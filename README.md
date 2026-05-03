@@ -54,7 +54,9 @@ Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) 
    ┌────────────────────────────────────────────────────────────┐
    │                     sing-box container                      │
    │                                                             │
-   │  TLS (built-in ACME Let's Encrypt, auto-renew on :80)      │
+   │  TLS termination — cert + key read from /data/caddy/...     │
+   │  (Caddy obtains and renews via ACME on :80; sing-box is     │
+   │  not the ACME side.)                                        │
    │   │                                                         │
    │   ├──▶ naive inbound (multi-user from `users` array)        │
    │   │      probe_resistance, padding, h2/h3                   │

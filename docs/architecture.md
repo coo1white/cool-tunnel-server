@@ -97,8 +97,10 @@ once we cut that integration.
                          ▼                                  │
                    ┌──────────────────────────────────┐    │
                    │           sing-box                 │◀──┘
-                   │   naive inbound { users, tls(ACME)}│
-                   │   listen :443 (h2 + h3) + :80 (ACME)│
+                   │   naive inbound { users }          │
+                   │   tls { cert+key from              │
+                   │     /data/caddy/certificates/... } │
+                   │   listen :443 (h2 + h3)            │
                    │   fallback → panel:9000 (cover     │
                    │                          site)     │
                    └──────────────────────────────────┘

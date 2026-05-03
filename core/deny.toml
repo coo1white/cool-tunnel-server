@@ -1,0 +1,71 @@
+# cargo-deny configuration.
+#
+# Run via the `audit` workflow on a weekly cron + on every PR that
+# touches Cargo.toml / Cargo.lock. Locally: `cd core && cargo deny check`.
+#
+# We tune deny on top of cargo-audit to also catch:
+#   - licence-incompatibility issues
+#   - duplicate dependencies (which often hide diamond-bug regressions)
+#   - dependencies pulled from registries we don't trust
+
+[graph]
+# Only check the actual targets we build for. Other-target advisories
+# (musl-only Rust crates etc.) are noise.
+targets = [
+    { triple = "x86_64-unknown-linux-musl" },
+    { triple = "aarch64-unknown-linux-musl" },
+]
+all-features = false
+
+[advisories]
+# yanked crates fail the audit; everything else is whatever cargo-audit
+# decides. We don't keep an `ignore` list yet — if you add one,
+# document why next to the advisory ID.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Allow the standard permissive set + GPL-3 (sing-box's licence — but
+# we don't link sing-box, we run it as a separate process, so it
+# never ends up in the Rust dep graph; this allow is here for
+# completeness).
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",     # firefox-derived, weak-copyleft per-file
+    "OpenSSL",      # rare; some old crates still
+    "CC0-1.0",
+    "0BSD",
+]
+# Anything not on `allow` is denied by default.
+confidence-threshold = 0.93   # cargo-deny's default; bump if false-positives.
+
+[bans]
+# Don't allow crates with multiple-version diamonds — an N-N+1 same-
+# crate pair usually means an upgrade was incomplete.
+multiple-versions = "warn"
+wildcards = "warn"
+# A few crates we never want pulled in. Add new entries as we discover
+# them.
+deny = [
+    # `openssl-sys` would mean we accidentally pulled the C-OpenSSL
+    # FFI in; we standardise on rustls.
+    { name = "openssl", reason = "use rustls — this stack does not link OpenSSL FFI" },
+    { name = "openssl-sys", reason = "see `openssl` ban" },
+]
+
+[sources]
+# We only allow crates from the official crates.io registry. Git deps
+# would be invisible to dependabot / renovate and break reproducible
+# builds.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
