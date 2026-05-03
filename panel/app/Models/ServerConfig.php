@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Services\CaddyReloader;
 use App\Services\CaddyfileGenerator;
+use App\Services\RedisRevocationBus;
 use Illuminate\Database\Eloquent\Model;
 
 // Singleton — exactly one row, id=1. The seeder creates it on first
@@ -46,6 +47,10 @@ class ServerConfig extends Model
     protected static function booted(): void
     {
         static::updated(function (): void {
+            // Same dual-path as ProxyAccount: pub/sub for the ≤100ms
+            // hot path, synchronous render+reload as a backstop.
+            app(RedisRevocationBus::class)->announceServerConfigChanged();
+
             $generator = app(CaddyfileGenerator::class);
             $hash      = $generator->renderToFile();
             if ($hash !== null) {

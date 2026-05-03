@@ -17,6 +17,7 @@ mod err;
 mod metrics;
 mod probe;
 mod quota;
+mod redis_bridge;
 mod subscription;
 
 pub use err::{Error, Result};
@@ -84,11 +85,17 @@ enum Cmd {
         #[command(subcommand)]
         op: ProbeOp,
     },
-    /// Long-running JSON-over-unix-socket daemon.
+    /// Long-running JSON-over-unix-socket daemon. Also subscribes
+    /// to the Redis revocation channel for ≤100 ms Filament-to-Caddy
+    /// reload propagation.
     Daemon {
         #[arg(long, env = "CT_CORE_SOCKET",
               default_value = "/run/cool-tunnel/core.sock")]
         socket: String,
+        /// Redis URL for the revocation bridge subscription. Empty
+        /// (default) skips the subscriber — single-host dev only.
+        #[arg(long, env = "REDIS_URL", default_value = "")]
+        redis_url: String,
     },
     /// Emit a SubscriptionManifestV1 to stdout for `account_id`.
     Subscription {
@@ -216,7 +223,22 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 probe::anti_tracking(&target, via.as_deref()).await
             }
         },
-        Cmd::Daemon { socket } => {
+        Cmd::Daemon { socket, redis_url } => {
+            // Spawn the Redis subscriber alongside the unix-socket
+            // listener — both run for the daemon's lifetime. Empty
+            // url means "no Redis"; we log a warning and continue
+            // (Caddyfile changes still happen via per-call CLI).
+            if !redis_url.is_empty() {
+                redis_bridge::spawn(
+                    redis_url,
+                    cli.database_url.clone(),
+                    cli.template.clone(),
+                    cli.output.clone(),
+                    cli.admin_socket.clone(),
+                );
+            } else {
+                tracing::warn!("REDIS_URL empty — running without revocation subscriber");
+            }
             daemon::serve(
                 &socket,
                 &cli.database_url,

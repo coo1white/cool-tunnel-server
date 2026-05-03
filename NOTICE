@@ -1,50 +1,75 @@
 Cool Tunnel Server
-Copyright 2026 Nick (coo1white)
+Copyright (c) 2026 the Cool Tunnel Server contributors. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may
-not use this software except in compliance with the License. You may
-obtain a copy of the License at
+The original code in this repository — the Filament/Laravel panel
+under panel/app/, the Rust crates under core/, the Dockerfiles, the
+Caddyfile.tpl, the upstream-pin manifests under manifests/, the
+operator-facing scripts under scripts/, and the documentation under
+docs/ — is proprietary. See LICENSE.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-implied. See the License for the specific language governing permissions
-and limitations under the License.
+This product builds and runs the following third-party software,
+unmodified, via Docker images and language-specific package
+managers. Each retains its own copyright and licence; the licences
+must be preserved in any redistribution of the resulting stack.
+The full text of every applicable licence is reproduced or
+referenced in THIRD_PARTY_LICENSES.md.
 
 ------------------------------------------------------------------------
 
-This product builds and runs the following third-party software,
-unmodified, via Docker images and Composer packages. Each retains its
-own copyright and license:
-
 * Caddy (https://github.com/caddyserver/caddy)
-  Copyright the Caddy Authors
+  Copyright the Caddy Authors.
   Licensed under the Apache License, Version 2.0.
   Built into the cool-tunnel-server-caddy image via xcaddy from the
   upstream caddy:builder + caddy:latest base images.
 
-* forwardproxy (https://github.com/klzgrad/forwardproxy)
-  Copyright the Caddy Authors and contributors
+* klzgrad/forwardproxy (https://github.com/klzgrad/forwardproxy)
+  Copyright the Caddy Authors and contributors.
   Licensed under the Apache License, Version 2.0.
-  Compiled into Caddy at build time via xcaddy. This is the
-  forward_proxy plugin used by NaiveProxy clients.
+  The NaiveProxy fork of the Caddy forward_proxy plugin. Compiled
+  into Caddy at image build time.
 
 * Laravel (https://github.com/laravel/laravel)
-  Copyright Taylor Otwell
+  Copyright Taylor Otwell.
   Licensed under the MIT License.
   Used as the framework underlying the admin panel.
 
 * Filament (https://github.com/filamentphp/filament)
-  Copyright Filament contributors
+  Copyright the Filament contributors.
   Licensed under the MIT License.
-  Used as the admin panel UI on top of Laravel.
+  Used as the admin panel UI.
 
-* Composer dependencies (see panel/composer.json for the full list)
-  Each Composer package is distributed under its own license; see the
-  source repository linked from each package's page on packagist.org.
+* predis/predis (https://github.com/predis/predis)
+  Copyright the Predis contributors.
+  Licensed under the MIT License.
+  Redis client used by the panel for the revocation bridge.
 
-* Docker base images (caddy:builder, caddy:latest, php:8.3-fpm-alpine,
-  nginx:alpine, mariadb:11, redis:7-alpine) — each retains its own
-  upstream license.
+* Cargo dependencies (see core/Cargo.lock for the full graph): tokio,
+  serde, serde_json, sqlx, hyper, hyper-util, hyperlocal, http-body-util,
+  bytes, reqwest, redis, chrono, tracing, tracing-subscriber, sha2, hex,
+  hmac, clap, regex, and their transitive dependencies. Each is
+  distributed under its own licence (predominantly MIT or
+  Apache-2.0); see crates.io for canonical licence text per crate.
+
+* MariaDB (https://mariadb.org/) — GPL-2.0 (server). Bundled as the
+  upstream mariadb:11 OCI image, unmodified.
+
+* Redis (https://redis.io/) — BSD-3-Clause for redis 7.x stable.
+  Bundled as the upstream redis:7-alpine OCI image, unmodified.
+
+* NaiveProxy (https://github.com/klzgrad/naiveproxy) — BSD-3-Clause.
+  Not bundled directly in this server image; clients (macOS today,
+  iOS/Android/Windows/Linux desktop on the roadmap) bundle their
+  own platform-specific naive binary and connect to the
+  forward_proxy@naive endpoint Caddy exposes here.
+
+* Docker base images: caddy:builder-alpine, caddy:alpine,
+  rust:1.78-alpine, php:8.3-fpm-alpine, mariadb:11, redis:7-alpine,
+  alpine:3.20. Each retains its own upstream licence.
+
+------------------------------------------------------------------------
+
+Redistribution of the resulting Docker images, the Cargo workspace,
+or any compiled binary derived from this repository requires
+preservation of this NOTICE file, the LICENSE file, the
+THIRD_PARTY_LICENSES.md file, and any per-component LICENSE.txt files
+shipped inside the upstream containers — verbatim, in their entirety.

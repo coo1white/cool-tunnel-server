@@ -37,7 +37,7 @@ so unauthenticated probes can't fingerprint the box as a proxy.
 | **`ct-server-core`** | Rust binary baked into the panel image. Owns the latency-sensitive paths: Caddyfile rendering, admin-API hot-reload over the unix socket, `/metrics` scraping, quota enforcement, anti-tracking probe, component OK/NG check. Uses the `ct-protocol` crate that future cross-platform clients will share. |
 | **`panel`** | Laravel 11 + Filament 3 admin app. PHP services are thin shell-outs to `ct-server-core`. Manages proxy accounts, fake-site templates, server config, traffic logs, and the **Components** OK/NG page. |
 | **`db`** | MariaDB 11 — proxy accounts, traffic counters, fake-site template data, panel users. |
-| **`redis`** | Cache + queue backend for the panel. |
+| **`redis`** | Cache + queue backend **and** the revocation pub/sub bus that ties Filament saves to ≤100 ms Caddy reloads. |
 
 Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) — the **component-as-machine-part** model. Update one component, run `ct-server-core component check`, get an OK/NG verdict before swap. Same schema is used by every Rust-cored client. See [`docs/components.md`](./docs/components.md).
 
@@ -77,8 +77,30 @@ Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) 
    │            TrafficCollector                                 │
    │  Workers: queue worker (regenerate-on-save),                │
    │           scheduled traffic-rollup, scheduled quota check   │
+   └─────────────────────────┬───────────────────────────────────┘
+                             │ PUBLISH cool_tunnel:revocations
+                             ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │                      redis container                         │
+   │  channel: cool_tunnel:revocations                            │
+   │  keys:    account:status:<username> = active|revoked|…       │
+   └─────────────────────────┬───────────────────────────────────┘
+                             │ SUBSCRIBE (long-lived)
+                             ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │           ct-server-core daemon (Rust, in panel image)       │
+   │  on revocation: re-render Caddyfile, POST /load to admin     │
+   │  socket. ≤100 ms from Filament save to new auth blocked.     │
    └─────────────────────────────────────────────────────────────┘
 ```
+
+**Revocation latency:** new auth attempts are blocked within
+~100 ms of a Filament save (Redis pub/sub → Caddyfile re-render →
+admin-socket reload). Existing in-flight HTTP/2 CONNECT tunnels
+persist until the underlying TCP connection closes — Caddy doesn't
+expose per-user connection enumeration on `forward_proxy`. Per-
+request hard severing requires a forwardproxy plugin patch and is
+on the v0.1 roadmap.
 
 ---
 
@@ -240,7 +262,8 @@ cool-tunnel-server/
 │   └── cross-platform-clients.md   Future iOS / Android / Win / Linux plan
 ├── docker-compose.yml              core-builder + panel + caddy + db + redis
 ├── .env.example
-├── LICENSE                         Apache 2.0
+├── LICENSE                         Proprietary — (c) 2026 the Cool Tunnel Server contributors
+├── THIRD_PARTY_LICENSES.md         Upstream Apache/MIT/BSD/GPL components
 ├── NOTICE                          Bundled-software attribution
 ├── Disclaimer.md                   Read this first
 └── README.md                       You are here

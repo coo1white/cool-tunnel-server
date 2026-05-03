@@ -62,12 +62,22 @@ services:
       DB_PORT: 3306
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # ct-server-core daemon reads this to subscribe to the
+      # cool_tunnel:revocations channel. Authentication via password
+      # in the URL — see entrypoint.sh for the assembly.
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       # Where the CaddyfileGenerator writes the rendered file. Mounted
       # from caddy_etc so the caddy container picks it up.
       CADDYFILE_PATH: /etc/caddy/Caddyfile
+      CADDYFILE_TEMPLATE: /srv/caddy/Caddyfile.tpl
       # Unix-socket path Caddy exposes its admin API on (read-write to
       # the panel via the shared caddy_run volume).
       CADDY_ADMIN_SOCKET: /run/caddy/admin.sock
+      # Where ct-server-core's own daemon socket lives — the panel
+      # talks to the daemon over this in addition to the per-call
+      # CLI invocations.
+      CT_CORE_SOCKET: /run/cool-tunnel/core.sock
+      CT_MANIFESTS_DIR: /srv/manifests
     volumes:
       - ./panel:/var/www/html
       - ./manifests:/srv/manifests:ro

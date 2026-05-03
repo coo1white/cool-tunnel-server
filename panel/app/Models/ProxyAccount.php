@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Services\CaddyReloader;
 use App\Services\CaddyfileGenerator;
+use App\Services\RedisRevocationBus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -53,17 +54,45 @@ class ProxyAccount extends Model
     protected static function booted(): void
     {
         // Any change to the basic_auth set means we need a new
-        // Caddyfile. The Generator + Reloader services dedupe by
-        // hash, so churn is fine.
-        $reload = function (): void {
+        // Caddyfile. Two paths fire in sequence:
+        //
+        //   1. Redis pub/sub → ct-server-core daemon picks it up
+        //      within ~1ms and re-renders + reloads. This is the
+        //      ≤100ms hot path the operator-facing UI cares about.
+        //
+        //   2. A synchronous PHP-side render+reload as a backstop in
+        //      case Redis is unreachable or the daemon isn't running.
+        //      Both layers dedupe by SHA-256 so a duplicate reload is
+        //      a no-op.
+        //
+        // The order matters: we publish first so the Rust daemon can
+        // start the work in parallel with whatever the panel's PHP
+        // backstop is doing.
+
+        static::saved(function (self $account): void {
+            $bus    = app(RedisRevocationBus::class);
+            $status = $account->isActive() ? 'active'
+                    : ($account->expires_at && $account->expires_at->isPast() ? 'expired' : 'revoked');
+            $bus->setAccountStatus($account->username, $status);
+            $bus->announceAccountChanged($account->username, "saved:{$status}");
+
             $generator = app(CaddyfileGenerator::class);
             $hash      = $generator->renderToFile();
             if ($hash !== null) {
                 app(CaddyReloader::class)->reload();
             }
-        };
+        });
 
-        static::saved(fn () => $reload());
-        static::deleted(fn () => $reload());
+        static::deleted(function (self $account): void {
+            $bus = app(RedisRevocationBus::class);
+            $bus->clearAccountStatus($account->username);
+            $bus->announceAccountChanged($account->username, 'deleted');
+
+            $generator = app(CaddyfileGenerator::class);
+            $hash      = $generator->renderToFile();
+            if ($hash !== null) {
+                app(CaddyReloader::class)->reload();
+            }
+        });
     }
 }

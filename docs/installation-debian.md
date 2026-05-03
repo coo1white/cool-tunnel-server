@@ -129,7 +129,11 @@ No backport needed.
 
 ```bash
 cat >/etc/sysctl.d/99-cool-tunnel.conf <<'EOF'
-# --- Congestion control --------------------------------------------
+# --- Congestion control (BBR) -------------------------------------
+# Why BBR: model-based congestion control that probes for available
+# bandwidth and minimum RTT. Drop-in win for proxy workloads which
+# have long fat pipes between the client's network and the server's
+# upstream — cubic gives up too early on transient loss; BBR doesn't.
 net.core.default_qdisc            = fq
 net.ipv4.tcp_congestion_control   = bbr
 
@@ -183,6 +187,68 @@ systemctl restart sshd
 systemctl enable --now fail2ban
 fail2ban-client status sshd
 ```
+
+### Tighten fail2ban for cool-tunnel-server
+
+The defaults are decent but worth a tighter sshd jail. Drop a config
+snippet under `/etc/fail2ban/jail.d/` so it survives package upgrades
+(don't edit `jail.conf` directly):
+
+```bash
+cat >/etc/fail2ban/jail.d/cool-tunnel.local <<'EOF'
+[DEFAULT]
+# Ban for 1 hour after 5 failures inside 10 minutes.
+findtime = 10m
+maxretry = 5
+bantime  = 1h
+
+# Whitelist your own management IPs so you don't lock yourself out.
+# Replace with your operator's static IP / CIDR. Multiple values are
+# space-separated.
+ignoreip = 127.0.0.1/8 ::1
+# ignoreip = 127.0.0.1/8 ::1 203.0.113.42
+
+# Use the modern nftables backend on Debian 11+. On Debian 10
+# (iptables-legacy) change to "iptables-multiport".
+banaction = nftables-multiport
+banaction_allports = nftables-allports
+
+[sshd]
+enabled = true
+mode    = aggressive
+maxretry = 4
+
+# Caddy access-log jail. Disabled by default because cool-tunnel-server
+# does not write Caddy access logs (privacy). Enable only if YOU
+# explicitly turn on Caddy access logging in the Caddyfile and accept
+# the privacy trade-off.
+# [caddy-auth]
+# enabled  = false
+# port     = http,https
+# filter   = caddy-auth
+# logpath  = /var/log/caddy/access.log
+# maxretry = 10
+# findtime = 5m
+# bantime  = 6h
+EOF
+
+# Reload to pick up the new jail.
+systemctl restart fail2ban
+
+# Verify the SSH jail is active and the new bantime is in effect.
+fail2ban-client status sshd
+fail2ban-client get sshd bantime         # should show 3600
+fail2ban-client banned 2>/dev/null | head -5
+```
+
+🟢 **Debian 10 (buster):** `nftables` isn't the default backend.
+Switch the two `banaction` lines to `iptables-multiport` and
+`iptables-allports` respectively. Everything else is identical.
+
+> **On the Caddy side**, fail2ban's role is small — `probe_resistance`
+> already makes brute-force basic_auth attempts indistinguishable
+> from "wrong page" 404s, so there's nothing in the (default-disabled)
+> access log to ban on. The SSH jail is the real win.
 
 ---
 
