@@ -31,19 +31,26 @@ cd "$(dirname "$0")/.." || exit 1
 # ---------- Pre-flight ---------------------------------------------
 
 step "Pre-flight: tooling"
-require_cmd cargo  "https://rustup.rs/  (then: rustup default 1.86)"
+# Cargo is OPTIONAL — the host path is faster when it's available
+# (laptop / dev box), but on a fresh VPS we run prepare inside a
+# rust:1.86-alpine container so the operator doesn't need to
+# install rustup just to refresh schema metadata. Only docker is
+# strictly required.
 require_cmd docker "apt install -y docker.io docker-compose-plugin"
 require_file .env "cp .env.example .env  &&  \$EDITOR .env"
 
-# Install sqlx-cli the first time. We pin to 0.8 to match the sqlx
-# crate version in core/ct-server-core/Cargo.toml; mismatched majors
-# can produce metadata the runtime macro rejects.
-if ! command -v cargo-sqlx >/dev/null 2>&1; then
-    step "Install sqlx-cli (0.8.x, mysql + native-tls)"
+USE_CONTAINER=0
+if ! command -v cargo >/dev/null 2>&1; then
+    USE_CONTAINER=1
+    ok "cargo not on host — will run prepare inside rust:1.86-alpine container"
+elif ! command -v cargo-sqlx >/dev/null 2>&1; then
+    step "Install sqlx-cli (0.8.x, mysql + rustls)"
     cargo install sqlx-cli --version '~0.8' --no-default-features \
         --features 'rustls,mysql' --locked
+    ok "sqlx-cli present"
+else
+    ok "cargo + sqlx-cli on host"
 fi
-ok "sqlx-cli present"
 
 # ---------- Bring DB up + migrate ---------------------------------
 
@@ -62,38 +69,48 @@ compose up -d panel
 # shellcheck disable=SC2016
 wait_for "panel vendor/autoload.php" 60 5 \
     bash -c 'docker compose exec -T panel test -f /var/www/html/vendor/autoload.php'
+# `migrate --force` is a no-op when migrations are already applied
+# (Laravel checks the migrations table). Idempotent.
 compose exec -T panel php artisan migrate --force --no-interaction
 ok "schema is current"
 
 # ---------- Run sqlx prepare --------------------------------------
 
-# Build the DATABASE_URL the macros will use. This URL is local-only
-# (the prepare runs on the operator's machine; nothing leaves the
-# host) and is reconstructed from .env so secrets stay there.
-db_host=${DB_HOST_PUBLIC:-127.0.0.1}
-db_port=${DB_PORT_PUBLIC:-3306}
-DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@${db_host}:${db_port}/${DB_DATABASE}"
+# DATABASE_URL the macros will use. Reconstructed from .env so
+# secrets stay there. `db` (compose-resolved hostname) for the
+# containerised path; 127.0.0.1 for the host path with port-forward.
+HOST_DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@127.0.0.1:3306/${DB_DATABASE}"
+CONTAINER_DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@db:3306/${DB_DATABASE}"
 
-# If the db port isn't host-mapped, fall back to running sqlx prepare
-# inside an ephemeral container that's on the same network.
-if ! (echo > "/dev/tcp/${db_host}/${db_port}") 2>/dev/null; then
-    warn "MariaDB not reachable at ${db_host}:${db_port} from the host;"
-    warn "running prepare inside an ephemeral container on ct-data network"
-
-    step "cargo sqlx prepare (containerised)"
+run_in_container() {
+    step "cargo sqlx prepare (containerised, rust:1.86-alpine)"
+    warn "first run downloads + compiles sqlx-cli inside the container"
+    warn "(~3-5 min on a 1-vCPU VPS); subsequent runs are seconds"
+    # shellcheck disable=SC2016
     docker run --rm \
         --network cool-tunnel-server_ct-data \
         -v "$PWD/core:/work" \
-        -e DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@db:3306/${DB_DATABASE}" \
+        -e DATABASE_URL="$CONTAINER_DATABASE_URL" \
         -w /work \
         rust:1.86-alpine \
-        sh -c 'apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static \
+        sh -c 'set -eux ; \
+               apk add --no-cache musl-dev pkgconfig openssl-dev \
+                                  openssl-libs-static ca-certificates \
                && cargo install sqlx-cli --version "~0.8" --no-default-features \
                                           --features "rustls,mysql" --locked \
                && cargo sqlx prepare --workspace'
-else
+}
+
+if [[ "$USE_CONTAINER" == 1 ]]; then
+    run_in_container
+elif (echo > "/dev/tcp/127.0.0.1/3306") 2>/dev/null; then
     step "cargo sqlx prepare (host)"
-    DATABASE_URL="$DATABASE_URL" cargo sqlx prepare --workspace --manifest-path core/Cargo.toml
+    DATABASE_URL="$HOST_DATABASE_URL" \
+        cargo sqlx prepare --workspace --manifest-path core/Cargo.toml
+else
+    warn "MariaDB not reachable at 127.0.0.1:3306 from host"
+    warn "(no port mapping) — falling through to containerised prepare"
+    run_in_container
 fi
 
 # ---------- Diff report -------------------------------------------
