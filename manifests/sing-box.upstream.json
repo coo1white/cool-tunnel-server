@@ -1,0 +1,12 @@
+{
+    "name": "sing-box",
+    "kind": "container-image",
+    "version": "1.10.7",
+    "upstream": "https://github.com/SagerNet/sing-box",
+    "verify": {
+        "command": ["docker", "exec", "ct-singbox", "sing-box", "version"],
+        "expect_stdout_contains": "sing-box version 1.",
+        "expect_zero_exit": true
+    },
+    "note": "GPL-3.0. Actively maintained Go reimplementation of the NaiveProxy server protocol with multi-user basic_auth support, built-in ACME, HTTP/3, and a clash-API for hot config reload. Replaces the unmaintained klzgrad/forwardproxy plugin in this stack. The wire protocol is identical to forwardproxy@naive, so existing naive clients connect unchanged. We bundle sing-box as a separate process (not statically linked) so its GPL-3 stays scoped to its own image; our proprietary code is unaffected."
+}

@@ -28,7 +28,15 @@ pub struct ServerConfig {
 pub struct ProxyAccount {
     pub id: i64,
     pub username: String,
+    /// bcrypt hash — preserved for audit / legacy tooling. sing-box
+    /// itself reads the cleartext field below.
     pub password_hash: String,
+    /// Cleartext password, decrypted from the Laravel-encrypted DB
+    /// column at db-read time. None for legacy rows that haven't
+    /// been re-saved since the sing-box migration; the panel forces
+    /// a regen on first save so this is a transitional state only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleartext_password: Option<String>,
     pub enabled: bool,
     pub quota_bytes: Option<i64>,
     pub used_bytes: i64,
@@ -36,10 +44,11 @@ pub struct ProxyAccount {
 }
 
 impl ProxyAccount {
-    /// Reject usernames that would break Caddyfile syntax (whitespace,
+    /// Reject usernames that would break basic_auth syntax (whitespace,
     /// quotes, control chars). The panel pre-validates with `alphaDash`,
     /// but we re-check here so a malformed row in the DB can't take
-    /// Caddy down.
+    /// the proxy down. Method name dates back to the Caddyfile era;
+    /// kept for historical continuity — applies to sing-box too.
     pub fn caddyfile_safe_username(&self) -> bool {
         !self.username.is_empty()
             && self.username.len() <= 64

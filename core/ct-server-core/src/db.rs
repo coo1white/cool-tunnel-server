@@ -78,8 +78,8 @@ pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
 pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>> {
     let rows = sqlx::query(
         r"
-        SELECT id, username, password_hash, enabled, quota_bytes, used_bytes,
-               expires_at
+        SELECT id, username, password_hash, password_cleartext_encrypted,
+               enabled, quota_bytes, used_bytes, expires_at
         FROM proxy_accounts
         WHERE enabled = 1
           AND (expires_at IS NULL OR expires_at > NOW())
@@ -90,12 +90,24 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
     .fetch_all(pool)
     .await?;
 
+    let app_key = std::env::var("APP_KEY").ok();
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
+        let encrypted: Option<String> = r.try_get("password_cleartext_encrypted").ok();
+        let cleartext = encrypted.and_then(|enc| {
+            match crate::laravel_crypt::decrypt(&enc, app_key.as_deref().unwrap_or("")) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not decrypt cleartext for account");
+                    None
+                }
+            }
+        });
         out.push(ProxyAccount {
             id: r.try_get::<i64, _>("id")?,
             username: r.try_get("username")?,
             password_hash: r.try_get("password_hash")?,
+            cleartext_password: cleartext,
             enabled: r.try_get::<i8, _>("enabled")? != 0,
             quota_bytes: r.try_get("quota_bytes").ok(),
             used_bytes: r.try_get::<i64, _>("used_bytes").unwrap_or(0),

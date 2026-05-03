@@ -14,17 +14,19 @@ under the copyright laws of any jurisdiction. Possession of a copy
 does not constitute a licence to use it.
 
 Notwithstanding the above, the Software builds and runs third-party
-open-source components — Caddy, the NaiveProxy server-side plugin
-(klzgrad/naiveproxy project family), the Laravel framework, Filament,
-predis/predis, the SQLx, hyper, tokio, serde, redis, reqwest and
-tracing crate families, MariaDB, Redis, and their respective
-transitive dependencies. Each of those components retains its own
-upstream licence (Apache-2.0, MIT, BSD-3-Clause, GPL-2.0, etc.).
-Those licences are reproduced or referenced in THIRD_PARTY_LICENSES.md
-and NOTICE in this same directory and MUST be preserved verbatim in
-any redistribution of
-the running stack — including private redistribution to a single
-collaborator.
+open-source components — sing-box (the actively-maintained server that
+speaks the NaiveProxy protocol), the NaiveProxy client family
+(klzgrad/naiveproxy), the Laravel framework, Filament, predis/predis,
+the SQLx, hyper, tokio, serde, redis, reqwest, aes-gcm, and tracing
+crate families, MariaDB, Redis, and their respective transitive
+dependencies. Each of those components retains its own upstream licence
+(Apache-2.0, MIT, BSD-3-Clause, GPL-2.0, GPL-3.0, etc.). Those licences
+are reproduced or referenced in THIRD_PARTY_LICENSES.md and NOTICE in
+this same directory and MUST be preserved verbatim in any redistribution
+of the running stack — including private redistribution to a single
+collaborator. sing-box specifically is GPL-3.0 and is bundled here as
+a separate process / image; it is not statically linked with this
+proprietary code.
 
 The proprietary terms above govern only the original work of the
 copyright holder; they do not, and cannot, override the licence of

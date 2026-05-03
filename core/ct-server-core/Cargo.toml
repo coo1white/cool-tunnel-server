@@ -7,7 +7,7 @@ license-file.workspace = true
 repository.workspace   = true
 authors.workspace      = true
 publish.workspace      = true
-description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering, admin-API hot-reload, metrics scraping, quota enforcement, anti-tracking probe, Redis revocation bridge. Proprietary; see ../../LICENSE."
+description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — sing-box config rendering, clash-API hot-reload, metrics scraping, quota enforcement, anti-tracking probe, Redis revocation bridge. Proprietary; see ../../LICENSE."
 readme      = "README.md"
 
 [[bin]]
@@ -34,6 +34,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Caddyfile and reloads via admin socket.
 redis = { version = "0.25", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
 futures-core = "0.3"
+
+# Laravel-compatible AES-256-GCM decryption for the
+# proxy_accounts.password_cleartext_encrypted column.
+aes-gcm = "0.10"
+base64  = "0.22"
 
 chrono     = { version = "0.4", features = ["serde"] }
 tracing    = "0.1"

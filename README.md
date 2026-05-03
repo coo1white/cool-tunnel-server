@@ -6,7 +6,7 @@ roadmap). Three layers, mirroring the client:
 
 |  | UI | Glue (cross-platform Rust) | Anti-tracking engine |
 | --- | --- | --- | --- |
-| **Server** (this repo) | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` crate | NaiveProxy server-side plugin baked into Caddy |
+| **Server** (this repo) | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` crate | sing-box `naive` inbound (GPL-3, actively maintained) |
 | **macOS client** ([cool-tunnel][client]) | SwiftUI + AppKit | `cool-tunnel-core` (Rust) | Bundled `naive` Mach-O |
 | **Future iOS / Android / Win / Linux** | Per-platform native | Same `ct-protocol` + per-platform core | Per-platform `naive` |
 
@@ -14,11 +14,13 @@ The two horizontal lines that bind every row together are the Rust
 crate (`ct-protocol`) and the NaiveProxy wire format. New platforms
 plug into both without re-implementing.
 
-Runs **Caddy + `forward_proxy` (NaiveProxy fork)** as the actual proxy,
-with a **Filament + Laravel** admin panel that manages proxy accounts,
-generates the `Caddyfile`, hot-reloads Caddy via its admin API (via
-the Rust core), and serves a fake camouflage site on the apex domain
-so unauthenticated probes can't fingerprint the box as a proxy.
+Runs **sing-box** as the actual NaiveProxy server (multi-user,
+built-in ACME, hot reload via clash API), with a **Filament + Laravel**
+admin panel that manages proxy accounts, generates the sing-box
+`config.json`, hot-reloads sing-box via its clash unix socket (via the
+Rust core), and serves a fake camouflage site at the apex domain
+through sing-box's fallback so unauthenticated probes can't
+fingerprint the box as a proxy.
 
 [client]: https://github.com/coo1white/cool-tunnel
 
@@ -33,11 +35,11 @@ so unauthenticated probes can't fingerprint the box as a proxy.
 
 | Layer | What it is |
 | --- | --- |
-| **`caddy`** | Caddy compiled with the [NaiveProxy](https://github.com/klzgrad/naiveproxy) server-side plugin baked in (xcaddy build). Terminates TLS on `:443`, speaks HTTP/2 + HTTP/3, runs `forward_proxy` with `hide_ip`, `hide_via`, and `probe_resistance` switched on. Falls through to a Laravel-rendered fake site for any request that isn't an authenticated CONNECT. |
-| **`ct-server-core`** | Rust binary baked into the panel image. Owns the latency-sensitive paths: Caddyfile rendering, admin-API hot-reload over the unix socket, `/metrics` scraping, quota enforcement, anti-tracking probe, component OK/NG check. Uses the `ct-protocol` crate that future cross-platform clients will share. |
+| **`sing-box`** | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) (GPL-3.0). Multi-user `naive` inbound, built-in ACME on `:80`, TLS-terminating HTTP/2 CONNECT on `:443`, HTTP/3 on `:443/udp`. Fallback for unauthenticated traffic reverse-proxies to the panel for the cover site. Replaces the unmaintained klzgrad/forwardproxy plugin. |
+| **`ct-server-core`** | Rust binary baked into the panel image. Owns the latency-sensitive paths: sing-box config rendering (incl. Laravel-Crypt decryption of cleartext passwords), clash-API hot-reload over the unix socket, `/metrics` scraping, quota enforcement, anti-tracking probe, component OK/NG check, burst Coalescer. Uses the `ct-protocol` crate that future cross-platform clients will share. |
 | **`panel`** | Laravel 11 + Filament 3 admin app. PHP services are thin shell-outs to `ct-server-core`. Manages proxy accounts, fake-site templates, server config, traffic logs, and the **Components** OK/NG page. |
 | **`db`** | MariaDB 11 — proxy accounts, traffic counters, fake-site template data, panel users. |
-| **`redis`** | Cache + queue backend **and** the revocation pub/sub bus that ties Filament saves to ≤100 ms Caddy reloads. |
+| **`redis`** | Cache + queue backend **and** the revocation pub/sub bus that ties Filament saves to ≤100 ms sing-box reloads. |
 
 Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) — the **component-as-machine-part** model. Update one component, run `ct-server-core component check`, get an OK/NG verdict before swap. Same schema is used by every Rust-cored client. See [`docs/components.md`](./docs/components.md).
 
@@ -49,34 +51,32 @@ Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) 
                                      │ TLS:443
                                      ▼
    ┌────────────────────────────────────────────────────────────┐
-   │                       caddy container                       │
+   │                     sing-box container                      │
    │                                                             │
-   │  TLS (ACME Let's Encrypt, auto-renew)                      │
+   │  TLS (built-in ACME Let's Encrypt, auto-renew on :80)      │
    │   │                                                         │
-   │   ├──▶ forward_proxy (basic_auth from sites-enabled/*.caddy)│
-   │   │      hide_ip, hide_via, probe_resistance                │
+   │   ├──▶ naive inbound (multi-user from `users` array)        │
+   │   │      probe_resistance, padding, h2/h3                   │
    │   │      → upstream internet                                │
    │   │                                                         │
-   │   └──▶ unauthed traffic → fake site                          │
-   │           ├─ /  → reverse_proxy panel:9000 (PHP-FPM)        │
-   │           └─ /static/*, /favicon.ico → file_server          │
+   │   └──▶ unauthed traffic → fallback                           │
+   │           reverse_proxy panel:9000 (cover site / panel)     │
    └─────────────┬──────────────────────────────┬───────────────┘
-                 │                               │
-                 │ unix socket /run/caddy/admin │ generated Caddyfile
-                 ▼                               │
+                 │ /etc/sing-box/config.json    │ /run/sing-box/clash.sock
+                 ▼ (panel renders here)         │ (panel hot-reloads here)
    ┌────────────────────────────────────────────┴───────────────┐
    │                      panel container                        │
    │                                                             │
-   │  Laravel 11 + Filament 3 admin (port 8443 over reverse-     │
-   │  proxy with admin-only basic_auth at the Caddy edge)        │
+   │  Laravel 11 + Filament 3 admin (reverse-proxied behind      │
+   │  sing-box with admin-only basic_auth gating /admin)         │
    │                                                             │
-   │  Models:  ProxyAccount, FakeWebsite, ServerConfig,          │
-   │           TrafficLog                                        │
-   │  Services: CaddyfileGenerator, CaddyReloader,               │
-   │            FakeSiteRenderer, AntiTrackingFilter,            │
-   │            TrafficCollector                                 │
-   │  Workers: queue worker (regenerate-on-save),                │
-   │           scheduled traffic-rollup, scheduled quota check   │
+   │  Models:    ProxyAccount, FakeWebsite, ServerConfig,        │
+   │             TrafficLog                                      │
+   │  Services:  CtServerCore + thin wrappers,                   │
+   │             SingBoxConfigGenerator, SingBoxReloader,        │
+   │             RedisRevocationBus                              │
+   │  Workers:   queue worker, scheduled traffic-rollup,         │
+   │             scheduled quota check                           │
    └─────────────────────────┬───────────────────────────────────┘
                              │ PUBLISH cool_tunnel:revocations
                              ▼
@@ -89,44 +89,51 @@ Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) 
                              ▼
    ┌─────────────────────────────────────────────────────────────┐
    │           ct-server-core daemon (Rust, in panel image)       │
-   │  on revocation: re-render Caddyfile, POST /load to admin     │
-   │  socket. ≤100 ms from Filament save to new auth blocked.     │
+   │  on revocation: re-render config.json, PUT /configs to       │
+   │  sing-box clash API. ≤100 ms from Filament save to new       │
+   │  auth blocked. Burst Coalescer collapses N events → ≤2       │
+   │  reloads per 100 ms window.                                  │
    └─────────────────────────────────────────────────────────────┘
 ```
 
-**Revocation latency:** new auth attempts are blocked within
-~100 ms of a Filament save (Redis pub/sub → Caddyfile re-render →
-admin-socket reload). Existing in-flight HTTP/2 CONNECT tunnels
-persist until the underlying TCP connection closes — Caddy doesn't
-expose per-user connection enumeration on `forward_proxy`. Per-
-request hard severing requires a patch to the NaiveProxy server plugin and is
-on the v0.1 roadmap.
+**Revocation latency:** new auth attempts are blocked within ~100 ms
+of a Filament save (Redis pub/sub → sing-box config re-render →
+clash-API reload). Bursts of saves (e.g. an admin disabling 50
+accounts in one click) collapse to **at most 2 sing-box reloads per
+100 ms window** thanks to the leading-edge + trailing-flush coalescer
+in `redis_bridge.rs`. Existing in-flight HTTP/2 CONNECT tunnels
+persist until the underlying TCP connection closes — neither sing-box
+nor any other multi-user NaiveProxy server currently exposes per-user
+connection enumeration. Per-request hard severing is on the v0.1
+roadmap.
 
 ---
 
 ## Anti-tracking defaults
 
-Out of the box, the generated `Caddyfile` enables every network-tracking
-mitigation `forward_proxy` exposes, plus a few panel-level defaults:
+Out of the box, the rendered sing-box config enables every NaiveProxy
+mitigation it exposes, plus a few panel-level defaults:
 
-- **`hide_ip`** — strip `X-Forwarded-For`, `Forwarded`, and `X-Real-IP`
-  from outbound requests.
-- **`hide_via`** — strip `Via` (which would otherwise reveal that the
-  request transited a proxy at all).
-- **`probe_resistance`** — unauthenticated `CONNECT` is indistinguishable
-  from a wrong-password attempt; the response shape matches the static
-  site, so active probing tools (e.g. GFW-style probers) can't
-  fingerprint the proxy.
-- **HTTP/3 (QUIC) on `:443/udp`** — harder to selectively throttle than
-  TCP/443.
+- **TLS forge / browser-shaped handshake** — sing-box's `naive`
+  inbound emits a TLS ClientHello-equivalent shape that matches a
+  real Chrome browser, so the handshake itself doesn't fingerprint
+  the box as a proxy.
+- **Padding** — naive's protocol-level padding makes traffic-flow
+  analysis harder.
+- **Probe resistance** — sing-box's `naive` inbound's `fallback`
+  field reverse-proxies unauthenticated traffic to the panel, which
+  serves a Blade-rendered cover site. Probes see a normal-looking
+  website, not a proxy 401.
+- **HTTP/3 (QUIC) on `:443/udp`** — harder to selectively throttle
+  than TCP/443.
 - **Disabled access logs by default** — only the panel records
   per-account aggregate byte counters, never URLs or remote hosts.
-- **DNS over HTTPS upstream resolver** (Cloudflare `1.1.1.1` by default)
-  — Caddy resolves CONNECT targets without leaking to the host's
-  recursive resolver. Configurable to any DoH endpoint.
-- **Random fake-site rotation** — a dataset of cover-site templates
-  (blog, portfolio, corp landing) the operator can swap between to
-  reduce fingerprintability across hosts.
+- **DNS over HTTPS** — sing-box's route block uses a DoH resolver
+  for outbound name lookups; Cloudflare `1.1.1.1` by default,
+  configurable to any DoH endpoint.
+- **Cover-site rotation** — three Blade templates (blog, portfolio,
+  corporate consultancy) the operator can swap between to reduce
+  fingerprintability across hosts.
 
 The full list and per-account toggles live in *Settings → Anti-Tracking*
 in the panel.
@@ -156,19 +163,21 @@ cd cool-tunnel-server
 cp .env.example .env
 $EDITOR .env
 
-# Build the panel + caddy images and start everything.
+# Build the panel + sing-box images and start everything.
 ./scripts/install.sh
 ```
 
 `install.sh` will:
 
 1. Build the panel image (PHP 8.3-fpm + Composer install + `php artisan
-   key:generate` + `php artisan filament:install`).
-2. Build the Caddy image (xcaddy with the NaiveProxy server-side plugin).
+   key:generate` + `php artisan filament:install`) with the
+   `ct-server-core` Rust binary baked in.
+2. Build the sing-box image (downloads the upstream pre-built binary,
+   verifies it).
 3. Run DB migrations and seed a default `ServerConfig` row.
 4. Prompt you to create the first admin login for the panel.
-5. Render a starter `Caddyfile` (no proxy accounts yet → caddy serves
-   only the fake site).
+5. Render a starter sing-box `config.json` (no proxy accounts yet →
+   sing-box serves only the cover site via fallback).
 6. `docker compose up -d`.
 
 When it finishes, the panel is at:
@@ -177,9 +186,9 @@ When it finishes, the panel is at:
 https://<your-domain>/admin
 ```
 
-…protected at the Caddy edge by an additional admin basic-auth header
-(see `.env` `PANEL_BASIC_AUTH_*`) so the Filament login isn't directly
-exposed to the internet.
+…protected at the sing-box `naive` fallback layer by an additional
+admin basic-auth header (see `.env` `PANEL_BASIC_AUTH_*`) so the
+Filament login isn't directly exposed to the internet.
 
 Create a proxy account, copy the cleartext password (it will only show
 once), and point your Cool Tunnel client at:
@@ -218,20 +227,20 @@ cool-tunnel-server/
 │   │                              the same crate every future client links.
 │   └── ct-server-core/             Server-only binary. CLI subcommands +
 │                                   long-running daemon mode. Owns:
-│                                   caddyfile render / caddy reload /
+│                                   singbox render / server reload (clash) /
 │                                   traffic collect / quota enforce /
-│                                   probe anti-tracking / component check.
+│                                   probe anti-tracking / component check /
+│                                   util::debounce (Coalescer).
 ├── manifests/                     One *.upstream.json per swappable
-│                                  component (caddy, naiveproxy, the
+│                                  component (sing-box, naiveproxy, the
 │                                  Rust crates, the panel image, db, redis).
 ├── docker/
 │   ├── core/Dockerfile             Rust musl build → static ct-server-core
-│   ├── caddy/Dockerfile            xcaddy with NaiveProxy server plugin
+│   ├── sing-box/Dockerfile         Pulls upstream sing-box binary
 │   └── panel/Dockerfile            PHP-fpm + Composer + nginx +
 │                                   ct-server-core copied in from core stage
-├── caddy/
-│   ├── Caddyfile.tpl               Template — Rust core substitutes
-│   └── sites-fallback/             Static cover-site fallback
+├── sing-box/
+│   └── config.json.tpl             Template — ct-server-core substitutes
 ├── panel/                          Laravel 11 + Filament 3
 │   ├── app/
 │   │   ├── Filament/
@@ -241,11 +250,11 @@ cool-tunnel-server/
 │   │   ├── Models/                 ProxyAccount, FakeWebsite, ServerConfig,
 │   │   │                           TrafficLog, User
 │   │   ├── Services/               CtServerCore (the shell-out), and thin
-│   │   │                           wrappers: CaddyfileGenerator,
-│   │   │                           CaddyReloader, TrafficCollector,
+│   │   │                           wrappers: SingBoxConfigGenerator,
+│   │   │                           SingBoxReloader, TrafficCollector,
 │   │   │                           ComponentChecker, PasswordGenerator,
-│   │   │                           AntiTrackingFilter
-│   │   ├── Console/Commands/       caddyfile:render, quota:enforce,
+│   │   │                           AntiTrackingFilter, RedisRevocationBus
+│   │   ├── Console/Commands/       singbox:render, quota:enforce,
 │   │   │                           traffic:rollup, component:check
 │   │   └── Http/Controllers/       FakeSiteController, SubscriptionController
 │   ├── database/migrations/        schema
@@ -254,13 +263,13 @@ cool-tunnel-server/
 │   ├── composer.json               Laravel 11, Filament 3, predis
 │   └── config/                     app, auth, db, cache, session, queue …
 ├── scripts/                        install.sh, update.sh, backup.sh,
-│                                   render-caddyfile.sh
+│                                   render-singbox.sh
 ├── docs/
 │   ├── installation-debian.md      Step-by-step Debian 10/11/12/13+
 │   ├── architecture.md             Three-layer model
 │   ├── components.md               How OK/NG verifies each part
 │   └── cross-platform-clients.md   Future iOS / Android / Win / Linux plan
-├── docker-compose.yml              core-builder + panel + caddy + db + redis
+├── docker-compose.yml              core-builder + panel + sing-box + db + redis
 ├── .env.example
 ├── LICENSE                         Proprietary — (c) 2026 Nick (Bai Yuhang)
 ├── THIRD_PARTY_LICENSES.md         Upstream Apache/MIT/BSD/GPL components
@@ -278,10 +287,10 @@ This is the server-side companion to:
 - [coo1white/cool-tunnel](https://github.com/coo1white/cool-tunnel) —
   macOS GUI client (SwiftUI + Rust core, universal `.app`).
 
-The client connects to any HTTP/2 CONNECT proxy that speaks
-NaiveProxy's `forward_proxy` flavour. This server is one (opinionated)
-way to provide that endpoint — but the client also works against a
-hand-rolled Caddyfile + naive setup, or any other compatible upstream.
+The client connects to any HTTP/2 CONNECT proxy that speaks the
+NaiveProxy wire format. This server (sing-box `naive` inbound) is
+one opinionated way to provide that endpoint — the client also
+works against any other NaiveProxy-protocol server.
 
 ---
 

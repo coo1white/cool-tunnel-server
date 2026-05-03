@@ -7,8 +7,8 @@ use Symfony\Component\Process\Process;
 
 // Thin wrapper around the ct-server-core Rust binary.
 //
-// Every PHP service that used to do "real work" (CaddyfileGenerator,
-// CaddyReloader, TrafficCollector, ComponentChecker) now calls into
+// Every PHP service that used to do "real work" (SingBoxConfigGenerator,
+// SingBoxReloader, TrafficCollector, ComponentChecker) now calls into
 // this one helper. The Rust binary owns the latency-sensitive paths;
 // PHP stays where it's good — UI and persistence orchestration.
 //
@@ -63,14 +63,14 @@ final class CtServerCore
         return $decoded;
     }
 
-    public function renderCaddyfile(): array
+    public function renderSingBoxConfig(): array
     {
-        return $this->run(['caddyfile', 'render']);
+        return $this->run(['singbox', 'render']);
     }
 
-    public function reloadCaddy(): array
+    public function reloadSingBox(): array
     {
-        return $this->run(['caddy', 'reload'], timeoutSec: 60);
+        return $this->run(['server', 'reload'], timeoutSec: 60);
     }
 
     public function collectTraffic(): array

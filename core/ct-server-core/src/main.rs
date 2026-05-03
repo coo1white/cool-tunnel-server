@@ -8,16 +8,17 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod admin;
-mod caddyfile;
 mod components;
 mod daemon;
 mod db;
 mod domain;
 mod err;
+mod laravel_crypt;
 mod metrics;
 mod probe;
 mod quota;
 mod redis_bridge;
+mod singbox;
 mod subscription;
 mod util;
 
@@ -36,19 +37,19 @@ struct Cli {
     #[arg(long, env = "DATABASE_URL", global = true)]
     database_url: Option<String>,
 
-    /// Caddyfile template path.
-    #[arg(long, env = "CADDYFILE_TEMPLATE",
-          default_value = "/srv/caddy/Caddyfile.tpl", global = true)]
+    /// sing-box config template path.
+    #[arg(long, env = "SINGBOX_CONFIG_TEMPLATE",
+          default_value = "/srv/sing-box/config.json.tpl", global = true)]
     template: String,
 
-    /// Caddyfile output path.
-    #[arg(long, env = "CADDYFILE_PATH",
-          default_value = "/etc/caddy/Caddyfile", global = true)]
+    /// sing-box config output path.
+    #[arg(long, env = "SINGBOX_CONFIG_PATH",
+          default_value = "/etc/sing-box/config.json", global = true)]
     output: String,
 
-    /// Caddy admin unix socket.
-    #[arg(long, env = "CADDY_ADMIN_SOCKET",
-          default_value = "/run/caddy/admin.sock", global = true)]
+    /// sing-box clash-API unix socket.
+    #[arg(long, env = "SINGBOX_CLASH_SOCKET",
+          default_value = "/run/sing-box/clash.sock", global = true)]
     admin_socket: String,
 
     /// Print machine-readable JSON instead of human-readable lines.
@@ -61,15 +62,15 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Caddyfile generation + validation.
-    Caddyfile {
+    /// sing-box config generation + validation.
+    Singbox {
         #[command(subcommand)]
-        op: CaddyfileOp,
+        op: SingboxOp,
     },
-    /// Talk to Caddy's admin API.
-    Caddy {
+    /// Talk to sing-box's clash API.
+    Server {
         #[command(subcommand)]
-        op: CaddyOp,
+        op: ServerOp,
     },
     /// Pull metrics + roll into traffic_logs.
     Traffic {
@@ -87,8 +88,8 @@ enum Cmd {
         op: ProbeOp,
     },
     /// Long-running JSON-over-unix-socket daemon. Also subscribes
-    /// to the Redis revocation channel for ≤100 ms Filament-to-Caddy
-    /// reload propagation.
+    /// to the Redis revocation channel for ≤100 ms Filament-to-
+    /// sing-box reload propagation.
     Daemon {
         #[arg(long, env = "CT_CORE_SOCKET",
               default_value = "/run/cool-tunnel/core.sock")]
@@ -127,21 +128,21 @@ enum ComponentOp {
 }
 
 #[derive(Subcommand, Debug)]
-enum CaddyfileOp {
-    /// Render template → /etc/caddy/Caddyfile (atomic).
+enum SingboxOp {
+    /// Render template → /etc/sing-box/config.json (atomic).
     Render {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Run `caddy validate` on the rendered file.
+    /// Run `sing-box check` on the rendered file.
     Validate,
 }
 
 #[derive(Subcommand, Debug)]
-enum CaddyOp {
-    /// Hot-reload via admin API.
+enum ServerOp {
+    /// Hot-reload via the clash API.
     Reload,
-    /// GET /config from the admin API and print.
+    /// GET /configs from the clash API and print.
     Config,
 }
 
@@ -199,16 +200,16 @@ fn main() -> ExitCode {
 
 async fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
-        Cmd::Caddyfile { op } => match op {
-            CaddyfileOp::Render { dry_run } => {
-                caddyfile::render(&cli.database_url, &cli.template, &cli.output, dry_run, cli.json)
+        Cmd::Singbox { op } => match op {
+            SingboxOp::Render { dry_run } => {
+                singbox::render(&cli.database_url, &cli.template, &cli.output, dry_run, cli.json)
                     .await
             }
-            CaddyfileOp::Validate => caddyfile::validate(&cli.output).await,
+            SingboxOp::Validate => singbox::validate(&cli.output).await,
         },
-        Cmd::Caddy { op } => match op {
-            CaddyOp::Reload => admin::reload(&cli.admin_socket, &cli.output).await,
-            CaddyOp::Config => admin::dump_config(&cli.admin_socket).await,
+        Cmd::Server { op } => match op {
+            ServerOp::Reload => admin::reload(&cli.admin_socket, &cli.output).await,
+            ServerOp::Config => admin::dump_config(&cli.admin_socket).await,
         },
         Cmd::Traffic { op } => match op {
             TrafficOp::Collect => metrics::collect(&cli.database_url, &cli.admin_socket).await,
@@ -225,10 +226,6 @@ async fn dispatch(cli: Cli) -> Result<()> {
             }
         },
         Cmd::Daemon { socket, redis_url } => {
-            // Spawn the Redis subscriber alongside the unix-socket
-            // listener — both run for the daemon's lifetime. Empty
-            // url means "no Redis"; we log a warning and continue
-            // (Caddyfile changes still happen via per-call CLI).
             if !redis_url.is_empty() {
                 redis_bridge::spawn(
                     redis_url,
@@ -269,7 +266,9 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 }
                 Ok(())
             }
-            ComponentOp::Check { manifests } => components::print_check(&manifests, cli.json).await,
+            ComponentOp::Check { manifests } => {
+                components::print_check(&manifests, cli.json).await
+            }
         },
         Cmd::Version => {
             println!(

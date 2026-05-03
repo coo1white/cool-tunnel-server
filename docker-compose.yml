@@ -15,30 +15,27 @@ services:
     image: cool-tunnel-server-core:latest
     profiles: ["build-only"]      # never started by `compose up`
 
-  caddy:
+  sing-box:
     build:
-      context: ./docker/caddy
-    image: cool-tunnel-server-caddy:latest
-    container_name: ct-caddy
+      context: ./docker/sing-box
+    image: cool-tunnel-server-singbox:latest
+    container_name: ct-singbox
     restart: unless-stopped
     cap_add:
-      # Required for binding 80/443 inside the container as non-root,
-      # if we ever switch off the default Caddy user. Harmless otherwise.
       - NET_BIND_SERVICE
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "80:80"             # ACME HTTP-01 challenges (sing-box auto-binds when renewing)
+      - "443:443"           # naive inbound — TLS, HTTP/2 CONNECT
+      - "443:443/udp"       # HTTP/3 / QUIC
     volumes:
-      # The panel renders Caddyfile into a shared volume.
-      - caddy_etc:/etc/caddy
-      # ACME state and cert cache — persist across rebuilds.
-      - caddy_data:/data
-      - caddy_config:/config
-      # Static fallback assets when the panel is unreachable.
-      - ./caddy/sites-fallback:/srv/fallback:ro
-      # Shared admin socket so the panel can `caddy reload`.
-      - caddy_run:/run/caddy
+      # The panel renders config.json into a shared volume.
+      - singbox_etc:/etc/sing-box
+      # ACME state (cert + key per domain) lives under /data so it
+      # survives image rebuilds.
+      - singbox_data:/data
+      # Shared admin socket so ct-server-core can hot-reload via the
+      # clash API without TCP exposure.
+      - singbox_run:/run/sing-box
     depends_on:
       panel:
         condition: service_started
@@ -57,34 +54,30 @@ services:
     env_file:
       - .env
     environment:
-      # Inside the container the DB host is the service name.
       DB_HOST: db
       DB_PORT: 3306
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # ct-server-core daemon reads this to subscribe to the
-      # cool_tunnel:revocations channel. Authentication via password
-      # in the URL — see entrypoint.sh for the assembly.
+      # ct-server-core daemon subscribes here for the
+      # cool_tunnel:revocations channel.
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
-      # Where the CaddyfileGenerator writes the rendered file. Mounted
-      # from caddy_etc so the caddy container picks it up.
-      CADDYFILE_PATH: /etc/caddy/Caddyfile
-      CADDYFILE_TEMPLATE: /srv/caddy/Caddyfile.tpl
-      # Unix-socket path Caddy exposes its admin API on (read-write to
-      # the panel via the shared caddy_run volume).
-      CADDY_ADMIN_SOCKET: /run/caddy/admin.sock
-      # Where ct-server-core's own daemon socket lives — the panel
-      # talks to the daemon over this in addition to the per-call
-      # CLI invocations.
-      CT_CORE_SOCKET: /run/cool-tunnel/core.sock
-      CT_MANIFESTS_DIR: /srv/manifests
+      # Where the SingBoxConfigGenerator writes the rendered file.
+      # Mounted from singbox_etc so the sing-box container loads it.
+      SINGBOX_CONFIG_PATH:    /etc/sing-box/config.json
+      SINGBOX_CONFIG_TEMPLATE: /srv/sing-box/config.json.tpl
+      # sing-box clash-API unix socket — read-write to the panel via
+      # the shared singbox_run volume.
+      SINGBOX_CLASH_SOCKET:   /run/sing-box/clash.sock
+      # Where the daemon's own JSON-over-unix-socket lives.
+      CT_CORE_SOCKET:         /run/cool-tunnel/core.sock
+      CT_MANIFESTS_DIR:       /srv/manifests
     volumes:
       - ./panel:/var/www/html
       - ./manifests:/srv/manifests:ro
-      - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
+      - ./sing-box/config.json.tpl:/srv/sing-box/config.json.tpl:ro
       - panel_storage:/var/www/html/storage
-      - caddy_etc:/etc/caddy
-      - caddy_run:/run/caddy
+      - singbox_etc:/etc/sing-box
+      - singbox_run:/run/sing-box
     depends_on:
       db:
         condition: service_healthy
@@ -123,10 +116,9 @@ services:
       - ct-net
 
 volumes:
-  caddy_etc:
-  caddy_data:
-  caddy_config:
-  caddy_run:
+  singbox_etc:
+  singbox_data:
+  singbox_run:
   panel_storage:
   db_data:
   redis_data:
