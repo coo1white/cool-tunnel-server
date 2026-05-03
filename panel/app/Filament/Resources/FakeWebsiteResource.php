@@ -17,6 +17,7 @@ class FakeWebsiteResource extends Resource
     protected static ?string $model = FakeWebsite::class;
     protected static ?string $navigationIcon = 'heroicon-o-globe-alt';
     protected static ?string $navigationLabel = 'Fake websites';
+    protected static ?string $navigationGroup = 'System';
     protected static ?int $navigationSort = 20;
 
     public static function form(Form $form): Form
@@ -57,6 +58,10 @@ class FakeWebsiteResource extends Resource
                 Tables\Columns\IconColumn::make('is_active')->boolean()->label('Active'),
                 Tables\Columns\TextColumn::make('updated_at')->dateTime()->since(),
             ])
+            ->filters([
+                Tables\Filters\TernaryFilter::make('is_active')->label('Currently active'),
+            ])
+            ->defaultSort('is_active', 'desc')
             ->actions([
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),

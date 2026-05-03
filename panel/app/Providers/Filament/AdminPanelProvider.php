@@ -8,6 +8,7 @@ use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Navigation\NavigationGroup;
 use Filament\Pages;
 use Filament\Panel;
 use Filament\PanelProvider;
@@ -29,9 +30,19 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
+            ->profile()
+            ->darkMode()
             ->brandName('Cool Tunnel Server')
             ->colors([
                 'primary' => Color::Indigo,
+            ])
+            ->favicon(asset('favicon.svg'))
+            ->maxContentWidth('full')
+            ->sidebarCollapsibleOnDesktop()
+            ->navigationGroups([
+                NavigationGroup::make('Users')->icon('heroicon-o-users'),
+                NavigationGroup::make('Reporting')->icon('heroicon-o-chart-bar'),
+                NavigationGroup::make('System')->icon('heroicon-o-server-stack'),
             ])
             ->discoverResources(in: app_path('Filament/Resources'),
                                  for: 'App\\Filament\\Resources')

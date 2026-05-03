@@ -9,8 +9,8 @@
 <meta property="og:title" content="{{ $site->title ?? 'Calm Software Consulting' }}">
 <meta property="og:description" content="{{ $site->tagline ?? 'Boring infrastructure, done well.' }}">
 <title>{{ $site->title ?? 'Calm Software Consulting' }}</title>
-<link rel="stylesheet" href="/static/style.css">
 <link rel="canonical" href="https://{{ request()->host() }}/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%234338ca'/%3E%3Ctext x='50%25' y='55%25' fill='white' font-family='-apple-system,sans-serif' font-weight='700' font-size='10' text-anchor='middle' dominant-baseline='central'%3EC%3C/text%3E%3C/svg%3E">
 <style>
 :root { --ink: #1a1d21; --muted: #6b7280; --line: #e5e7eb; --brand: #4338ca; --bg: #fafafa; }
 * { box-sizing: border-box; margin: 0; padding: 0; }

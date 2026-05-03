@@ -13,6 +13,7 @@ class ComponentsPage extends Page
 {
     protected static ?string $navigationIcon  = 'heroicon-o-puzzle-piece';
     protected static ?string $navigationLabel = 'Components';
+    protected static ?string $navigationGroup = 'System';
     protected static ?int    $navigationSort  = 80;
     protected static string  $view            = 'filament.pages.components';
 

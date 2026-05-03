@@ -20,6 +20,7 @@ class ServerConfigPage extends Page implements HasForms
 
     protected static ?string $navigationIcon = 'heroicon-o-cog-6-tooth';
     protected static ?string $navigationLabel = 'Server config';
+    protected static ?string $navigationGroup = 'System';
     protected static ?int $navigationSort = 90;
     protected static string $view = 'filament.pages.server-config';
 
@@ -42,7 +43,7 @@ class ServerConfigPage extends Page implements HasForms
                     ])->columns(3),
 
                 Section::make('Anti-tracking')
-                    ->description('Defaults match what NaiveProxy clients expect. Toggling these regenerates Caddyfile and hot-reloads Caddy.')
+                    ->description('Defaults match what NaiveProxy clients expect. Saving regenerates the Caddyfile and the sing-box config, then hot-reloads both.')
                     ->schema([
                         Toggle::make('anti_tracking_hide_ip')->label('hide_ip'),
                         Toggle::make('anti_tracking_hide_via')->label('hide_via'),
@@ -55,8 +56,15 @@ class ServerConfigPage extends Page implements HasForms
                 Section::make('Edge auth (extra layer in front of /admin)')
                     ->description('Generate the hash with: caddy hash-password -plaintext "your-password"')
                     ->schema([
-                        TextInput::make('admin_basic_auth_user'),
-                        TextInput::make('admin_basic_auth_hash'),
+                        TextInput::make('admin_basic_auth_user')
+                            ->label('Username')
+                            ->autocomplete('off'),
+                        TextInput::make('admin_basic_auth_hash')
+                            ->label('Bcrypt hash')
+                            ->password()
+                            ->revealable()
+                            ->autocomplete('new-password')
+                            ->helperText('Stored as a bcrypt hash. Run "caddy hash-password" on the host and paste the output here.'),
                     ])->columns(2),
             ])
             ->statePath('data');
@@ -66,7 +74,11 @@ class ServerConfigPage extends Page implements HasForms
     {
         $config = ServerConfig::current();
         $config->fill($this->form->getState())->save();
-        Notification::make()->title('Server config saved — Caddy reloading')->success()->send();
+        Notification::make()
+            ->title('Server config saved')
+            ->body('Caddyfile + sing-box config regenerated; both services hot-reloading.')
+            ->success()
+            ->send();
     }
 
     protected function getFormActions(): array

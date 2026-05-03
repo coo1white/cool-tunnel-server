@@ -254,9 +254,9 @@ cool-tunnel-server/
 │   │   │                           TrafficLog, User
 │   │   ├── Services/               CtServerCore (the shell-out), and thin
 │   │   │                           wrappers: SingBoxConfigGenerator,
-│   │   │                           SingBoxReloader, TrafficCollector,
-│   │   │                           ComponentChecker, PasswordGenerator,
-│   │   │                           AntiTrackingFilter, RedisRevocationBus
+│   │   │                           SingBoxReloader, CaddyfileGenerator,
+│   │   │                           TrafficCollector, ComponentChecker,
+│   │   │                           PasswordGenerator, RedisRevocationBus
 │   │   ├── Console/Commands/       singbox:render, quota:enforce,
 │   │   │                           traffic:rollup, component:check
 │   │   └── Http/Controllers/       FakeSiteController, SubscriptionController
