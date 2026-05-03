@@ -136,6 +136,16 @@ status: ## one-shot health check (safe to run after SSH reconnect)
 		echo "  ✗ cert not yet (or DOMAIN unset)"; \
 	fi
 
+.PHONY: clean-images
+clean-images: ## drop locally-built cool-tunnel-server-* images (forces fresh rebuild)
+	@for img in cool-tunnel-server-core cool-tunnel-server-panel \
+	            cool-tunnel-server-caddy cool-tunnel-server-singbox \
+	            cool-tunnel-server-sqlx-prepare; do \
+		docker image rm -f "$$img:latest" 2>/dev/null && echo "  removed $$img:latest" \
+		    || echo "  $$img:latest not present"; \
+	done
+	@echo "    next step: docker compose --profile build-only build core-builder"
+
 .PHONY: build-detached
 build-detached: ## run a long build in tmux so SSH drops don't kill it
 	@if ! command -v tmux >/dev/null 2>&1; then \
