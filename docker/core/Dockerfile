@@ -32,11 +32,22 @@ WORKDIR /build/core
 # Static link against musl so the binary runs in any minimal base.
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
+# Build with the registry cache mount only. We deliberately do NOT
+# cache-mount /build/core/target — that interacts badly with the
+# multi-stage `COPY --from=builder /ct-server-core` below: when
+# BuildKit serves the builder stage from a partially-populated
+# layer cache, the binary that lives under the target cache mount
+# isn't part of the committed builder image, and the COPY in the
+# final stage fails with "failed to compute cache key:
+# /ct-server-core: not found". We accept slightly slower
+# rebuilds (no incremental cargo target reuse) for a build that
+# is actually correct end-to-end.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/build/core/target \
+    --mount=type=cache,target=/usr/local/cargo/git \
     cargo build --release --bin ct-server-core && \
-    cp target/release/ct-server-core /ct-server-core && \
-    strip /ct-server-core || true
+    install -Dm755 target/release/ct-server-core /ct-server-core && \
+    (strip /ct-server-core || true) && \
+    test -x /ct-server-core
 
 # Final stage: a tiny runtime image we never actually run, but use
 # as the source for `--from=` in the panel Dockerfile.
