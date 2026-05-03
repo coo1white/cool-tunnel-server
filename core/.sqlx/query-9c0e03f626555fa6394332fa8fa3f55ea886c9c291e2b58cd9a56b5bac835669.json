@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "\n        UPDATE proxy_accounts\n        SET used_bytes = used_bytes + ?, last_seen_at = NOW(), updated_at = NOW()\n        WHERE id = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "9c0e03f626555fa6394332fa8fa3f55ea886c9c291e2b58cd9a56b5bac835669"
+}

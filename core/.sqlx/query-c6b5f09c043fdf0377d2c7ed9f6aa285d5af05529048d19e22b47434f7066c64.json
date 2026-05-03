@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "\n        UPDATE server_configs\n        SET last_caddyfile_hash = ?, last_rendered_at = NOW()\n        WHERE id = 1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c6b5f09c043fdf0377d2c7ed9f6aa285d5af05529048d19e22b47434f7066c64"
+}

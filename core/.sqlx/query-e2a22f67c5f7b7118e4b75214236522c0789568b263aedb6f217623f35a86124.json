@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "e2a22f67c5f7b7118e4b75214236522c0789568b263aedb6f217623f35a86124"
+}
