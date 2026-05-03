@@ -1,8 +1,8 @@
 {
     "name": "coo1white/cool-tunnel-server-panel",
     "type": "project",
-    "description": "Cool Tunnel Server admin panel — Laravel 11 + Filament 3.",
-    "license": "Apache-2.0",
+    "description": "Cool Tunnel Server admin panel — Laravel 11 + Filament 3. Proprietary; see ../LICENSE.",
+    "license": "proprietary",
     "require": {
         "php": "^8.2",
         "filament/filament": "^3.2",

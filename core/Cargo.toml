@@ -23,9 +23,13 @@ members = [
 version       = "0.0.1"
 edition       = "2021"
 rust-version  = "1.78"
-license       = "Apache-2.0"
+# Proprietary; the LICENSE file at the repo root is authoritative.
+# We use license-file (not license) so we don't assert an SPDX id
+# that misrepresents the terms.
+license-file  = "../LICENSE"
 repository    = "https://github.com/coo1white/cool-tunnel-server"
-authors       = ["Nick (coo1white)"]
+authors       = ["Nick (Bai Yuhang)"]
+publish       = false
 
 [workspace.lints.rust]
 unsafe_code = "deny"

@@ -9,6 +9,10 @@ export COMPOSER_HOME=/tmp/composer
 mkdir -p "$COMPOSER_HOME" storage/framework/{cache,sessions,views} storage/logs bootstrap/cache
 chmod -R 0775 storage bootstrap/cache 2>/dev/null || true
 
+# ct-server-core daemon's unix-socket lives under /run/cool-tunnel.
+# Pre-create with mode 0770 so supervisord's daemon program can bind.
+mkdir -p /run/cool-tunnel && chmod 0770 /run/cool-tunnel || true
+
 # php-fpm pool config: listen on a TCP port so nginx in the same
 # container can talk to it without a unix socket race.
 cat >/usr/local/etc/php-fpm.d/zz-pool.conf <<'POOL'

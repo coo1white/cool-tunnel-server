@@ -3,13 +3,12 @@ name        = "ct-server-core"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
-license.workspace      = true
+license-file.workspace = true
 repository.workspace   = true
 authors.workspace      = true
-description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering, admin-API hot-reload, metrics scraping, quota enforcement, anti-tracking probe."
+publish.workspace      = true
+description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering, admin-API hot-reload, metrics scraping, quota enforcement, anti-tracking probe, Redis revocation bridge. Proprietary; see ../../LICENSE."
 readme      = "README.md"
-keywords    = ["proxy", "naiveproxy", "caddy", "forwardproxy"]
-categories  = ["command-line-utilities", "network-programming"]
 
 [[bin]]
 name = "ct-server-core"
@@ -29,6 +28,13 @@ hyperlocal      = "0.9"
 http-body-util  = "0.1"
 bytes           = "1.6"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Redis revocation bridge — long-lived pub/sub from the daemon.
+# Listens on cool_tunnel:revocations; on any message, re-renders
+# Caddyfile and reloads via admin socket.
+redis = { version = "0.25", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
+futures-core = "0.3"
+
 chrono     = { version = "0.4", features = ["serde"] }
 tracing    = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

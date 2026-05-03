@@ -3,13 +3,12 @@ name        = "ct-protocol"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
-license.workspace      = true
+license-file.workspace = true
 repository.workspace   = true
 authors.workspace      = true
-description = "Cool Tunnel wire format and client/server shared types. no_std-friendly. Used by the server and by every platform's client (current macOS, future iOS/Android/Windows/Linux desktop)."
+publish.workspace      = true
+description = "Cool Tunnel wire format and client/server shared types. no_std-friendly. Used by the server and by every platform's client (current macOS, future iOS/Android/Windows/Linux desktop). Proprietary; see ../../LICENSE."
 readme      = "README.md"
-keywords    = ["proxy", "naiveproxy", "cool-tunnel"]
-categories  = ["network-programming", "no-std::no-alloc"]
 
 [features]
 default = ["std"]

@@ -49,11 +49,20 @@ and agree that:
 5. **You assume all risk** arising from running this software on your
    own hardware or any hardware you have permission to use.
 
-## No warranty
+## Licence and no-warranty
 
-This software is distributed under the **Apache License, Version 2.0**
-(see [LICENSE](./LICENSE)). It is provided **without any warranty** —
-express or implied — including without limitation the warranties of
+This software is **proprietary**, copyright (c) 2026 Nick (Bai Yuhang),
+all rights reserved. See [LICENSE](./LICENSE).
+
+The third-party open-source components this stack builds and runs
+(Caddy, forwardproxy, Laravel, Filament, predis/predis, the SQLx /
+hyper / tokio / redis crate families, MariaDB, Redis, NaiveProxy)
+retain their own upstream licences and must be preserved in any
+redistribution — see [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)
+and [NOTICE](./NOTICE).
+
+The Software is provided **without any warranty** — express or
+implied — including without limitation the warranties of
 merchantability, fitness for a particular purpose, and non-infringement.
 
 ## No liability
