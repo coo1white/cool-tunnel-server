@@ -5,6 +5,17 @@
         "disabled": false
     },
 
+    "dns": {
+        "servers": [
+            {
+                "tag": "doh",
+                "address": "{{ .DohResolver }}",
+                "strategy": "ipv4_only"
+            }
+        ],
+        "final": "doh"
+    },
+
     "inbounds": [
         {
             "type": "naive",
@@ -30,7 +41,6 @@
     ],
 
     "route": {
-        "default_domain_resolver": "{{ .DohResolver }}",
         "rules": [
             {"protocol": "dns", "outbound": "block"}
         ]
