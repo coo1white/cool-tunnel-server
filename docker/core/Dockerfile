@@ -109,6 +109,13 @@ RUN apk add --no-cache \
         openssl-libs-static \
         ca-certificates \
         git
+# Pre-install the components core/rust-toolchain.toml requires
+# (clippy, rustfmt). Without this, rustup re-reads toolchain.toml
+# at every runtime invocation and tries to download them from
+# static.rust-lang.org — which fails on the ct-data internal-only
+# network. We bake them in at build time when the container has
+# regular internet via BuildKit.
+RUN rustup component add clippy rustfmt
 RUN cargo install sqlx-cli --version "~0.8" \
         --no-default-features --features "rustls,mysql" --locked
 WORKDIR /build/core
