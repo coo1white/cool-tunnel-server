@@ -22,7 +22,10 @@ members = [
 [workspace.package]
 version       = "0.0.1"
 edition       = "2021"
-rust-version  = "1.78"
+# 1.85 introduced edition2024 (needed by clap_lex 1.1); some sqlx
+# transitives (icu_*) further require 1.86. The Docker build image
+# must match — see docker/core/Dockerfile.
+rust-version  = "1.86"
 # Proprietary; the LICENSE file at the repo root is authoritative.
 # We use license-file (not license) so we don't assert an SPDX id
 # that misrepresents the terms.

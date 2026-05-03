@@ -138,12 +138,13 @@ fn is_safe_username(u: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
     fn happy_path() {
-        let p = ProfileV1::parse("naive+https://alice:s3cr3t@proxy.example.com:443").map_err(|e| format!("{e:?}")).unwrap_or_default();
+        let p = ProfileV1::parse("naive+https://alice:s3cr3t@proxy.example.com:443").unwrap();
         assert_eq!(p.host, "proxy.example.com");
         assert_eq!(p.port, 443);
         assert_eq!(p.username, "alice");
@@ -177,13 +178,9 @@ mod tests {
 
     #[test]
     fn round_trip_via_serde() {
-        let p = ProfileV1::parse("naive+https://alice:p@h:443").map_err(|_| ()).unwrap_or(ProfileV1 {
-            host: String::new(), port: 0,
-            username: String::new(), password: String::new(),
-            label: None,
-        });
-        let s = serde_json::to_string(&p).unwrap_or_default();
-        let p2: ProfileV1 = serde_json::from_str(&s).map_err(|_| ()).unwrap_or(p.clone());
+        let p = ProfileV1::parse("naive+https://alice:p@h:443").unwrap();
+        let s = serde_json::to_string(&p).unwrap();
+        let p2: ProfileV1 = serde_json::from_str(&s).unwrap();
         assert_eq!(p, p2);
     }
 }

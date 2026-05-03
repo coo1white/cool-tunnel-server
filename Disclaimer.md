@@ -55,9 +55,9 @@ This software is **proprietary**, copyright (c) 2026 the Cool Tunnel Server cont
 all rights reserved. See [LICENSE](./LICENSE).
 
 The third-party open-source components this stack builds and runs
-(Caddy, forwardproxy, Laravel, Filament, predis/predis, the SQLx /
-hyper / tokio / redis crate families, MariaDB, Redis, NaiveProxy)
-retain their own upstream licences and must be preserved in any
+(Caddy, NaiveProxy, Laravel, Filament, predis/predis, the SQLx /
+hyper / tokio / redis crate families, MariaDB, Redis) retain their
+own upstream licences and must be preserved in any
 redistribution — see [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)
 and [NOTICE](./NOTICE).
 
@@ -100,8 +100,7 @@ unmodified. Their licenses are reproduced or referenced in
 [NOTICE](./NOTICE) and must be preserved in any redistribution:
 
 - [Caddy](https://github.com/caddyserver/caddy) — Apache-2.0
-- [klzgrad/forwardproxy](https://github.com/klzgrad/forwardproxy) (the
-  `forward_proxy` Caddy plugin used by NaiveProxy) — Apache-2.0
+- [NaiveProxy](https://github.com/klzgrad/naiveproxy) server-side plugin — Apache-2.0
 - [Laravel](https://github.com/laravel/laravel) — MIT
 - [Filament](https://github.com/filamentphp/filament) — MIT
 

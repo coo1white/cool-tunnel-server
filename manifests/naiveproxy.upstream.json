@@ -1,0 +1,12 @@
+{
+    "name": "naiveproxy",
+    "kind": "binary",
+    "version": "naive-server-plugin",
+    "upstream": "https://github.com/klzgrad/naiveproxy",
+    "verify": {
+        "command": ["caddy", "list-modules"],
+        "expect_stdout_contains": "http.handlers.forward_proxy",
+        "expect_zero_exit": true
+    },
+    "note": "Apache-2.0. NaiveProxy is the anti-tracking architecture this server speaks. The server side is a Caddy plugin compiled in via xcaddy at image build time (see docker/caddy/Dockerfile); the client side is the naive binary bundled in the cool-tunnel client family. Both halves live under the klzgrad/naiveproxy project umbrella. The OK/NG check confirms the plugin is loaded into the running Caddy."
+}

@@ -6,7 +6,7 @@ roadmap). Three layers, mirroring the client:
 
 |  | UI | Glue (cross-platform Rust) | Anti-tracking engine |
 | --- | --- | --- | --- |
-| **Server** (this repo) | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` crate | `forwardproxy@naive` plugin baked into Caddy |
+| **Server** (this repo) | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` crate | NaiveProxy server-side plugin baked into Caddy |
 | **macOS client** ([cool-tunnel][client]) | SwiftUI + AppKit | `cool-tunnel-core` (Rust) | Bundled `naive` Mach-O |
 | **Future iOS / Android / Win / Linux** | Per-platform native | Same `ct-protocol` + per-platform core | Per-platform `naive` |
 
@@ -33,7 +33,7 @@ so unauthenticated probes can't fingerprint the box as a proxy.
 
 | Layer | What it is |
 | --- | --- |
-| **`caddy`** | Caddy compiled with [`klzgrad/forwardproxy@naive`](https://github.com/klzgrad/forwardproxy/tree/naive). Terminates TLS on `:443`, speaks HTTP/2 + HTTP/3, runs `forward_proxy` with `hide_ip`, `hide_via`, and `probe_resistance` switched on. Falls through to a Laravel-rendered fake site for any request that isn't an authenticated CONNECT. |
+| **`caddy`** | Caddy compiled with the [NaiveProxy](https://github.com/klzgrad/naiveproxy) server-side plugin baked in (xcaddy build). Terminates TLS on `:443`, speaks HTTP/2 + HTTP/3, runs `forward_proxy` with `hide_ip`, `hide_via`, and `probe_resistance` switched on. Falls through to a Laravel-rendered fake site for any request that isn't an authenticated CONNECT. |
 | **`ct-server-core`** | Rust binary baked into the panel image. Owns the latency-sensitive paths: Caddyfile rendering, admin-API hot-reload over the unix socket, `/metrics` scraping, quota enforcement, anti-tracking probe, component OK/NG check. Uses the `ct-protocol` crate that future cross-platform clients will share. |
 | **`panel`** | Laravel 11 + Filament 3 admin app. PHP services are thin shell-outs to `ct-server-core`. Manages proxy accounts, fake-site templates, server config, traffic logs, and the **Components** OK/NG page. |
 | **`db`** | MariaDB 11 — proxy accounts, traffic counters, fake-site template data, panel users. |
@@ -99,7 +99,7 @@ Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) 
 admin-socket reload). Existing in-flight HTTP/2 CONNECT tunnels
 persist until the underlying TCP connection closes — Caddy doesn't
 expose per-user connection enumeration on `forward_proxy`. Per-
-request hard severing requires a forwardproxy plugin patch and is
+request hard severing requires a patch to the NaiveProxy server plugin and is
 on the v0.1 roadmap.
 
 ---
@@ -164,7 +164,7 @@ $EDITOR .env
 
 1. Build the panel image (PHP 8.3-fpm + Composer install + `php artisan
    key:generate` + `php artisan filament:install`).
-2. Build the Caddy image (xcaddy with `klzgrad/forwardproxy@naive`).
+2. Build the Caddy image (xcaddy with the NaiveProxy server-side plugin).
 3. Run DB migrations and seed a default `ServerConfig` row.
 4. Prompt you to create the first admin login for the panel.
 5. Render a starter `Caddyfile` (no proxy accounts yet → caddy serves
@@ -222,11 +222,11 @@ cool-tunnel-server/
 │                                   traffic collect / quota enforce /
 │                                   probe anti-tracking / component check.
 ├── manifests/                     One *.upstream.json per swappable
-│                                  component (caddy, forwardproxy, the
+│                                  component (caddy, naiveproxy, the
 │                                  Rust crates, the panel image, db, redis).
 ├── docker/
 │   ├── core/Dockerfile             Rust musl build → static ct-server-core
-│   ├── caddy/Dockerfile            xcaddy with forwardproxy@naive
+│   ├── caddy/Dockerfile            xcaddy with NaiveProxy server plugin
 │   └── panel/Dockerfile            PHP-fpm + Composer + nginx +
 │                                   ct-server-core copied in from core stage
 ├── caddy/

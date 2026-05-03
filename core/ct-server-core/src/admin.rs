@@ -15,7 +15,6 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::client::legacy::Client;
-use hyper_util::rt::TokioExecutor;
 use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use std::path::Path;
 use std::time::Instant;

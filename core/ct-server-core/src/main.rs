@@ -19,6 +19,7 @@ mod probe;
 mod quota;
 mod redis_bridge;
 mod subscription;
+mod util;
 
 pub use err::{Error, Result};
 

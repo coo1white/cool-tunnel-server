@@ -22,11 +22,16 @@ referenced in THIRD_PARTY_LICENSES.md.
   Built into the cool-tunnel-server-caddy image via xcaddy from the
   upstream caddy:builder + caddy:latest base images.
 
-* klzgrad/forwardproxy (https://github.com/klzgrad/forwardproxy)
+* NaiveProxy server-side plugin (https://github.com/klzgrad/naiveproxy)
   Copyright the Caddy Authors and contributors.
   Licensed under the Apache License, Version 2.0.
-  The NaiveProxy fork of the Caddy forward_proxy plugin. Compiled
-  into Caddy at image build time.
+  The server side of the NaiveProxy project — a Caddy plugin
+  (basic_auth + hide_ip + hide_via + probe_resistance) that
+  NaiveProxy clients connect to. Source lives at
+  github.com/klzgrad/forwardproxy@naive (same author, same project
+  family); xcaddy fetches it from there at image build time. The
+  project as a whole is what github.com/klzgrad/naiveproxy refers
+  to and is the upstream we track.
 
 * Laravel (https://github.com/laravel/laravel)
   Copyright Taylor Otwell.

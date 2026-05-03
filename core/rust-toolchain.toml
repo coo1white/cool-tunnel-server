@@ -1,4 +1,7 @@
 [toolchain]
-channel = "1.78"
+# 1.85 was the first stable with edition2024, which clap_lex 1.1
+# requires. Some sqlx transitives (icu_*) further require 1.86, so
+# we pin to 1.86. Bumping higher is fine; lower fails at build.
+channel = "1.86"
 profile = "minimal"
 components = ["clippy", "rustfmt"]

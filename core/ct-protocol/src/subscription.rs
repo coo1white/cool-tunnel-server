@@ -70,6 +70,7 @@ pub enum AntiTrackingFeature {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::profile::ProfileV1;
@@ -99,8 +100,8 @@ mod tests {
             expires_at: 0,
             note: None,
         };
-        let s = serde_json::to_string(&m).unwrap_or_default();
-        let m2: SubscriptionManifestV1 = serde_json::from_str(&s).map_err(|_| ()).unwrap_or(m.clone());
+        let s = serde_json::to_string(&m).unwrap();
+        let m2: SubscriptionManifestV1 = serde_json::from_str(&s).unwrap();
         assert_eq!(m, m2);
     }
 }
