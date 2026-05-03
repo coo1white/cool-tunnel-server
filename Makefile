@@ -105,6 +105,60 @@ readiness: ## run scripts/late-night-comeback.sh
 logs: ## tail all container logs
 	docker compose logs -f --tail=80
 
+.PHONY: status
+status: ## one-shot health check (safe to run after SSH reconnect)
+	@echo "=== Containers ==="
+	@docker compose ps 2>/dev/null || echo "  docker compose not running here"
+	@echo ""
+	@echo "=== Images (cool-tunnel-server-* only) ==="
+	@docker images --format 'table {{.Repository}}:{{.Tag}}\t{{.CreatedSince}}\t{{.Size}}' \
+		2>/dev/null | (grep -E 'REPOSITORY|cool-tunnel-server' || echo "  no cool-tunnel images yet")
+	@echo ""
+	@echo "=== ct-server-core binary inside panel image ==="
+	@docker run --rm --entrypoint=ls cool-tunnel-server-panel:latest \
+		-la /usr/local/bin/ct-server-core 2>/dev/null \
+		|| echo "  panel image not built / binary missing"
+	@echo ""
+	@echo "=== Last panel errors (if any) ==="
+	@docker compose logs --tail=200 panel 2>/dev/null \
+		| grep -iE 'error|fatal|exception' | tail -5 \
+		|| echo "  no recent errors"
+	@echo ""
+	@echo "=== Last sing-box errors (if any) ==="
+	@docker compose logs --tail=200 sing-box 2>/dev/null \
+		| grep -iE 'error|fatal|panic' | tail -5 \
+		|| echo "  no recent errors"
+	@echo ""
+	@echo "=== Cert presence ==="
+	@if [ -f /var/lib/docker/volumes/cool-tunnel-server_caddy_data/_data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/$$(grep ^DOMAIN= .env 2>/dev/null | cut -d= -f2)/$$(grep ^DOMAIN= .env 2>/dev/null | cut -d= -f2).crt ]; then \
+		echo "  ✓ cert obtained"; \
+	else \
+		echo "  ✗ cert not yet (or DOMAIN unset)"; \
+	fi
+
+.PHONY: build-detached
+build-detached: ## run a long build in tmux so SSH drops don't kill it
+	@if ! command -v tmux >/dev/null 2>&1; then \
+		echo "tmux not installed — apt install -y tmux"; exit 1; \
+	fi
+	@if tmux has-session -t ct-build 2>/dev/null; then \
+		echo "tmux session 'ct-build' already exists. Attach: tmux attach -t ct-build"; \
+		echo "Or kill: tmux kill-session -t ct-build"; \
+		exit 1; \
+	fi
+	@tmux new-session -d -s ct-build \
+		'set -x; \
+		 docker compose --profile build-only build core-builder && \
+		 docker compose build panel && \
+		 docker compose up -d --force-recreate panel sing-box && \
+		 echo "DONE $$(date)" > /tmp/ct-build.done; \
+		 echo "press enter to close session"; read'
+	@echo "Build started in tmux session 'ct-build'."
+	@echo "Attach to watch:        tmux attach -t ct-build"
+	@echo "Detach without killing: Ctrl-B then d"
+	@echo "Check status from any session: make status"
+	@echo "When done: /tmp/ct-build.done will exist."
+
 .PHONY: components
 components: ## ct-server-core component check (OK/NG)
 	docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
