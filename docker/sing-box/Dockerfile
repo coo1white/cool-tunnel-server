@@ -12,7 +12,7 @@
 
 FROM alpine:3.20
 
-ARG SING_BOX_VERSION=1.10.7
+ARG SING_BOX_VERSION=1.11.4
 ARG TARGETARCH
 
 # `with_clash_api` is included in the official release tarball so we
