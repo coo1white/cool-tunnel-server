@@ -1,0 +1,37 @@
+# Cargo workspace rustfmt config. Explicit so future contributors and
+# CI agree on the same source-of-truth defaults.
+#
+# We intentionally stay close to rustfmt's defaults; the few overrides
+# below are "this is the style the existing code already uses, lock it
+# in so a fresh editor config doesn't reformat the world."
+
+edition = "2021"
+
+# Standard width. Two-character increments past 100 quickly become
+# unreadable diffs.
+max_width = 100
+
+# Default is 2 since 2021. Make it explicit.
+tab_spaces = 4
+hard_tabs = false
+
+# Default; explicit because some editors set this differently.
+newline_style = "Unix"
+
+# Comments — wrap long ones automatically. The 80-char wrap is what
+# most existing comments already aim for.
+wrap_comments = false        # rustfmt's heuristic mangles paragraphs; leave manual
+comment_width = 80
+normalize_comments = true
+
+# Imports — group std / external / crate. Keeps diffs tidy when adding
+# a new use line.
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+
+# String formatting.
+format_strings = false       # leave operator-curated string layout alone
+
+# Misc niceties.
+use_field_init_shorthand = true
+use_try_shorthand = true
