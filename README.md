@@ -1,304 +1,208 @@
 # Cool Tunnel Server
 
-Server-side stack for the [Cool Tunnel][client] family of NaiveProxy
-clients (macOS today; iOS / Android / Windows / Linux desktop on the
-roadmap). Three layers, mirroring the client:
+> **Heads-up.** This is a tool for circumventing online censorship.
+> Read the [Disclaimer](./Disclaimer.md) before deploying.
 
-|  | UI | Glue (cross-platform Rust) | Anti-tracking engine |
-| --- | --- | --- | --- |
-| **Server** (this repo) | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` crate | sing-box `naive` inbound (GPL-3, actively maintained) |
-| **macOS client** ([cool-tunnel][client]) | SwiftUI + AppKit | `cool-tunnel-core` (Rust) | Bundled `naive` Mach-O |
-| **Future iOS / Android / Win / Linux** | Per-platform native | Same `ct-protocol` + per-platform core | Per-platform `naive` |
+A self-hosted proxy server you can run on a cheap Linux VPS. It's the
+backend for the [Cool Tunnel macOS client][client] — once you've set
+this up, your client connects to your server, and your traffic looks
+like normal HTTPS browsing to anyone watching the network.
 
-The two horizontal lines that bind every row together are the Rust
-crate (`ct-protocol`) and the NaiveProxy wire format. New platforms
-plug into both without re-implementing.
-
-Runs **sing-box** as the actual NaiveProxy server (multi-user,
-built-in ACME, hot reload via clash API), with a **Filament + Laravel**
-admin panel that manages proxy accounts, generates the sing-box
-`config.json`, hot-reloads sing-box via its clash unix socket (via the
-Rust core), and serves a fake camouflage site at the apex domain
-through sing-box's fallback so unauthenticated probes can't
-fingerprint the box as a proxy.
+You manage it through a web admin panel: add user accounts, set
+quotas, swap the "fake website" your domain shows to scanners, see
+who's connected.
 
 [client]: https://github.com/coo1white/cool-tunnel
 
-> **Heads-up.** This is a tool for circumventing online censorship.
-> Read the [Disclaimer](./Disclaimer.md) before deploying — it covers
-> intended use, operator responsibility, and what the bundled
-> components are.
+---
+
+## What you need before you start
+
+- A small **Linux VPS** — Debian 11/12/13 recommended. 1 vCPU, 1 GB
+  RAM is enough for a few users. Any cloud provider works.
+- A **domain name** you control (e.g. `proxy.example.com`). A
+  subdomain is fine. Point its `A` record at the VPS public IP.
+- **Ports open** at the cloud-provider firewall: `22` (SSH),
+  `80` (so Let's Encrypt can issue a TLS cert), `443/tcp` (the proxy).
+- Basic comfort with the Linux command line: `ssh`, `git`, editing a
+  config file. No PHP / Rust knowledge needed — Docker handles it.
 
 ---
 
-## What's in the box
-
-| Layer | What it is |
-| --- | --- |
-| **`caddy`** | [caddyserver/caddy](https://github.com/caddyserver/caddy) (Apache-2.0). Stock Caddy 2 — **no plugins**. Used here as **ACME provider only**: binds `:80` for HTTP-01 challenges, manages the TLS certificate for the operator's domain via Let's Encrypt, stores the cert in a shared volume sing-box reads. Caddy's auto-HTTPS / CertMagic is the most reliable ACME implementation in the Go ecosystem; we use it because sing-box's built-in ACME lacks Caddy's multi-challenge fallback and operator-friendly error messages. |
-| **`sing-box`** | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) (GPL-3.0). Multi-user `naive` inbound on `:443/tcp` + `:443/udp`. **Reads the TLS cert from Caddy's volume**; does the actual TLS termination. Fallback for unauthenticated traffic reverse-proxies to the panel for the cover site. Replaces the unmaintained klzgrad/forwardproxy plugin. |
-| **`ct-server-core`** | Rust binary baked into the panel image. Owns the latency-sensitive paths: sing-box config rendering (incl. Laravel-Crypt decryption of cleartext passwords), clash-API hot-reload over the unix socket, `/metrics` scraping, quota enforcement, anti-tracking probe, component OK/NG check, burst Coalescer. Uses the `ct-protocol` crate that future cross-platform clients will share. |
-| **`panel`** | Laravel 11 + Filament 3 admin app. PHP services are thin shell-outs to `ct-server-core`. Manages proxy accounts, fake-site templates, server config, traffic logs, and the **Components** OK/NG page. |
-| **`db`** | MariaDB 11 — proxy accounts, traffic counters, fake-site template data, panel users. |
-| **`redis`** | Cache + queue backend **and** the revocation pub/sub bus that ties Filament saves to ≤100 ms sing-box reloads. |
-
-Each piece is described by an `*.upstream.json` in [`manifests/`](./manifests/) — the **component-as-machine-part** model. Update one component, run `ct-server-core component check`, get an OK/NG verdict before swap. Same schema is used by every Rust-cored client. See [`docs/components.md`](./docs/components.md).
-
-```
-                    ┌─────────────────────────────────────┐
-                    │  Cool Tunnel client (macOS / iOS)   │
-                    │  — naive: HTTP/2 CONNECT over TLS   │
-                    └────────────────┬────────────────────┘
-                                     │ TLS:443
-                                     ▼
-   ┌────────────────────────────────────────────────────────────┐
-   │                     sing-box container                      │
-   │                                                             │
-   │  TLS termination — cert + key read from /data/caddy/...     │
-   │  (Caddy obtains and renews via ACME on :80; sing-box is     │
-   │  not the ACME side.)                                        │
-   │   │                                                         │
-   │   ├──▶ naive inbound (multi-user from `users` array)        │
-   │   │      probe_resistance, padding, h2/h3                   │
-   │   │      → upstream internet                                │
-   │   │                                                         │
-   │   └──▶ unauthed traffic → fallback                           │
-   │           reverse_proxy panel:9000 (cover site / panel)     │
-   └─────────────┬──────────────────────────────┬───────────────┘
-                 │ /etc/sing-box/config.json    │ /run/sing-box/clash.sock
-                 ▼ (panel renders here)         │ (panel hot-reloads here)
-   ┌────────────────────────────────────────────┴───────────────┐
-   │                      panel container                        │
-   │                                                             │
-   │  Laravel 11 + Filament 3 admin (reverse-proxied behind      │
-   │  sing-box with admin-only basic_auth gating /admin)         │
-   │                                                             │
-   │  Models:    ProxyAccount, FakeWebsite, ServerConfig,        │
-   │             TrafficLog                                      │
-   │  Services:  CtServerCore + thin wrappers,                   │
-   │             SingBoxConfigGenerator, SingBoxReloader,        │
-   │             RedisRevocationBus                              │
-   │  Workers:   queue worker, scheduled traffic-rollup,         │
-   │             scheduled quota check                           │
-   └─────────────────────────┬───────────────────────────────────┘
-                             │ PUBLISH cool_tunnel:revocations
-                             ▼
-   ┌─────────────────────────────────────────────────────────────┐
-   │                      redis container                         │
-   │  channel: cool_tunnel:revocations                            │
-   │  keys:    account:status:<username> = active|revoked|…       │
-   └─────────────────────────┬───────────────────────────────────┘
-                             │ SUBSCRIBE (long-lived)
-                             ▼
-   ┌─────────────────────────────────────────────────────────────┐
-   │           ct-server-core daemon (Rust, in panel image)       │
-   │  on revocation: re-render config.json, PUT /configs to       │
-   │  sing-box clash API. ≤100 ms from Filament save to new       │
-   │  auth blocked. Burst Coalescer collapses N events → ≤2       │
-   │  reloads per 100 ms window.                                  │
-   └─────────────────────────────────────────────────────────────┘
-```
-
-**Revocation latency:** new auth attempts are blocked within ~100 ms
-of a Filament save (Redis pub/sub → sing-box config re-render →
-clash-API reload). Bursts of saves (e.g. an admin disabling 50
-accounts in one click) collapse to **at most 2 sing-box reloads per
-100 ms window** thanks to the leading-edge + trailing-flush coalescer
-in `redis_bridge.rs`. Existing in-flight HTTP/2 CONNECT tunnels
-persist until the underlying TCP connection closes — neither sing-box
-nor any other multi-user NaiveProxy server currently exposes per-user
-connection enumeration. Per-request hard severing is on the v0.1
-roadmap.
-
----
-
-## Anti-tracking defaults
-
-Out of the box, the rendered sing-box config enables every NaiveProxy
-mitigation it exposes, plus a few panel-level defaults:
-
-- **TLS forge / browser-shaped handshake** — sing-box's `naive`
-  inbound emits a TLS ClientHello-equivalent shape that matches a
-  real Chrome browser, so the handshake itself doesn't fingerprint
-  the box as a proxy.
-- **Padding** — naive's protocol-level padding makes traffic-flow
-  analysis harder.
-- **Probe resistance** — sing-box's `naive` inbound's `fallback`
-  field reverse-proxies unauthenticated traffic to the panel, which
-  serves a Blade-rendered cover site. Probes see a normal-looking
-  website, not a proxy 401.
-- **HTTP/3 (QUIC) on `:443/udp`** — harder to selectively throttle
-  than TCP/443.
-- **Disabled access logs by default** — only the panel records
-  per-account aggregate byte counters, never URLs or remote hosts.
-- **DNS over HTTPS** — sing-box's route block uses a DoH resolver
-  for outbound name lookups; Cloudflare `1.1.1.1` by default,
-  configurable to any DoH endpoint.
-- **Cover-site rotation** — three Blade templates (blog, portfolio,
-  corporate consultancy) the operator can swap between to reduce
-  fingerprintability across hosts.
-
-The full list and per-account toggles live in *Settings → Anti-Tracking*
-in the panel.
-
----
-
-## Quickstart (Docker)
-
-Prerequisites:
-
-- Linux host with Docker + Compose v2
-- A domain pointing at the host's public IP (`A` and `AAAA`)
-- Ports 80, 443/tcp, 443/udp open inbound
-
-> **Bare-metal / fresh VPS?** Read
-> [`docs/installation-debian.md`](./docs/installation-debian.md)
-> first — it's a one-by-one Debian 10 / 11 / 12 / 13+ walk-through
-> covering DNS, firewall, BBR, Docker repo setup, and the gotchas
-> you only hit once.
+## Quick start
 
 ```bash
+# 1. SSH into your fresh Debian VPS as root, install Docker + git.
+apt update && apt install -y git docker.io docker-compose-plugin
+
+# 2. Clone this repo.
 git clone https://github.com/coo1white/cool-tunnel-server.git
 cd cool-tunnel-server
 
-# Copy the env template, then edit DOMAIN, ACME_EMAIL, and the
-# generated app/db/redis passwords.
+# 3. Copy the example env file and edit DOMAIN + ACME_EMAIL.
 cp .env.example .env
-$EDITOR .env
+nano .env                 # change `proxy.example.com` to your domain;
+                          # change `admin@example.com` to your email.
 
-# Build the panel + sing-box images and start everything.
+# 4. Run the bootstrap. Walks you through 8 numbered steps with
+# helpful "↳ try:" hints if anything fails.
 ./scripts/install.sh
 ```
 
-`install.sh` will:
+When `install.sh` finishes, your panel is at `https://<your-domain>/admin`.
+First boot takes 1–3 minutes (Docker images build, Let's Encrypt
+issues a cert).
 
-1. Build the panel image (PHP 8.3-fpm + Composer install + `php artisan
-   key:generate` + `php artisan filament:install`) with the
-   `ct-server-core` Rust binary baked in.
-2. Build the sing-box image (downloads the upstream pre-built binary,
-   verifies it).
-3. Run DB migrations and seed a default `ServerConfig` row.
-4. Prompt you to create the first admin login for the panel.
-5. Render a starter sing-box `config.json` (no proxy accounts yet →
-   sing-box serves only the cover site via fallback).
-6. `docker compose up -d`.
+If something fails, the script tells you exactly what's wrong and how
+to fix it. The most common gotchas:
 
-When it finishes, the panel is at:
+- DNS hasn't propagated yet → `dig +short A your-domain.com` should
+  return your VPS IP. Wait 5 minutes if not.
+- Port 80 blocked → `ufw allow 80/tcp` and check your provider's
+  firewall.
+- Domain points at the wrong IP → ACME can't validate. Fix DNS first.
 
-```
-https://<your-domain>/admin
-```
+For the full step-by-step (DNS, firewall, BBR tuning, SSH hardening),
+see [`docs/installation-debian.md`](./docs/installation-debian.md).
 
-…protected at the sing-box `naive` fallback layer by an additional
-admin basic-auth header (see `.env` `PANEL_BASIC_AUTH_*`) so the
-Filament login isn't directly exposed to the internet.
+---
 
-Create a proxy account, copy the cleartext password (it will only show
-once), and point your Cool Tunnel client at:
+## What's running
+
+| Container | Job |
+| --- | --- |
+| **`panel`** | Laravel + Filament admin you log into. Where you add accounts, set quotas, pick the cover website. |
+| **`sing-box`** | The actual proxy. Listens on `:443`, speaks NaiveProxy. Reads the config the panel renders for it. |
+| **`caddy`** | Gets the TLS certificate from Let's Encrypt. Hands it to sing-box via a shared volume. |
+| **`db`** | MariaDB. Stores accounts, settings, traffic counters. |
+| **`redis`** | Cache + the bus that pushes "this account was just disabled" messages to sing-box within ~100 ms. |
+
+That's it. Everything else (the Rust core, the config rendering, the
+clash-API reload) is internal plumbing you don't need to understand
+to operate the server.
+
+If you want the architecture deep-dive, see
+[`docs/architecture.md`](./docs/architecture.md).
+
+---
+
+## Adding your first proxy user
+
+1. Log into the panel at `https://<your-domain>/admin`.
+2. Click **Proxy accounts → New proxy account**.
+3. Give it a username (letters, digits, dashes). Save.
+4. **The cleartext password is shown once** in a notification — copy
+   it now or you'll have to regenerate.
+5. In your Cool Tunnel macOS client, add a profile:
 
 ```
 naive+https://<username>:<password>@<your-domain>:443
 ```
 
----
-
-## Configuring the client
-
-In Cool Tunnel (the macOS app), add a profile with:
-
-| Field | Value |
-| --- | --- |
-| Server | `naive+https://<username>:<password>@<your-domain>:443` |
-| Username | `<username>` (same as panel) |
-| Password | `<password>` (cleartext, shown once on creation) |
-| Local SOCKS port | `1080` (default) |
-| Mode | Smart, Global, or Local-only — your call |
-
-If you don't have the client yet:
-[github.com/coo1white/cool-tunnel/releases](https://github.com/coo1white/cool-tunnel/releases).
+Done. Traffic goes through your server.
 
 ---
 
-## Repository layout
+## Anti-tracking — what the server hides
+
+Out of the box, the proxy is configured to look as much like a
+normal HTTPS website as possible:
+
+- **TLS 1.3 only**, browser-shaped handshake. The handshake itself
+  doesn't fingerprint the box as a proxy.
+- **Cover site** at the apex domain. Anyone who visits
+  `https://your-domain.com/` without authentication sees a normal-
+  looking website (blog / portfolio / consultancy — pick one in the
+  panel). Probes can't tell it's a proxy.
+- **No per-connection logs**. Sing-box logs at `warn` level only, so
+  there's no "alice connected from 1.2.3.4 at 12:34" trail on disk.
+- **DNS over HTTPS** for the proxy's own DNS lookups. Your ISP
+  can't see what you're resolving.
+- **No identifying HTTP headers**. The subscription endpoint and the
+  cover site both return responses indistinguishable from a generic
+  static site.
+
+You can toggle these in **Server config** in the panel.
+
+---
+
+## Common operations
+
+```bash
+# View live logs
+docker compose logs -f --tail=20 panel
+docker compose logs -f --tail=20 sing-box
+
+# Restart everything
+docker compose restart
+
+# Pull a new release of the server code
+git fetch --tags && git checkout v0.0.10
+docker compose build && docker compose up -d
+
+# Take a backup (db + Caddy ACME state)
+./scripts/backup.sh
+
+# Pre-launch readiness gate (10-point checklist)
+./scripts/late-night-comeback.sh
+```
+
+---
+
+## Where everything lives in this repo
 
 ```
 cool-tunnel-server/
-├── core/                          Cargo workspace (Rust)
-│   ├── ct-protocol/               Pure-Rust shared crate. Profile parsing,
-│   │                              SubscriptionManifestV1, wire format,
-│   │                              ComponentManifestV1. Cross-platform —
-│   │                              the same crate every future client links.
-│   └── ct-server-core/             Server-only binary. CLI subcommands +
-│                                   long-running daemon mode. Owns:
-│                                   singbox render / server reload (clash) /
-│                                   traffic collect / quota enforce /
-│                                   probe anti-tracking / component check /
-│                                   util::debounce (Coalescer).
-├── manifests/                     One *.upstream.json per swappable
-│                                  component (sing-box, naiveproxy, the
-│                                  Rust crates, the panel image, db, redis).
-├── docker/
-│   ├── core/Dockerfile             Rust musl build → static ct-server-core
-│   ├── sing-box/Dockerfile         Pulls upstream sing-box binary
-│   └── panel/Dockerfile            PHP-fpm + Composer + nginx +
-│                                   ct-server-core copied in from core stage
-├── sing-box/
-│   └── config.json.tpl             Template — ct-server-core substitutes
-├── panel/                          Laravel 11 + Filament 3
-│   ├── app/
-│   │   ├── Filament/
-│   │   │   ├── Resources/          ProxyAccount, FakeWebsite, TrafficLog
-│   │   │   ├── Pages/              ServerConfig, Components (OK/NG)
-│   │   │   └── Widgets/            TrafficStats
-│   │   ├── Models/                 ProxyAccount, FakeWebsite, ServerConfig,
-│   │   │                           TrafficLog, User
-│   │   ├── Services/               CtServerCore (the shell-out), and thin
-│   │   │                           wrappers: SingBoxConfigGenerator,
-│   │   │                           SingBoxReloader, CaddyfileGenerator,
-│   │   │                           TrafficCollector, ComponentChecker,
-│   │   │                           PasswordGenerator, RedisRevocationBus
-│   │   ├── Console/Commands/       singbox:render, quota:enforce,
-│   │   │                           traffic:rollup, component:check
-│   │   └── Http/Controllers/       FakeSiteController, SubscriptionController
-│   ├── database/migrations/        schema
-│   ├── resources/views/            fake-sites + Filament page views
-│   ├── routes/                     web.php + console.php
-│   ├── composer.json               Laravel 11, Filament 3, predis
-│   └── config/                     app, auth, db, cache, session, queue …
-├── scripts/                        install.sh, update.sh, backup.sh,
-│                                   render-singbox.sh
-├── docs/
-│   ├── installation-debian.md      Step-by-step Debian 10/11/12/13+
-│   ├── architecture.md             Three-layer model
-│   ├── components.md               How OK/NG verifies each part
-│   └── cross-platform-clients.md   Future iOS / Android / Win / Linux plan
-├── docker-compose.yml              core-builder + panel + sing-box + db + redis
-├── .env.example
-├── LICENSE                         Proprietary — (c) 2026 Nick (Bai Yuhang)
-├── THIRD_PARTY_LICENSES.md         Upstream Apache/MIT/BSD/GPL components
-├── NOTICE                          Bundled-software attribution
-├── Disclaimer.md                   Read this first
-└── README.md                       You are here
+├── panel/              Laravel + Filament admin (PHP)
+├── core/               Rust workspace
+│   ├── ct-protocol/    Shared types future iOS / Android / etc. clients pull in
+│   └── ct-server-core/ Server-only binary the panel shells out to
+├── sing-box/           sing-box config template
+├── caddy/              Caddyfile template
+├── docker/             Dockerfiles for each container
+├── manifests/          Pinned versions of every component (sing-box, Rust crates, etc.)
+├── scripts/            install.sh, backup.sh, update.sh, late-night-comeback.sh
+├── docs/               Deeper guides — installation, architecture, components
+└── docker-compose.yml  Brings up the whole stack
 ```
+
+For the full file-by-file map, see [`STRUCTURE.md`](./STRUCTURE.md).
+
+---
+
+## Things going wrong?
+
+| Symptom | Most likely cause | Fix |
+| --- | --- | --- |
+| Panel won't load — `connection refused` | Cert hasn't been issued yet | `docker compose logs caddy` — wait until you see "certificate obtained" |
+| Panel loads but **save does nothing** | You're on v0.0.4–v0.0.9 (broken save flow) | Upgrade to v0.0.10 or later |
+| Client connects but no traffic | Account quota hit, or expires_at is past | Check the account in the panel |
+| `dial tcp ...:80: connection refused` during ACME | Port 80 closed | Open it at the cloud provider firewall |
+| Domain doesn't resolve | DNS hasn't propagated | `dig +short A your-domain.com` should return your VPS IP |
+
+Full troubleshooting table:
+[`docs/installation-debian.md` § 10](./docs/installation-debian.md).
 
 ---
 
 ## Pairs with
 
-This is the server-side companion to:
-
 - [coo1white/cool-tunnel](https://github.com/coo1white/cool-tunnel) —
-  macOS GUI client (SwiftUI + Rust core, universal `.app`).
+  macOS GUI client. Universal Apple Silicon + Intel `.app`.
 
-The client connects to any HTTP/2 CONNECT proxy that speaks the
-NaiveProxy wire format. This server (sing-box `naive` inbound) is
-one opinionated way to provide that endpoint — the client also
-works against any other NaiveProxy-protocol server.
+The client speaks plain NaiveProxy on the wire, so it'll also work
+against any other NaiveProxy-protocol server you set up elsewhere.
 
 ---
 
 ## License
 
-Apache License 2.0 — see [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
+Proprietary — (c) 2026 Nick (Bai Yuhang). All Rights Reserved. See
+[LICENSE](./LICENSE).
+
+Bundled upstream components (Caddy, sing-box, Laravel, Filament,
+MariaDB, Redis, etc.) ship under their own permissive / GPL licenses
+— see [NOTICE](./NOTICE) and
+[THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
 
 Read the [Disclaimer](./Disclaimer.md) before deploying.
