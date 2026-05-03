@@ -113,6 +113,19 @@ pub async fn render(
     Ok(())
 }
 
+/// Load the live `ServerConfig` from the DB and derive the clash-API
+/// bearer token from it. Used by every reload caller (daemon /
+/// quota / redis_bridge) to construct a [`crate::admin::ClashAdmin`]
+/// whose secret matches what the most recent `render` baked into
+/// `experimental.clash_api.secret`. The DB roundtrip costs ~1ms on
+/// the local-network mariadb, well within the 200ms revocation
+/// budget.
+pub async fn current_clash_secret(database_url: &Option<String>) -> Result<String> {
+    let pool = db::connect(database_url).await?;
+    let cfg = db::server_config(&pool).await?;
+    Ok(clash_secret(&cfg))
+}
+
 /// Run `sing-box check` against the rendered file. Catches malformed
 /// JSON / unknown fields / port conflicts before the reload attempt.
 ///
@@ -281,7 +294,14 @@ async fn read_cert_mtime(cfg: &ServerConfig) -> Option<u64> {
 /// from the bcrypt admin_basic_auth_hash if available, or from the
 /// ACME email as a fallback. Any deterministic input works — sing-box
 /// treats this as an opaque token.
-fn clash_secret(cfg: &ServerConfig) -> String {
+///
+/// This is `pub(crate)` rather than module-private because the
+/// daemon / quota / redis-bridge reload paths need the same value
+/// the template was rendered with so they can pass it as the
+/// `Authorization: Bearer …` header to the clash API. Callers that
+/// already hold a `ServerConfig` can call this directly; everyone
+/// else can use [`current_clash_secret`] which loads the cfg.
+pub(crate) fn clash_secret(cfg: &ServerConfig) -> String {
     let mut h = Sha256::new();
     h.update(b"ct-clash-secret-v1:");
     if let Some(s) = cfg.admin_basic_auth_hash.as_deref() {

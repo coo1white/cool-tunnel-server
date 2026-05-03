@@ -22,6 +22,14 @@ tokio = { version = "1.38", features = ["full"] }
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "macros", "chrono"] }
+# `hyper` / `hyper-util` / `hyperlocal` / `http-body-util` were the
+# old unix-domain admin path's stack. Dropped from active use when
+# sing-box's clash API moved to `external_controller` (TCP) on the
+# docker-internal `ct-singbox:9090` listener — see admin.rs head
+# comment. The crates remain pinned here (rather than removed) to
+# keep the Cargo.lock stable under `cargo build --locked` without a
+# separate lockfile-bump commit; reqwest is the only HTTP client
+# the binary actually exercises today.
 hyper           = { version = "1.4", features = ["client", "http1"] }
 hyper-util      = { version = "0.1", features = ["client-legacy", "tokio"] }
 hyperlocal      = "0.9"

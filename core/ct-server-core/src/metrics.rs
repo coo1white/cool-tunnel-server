@@ -32,17 +32,11 @@
 // process; we clamp deltas to >= 0 so a process restart doesn't
 // underflow.
 
-use crate::{db, Error, Result};
-use bytes::Bytes;
+use crate::{admin::ClashAdmin, db, Result};
 use chrono::Utc;
-use http_body_util::{BodyExt, Full};
-use hyper::{Method, Request};
-use hyper_util::client::legacy::Client;
-use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use std::collections::HashMap;
-use std::path::Path;
 
-pub async fn collect(database_url: &Option<String>, socket_path: &str) -> Result<()> {
+pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Result<()> {
     // See module-level docstring for the honest state. Until sing-box
     // exposes per-user proxy bytes in a Prometheus-text-compatible
     // shape, this is a no-op rather than a silent failure: previous
@@ -64,7 +58,7 @@ pub async fn collect(database_url: &Option<String>, socket_path: &str) -> Result
     // The legacy scrape path is preserved below for the day sing-box
     // emits Prometheus-shaped naive metrics. It returns immediately
     // when no matching metrics are present, which is always (today).
-    let raw = match fetch_metrics_text(socket_path).await {
+    let raw = match admin.fetch_metrics_text().await {
         Ok(t) => t,
         Err(e) => {
             tracing::debug!(error = %e, "metrics endpoint unreachable (expected)");
@@ -186,33 +180,6 @@ fn parse_labels(raw: &str) -> HashMap<&str, &str> {
         out.insert(k, v);
     }
     out
-}
-
-async fn fetch_metrics_text(socket_path: &str) -> Result<String> {
-    if !Path::new(socket_path).exists() {
-        return Err(Error::msg(format!(
-            "admin socket {socket_path} not present"
-        )));
-    }
-    let client: Client<UnixConnector, Full<Bytes>> = Client::unix();
-    let uri: hyper::Uri = UnixUri::new(socket_path, "/metrics").into();
-    let req = Request::builder()
-        .method(Method::GET)
-        .uri(uri)
-        .body(Full::new(Bytes::new()))?;
-    // Bounded by 10s — a hung admin socket must not wedge the
-    // traffic:rollup scheduler (which already runs every minute).
-    // The legacy parser is a no-op anyway today; keeping the
-    // timeout here so the day sing-box exposes Prometheus-shape
-    // metrics this path doesn't regress.
-    let resp = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        client.request(req),
-    )
-    .await
-    .map_err(|_| Error::msg("admin /metrics GET timed out after 10s"))??;
-    let body = resp.into_body().collect().await?;
-    Ok(String::from_utf8_lossy(&body.to_bytes()).into_owned())
 }
 
 #[cfg(test)]

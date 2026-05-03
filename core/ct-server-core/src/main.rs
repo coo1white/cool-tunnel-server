@@ -57,14 +57,26 @@ struct Cli {
     )]
     output: String,
 
-    /// sing-box clash-API unix socket.
+    /// sing-box clash-API base URL. Default targets the
+    /// docker-internal `ct-singbox:9090` listener bound by
+    /// `experimental.clash_api.external_controller`. The compose
+    /// `ports:` map MUST NOT publish 9090 (audit-enforced) — this
+    /// is a TCP listener intended for `ct-net` peers only.
     #[arg(
         long,
-        env = "SINGBOX_CLASH_SOCKET",
-        default_value = "/run/sing-box/clash.sock",
+        env = "SINGBOX_CLASH_URL",
+        default_value = "http://ct-singbox:9090",
         global = true
     )]
-    admin_socket: String,
+    admin_url: String,
+
+    /// Optional override for the clash-API bearer token. Empty
+    /// (default) → derive deterministically from ServerConfig at
+    /// each call site, matching what `singbox::render` baked into
+    /// `experimental.clash_api.secret`. Set this only for
+    /// host-side dev where the panel's ServerConfig isn't reachable.
+    #[arg(long, env = "SINGBOX_CLASH_SECRET", default_value = "", global = true)]
+    admin_secret: String,
 
     /// Print machine-readable JSON instead of human-readable lines.
     #[arg(long, global = true)]
@@ -266,12 +278,36 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 caddy::render(&cli.database_url, &template, &output, dry_run, cli.json).await
             }
         },
-        Cmd::Server { op } => match op {
-            ServerOp::Reload => admin::reload(&cli.admin_socket, &cli.output).await,
-            ServerOp::Config => admin::dump_config(&cli.admin_socket).await,
-        },
+        Cmd::Server { op } => {
+            // CLI Server.{Reload,Config} are operator-facing — they
+            // have no DB pool to derive the secret from on their
+            // own. If --admin-secret / SINGBOX_CLASH_SECRET is empty
+            // we load ServerConfig once and use the deterministic
+            // value; an explicit override wins for ad-hoc debugging.
+            let secret = if cli.admin_secret.is_empty() {
+                singbox::current_clash_secret(&cli.database_url).await?
+            } else {
+                cli.admin_secret.clone()
+            };
+            let admin_client = admin::ClashAdmin::new(&cli.admin_url, &secret);
+            match op {
+                ServerOp::Reload => admin_client.reload(&cli.output).await,
+                ServerOp::Config => admin_client.dump_config().await,
+            }
+        }
         Cmd::Traffic { op } => match op {
-            TrafficOp::Collect => metrics::collect(&cli.database_url, &cli.admin_socket).await,
+            TrafficOp::Collect => {
+                let secret = if cli.admin_secret.is_empty() {
+                    singbox::current_clash_secret(&cli.database_url).await?
+                } else {
+                    cli.admin_secret.clone()
+                };
+                metrics::collect(
+                    &cli.database_url,
+                    &admin::ClashAdmin::new(&cli.admin_url, &secret),
+                )
+                .await
+            }
         },
         Cmd::Quota { op } => match op {
             QuotaOp::Enforce => {
@@ -279,7 +315,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                     &cli.database_url,
                     &cli.template,
                     &cli.output,
-                    &cli.admin_socket,
+                    &cli.admin_url,
                 )
                 .await
             }
@@ -296,7 +332,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                     cli.database_url.clone(),
                     cli.template.clone(),
                     cli.output.clone(),
-                    cli.admin_socket.clone(),
+                    cli.admin_url.clone(),
                 );
             } else {
                 tracing::warn!("REDIS_URL empty — running without revocation subscriber");
@@ -306,7 +342,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &cli.database_url,
                 &cli.template,
                 &cli.output,
-                &cli.admin_socket,
+                &cli.admin_url,
             )
             .await
         }

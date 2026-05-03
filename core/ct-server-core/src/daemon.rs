@@ -24,7 +24,7 @@ pub async fn serve(
     database_url: &Option<String>,
     template: &str,
     output: &str,
-    admin_socket: &str,
+    admin_url: &str,
 ) -> Result<()> {
     // Ensure parent dir exists; remove any stale socket file.
     if let Some(dir) = Path::new(socket_path).parent() {
@@ -45,7 +45,7 @@ pub async fn serve(
     let database_url = database_url.clone();
     let template = template.to_owned();
     let output = output.to_owned();
-    let admin_socket = admin_socket.to_owned();
+    let admin_url = admin_url.to_owned();
 
     // Graceful shutdown: stop accepting new connections on
     // SIGINT / SIGTERM, drop the listener so its socket file is
@@ -67,10 +67,10 @@ pub async fn serve(
                 let database_url = database_url.clone();
                 let template = template.clone();
                 let output = output.clone();
-                let admin_socket = admin_socket.clone();
+                let admin_url = admin_url.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
-                        handle_client(stream, &database_url, &template, &output, &admin_socket).await
+                        handle_client(stream, &database_url, &template, &output, &admin_url).await
                     {
                         tracing::warn!(error = %e, "client handler errored");
                     }
@@ -103,7 +103,7 @@ async fn handle_client(
     database_url: &Option<String>,
     template: &str,
     output: &str,
-    admin_socket: &str,
+    admin_url: &str,
 ) -> Result<()> {
     let (rd, mut wr) = stream.into_split();
     // Cap the read buffer so a misbehaving client sending an
@@ -154,7 +154,7 @@ async fn handle_client(
                 continue;
             }
         };
-        let resp = match handle(req, database_url, template, output, admin_socket).await {
+        let resp = match handle(req, database_url, template, output, admin_url).await {
             Ok(r) => r,
             Err(e) => WireResponseV1::Error {
                 code: "internal".into(),
@@ -179,7 +179,7 @@ async fn handle(
     database_url: &Option<String>,
     template: &str,
     output: &str,
-    admin_socket: &str,
+    admin_url: &str,
 ) -> Result<WireResponseV1> {
     match req {
         WireRequestV1::RenderCaddyfile => {
@@ -197,17 +197,21 @@ async fn handle(
             // sing-box via its clash API. Variant name preserved
             // for WireV1 compat.
             let started = std::time::Instant::now();
-            admin::reload(admin_socket, output).await?;
+            let secret = singbox::current_clash_secret(database_url).await?;
+            admin::ClashAdmin::new(admin_url, &secret)
+                .reload(output)
+                .await?;
             Ok(WireResponseV1::CaddyReloaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             })
         }
         WireRequestV1::CollectTraffic => {
-            metrics::collect(database_url, admin_socket).await?;
+            let secret = singbox::current_clash_secret(database_url).await?;
+            metrics::collect(database_url, &admin::ClashAdmin::new(admin_url, &secret)).await?;
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::EnforceQuota => {
-            crate::quota::enforce(database_url, template, output, admin_socket).await?;
+            crate::quota::enforce(database_url, template, output, admin_url).await?;
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::ProbeAntiTracking => Err(Error::msg(

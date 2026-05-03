@@ -63,7 +63,7 @@ pub fn spawn(
     database_url: Option<String>,
     template: String,
     output: String,
-    admin_socket: String,
+    admin_url: String,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         // The coalescer is shared between the subscriber loop (which
@@ -80,7 +80,7 @@ pub fn spawn(
                 &database_url,
                 &template,
                 &output,
-                &admin_socket,
+                &admin_url,
                 &coalescer,
             )
             .await
@@ -104,7 +104,7 @@ async fn run_subscriber(
     database_url: &Option<String>,
     template: &str,
     output: &str,
-    admin_socket: &str,
+    admin_url: &str,
     coalescer: &Arc<Mutex<Coalescer>>,
 ) -> Result<()> {
     let client = Client::open(redis_url)?;
@@ -145,14 +145,14 @@ async fn run_subscriber(
                 // up our state when it runs.
             }
             Decision::FireNow | Decision::FireNowAndScheduleFlush => {
-                fire_reload(database_url, template, output, admin_socket, "leading").await;
+                fire_reload(database_url, template, output, admin_url, "leading").await;
                 if matches!(decision, Decision::FireNowAndScheduleFlush) {
                     schedule_flush(
                         coalescer.clone(),
                         database_url.clone(),
                         template.to_owned(),
                         output.to_owned(),
-                        admin_socket.to_owned(),
+                        admin_url.to_owned(),
                     );
                 }
             }
@@ -168,7 +168,7 @@ async fn fire_reload(
     database_url: &Option<String>,
     template: &str,
     output: &str,
-    admin_socket: &str,
+    admin_url: &str,
     edge: &'static str,
 ) {
     let started = Instant::now();
@@ -176,7 +176,18 @@ async fn fire_reload(
         tracing::warn!(error = %e, edge, "render failed during revocation");
         return;
     }
-    if let Err(e) = admin::reload(admin_socket, output).await {
+    // Re-derive the clash bearer from ServerConfig on every fire.
+    // Cheap (~1ms DB hit) and means a rotation of the secret's
+    // deterministic input propagates without a daemon restart.
+    let secret = match singbox::current_clash_secret(database_url).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, edge, "could not load clash secret; skipping reload");
+            return;
+        }
+    };
+    let admin_client = admin::ClashAdmin::new(admin_url, &secret);
+    if let Err(e) = admin_client.reload(output).await {
         tracing::warn!(error = %e, edge, "reload failed during revocation");
         return;
     }
@@ -193,7 +204,7 @@ fn schedule_flush(
     database_url: Option<String>,
     template: String,
     output: String,
-    admin_socket: String,
+    admin_url: String,
 ) {
     tokio::spawn(async move {
         tokio::time::sleep(DEFAULT_WINDOW).await;
@@ -202,7 +213,7 @@ fn schedule_flush(
             g.on_flush(Instant::now())
         };
         if needs_flush {
-            fire_reload(&database_url, &template, &output, &admin_socket, "trailing").await;
+            fire_reload(&database_url, &template, &output, &admin_url, "trailing").await;
         } else {
             tracing::debug!("trailing flush skipped — no suppressed events");
         }
