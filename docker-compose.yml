@@ -127,6 +127,17 @@ services:
       CT_MANIFESTS_DIR:       /srv/manifests
     volumes:
       - ./panel:/var/www/html
+      # Mount the repo-root .env over the panel project's .env. The
+      # bootstrap operator edits /opt/cool-tunnel-server/.env (one
+      # file, one source of truth); Laravel inside the container
+      # reads + writes /var/www/html/.env (its standard project
+      # location, where `php artisan key:generate` appends APP_KEY).
+      # Without this mount, the entrypoint's key:generate fails
+      # with "Failed to open stream: No such file or directory".
+      # RW is required because key:generate needs to append; mounted
+      # as a single-file bind so other panel/ contents stay in
+      # sync via the directory mount above.
+      - ./.env:/var/www/html/.env
       - ./manifests:/srv/manifests:ro
       - ./sing-box/config.json.tpl:/srv/sing-box/config.json.tpl:ro
       - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
