@@ -32,8 +32,13 @@ who's connected.
 ## Quick start
 
 ```bash
-# 1. SSH into your fresh Debian VPS as root, install Docker + git.
-apt update && apt install -y git docker.io docker-compose-plugin
+# 1. SSH into your fresh Debian VPS as root. Install Docker, git,
+#    and the small CLI tools install.sh's pre-flight checks for.
+#    `apache2-utils` is where Debian ships `htpasswd` — there's no
+#    standalone htpasswd package.
+apt update && apt install -y \
+    git curl jq dnsutils apache2-utils \
+    docker.io docker-compose-plugin
 
 # 2. Clone this repo.
 git clone https://github.com/coo1white/cool-tunnel-server.git
