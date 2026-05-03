@@ -50,7 +50,16 @@ services:
       - ./core:/build/core
     working_dir: /build/core
     networks:
+      # ct-data: reach `db:3306` for query type-checking against
+      #          the live schema.
+      # ct-net:  internet for any rustup / crates.io fallback if
+      #          the cached layers ever go stale. The image
+      #          pre-installs everything it needs (Dockerfile
+      #          stage `sqlx-prepare`) so this is belt-and-braces;
+      #          if you tighten egress, ct-data alone suffices for
+      #          normal prepare runs.
       - ct-data
+      - ct-net
     depends_on:
       db:
         condition: service_healthy
