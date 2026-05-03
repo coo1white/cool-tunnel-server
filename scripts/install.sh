@@ -90,9 +90,29 @@ wait_for "MariaDB healthcheck" 30 2 \
 
 step "Start panel and run database migrations"
 compose up -d panel
-# Give the panel entrypoint a moment to finish composer install +
-# key:generate before we shell into it.
-sleep 3
+
+# The panel entrypoint.sh does the slow first-boot work:
+#   1. composer install   (30-90s on a 1-vCPU VPS, fresh box)
+#   2. php artisan key:generate
+#   3. wait for db
+#   4. php artisan migrate
+# If we shell in too early, vendor/autoload.php doesn't exist and
+# every artisan call fails with "Failed to open stream". Wait for
+# vendor/ to actually land before any explicit shell-in.
+# 5 minutes total budget — enough headroom for tiny VPS + cold
+# Composer cache, but bounded so we don't hang the install path
+# if composer is genuinely failing.
+warn "panel entrypoint is running 'composer install' on first boot;"
+warn "this takes ~30-90s on a small VPS. Watch progress with:"
+warn "    docker compose logs -f --tail=80 panel"
+# shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
+wait_for "panel vendor/autoload.php" 60 5 \
+    bash -c 'docker compose exec -T panel test -f /var/www/html/vendor/autoload.php'
+
+# The entrypoint will run migrate as part of its first-boot flow,
+# but we re-run here explicitly so the install path observes a
+# concrete success/failure (the entrypoint swallows migration
+# errors with `|| true` to avoid wedging container start).
 compose exec -T panel php artisan migrate --force --no-interaction \
     || die "migrations failed — see panel logs" \
            "docker compose logs --tail=80 panel"
