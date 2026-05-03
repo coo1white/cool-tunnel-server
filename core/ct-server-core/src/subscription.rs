@@ -27,6 +27,7 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
     // username so that's fine. The proxy itself enforces enabled-ness
     // via the sing-box config's `users` array — disabled accounts
     // are filtered out at render time in singbox::render().
+    // proxy_accounts.id is BIGINT UNSIGNED — bind u64.
     let row = sqlx::query(
         r"
         SELECT username, password_hash
@@ -34,7 +35,7 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
         WHERE id = ?
         ",
     )
-    .bind(account_id)
+    .bind(account_id.max(0) as u64)
     .fetch_optional(&pool)
     .await?
     .ok_or_else(|| Error::msg(format!("no proxy_account with id={account_id}")))?;

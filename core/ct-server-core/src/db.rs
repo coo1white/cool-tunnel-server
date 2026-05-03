@@ -58,8 +58,16 @@ pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
     .fetch_one(pool)
     .await?;
 
+    // NOTE on the u64 → i64 cast: Laravel's `$table->id()` migration
+    // creates `BIGINT UNSIGNED AUTO_INCREMENT`. sqlx is strict about
+    // the type match at decode time and rejects an i64 try_get on an
+    // unsigned column ("Rust type i64 (as SQL type BIGINT) is not
+    // compatible with SQL type BIGINT UNSIGNED"). We read u64 and
+    // cast — primary-key IDs in Laravel will never reach 2^63 in any
+    // realistic workload, so the cast is lossless. Same pattern
+    // for the rest of the BIGINT UNSIGNED columns below.
     Ok(ServerConfig {
-        id: row.try_get::<i64, _>("id")?,
+        id: row.try_get::<u64, _>("id")? as i64,
         domain: row.try_get("domain")?,
         acme_email: row.try_get("acme_email")?,
         acme_directory: row.try_get("acme_directory")?,
@@ -116,21 +124,24 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
                 }
             }
         });
-        // quota_bytes / expires_at are nullable in the schema. We
+        // quota_bytes / used_bytes are BIGINT UNSIGNED in the
+        // Laravel migration; expires_at is nullable timestamp. Read
+        // unsigned-int columns as u64 and cast (see note in
+        // server_config above on why the cast is safe). We
         // distinguish "column NULL" (legitimate, means unlimited /
         // never-expire) from "column missing or wrong type"
         // (schema regression — fail loudly instead of silently
         // unlimited-quota every account).
-        let quota_bytes = match r.try_get::<Option<i64>, _>("quota_bytes") {
-            Ok(v) => v,
+        let quota_bytes = match r.try_get::<Option<u64>, _>("quota_bytes") {
+            Ok(v) => v.map(|n| n as i64),
             Err(e) => {
                 return Err(crate::Error::msg(format!(
                     "proxy_accounts.quota_bytes read failed (schema regression?): {e}"
                 )));
             }
         };
-        let used_bytes = match r.try_get::<i64, _>("used_bytes") {
-            Ok(v) => v,
+        let used_bytes = match r.try_get::<u64, _>("used_bytes") {
+            Ok(v) => v as i64,
             Err(e) => {
                 return Err(crate::Error::msg(format!(
                     "proxy_accounts.used_bytes read failed (schema regression?): {e}"
@@ -146,7 +157,7 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
             }
         };
         out.push(ProxyAccount {
-            id: r.try_get::<i64, _>("id")?,
+            id: r.try_get::<u64, _>("id")? as i64,
             username: r.try_get("username")?,
             password_hash: r.try_get("password_hash")?,
             cleartext_password: cleartext,
@@ -181,6 +192,9 @@ pub async fn upsert_traffic(
     downlink: i64,
     connections: i64,
 ) -> Result<i64> {
+    // Schema columns are UNSIGNED — bind as u64/u32 to match.
+    // Internal callers pass i64; clamp negatives to 0 (they would
+    // be a metric-source bug anyway) and cast for the bind.
     let res = sqlx::query(
         r"
         INSERT INTO traffic_logs
@@ -193,11 +207,11 @@ pub async fn upsert_traffic(
             updated_at     = NOW()
         ",
     )
-    .bind(proxy_account_id)
+    .bind(proxy_account_id.max(0) as u64)
     .bind(day)
-    .bind(uplink)
-    .bind(downlink)
-    .bind(connections)
+    .bind(uplink.max(0) as u64)
+    .bind(downlink.max(0) as u64)
+    .bind(connections.max(0) as u32)
     .execute(pool)
     .await?;
     Ok(res.rows_affected() as i64)
@@ -224,6 +238,9 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
              likely a metric-source regression — refusing to apply"
         )));
     }
+    // proxy_accounts.id and used_bytes are BIGINT UNSIGNED — bind
+    // as u64. The delta is bounded by MAX_USED_BYTES_DELTA above
+    // so the cast can't truncate.
     sqlx::query(
         r"
         UPDATE proxy_accounts
@@ -231,8 +248,8 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
         WHERE id = ?
         ",
     )
-    .bind(delta)
-    .bind(proxy_account_id)
+    .bind(delta as u64)
+    .bind(proxy_account_id.max(0) as u64)
     .execute(pool)
     .await?;
     Ok(())
@@ -246,8 +263,9 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
 #[allow(dead_code)]
 pub async fn disable_account(pool: &MySqlPool, id: i64, reason: &str) -> Result<()> {
     tracing::info!(account = id, reason, "disabling account");
+    // id column is BIGINT UNSIGNED — bind u64.
     sqlx::query(r"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?")
-        .bind(id)
+        .bind(id.max(0) as u64)
         .execute(pool)
         .await?;
     Ok(())

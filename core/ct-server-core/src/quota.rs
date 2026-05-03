@@ -51,7 +51,13 @@ pub async fn enforce(
 
     let mut disabled = 0_usize;
     for row in &to_disable {
-        let id: i64 = row.try_get("id")?;
+        // proxy_accounts.id is BIGINT UNSIGNED in the Laravel
+        // schema, so we read u64 and bind u64 (sqlx rejects i64
+        // on either end with a type-mismatch error). The internal
+        // domain type is still i64 — IDs in any realistic
+        // deployment are nowhere near 2^63 so the cast is safe
+        // both directions.
+        let id: u64 = row.try_get("id")?;
         let username: String = row.try_get("username")?;
         let is_expired: i32 = row.try_get("is_expired")?;
         let over_quota: i32 = row.try_get("over_quota")?;
