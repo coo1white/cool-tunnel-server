@@ -24,10 +24,22 @@ WORKDIR /build
 
 # Copy the workspace and build in release. We use BuildKit cache
 # mounts so iterative builds don't re-download crates every time.
+# core/ includes core/.sqlx/ — pre-prepared sqlx query metadata
+# (see `make sqlx-prepare`). With SQLX_OFFLINE=true, the macros
+# validate every query against this committed metadata instead
+# of needing a live DB during `cargo build`.
 COPY core /build/core
 COPY manifests /build/manifests
 
 WORKDIR /build/core
+
+# Compile-time SQL safety. SQLX_OFFLINE=true forces the
+# `sqlx::query!()` macros to read core/.sqlx/*.json (committed)
+# instead of attempting to open a live DB connection. A schema
+# regression that wasn't reflected in .sqlx/ will fail this
+# stage with a clear "no cached data for query" error;
+# operator regenerates with `make sqlx-prepare`.
+ENV SQLX_OFFLINE=true
 
 # Static link against musl so the resulting binary runs in any
 # minimal Alpine OR debian base without a musl-libc dependency.

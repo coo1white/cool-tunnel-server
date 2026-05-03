@@ -50,10 +50,23 @@ jobs:
             core/target
           key: cargo-${{ runner.os }}-${{ hashFiles('core/Cargo.lock') }}
 
+      # Compile-time SQL safety. SQLX_OFFLINE=true tells the
+      # `sqlx::query!()` macros to read core/.sqlx/*.json
+      # (committed) instead of trying to open a live MariaDB.
+      # A schema regression (column dropped / retyped / renamed)
+      # that wasn't reflected in .sqlx/ fails the build here with
+      # "no cached data for query"; the operator regenerates with
+      # `make sqlx-prepare` and commits.
       - run: cargo fmt --all -- --check
       - run: cargo build --release --workspace --locked
+        env:
+          SQLX_OFFLINE: "true"
       - run: cargo test  --release --workspace --locked
+        env:
+          SQLX_OFFLINE: "true"
       - run: cargo clippy --release --all-targets --locked -- -D warnings
+        env:
+          SQLX_OFFLINE: "true"
 
   php:
     name: php (syntax / composer validate)

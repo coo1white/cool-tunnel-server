@@ -38,7 +38,8 @@ showstopper bugs that v0.0.10's hand-audit found.
 | **40** — Anti-tracking config smell-test (sing-box TLS 1.3, no TCP clash, no disk cache; Caddy ghost site no recognisable string; no `X-CT-*` headers) | `audit.yml` job `anti-tracking-config` | **weekly** + on every PR |
 | **41** — PHP class-vs-filename PSR-4 lint (catches "file Foo.php declares `class Bar`") | `audit.yml` job `php-psr4` | **weekly** + on every PR touching `panel/app/**` |
 | **42** — PHPStan level-5 (undefined-method, type errors) | `audit.yml` job `phpstan` | **weekly** + on every PR touching `panel/app/**` |
-| 43–50 | placeholders for future codified checks | — |
+| **43** — sqlx offline metadata staleness (every `query!()` call has matching `.sqlx/` JSON) | `audit.yml` job `sqlx-offline-check` | **weekly** + on every PR touching `core/` or `panel/database/migrations/` |
+| 44–50 | placeholders for future codified checks | — |
 
 ## What's scheduled vs. on-demand
 

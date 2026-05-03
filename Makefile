@@ -42,16 +42,28 @@ rust-fmt-check: ## cargo fmt --all -- --check
 	cd core && cargo fmt --all -- --check
 
 .PHONY: rust-build
-rust-build: ## cargo build --release --workspace
-	cd core && cargo build --release --workspace --locked
+rust-build: ## cargo build --release --workspace (offline sqlx)
+	cd core && SQLX_OFFLINE=true cargo build --release --workspace --locked
 
 .PHONY: rust-test
-rust-test: ## cargo test --release --workspace
-	cd core && cargo test --release --workspace --locked
+rust-test: ## cargo test --release --workspace (offline sqlx)
+	cd core && SQLX_OFFLINE=true cargo test --release --workspace --locked
 
 .PHONY: rust-clippy
-rust-clippy: ## cargo clippy --all-targets -- -D warnings
-	cd core && cargo clippy --release --all-targets --locked -- -D warnings
+rust-clippy: ## cargo clippy --all-targets -- -D warnings (offline sqlx)
+	cd core && SQLX_OFFLINE=true cargo clippy --release --all-targets --locked -- -D warnings
+
+.PHONY: sqlx-prepare
+sqlx-prepare: ## regenerate core/.sqlx/ from live schema (run after migrations or query!() edits)
+	./scripts/sqlx-prepare.sh
+
+.PHONY: sqlx-check
+sqlx-check: ## verify core/.sqlx/ matches the live schema (CI lint)
+	@cd core && SQLX_OFFLINE=true cargo check --workspace --locked \
+		|| { echo ""; \
+		     echo "  ↳ if this failed with 'no cached data for query',"; \
+		     echo "    .sqlx/ is stale — run: make sqlx-prepare && git add core/.sqlx"; \
+		     exit 1; }
 
 .PHONY: php-syntax
 php-syntax: ## php -l on every panel/**/*.php
