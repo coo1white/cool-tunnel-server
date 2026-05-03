@@ -1,0 +1,43 @@
+[package]
+name        = "ct-server-core"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering, admin-API hot-reload, metrics scraping, quota enforcement, anti-tracking probe."
+readme      = "README.md"
+keywords    = ["proxy", "naiveproxy", "caddy", "forwardproxy"]
+categories  = ["command-line-utilities", "network-programming"]
+
+[[bin]]
+name = "ct-server-core"
+path = "src/main.rs"
+
+[dependencies]
+ct-protocol = { path = "../ct-protocol" }
+
+clap = { version = "4.5", features = ["derive", "env"] }
+tokio = { version = "1.38", features = ["full"] }
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "macros", "chrono"] }
+hyper           = { version = "1.4", features = ["client", "http1"] }
+hyper-util      = { version = "0.1", features = ["client-legacy", "tokio"] }
+hyperlocal      = "0.9"
+http-body-util  = "0.1"
+bytes           = "1.6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+chrono     = { version = "0.4", features = ["serde"] }
+tracing    = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2       = "0.10"
+hex        = "0.4"
+hmac       = "0.12"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[lints]
+workspace = true
