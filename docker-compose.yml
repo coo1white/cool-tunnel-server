@@ -1,0 +1,126 @@
+# Cool Tunnel Server — full stack.
+#
+# Edit .env (copied from .env.example) before bringing this up.
+# install.sh handles first-time bootstrap; this file is the source
+# of truth for what is running in production.
+
+services:
+  # The Rust core builder. Not a long-running service — its image is
+  # used as a build dep by `panel`. `docker compose build` brings it
+  # up to date on each release.
+  core-builder:
+    build:
+      context: .
+      dockerfile: docker/core/Dockerfile
+    image: cool-tunnel-server-core:latest
+    profiles: ["build-only"]      # never started by `compose up`
+
+  caddy:
+    build:
+      context: ./docker/caddy
+    image: cool-tunnel-server-caddy:latest
+    container_name: ct-caddy
+    restart: unless-stopped
+    cap_add:
+      # Required for binding 80/443 inside the container as non-root,
+      # if we ever switch off the default Caddy user. Harmless otherwise.
+      - NET_BIND_SERVICE
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # The panel renders Caddyfile into a shared volume.
+      - caddy_etc:/etc/caddy
+      # ACME state and cert cache — persist across rebuilds.
+      - caddy_data:/data
+      - caddy_config:/config
+      # Static fallback assets when the panel is unreachable.
+      - ./caddy/sites-fallback:/srv/fallback:ro
+      # Shared admin socket so the panel can `caddy reload`.
+      - caddy_run:/run/caddy
+    depends_on:
+      panel:
+        condition: service_started
+    networks:
+      - ct-net
+
+  panel:
+    build:
+      context: .
+      dockerfile: docker/panel/Dockerfile
+      args:
+        CT_CORE_IMAGE: cool-tunnel-server-core:latest
+    image: cool-tunnel-server-panel:latest
+    container_name: ct-panel
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Inside the container the DB host is the service name.
+      DB_HOST: db
+      DB_PORT: 3306
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Where the CaddyfileGenerator writes the rendered file. Mounted
+      # from caddy_etc so the caddy container picks it up.
+      CADDYFILE_PATH: /etc/caddy/Caddyfile
+      # Unix-socket path Caddy exposes its admin API on (read-write to
+      # the panel via the shared caddy_run volume).
+      CADDY_ADMIN_SOCKET: /run/caddy/admin.sock
+    volumes:
+      - ./panel:/var/www/html
+      - ./manifests:/srv/manifests:ro
+      - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
+      - panel_storage:/var/www/html/storage
+      - caddy_etc:/etc/caddy
+      - caddy_run:/run/caddy
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - ct-net
+
+  db:
+    image: mariadb:11
+    container_name: ct-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE:      ${DB_DATABASE}
+      MARIADB_USER:          ${DB_USERNAME}
+      MARIADB_PASSWORD:      ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - ct-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: ct-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - ct-net
+
+volumes:
+  caddy_etc:
+  caddy_data:
+  caddy_config:
+  caddy_run:
+  panel_storage:
+  db_data:
+  redis_data:
+
+networks:
+  ct-net:
+    driver: bridge

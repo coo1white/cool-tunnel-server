@@ -1,0 +1,28 @@
+[package]
+name        = "ct-protocol"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+description = "Cool Tunnel wire format and client/server shared types. no_std-friendly. Used by the server and by every platform's client (current macOS, future iOS/Android/Windows/Linux desktop)."
+readme      = "README.md"
+keywords    = ["proxy", "naiveproxy", "cool-tunnel"]
+categories  = ["network-programming", "no-std::no-alloc"]
+
+[features]
+default = ["std"]
+# `std` adds Display/Error impls and HMAC verification. Disable for
+# embedded targets or super-thin client wrappers.
+std = []
+
+[dependencies]
+serde      = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[lints]
+workspace = true

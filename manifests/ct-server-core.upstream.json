@@ -1,0 +1,12 @@
+{
+    "name": "ct-server-core",
+    "kind": "binary",
+    "version": "0.0.1",
+    "upstream": "https://github.com/coo1white/cool-tunnel-server",
+    "verify": {
+        "command": ["ct-server-core", "version"],
+        "expect_stdout_contains": "ct-server-core",
+        "expect_zero_exit": true
+    },
+    "note": "Apache-2.0. The Rust engine that the Filament panel shells out to for Caddyfile generation, admin-API hot-reload, metrics scraping, quota enforcement, and anti-tracking probes. Bumping this is a normal release."
+}

@@ -1,0 +1,12 @@
+{
+    "name": "mariadb",
+    "kind": "container-image",
+    "version": "11",
+    "upstream": "https://hub.docker.com/_/mariadb",
+    "verify": {
+        "command": ["docker", "exec", "ct-db", "mariadb", "--version"],
+        "expect_stdout_contains": "11.",
+        "expect_zero_exit": true
+    },
+    "note": "GPL-2.0. Stores proxy_accounts, traffic_logs, fake_websites, server_configs, and the Filament users table."
+}

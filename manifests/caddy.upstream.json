@@ -1,0 +1,12 @@
+{
+    "name": "caddy",
+    "kind": "binary",
+    "version": "v2.8.4",
+    "upstream": "https://github.com/caddyserver/caddy",
+    "verify": {
+        "command": ["caddy", "version"],
+        "expect_stdout_contains": "v2.",
+        "expect_zero_exit": true
+    },
+    "note": "Apache-2.0. Built via xcaddy in docker/caddy/Dockerfile with the forwardproxy plugin baked in. Bumping the version means rebuilding the caddy image — see scripts/update.sh."
+}

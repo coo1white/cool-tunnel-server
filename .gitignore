@@ -1,0 +1,34 @@
+# Secrets
+.env
+.env.*.local
+
+# Composer / Laravel
+panel/vendor/
+panel/node_modules/
+panel/storage/app/*
+!panel/storage/app/.gitkeep
+panel/storage/framework/cache/data/*
+!panel/storage/framework/cache/data/.gitkeep
+panel/storage/framework/sessions/*
+!panel/storage/framework/sessions/.gitkeep
+panel/storage/framework/views/*
+!panel/storage/framework/views/.gitkeep
+panel/storage/logs/*
+!panel/storage/logs/.gitkeep
+panel/bootstrap/cache/*
+!panel/bootstrap/cache/.gitkeep
+panel/public/storage
+panel/public/hot
+
+# Generated Caddyfile (lives in a Docker volume in prod; locally we
+# don't want to commit a rendered file with secrets in it).
+caddy/Caddyfile.rendered
+
+# Editor / OS detritus
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Backup tarballs from scripts/backup.sh
+backups/

@@ -1,0 +1,12 @@
+{
+    "name": "redis",
+    "kind": "container-image",
+    "version": "7-alpine",
+    "upstream": "https://hub.docker.com/_/redis",
+    "verify": {
+        "command": ["docker", "exec", "ct-redis", "redis-cli", "--version"],
+        "expect_stdout_contains": "redis-cli",
+        "expect_zero_exit": true
+    },
+    "note": "BSD-3. Used by Laravel for cache, sessions, and the queue worker that serializes Caddy reload jobs."
+}

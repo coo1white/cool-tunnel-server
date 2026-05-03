@@ -1,0 +1,46 @@
+# Workspace root for the Cool Tunnel Server Rust code.
+#
+# The shape of this workspace is deliberate — `ct-protocol` is the
+# cross-platform shared crate that every Rust client (current macOS,
+# future iOS / Android / Windows / Linux desktop) can depend on. The
+# server is the canonical source of the wire format, and any new
+# client just adds `ct-protocol` to its Cargo.toml to interoperate.
+#
+#  core/
+#   ├── ct-protocol/        Pure-Rust shared types, no async, no I/O.
+#   │                       What every client links against.
+#   └── ct-server-core/     Server-only binary (CLI + daemon mode).
+#                           Talks to MariaDB, Caddy admin API, metrics.
+
+[workspace]
+resolver = "2"
+members = [
+    "ct-protocol",
+    "ct-server-core",
+]
+
+[workspace.package]
+version       = "0.0.1"
+edition       = "2021"
+rust-version  = "1.78"
+license       = "Apache-2.0"
+repository    = "https://github.com/coo1white/cool-tunnel-server"
+authors       = ["Nick (coo1white)"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+pedantic     = { level = "warn",  priority = -1 }
+unwrap_used  = "deny"
+expect_used  = "deny"
+panic        = "deny"
+todo         = "deny"
+unimplemented = "deny"
+
+[profile.release]
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+strip         = "symbols"
+panic         = "abort"
