@@ -1,7 +1,7 @@
 {
     "name": "sing-box",
     "kind": "container-image",
-    "version": "1.11.4",
+    "version": "1.13.11",
     "upstream": "https://github.com/SagerNet/sing-box",
     "verify": {
         "command": ["docker", "exec", "ct-singbox", "sing-box", "version"],

@@ -9,10 +9,12 @@
         "servers": [
             {
                 "tag": "doh",
-                "address": "{{ .DohResolver }}",
-                "strategy": "ipv4_only"
+                "type": "https",
+                "server": "{{ .DohServer }}",
+                "path": "{{ .DohPath }}"
             }
         ],
+        "strategy": "ipv4_only",
         "final": "doh"
     },
 
