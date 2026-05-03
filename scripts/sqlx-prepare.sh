@@ -111,10 +111,20 @@ fi
 # ---------- Diff report -------------------------------------------
 
 step "Result"
-if git diff --quiet -- core/.sqlx 2>/dev/null; then
+# `git diff` only surfaces tracked changes; on FIRST prepare the
+# .sqlx files are untracked (never been committed), so we have to
+# check both: tracked-modifications AND new-untracked.
+tracked_diff=0
+git diff --quiet -- core/.sqlx 2>/dev/null || tracked_diff=1
+untracked_count=$(git ls-files --others --exclude-standard -- core/.sqlx 2>/dev/null | wc -l)
+
+if [[ "$tracked_diff" == 0 && "$untracked_count" == 0 ]]; then
     ok "core/.sqlx/ unchanged — schema and queries already in sync"
 else
     ok "core/.sqlx/ regenerated"
+    if [[ "$untracked_count" -gt 0 ]]; then
+        printf "    new files: %d\n" "$untracked_count"
+    fi
     git diff --stat -- core/.sqlx 2>/dev/null || true
     cat <<HINT
 ↳ commit the new metadata so future builds compile offline:
