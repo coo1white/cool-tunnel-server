@@ -1,16 +1,30 @@
 // Shared SQLx pool and DB queries.
 //
-// The panel writes to the same MariaDB. We re-read on every operation
-// — no caching at this layer — because the panel's UI assumes a
-// strong-consistency view. The pool is small (4 conns) since the core
-// runs alongside a single panel container; the panel itself uses a
-// separate larger pool.
+// COMPILE-TIME SQL TYPE CHECKING (v0.0.11+).
+//
+// All queries below use `sqlx::query!()` / `sqlx::query_as!()`,
+// which inspect the live schema during `cargo sqlx prepare` and
+// embed the result in `core/.sqlx/*.json`. The build then uses
+// `SQLX_OFFLINE=true` to validate every query against that
+// frozen metadata at `cargo check` time. Schema regressions
+// (column dropped, retyped, renamed) fail the build, never
+// production. See `docs/sqlx-offline.md` and the
+// `make sqlx-prepare` target.
+//
+// Type-mapping notes:
+//   - Laravel `\$table->id()` / `\$table->foreignId()` →
+//     `BIGINT UNSIGNED` → sqlx returns `u64`. We cast to `i64`
+//     at the struct boundary; primary-key IDs in any plausible
+//     deployment are nowhere near 2^63 so the cast is lossless.
+//   - Laravel `\$table->boolean()` → `TINYINT(1)` → sqlx returns
+//     `i8`. We compare `!= 0` for the bool field.
+//   - Laravel `\$table->timestamp()->nullable()` → with chrono
+//     feature, sqlx returns `Option<chrono::DateTime<chrono::Utc>>`.
 
 use crate::domain::{ProxyAccount, ServerConfig};
 use crate::Result;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::NaiveDate;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
-use sqlx::Row;
 use std::env;
 use std::time::Duration;
 
@@ -38,8 +52,8 @@ fn assemble_from_parts() -> String {
 }
 
 pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query!(
+        r#"
         SELECT
             id, domain, acme_email, acme_directory,
             anti_tracking_hide_ip,
@@ -53,39 +67,31 @@ pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
             last_rendered_at
         FROM server_configs
         WHERE id = 1
-        ",
+        "#,
     )
     .fetch_one(pool)
     .await?;
 
-    // NOTE on the u64 → i64 cast: Laravel's `$table->id()` migration
-    // creates `BIGINT UNSIGNED AUTO_INCREMENT`. sqlx is strict about
-    // the type match at decode time and rejects an i64 try_get on an
-    // unsigned column ("Rust type i64 (as SQL type BIGINT) is not
-    // compatible with SQL type BIGINT UNSIGNED"). We read u64 and
-    // cast — primary-key IDs in Laravel will never reach 2^63 in any
-    // realistic workload, so the cast is lossless. Same pattern
-    // for the rest of the BIGINT UNSIGNED columns below.
     Ok(ServerConfig {
-        id: row.try_get::<u64, _>("id")? as i64,
-        domain: row.try_get("domain")?,
-        acme_email: row.try_get("acme_email")?,
-        acme_directory: row.try_get("acme_directory")?,
-        hide_ip: row.try_get::<i8, _>("anti_tracking_hide_ip")? != 0,
-        hide_via: row.try_get::<i8, _>("anti_tracking_hide_via")? != 0,
-        probe_resistance: row.try_get::<i8, _>("anti_tracking_probe_resistance")? != 0,
-        doh_resolver: row.try_get("anti_tracking_doh_resolver")?,
-        http3_enabled: row.try_get::<i8, _>("http3_enabled")? != 0,
-        admin_basic_auth_user: row.try_get("admin_basic_auth_user").ok(),
-        admin_basic_auth_hash: row.try_get("admin_basic_auth_hash").ok(),
-        last_caddyfile_hash: row.try_get("last_caddyfile_hash").ok(),
-        last_rendered_at: row.try_get::<Option<DateTime<Utc>>, _>("last_rendered_at")?,
+        id: row.id as i64,
+        domain: row.domain,
+        acme_email: row.acme_email,
+        acme_directory: row.acme_directory,
+        hide_ip: row.anti_tracking_hide_ip != 0,
+        hide_via: row.anti_tracking_hide_via != 0,
+        probe_resistance: row.anti_tracking_probe_resistance != 0,
+        doh_resolver: row.anti_tracking_doh_resolver,
+        http3_enabled: row.http3_enabled != 0,
+        admin_basic_auth_user: row.admin_basic_auth_user,
+        admin_basic_auth_hash: row.admin_basic_auth_hash,
+        last_caddyfile_hash: row.last_caddyfile_hash,
+        last_rendered_at: row.last_rendered_at,
     })
 }
 
 pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>> {
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query!(
+        r#"
         SELECT id, username, password_hash, password_cleartext_encrypted,
                enabled, quota_bytes, used_bytes, expires_at
         FROM proxy_accounts
@@ -93,7 +99,7 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
           AND (expires_at IS NULL OR expires_at > NOW())
           AND (quota_bytes IS NULL OR used_bytes < quota_bytes)
         ORDER BY username
-        ",
+        "#,
     )
     .fetch_all(pool)
     .await?;
@@ -101,21 +107,11 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
     let app_key = std::env::var("APP_KEY").ok();
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        // password_cleartext_encrypted is allowed to be NULL (pre-
-        // migration rows or rows the operator never re-saved). We
-        // log on type mismatch / decode error rather than silently
-        // skipping — a schema migration that changed the column
-        // type to e.g. BLOB without updating this code would be
-        // visible in logs instead of resulting in every user being
-        // locked out with "could not decrypt".
-        let encrypted: Option<String> = match r.try_get("password_cleartext_encrypted") {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(error = %e, "password_cleartext_encrypted column type mismatch");
-                None
-            }
-        };
-        let cleartext = encrypted.and_then(|enc| {
+        // password_cleartext_encrypted is TEXT NULL — sqlx returns
+        // Option<String>. Decryption errors are logged + skipped:
+        // a stale APP_KEY or pre-migration row should not lock the
+        // operator out of every other account.
+        let cleartext = r.password_cleartext_encrypted.and_then(|enc| {
             match crate::laravel_crypt::decrypt(&enc, app_key.as_deref().unwrap_or("")) {
                 Ok(s) => Some(s),
                 Err(e) => {
@@ -124,61 +120,29 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
                 }
             }
         });
-        // quota_bytes / used_bytes are BIGINT UNSIGNED in the
-        // Laravel migration; expires_at is nullable timestamp. Read
-        // unsigned-int columns as u64 and cast (see note in
-        // server_config above on why the cast is safe). We
-        // distinguish "column NULL" (legitimate, means unlimited /
-        // never-expire) from "column missing or wrong type"
-        // (schema regression — fail loudly instead of silently
-        // unlimited-quota every account).
-        let quota_bytes = match r.try_get::<Option<u64>, _>("quota_bytes") {
-            Ok(v) => v.map(|n| n as i64),
-            Err(e) => {
-                return Err(crate::Error::msg(format!(
-                    "proxy_accounts.quota_bytes read failed (schema regression?): {e}"
-                )));
-            }
-        };
-        let used_bytes = match r.try_get::<u64, _>("used_bytes") {
-            Ok(v) => v as i64,
-            Err(e) => {
-                return Err(crate::Error::msg(format!(
-                    "proxy_accounts.used_bytes read failed (schema regression?): {e}"
-                )));
-            }
-        };
-        let expires_at = match r.try_get::<Option<DateTime<Utc>>, _>("expires_at") {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(crate::Error::msg(format!(
-                    "proxy_accounts.expires_at read failed (schema regression?): {e}"
-                )));
-            }
-        };
         out.push(ProxyAccount {
-            id: r.try_get::<u64, _>("id")? as i64,
-            username: r.try_get("username")?,
-            password_hash: r.try_get("password_hash")?,
+            id: r.id as i64,
+            username: r.username,
+            password_hash: r.password_hash,
             cleartext_password: cleartext,
-            enabled: r.try_get::<i8, _>("enabled")? != 0,
-            quota_bytes,
-            used_bytes,
-            expires_at,
+            enabled: r.enabled != 0,
+            quota_bytes: r.quota_bytes.map(|n| n as i64),
+            used_bytes: r.used_bytes as i64,
+            expires_at: r.expires_at,
         });
     }
     Ok(out)
 }
 
 pub async fn record_caddyfile_hash(pool: &MySqlPool, hash: &str) -> Result<()> {
-    sqlx::query(
-        r"
+    sqlx::query!(
+        r#"
         UPDATE server_configs
         SET last_caddyfile_hash = ?, last_rendered_at = NOW()
         WHERE id = 1
-        ",
+        "#,
+        hash,
     )
-    .bind(hash)
     .execute(pool)
     .await?;
     Ok(())
@@ -192,11 +156,15 @@ pub async fn upsert_traffic(
     downlink: i64,
     connections: i64,
 ) -> Result<i64> {
-    // Schema columns are UNSIGNED — bind as u64/u32 to match.
-    // Internal callers pass i64; clamp negatives to 0 (they would
-    // be a metric-source bug anyway) and cast for the bind.
-    let res = sqlx::query(
-        r"
+    // Schema columns are UNSIGNED — bind as u64/u32 to match. Internal
+    // callers pass i64; clamp negatives to 0 (a metric-source bug
+    // anyway) and cast for the bind.
+    let pid: u64 = proxy_account_id.max(0) as u64;
+    let up: u64 = uplink.max(0) as u64;
+    let down: u64 = downlink.max(0) as u64;
+    let conn: u32 = connections.max(0) as u32;
+    let res = sqlx::query!(
+        r#"
         INSERT INTO traffic_logs
             (proxy_account_id, day, uplink_bytes, downlink_bytes, connections, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, NOW(), NOW())
@@ -205,13 +173,9 @@ pub async fn upsert_traffic(
             downlink_bytes = VALUES(downlink_bytes),
             connections    = GREATEST(connections, VALUES(connections)),
             updated_at     = NOW()
-        ",
+        "#,
+        pid, day, up, down, conn,
     )
-    .bind(proxy_account_id.max(0) as u64)
-    .bind(day)
-    .bind(uplink.max(0) as u64)
-    .bind(downlink.max(0) as u64)
-    .bind(connections.max(0) as u32)
     .execute(pool)
     .await?;
     Ok(res.rows_affected() as i64)
@@ -238,18 +202,18 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
              likely a metric-source regression — refusing to apply"
         )));
     }
-    // proxy_accounts.id and used_bytes are BIGINT UNSIGNED — bind
-    // as u64. The delta is bounded by MAX_USED_BYTES_DELTA above
-    // so the cast can't truncate.
-    sqlx::query(
-        r"
+    // proxy_accounts.id and used_bytes are BIGINT UNSIGNED — bind as u64.
+    let d: u64 = delta as u64;
+    let id: u64 = proxy_account_id.max(0) as u64;
+    sqlx::query!(
+        r#"
         UPDATE proxy_accounts
         SET used_bytes = used_bytes + ?, last_seen_at = NOW(), updated_at = NOW()
         WHERE id = ?
-        ",
+        "#,
+        d,
+        id,
     )
-    .bind(delta as u64)
-    .bind(proxy_account_id.max(0) as u64)
     .execute(pool)
     .await?;
     Ok(())
@@ -263,10 +227,12 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
 #[allow(dead_code)]
 pub async fn disable_account(pool: &MySqlPool, id: i64, reason: &str) -> Result<()> {
     tracing::info!(account = id, reason, "disabling account");
-    // id column is BIGINT UNSIGNED — bind u64.
-    sqlx::query(r"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?")
-        .bind(id.max(0) as u64)
-        .execute(pool)
-        .await?;
+    let id_u: u64 = id.max(0) as u64;
+    sqlx::query!(
+        r#"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?"#,
+        id_u,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }

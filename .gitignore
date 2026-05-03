@@ -36,3 +36,9 @@ backups/
 # Rust build artifacts (the workspace lives in core/)
 core/target/
 **/target/
+
+# sqlx offline metadata: core/.sqlx/ IS committed. Listed here as
+# documentation — do NOT add `core/.sqlx` to ignore patterns. The
+# directory holds the compile-time SQL type contract every build
+# validates against (see docs/sqlx-offline.md, scripts/sqlx-prepare.sh).
+# CI's sqlx-offline-check job fails if it's missing.

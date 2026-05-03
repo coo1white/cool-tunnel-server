@@ -22,6 +22,105 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.11] — 2026-05-03
+
+**Compile-time SQL safety.** Every `sqlx::query()` call in the
+Rust core is now `sqlx::query!()` — type-checked against the
+panel's MariaDB schema at `cargo check` time, with offline
+metadata committed under `core/.sqlx/` so the build never needs
+a live DB. Schema regressions (column dropped, retyped, renamed)
+become **build failures**, not production failures.
+
+The motivation is the v0.0.10 BIGINT UNSIGNED issue: an `i64`
+bound to an unsigned column was caught by sqlx at runtime, after
+a 12-minute Docker rebuild + container start. With `query!()` +
+offline mode, the same class of bug surfaces during `cargo check`
+in seconds, before any image is built.
+
+### Changed (wire-format / build pipeline)
+
+- **`core/ct-server-core/src/db.rs`,`quota.rs`, `subscription.rs`**
+  — every query migrated from `sqlx::query("…")` (runtime-checked)
+  to `sqlx::query!("…")` (compile-time-checked). The macros
+  inspect the live schema during `cargo sqlx prepare` and embed
+  exact column types (incl. nullability + UNSIGNED) into
+  `core/.sqlx/query-<hash>.json`. The committed JSON files are
+  the schema↔code contract; `cargo build` validates against them.
+
+- **Builds now require `SQLX_OFFLINE=true` + a populated
+  `core/.sqlx/` directory.** Wired in:
+  - `docker/core/Dockerfile` (`ENV SQLX_OFFLINE=true`)
+  - `.github/workflows/ci.yml` (per-step env on `cargo build`,
+    `cargo test`, `cargo clippy`)
+  - `Makefile` (`rust-build`, `rust-test`, `rust-clippy`)
+
+- **First-time and post-migration generation:**
+  `scripts/sqlx-prepare.sh` (also `make sqlx-prepare`). The script
+  brings up MariaDB via the project's `docker-compose.yml`, runs
+  Laravel migrations, installs `sqlx-cli` if missing, runs
+  `cargo sqlx prepare --workspace` against the live schema, and
+  reports the diff for the operator to commit. Idempotent.
+  Containerised fallback for when the DB port isn't host-mapped.
+
+### Added
+
+- **Cycle 43 codified: `sqlx-offline-check` audit job.** Runs
+  `cargo check --workspace` with `SQLX_OFFLINE=true` against the
+  committed `core/.sqlx/`. If a `query!()` call has no matching
+  metadata (operator forgot `make sqlx-prepare`) or the metadata
+  is for a different schema (migration ran but wasn't reflected),
+  the job fails with `error: no cached data for this query` and
+  blocks the merge. Triggers: weekly cron + every PR touching
+  `core/**` or `panel/database/migrations/**`.
+- **`docs/sqlx-offline.md`** — explains the why, the how, the
+  per-migration loop, common errors, and the prepare-vs-runtime
+  trade-off table.
+- **`make sqlx-check`** target — runs the same check locally
+  before push. Prints a "↳ run make sqlx-prepare and commit"
+  hint on staleness.
+- **`.gitignore` comment** — explicit "do NOT add `core/.sqlx`
+  to ignore patterns" note. The directory MUST be committed; CI
+  fails without it.
+
+### Migrations / op-side action required (one-time per deploy)
+
+Pulling v0.0.11 onto a working v0.0.10 deployment requires one
+extra step before the next build will succeed:
+
+```bash
+cd /opt/cool-tunnel-server
+git fetch --depth 1 origin main && git reset --hard FETCH_HEAD
+make sqlx-prepare
+git add core/.sqlx
+git commit -m "chore(sqlx): initial offline metadata"
+git push origin main
+docker compose --profile build-only build core-builder
+docker compose up -d --force-recreate panel
+```
+
+After that, every future `cargo build` / CI run / Docker rebuild
+runs offline; the only time `sqlx-prepare` is rerun is after a
+migration changes column types or someone adds/edits a `query!()`
+call.
+
+### Tests
+
+51 passing once `core/.sqlx/` is generated (build won't compile
+without it — that's the whole point). Build + clippy + fmt +
+shellcheck still clean with offline mode wired in.
+
+### Security
+
+- Removes the entire class of "code expects T, schema returns
+  U, runtime decode error in production" bugs. The contract is
+  literal JSON checked into git; review-able in PR diffs.
+- The `.sqlx/*.json` files contain query SQL + column types. They
+  are NOT secrets — no data, no credentials. Safe to commit and
+  diff publicly (well, would be — the repo stays private for
+  other reasons).
+
+---
+
 ## [0.0.10] — 2026-05-03
 
 Fourth 50-cycle LTSC audit, focused on **code-robustness design**:
@@ -803,7 +902,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.10...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.11...HEAD
+[0.0.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.7...v0.0.8

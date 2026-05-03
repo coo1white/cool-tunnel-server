@@ -14,7 +14,6 @@ use crate::{db, Error, Result};
 use ct_protocol::{
     AntiTrackingFeature, ProfileV1, ServerCapabilitiesV1, SubscriptionManifestV1, PROTOCOL_VERSION,
 };
-use sqlx::Row;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> {
@@ -28,19 +27,20 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
     // via the sing-box config's `users` array — disabled accounts
     // are filtered out at render time in singbox::render().
     // proxy_accounts.id is BIGINT UNSIGNED — bind u64.
-    let row = sqlx::query(
-        r"
+    let id_u: u64 = account_id.max(0) as u64;
+    let row = sqlx::query!(
+        r#"
         SELECT username, password_hash
         FROM proxy_accounts
         WHERE id = ?
-        ",
+        "#,
+        id_u,
     )
-    .bind(account_id.max(0) as u64)
     .fetch_optional(&pool)
     .await?
     .ok_or_else(|| Error::msg(format!("no proxy_account with id={account_id}")))?;
 
-    let username: String = row.try_get("username")?;
+    let username = row.username;
     // We cannot include the cleartext password in the manifest —
     // we never stored it. The manifest carries the *bcrypt hash*
     // wrapped as a single-use token; the panel decorates this row
@@ -50,8 +50,7 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
     // splice it into the emitted JSON before signing. So this
     // command emits a *placeholder* password that the panel must
     // replace.
-    let password_hash: String = row.try_get("password_hash")?;
-    let _ = password_hash; // unused for now; panel splices cleartext
+    let _ = row.password_hash; // unused for now; panel splices cleartext
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

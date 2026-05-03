@@ -24,6 +24,8 @@ on:
   # asset link doesn't slip in.
   pull_request:
     paths:
+      - 'core/**'
+      - 'panel/database/migrations/**'
       - 'core/Cargo.toml'
       - 'core/Cargo.lock'
       - 'core/ct-protocol/Cargo.toml'
@@ -319,6 +321,46 @@ jobs:
           done < <(grep -rEn '(href|src)="/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)"' \
                        panel/resources/views 2>/dev/null || true)
           exit "$fail"
+
+  # ---------- Cycle 43: sqlx offline metadata staleness check ----
+  #
+  # Catches the v0.0.10/v0.0.11 BIGINT UNSIGNED bug class at lint
+  # time: every `sqlx::query!()` call now has its column types
+  # frozen in core/.sqlx/*.json (see scripts/sqlx-prepare.sh).
+  # If a panel migration changes a column type but nobody runs
+  # `make sqlx-prepare`, the production binary will fail at
+  # runtime. Instead, we validate that the committed `.sqlx/`
+  # files load against the current source's `query!()` calls
+  # — a stale metadata file fails this job at CI time.
+
+  sqlx-offline-check:
+    name: sqlx offline metadata up to date
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86
+      - name: Verify .sqlx/ matches the workspace's query!() calls
+        env:
+          SQLX_OFFLINE: "true"
+        run: |
+          set -euo pipefail
+          if [[ ! -d .sqlx ]]; then
+              echo "::error::core/.sqlx/ is missing. Run 'make sqlx-prepare' on a host with the live DB and commit the result."
+              exit 1
+          fi
+          # cargo check fails with "no cached data for query \"...\""
+          # when a query!() call is not represented in .sqlx/. That
+          # means either: (a) someone added a query!() without
+          # running prepare; (b) someone changed a query's SQL but
+          # didn't refresh; (c) a migration changed column types and
+          # the existing JSON is now wrong-shaped.
+          cargo check --workspace --locked --message-format=human
 
   # ---------- Cycle 41: PHP class-vs-filename lint (PSR-4) -------
   #
