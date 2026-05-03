@@ -119,9 +119,33 @@ require_env() {
 #
 # Source a .env file with shellcheck-friendly handling. Default path
 # is `.env` in the current working directory.
+#
+# Common operator papercut: bcrypt hashes (PANEL_BASIC_AUTH_HASH) and
+# random passwords often contain literal $ characters. Without single
+# quotes, bash sees `$2y$10$...` as the positional arg $2 followed by
+# literal text — `set -u` then aborts with "$2: unbound variable".
+# We pre-scan for the most common shape and print a friendlier
+# pointer before letting the actual source error fire.
 load_env() {
     local path="${1:-.env}"
     require_file "$path" "cp .env.example .env  &&  \$EDITOR .env"
+    # Scan for unquoted bcrypt hashes — pattern is KEY=$2y$10$..., or
+    # =$2a$, =$2b$. Anything starting with =$ that isn't already
+    # opened with a quote is suspect.
+    if grep -nE '^[A-Z_][A-Z0-9_]*=\$2[ayb]\$' "$path" >/dev/null; then
+        echo "" >&2
+        echo "  ✗ .env has an unquoted bcrypt hash. Bash reads \$2 / \$1 etc. as" >&2
+        echo "    positional args during 'set -a; . .env' and aborts." >&2
+        echo "    Wrap the value in SINGLE quotes:" >&2
+        echo "" >&2
+        grep -nE '^[A-Z_][A-Z0-9_]*=\$2[ayb]\$' "$path" \
+            | sed 's/^/      /' >&2
+        echo "" >&2
+        echo "    Change   PANEL_BASIC_AUTH_HASH=\$2y\$10\$abc..." >&2
+        echo "    To       PANEL_BASIC_AUTH_HASH='\$2y\$10\$abc...'" >&2
+        echo "" >&2
+        return 1
+    fi
     set -a
     # shellcheck source=/dev/null
     . "$path"
