@@ -2,8 +2,9 @@
 //   - expires_at  is in the past, OR
 //   - quota_bytes is non-null and used_bytes >= quota_bytes
 //
-// If any account changed state, re-render the Caddyfile and reload
-// Caddy so basic_auth lines come into effect immediately.
+// If any account changed state, re-render the sing-box config and
+// hot-reload via the clash API so the new `users` array (with the
+// disabled accounts removed) takes effect immediately.
 
 use crate::{admin, db, singbox, Result};
 use chrono::Utc;

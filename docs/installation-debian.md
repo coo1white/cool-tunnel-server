@@ -257,7 +257,7 @@ Switch the two `banaction` lines to `iptables-multiport` and
 ```bash
 ufw allow OpenSSH
 ufw allow 80/tcp                    # ACME HTTP-01 + http→https redirect
-ufw allow 443/tcp                   # HTTPS (h1, h2, forward_proxy)
+ufw allow 443/tcp                   # HTTPS — sing-box NaiveProxy CONNECT
 ufw allow 443/udp                   # HTTP/3 (QUIC)
 ufw --force enable
 ufw status verbose

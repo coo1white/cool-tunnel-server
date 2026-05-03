@@ -50,7 +50,9 @@ pub async fn reload(socket_path: &str, config_path: &str) -> Result<()> {
         let status = resp.status();
         let body = read_body(resp).await.unwrap_or_default();
         return Err(Error::msg(format!(
-            "sing-box clash /configs failed: {status} — {}",
+            "sing-box clash /configs failed: {status} — {}. \
+             Validate the rendered config first: \
+             `docker compose exec ct-singbox sing-box check -c /etc/sing-box/config.json`",
             String::from_utf8_lossy(&body),
         )));
     }
@@ -72,7 +74,10 @@ pub async fn reload_caddyfile_text(socket_path: &str, config_path: &str) -> Resu
 pub async fn dump_config(socket_path: &str) -> Result<()> {
     if !Path::new(socket_path).exists() {
         return Err(Error::msg(format!(
-            "clash API socket {socket_path} not found"
+            "clash API socket {socket_path} not found. \
+             sing-box may not be running, or the singbox_run docker volume is \
+             not mounted into the panel container. Check: \
+             `docker compose ps sing-box` and the volume list in docker-compose.yml."
         )));
     }
     let client: Client<UnixConnector, Full<Bytes>> = Client::unix();
@@ -100,10 +105,23 @@ async fn read_body(resp: Response<Incoming>) -> Result<Vec<u8>> {
 
 async fn reload_via_docker_restart() -> Result<()> {
     let started = Instant::now();
-    let out = Command::new("docker")
-        .args(["compose", "restart", "sing-box"])
-        .output()
-        .await?;
+    // Bounded timeout so a hung docker daemon (network blip, disk
+    // full, etc.) doesn't wedge the panel's reload path forever.
+    // 60s is generous — `docker compose restart sing-box` should
+    // finish in ≤ 5s on a healthy host.
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        Command::new("docker")
+            .args(["compose", "restart", "sing-box"])
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        Error::msg(
+            "docker compose restart sing-box timed out after 60s. \
+             Investigate: `docker ps` and `docker compose logs --tail=50 sing-box`.",
+        )
+    })??;
     if !out.status.success() {
         return Err(Error::msg(format!(
             "docker compose restart sing-box failed: {}",

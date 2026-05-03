@@ -115,10 +115,20 @@ pub async fn render(
 
 /// Run `sing-box check` against the rendered file. Catches malformed
 /// JSON / unknown fields / port conflicts before the reload attempt.
+///
+/// Bounded by a 30s timeout so a hung docker daemon doesn't wedge
+/// the validation step.
 pub async fn validate(output_path: &str) -> Result<()> {
     let mut cmd = Command::new("docker");
     cmd.args(["exec", "ct-singbox", "sing-box", "check", "-c", output_path]);
-    let out = cmd.output().await?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output())
+        .await
+        .map_err(|_| {
+            Error::msg(
+                "`sing-box check` timed out after 30s. \
+                 Is the ct-singbox container running? `docker ps`",
+            )
+        })??;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(Error::msg(format!("sing-box check failed: {stderr}")));

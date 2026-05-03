@@ -22,6 +22,56 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.6] — 2026-05-03
+
+5-cycle LTSC code audit. Two structural bugs fixed (the v0.0.4
+sing-box template never picked up the ACME→cert-path change; the
+v0.0.3 mass-assignment guard reverted somewhere along the way),
+plus a reliability gap and a clutch of stale comments.
+
+### Fixed
+
+- **`sing-box/config.json.tpl` still had the `acme` block** —
+  v0.0.4's "switch to certificate_path / key_path" edit landed in
+  the Rust render code (which set CertPath / KeyPath bindings) but
+  not in the template file itself. With this template, sing-box
+  would attempt BOTH built-in ACME AND read certs Caddy wrote,
+  causing port-80 binding conflicts or undefined behaviour. Now the
+  template uses `certificate_path` + `key_path` to match the bindings.
+- **`ProxyAccount.$fillable` had `password_hash` and
+  `password_cleartext_encrypted` back in it.** The v0.0.3 hardening
+  apparently reverted between then and now — Cycle 2 caught it.
+  Both columns are out of `$fillable` again; only
+  `setCleartextPassword()` can write them.
+- **Subprocess calls had no timeout.** `Command::new("docker")`
+  invocations in `admin.rs`, `singbox/mod.rs`, and `components.rs`
+  could hang indefinitely on a sick docker daemon. All three now
+  wrap with `tokio::time::timeout` (60s for restart, 30s for
+  validation, 15s for component-verify).
+- Stale comments: `quota.rs` referred to "re-render the Caddyfile";
+  `subscription.rs` referred to "Caddyfile basic_auth presence";
+  `installation-debian.md` UFW comment said `forward_proxy`. All
+  three now name the actual sing-box-era machinery.
+
+### Changed
+
+- `install.sh` pre-flight now also requires `dig`, `curl`, `jq`,
+  and `htpasswd` — every tool a real install needs. Also requires
+  `PANEL_BASIC_AUTH_HASH` to be set in `.env` (with a hint to
+  generate one via `htpasswd -nbB admin '<pw>'`). Catches "I
+  forgot to set the panel password" before bringing services up.
+- Friendlier error messages from `admin::reload`: a non-2xx clash
+  API response now suggests running `sing-box check -c …` to
+  validate the config first; a missing clash socket suggests the
+  most likely cause (sing-box not running, or the volume not
+  mounted into the panel container).
+
+### Tests
+
+38 passing; build + clippy + fmt + shellcheck all clean.
+
+---
+
 ## [0.0.5] — 2026-05-03
 
 LTSC discipline pass. No runtime behaviour change; everything is
@@ -195,7 +245,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.2...v0.0.3

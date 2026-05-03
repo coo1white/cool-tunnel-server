@@ -22,7 +22,8 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
     // operator might want to issue a manifest, then disable the
     // account, then re-enable later; the manifest is for the same
     // username so that's fine. The proxy itself enforces enabled-ness
-    // via Caddyfile basic_auth presence.
+    // via the sing-box config's `users` array — disabled accounts
+    // are filtered out at render time in singbox::render().
     let row = sqlx::query(
         r"
         SELECT username, password_hash

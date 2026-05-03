@@ -85,12 +85,28 @@ async fn verify_via_command(m: &ComponentManifestV1) -> (ComponentStateV1, Strin
 
     let args: Vec<&str> = spec.command.iter().skip(1).map(String::as_str).collect();
 
-    let output = match Command::new(prog).args(&args).output().await {
-        Ok(o) => o,
-        Err(e) => {
+    // Bounded by a 15s timeout. The verify command is supposed to
+    // be a fast `--version`-style check; if it hangs longer than
+    // that, treat it as VerifyFailed so a hung verifier doesn't
+    // wedge the entire OK/NG pass.
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        Command::new(prog).args(&args).output(),
+    )
+    .await
+    {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
             return (
                 ComponentStateV1::Missing,
                 format!("could not exec {prog}: {e}"),
+                None,
+            );
+        }
+        Err(_) => {
+            return (
+                ComponentStateV1::VerifyFailed,
+                format!("`{prog}` did not respond within 15s"),
                 None,
             );
         }
