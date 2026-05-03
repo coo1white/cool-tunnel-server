@@ -61,8 +61,19 @@ pub async fn render(
         .collect();
 
     let body = render_to_string(template_path, &cfg, &safe_accounts).await?;
+
+    // The hash is computed over (rendered config) AND (cert mtime).
+    // The mtime is NOT in the rendered file (sing-box would reject
+    // an unknown JSON field) — it's just an extra input to the change-
+    // detection hash so a Caddy cert renewal flips `changed = true`
+    // and the existing scheduled `singbox:render --if-changed --reload`
+    // path picks up the rotation without any other plumbing.
+    let cert_mtime = read_cert_mtime(&cfg).await;
     let mut hasher = Sha256::new();
     hasher.update(body.as_bytes());
+    if let Some(t) = cert_mtime {
+        hasher.update(format!("\x00cert-mtime:{t}").as_bytes());
+    }
     let hash = hex::encode(hasher.finalize());
 
     if dry_run {
@@ -70,20 +81,18 @@ pub async fn render(
         return Ok(());
     }
 
-    let changed = match fs::read(output_path).await {
-        Ok(existing) => {
-            let mut h = Sha256::new();
-            h.update(&existing);
-            hex::encode(h.finalize()) != hash
-        }
-        Err(_) => true,
-    };
+    let last_hash = cfg.last_caddyfile_hash.clone().unwrap_or_default();
+    let changed = last_hash != hash;
 
     if changed {
         atomic_write(output_path, &body).await?;
         db::record_caddyfile_hash(&pool, &hash).await?;
-        tracing::info!(path = output_path, %hash, bytes = body.len(),
-            users = safe_accounts.len(), "sing-box config rendered");
+        tracing::info!(
+            path = output_path, %hash, bytes = body.len(),
+            users = safe_accounts.len(),
+            cert_mtime_seen = cert_mtime.is_some(),
+            "sing-box config rendered"
+        );
     } else {
         tracing::debug!(path = output_path, %hash, "sing-box config unchanged");
     }
@@ -156,6 +165,12 @@ async fn render_to_string(
         serde_json::to_string(&Value::Array(users))?
     };
 
+    // sing-box reads cert + key files at config-load time. The files
+    // are written by Caddy's auto-HTTPS into the shared volume; we
+    // reference them via stable paths derived from Caddy's standard
+    // layout. See cert_paths() for the layout rules.
+    let (cert_path, key_path) = cert_paths(cfg);
+
     let bindings = crate::template::Bindings::new()
         .set("Domain", &cfg.domain)
         .set("AcmeEmail", &cfg.acme_email)
@@ -163,6 +178,8 @@ async fn render_to_string(
         .set("UsersJson", &users_json)
         .set("DohResolver", &cfg.doh_resolver)
         .set("ClashSecret", &clash_secret(cfg))
+        .set("CertPath", &cert_path)
+        .set("KeyPath", &key_path)
         .into_map();
 
     crate::template::render(&template, &bindings).map_err(|e| {
@@ -170,6 +187,53 @@ async fn render_to_string(
             "could not render sing-box template `{template_path}`: {e}"
         ))
     })
+}
+
+/// Derive the certificate / key paths Caddy uses for our domain.
+/// Caddy's auto-HTTPS layout is:
+///
+///   /data/caddy/certificates/<ca-folder>/<domain>/<domain>.crt
+///                                                          .key
+///
+/// Where `<ca-folder>` is derived from the ACME directory URL by
+/// stripping the scheme and replacing slashes with dashes (so
+/// `https://acme-v02.api.letsencrypt.org/directory` becomes
+/// `acme-v02.api.letsencrypt.org-directory`). We mount the same
+/// /data/caddy directory read-only into the sing-box container at
+/// /data/caddy, so the same path works on both sides.
+fn cert_paths(cfg: &ServerConfig) -> (String, String) {
+    let ca_folder = ca_folder_from_directory(&cfg.acme_directory);
+    let base = format!(
+        "/data/caddy/certificates/{ca}/{d}/{d}",
+        ca = ca_folder,
+        d = cfg.domain,
+    );
+    (format!("{base}.crt"), format!("{base}.key"))
+}
+
+fn ca_folder_from_directory(url: &str) -> String {
+    // Strip `https://` (or `http://`) and replace any `/` with `-`.
+    // Matches Caddy's storage/util layout, which has been stable across
+    // 2.x releases.
+    let stripped = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    stripped.replace('/', "-").trim_end_matches('-').to_owned()
+}
+
+/// Read the cert file's last-modified mtime as a UNIX-epoch-secs
+/// integer. None when the file doesn't exist yet (Caddy hasn't
+/// finished the first ACME issuance). The value is used purely as
+/// an extra input to the change-detection hash — a renewed cert
+/// flips its mtime, which flips the rendered-config hash, which
+/// triggers the existing scheduled reload path.
+async fn read_cert_mtime(cfg: &ServerConfig) -> Option<u64> {
+    use std::time::UNIX_EPOCH;
+    let (cert_path, _) = cert_paths(cfg);
+    let meta = tokio::fs::metadata(&cert_path).await.ok()?;
+    let mtime = meta.modified().ok()?;
+    mtime.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
 }
 
 /// Derive a clash-API secret from the ServerConfig. We don't want it
@@ -267,7 +331,9 @@ mod tests {
                 "directory": "{{ .AcmeDirectory }}",
                 "users": {{ .UsersJson }},
                 "resolver": "{{ .DohResolver }}",
-                "clash": "{{ .ClashSecret }}"
+                "clash": "{{ .ClashSecret }}",
+                "cert": "{{ .CertPath }}",
+                "key":  "{{ .KeyPath }}"
             }"#,
         )
         .await
@@ -285,6 +351,51 @@ mod tests {
         assert!(body.contains(r#""username":"alice""#));
         assert!(body.contains(r#""password":"alice-secret""#));
         assert!(body.contains("https://1.1.1.1/dns-query"));
+        // Cert paths land at the standard Caddy location for the
+        // pinned Let's Encrypt production directory.
+        assert!(
+            body.contains(
+                "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.crt"
+            ),
+            "rendered body should contain the standard LE cert path; got: {body}"
+        );
+        assert!(body.contains("proxy.example.com.key"));
+    }
+
+    #[test]
+    fn ca_folder_strips_scheme_and_replaces_slashes() {
+        assert_eq!(
+            ca_folder_from_directory("https://acme-v02.api.letsencrypt.org/directory"),
+            "acme-v02.api.letsencrypt.org-directory",
+        );
+        assert_eq!(
+            ca_folder_from_directory("https://acme-staging-v02.api.letsencrypt.org/directory"),
+            "acme-staging-v02.api.letsencrypt.org-directory",
+        );
+        // No scheme — passes through.
+        assert_eq!(
+            ca_folder_from_directory("local-test"),
+            "local-test",
+        );
+        // Trailing slash gets eaten.
+        assert_eq!(
+            ca_folder_from_directory("https://example.com/dir/"),
+            "example.com-dir",
+        );
+    }
+
+    #[test]
+    fn cert_paths_compose_correctly() {
+        let c = cfg();
+        let (cert, key) = cert_paths(&c);
+        assert_eq!(
+            cert,
+            "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.crt"
+        );
+        assert_eq!(
+            key,
+            "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.key"
+        );
     }
 
     #[test]

@@ -58,9 +58,11 @@ php artisan config:cache  --no-interaction || true
 php artisan route:cache   --no-interaction || true
 php artisan view:cache    --no-interaction || true
 
-# Render the initial Caddyfile from the DB so caddy has something on
-# first boot. The CaddyfileGenerator service writes to the shared
-# /etc/caddy volume.
+# Render the initial Caddyfile + sing-box config from the DB so both
+# servers have something to load on first boot. The CaddyfileGenerator
+# writes to /etc/caddy (mounted from caddy_etc volume), the
+# SingBoxConfigGenerator writes to /etc/sing-box (singbox_etc).
 php artisan caddyfile:render --no-interaction || true
+php artisan singbox:render   --no-interaction || true
 
 exec "$@"

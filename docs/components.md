@@ -5,12 +5,13 @@ file that pins what we expect, plus a verifier that reports OK or
 NG (good or bad). Operators add, swap, or update components like
 parts in a machine.
 
-## The seven components today
+## The eight components today
 
 | Slug | Kind | What it is | Verifier |
 | --- | --- | --- | --- |
-| `sing-box` | container-image | The TLS-terminating multi-user NaiveProxy server (GPL-3.0) | `sing-box version` |
-| `naiveproxy` | binary | The NaiveProxy client family (klzgrad/naiveproxy) — wire-protocol reference | bundled by clients, not the server |
+| `caddy` | container-image | Stock Caddy 2 — ACME provider only (Apache-2.0). Manages the TLS cert; sing-box reads it. | `caddy version` |
+| `sing-box` | container-image | Multi-user NaiveProxy server (GPL-3.0). Reads cert from Caddy's volume. | `sing-box version` |
+| `naiveproxy` | binary | NaiveProxy client family — wire-protocol reference (bundled by clients) | (client-side) |
 | `ct-server-core` | binary | Rust engine the panel shells out to | `ct-server-core version` |
 | `ct-protocol` | rust-crate | Shared cross-platform contract | trusted by Cargo.lock |
 | `panel` | container-image | Filament + Laravel admin | `php artisan --version` |

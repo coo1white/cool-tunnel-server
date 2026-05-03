@@ -100,9 +100,13 @@ COOL TUNNEL SERVER builds and runs the following third-party software
 unmodified. Their licenses are reproduced or referenced in
 [NOTICE](./NOTICE) and must be preserved in any redistribution:
 
+- [Caddy](https://github.com/caddyserver/caddy) — Apache-2.0
+  (stock; ACME provider only — manages the TLS cert via Let's
+  Encrypt and writes it to a shared volume that sing-box reads)
 - [sing-box](https://github.com/SagerNet/sing-box) — GPL-3.0
   (the actively-maintained NaiveProxy server we use; bundled as a
-  separate process, not statically linked)
+  separate process, not statically linked; reads the cert Caddy
+  writes)
 - [NaiveProxy](https://github.com/klzgrad/naiveproxy) server-side plugin — Apache-2.0
 - [Laravel](https://github.com/laravel/laravel) — MIT
 - [Filament](https://github.com/filamentphp/filament) — MIT

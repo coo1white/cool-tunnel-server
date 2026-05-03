@@ -3,11 +3,20 @@
 Cool Tunnel Server is a **three-layer stack** that mirrors the
 Cool Tunnel client's three-layer stack one-to-one:
 
-|  | UI tier | Glue tier (cross-platform Rust) | Anti-tracking engine |
-| --- | --- | --- | --- |
-| **Server** | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` | sing-box (`naive` inbound, GPL-3.0) |
-| **macOS client (today)** | SwiftUI + AppKit | `cool-tunnel-core` (Rust) — already ships in [coo1white/cool-tunnel](https://github.com/coo1white/cool-tunnel) | Bundled `naive` Mach-O |
-| **Future iOS / Android / Windows / Linux desktop clients** | Per-platform native (Swift / Kotlin / C++ / GTK or Qt) | Same `ct-protocol` crate + a per-platform `ct-client-core` | Per-platform `naive` build |
+|  | UI tier | Glue tier (cross-platform Rust) | TLS / ACME | Anti-tracking engine |
+| --- | --- | --- | --- | --- |
+| **Server** | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` | Caddy 2 (stock; ACME-only) | sing-box (`naive` inbound, GPL-3.0) |
+| **macOS client (today)** | SwiftUI + AppKit | `cool-tunnel-core` (Rust) | (system trust store) | Bundled `naive` Mach-O |
+| **Future iOS / Android / Windows / Linux desktop clients** | Per-platform native | Same `ct-protocol` + per-platform `ct-client-core` | (system trust store) | Per-platform `naive` |
+
+**Why Caddy is in the diagram:** sing-box has a built-in ACME
+implementation but it lacks Caddy's CertMagic-grade reliability —
+no multi-challenge fallback, terser error messages, smaller community.
+For an operator deploying to a fresh VPS, "ACME just works" is worth
+its own container. Caddy here is **stock, no plugins** (no
+`forwardproxy` — that's gone). It only manages the TLS cert and writes
+it to a shared volume; sing-box reads from there and does the actual
+TLS termination + proxying on `:443`.
 
 The two horizontal lines that connect every row are:
 
