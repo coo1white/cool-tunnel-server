@@ -27,38 +27,51 @@ class ProxyAccountResource extends Resource
     protected static ?string $model = ProxyAccount::class;
     protected static ?string $navigationIcon = 'heroicon-o-user-group';
     protected static ?string $navigationLabel = 'Proxy accounts';
+    protected static ?string $navigationGroup = 'Users';
     protected static ?int $navigationSort = 10;
 
     public static function form(Form $form): Form
     {
         return $form->schema([
-            Forms\Components\TextInput::make('username')
-                ->required()
-                ->alphaDash()
-                ->maxLength(64)
-                ->unique(ignoreRecord: true)
-                ->helperText('ASCII letters, digits, dashes, underscores. The client will use this as basic-auth username.'),
+            Forms\Components\Section::make('Identity')
+                ->description('How the client authenticates to sing-box.')
+                ->schema([
+                    Forms\Components\TextInput::make('username')
+                        ->required()
+                        ->alphaDash()
+                        ->maxLength(64)
+                        ->unique(ignoreRecord: true)
+                        ->autocomplete('off')
+                        ->helperText('ASCII letters, digits, dashes, underscores. The client will use this as basic-auth username.'),
 
-            Forms\Components\TextInput::make('label')
-                ->maxLength(255)
-                ->helperText('Free-form note — who is this account for?'),
+                    Forms\Components\TextInput::make('label')
+                        ->maxLength(255)
+                        ->helperText('Free-form note — who is this account for?'),
 
-            Forms\Components\Toggle::make('enabled')
-                ->default(true),
+                    Forms\Components\Toggle::make('enabled')
+                        ->default(true)
+                        ->helperText('Disable to revoke access without deleting history. Push to sing-box happens within ~100 ms via the Redis revocation bus.'),
+                ])->columns(2),
 
-            Forms\Components\TextInput::make('quota_bytes')
-                ->numeric()
-                ->minValue(0)
-                ->suffix('bytes')
-                ->helperText('Leave blank for unlimited. 1 GiB = 1073741824.'),
+            Forms\Components\Section::make('Limits')
+                ->description('Optional — leave blank for an unmetered, never-expiring account.')
+                ->schema([
+                    Forms\Components\TextInput::make('quota_bytes')
+                        ->label('Monthly quota')
+                        ->numeric()
+                        ->minValue(0)
+                        ->suffix('bytes')
+                        ->helperText('Leave blank for unlimited. 1 GiB = 1073741824. Quota enforcement runs once per minute via the scheduler.'),
 
-            Forms\Components\DateTimePicker::make('expires_at')
-                ->helperText('Leave blank to never expire.')
-                ->seconds(false),
+                    Forms\Components\DateTimePicker::make('expires_at')
+                        ->helperText('Leave blank to never expire. Past dates immediately disable the account.')
+                        ->seconds(false)
+                        ->minDate(now()),
+                ])->columns(2),
 
             Forms\Components\Placeholder::make('password_note')
                 ->label('Password')
-                ->content('A new random password is generated when you create this account; the cleartext is shown once and not stored. Use the "Regenerate password" action to issue a new one later.')
+                ->content('A new random password is generated when you create this account; the cleartext is shown once and not stored in any log. Use the "Regenerate password" action to issue a new one later.')
                 ->visibleOn('create'),
         ]);
     }
@@ -77,7 +90,19 @@ class ProxyAccountResource extends Resource
                     ->label('Quota')
                     ->formatStateUsing(fn ($state) => $state ? self::humanBytes($state) : '—'),
                 Tables\Columns\TextColumn::make('expires_at')->dateTime()->placeholder('—')->sortable(),
-                Tables\Columns\TextColumn::make('last_seen_at')->dateTime()->since()->placeholder('never')->sortable(),
+                // last_seen_at is written by metrics::collect, which is a
+                // no-op until sing-box exposes per-user Prometheus
+                // counters (see metrics.rs module docstring). Hidden
+                // by default to avoid showing a column that's always
+                // 'never' in current deployments — toggleable for
+                // operators inspecting historical rows or running on
+                // a future build with traffic plumbing wired.
+                Tables\Columns\TextColumn::make('last_seen_at')
+                    ->dateTime()
+                    ->since()
+                    ->placeholder('never')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 Tables\Filters\TernaryFilter::make('enabled'),

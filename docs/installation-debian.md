@@ -509,12 +509,16 @@ within ~100 ms (Redis pub/sub → sing-box reload).
 
 ### Renew TLS
 
-sing-box's built-in ACME renews automatically. To force a renewal,
-either bump the renewal threshold in `sing-box/config.json.tpl` and
-re-render, or restart the container (it will re-check on boot):
+Caddy is the ACME side; it renews automatically and writes the
+fresh cert + key to the `caddy_data` volume. The cert mtime is
+folded into the sing-box render-change hash, so the next
+`singbox:render --if-changed --reload` (scheduled every minute)
+picks the new material up automatically — no manual reload step.
+
+To force a renewal cycle, restart Caddy (it re-checks on boot):
 
 ```bash
-docker compose restart sing-box
+docker compose restart caddy
 ```
 
 ---

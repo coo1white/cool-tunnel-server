@@ -9,14 +9,15 @@ Cool Tunnel client's three-layer stack one-to-one:
 | **macOS client (today)** | SwiftUI + AppKit | `cool-tunnel-core` (Rust) | (system trust store) | Bundled `naive` Mach-O |
 | **Future iOS / Android / Windows / Linux desktop clients** | Per-platform native | Same `ct-protocol` + per-platform `ct-client-core` | (system trust store) | Per-platform `naive` |
 
-**Why Caddy is in the diagram:** sing-box has a built-in ACME
-implementation but it lacks Caddy's CertMagic-grade reliability —
+**Why Caddy is in the diagram:** sing-box ships its own ACME
+implementation, but it lacks Caddy's CertMagic-grade reliability —
 no multi-challenge fallback, terser error messages, smaller community.
 For an operator deploying to a fresh VPS, "ACME just works" is worth
-its own container. Caddy here is **stock, no plugins** (no
-`forwardproxy` — that's gone). It only manages the TLS cert and writes
-it to a shared volume; sing-box reads from there and does the actual
-TLS termination + proxying on `:443`.
+its own container. Caddy here is **stock, no plugins** (the historical
+`forwardproxy` plugin is gone — see `CHANGELOG.md` for the v0.0.2 pivot).
+Caddy only manages the TLS cert and writes it to a shared volume;
+sing-box reads from that volume and does the actual TLS termination
++ proxying on `:443`.
 
 The two horizontal lines that connect every row are:
 

@@ -1,10 +1,16 @@
 # Audit policy
 
-This project ran a 50-cycle LTSC audit during v0.0.6 / v0.0.7. The
-first 30 cycles were performed by hand and surfaced real findings
-(see `CHANGELOG.md`). Cycles 31–50 are codified as recurring
-machine-run checks: this is the **only** scalable way to keep an
-LTSC project honest.
+This project ran a 50-cycle LTSC audit during v0.0.6 / v0.0.7,
+and a follow-up 50-cycle UI/UX-focused audit during v0.0.8. The
+first 30 cycles of each pass are performed by hand and surface
+real findings (see `CHANGELOG.md`). Cycles 31–50 are codified as
+recurring machine-run checks: this is the **only** scalable way
+to keep an LTSC project honest across releases.
+
+Each pass adds a few more cycles to the codified set as new
+classes of regression are discovered. v0.0.7 codified seven
+checks (cycles 31–37); v0.0.8 added two more (cycles 38–39) for
+PHP style and Blade asset-link validation.
 
 ## Where each cycle lives
 
@@ -21,15 +27,17 @@ LTSC project honest.
 | **34** — Secret scan (gitleaks) | `audit.yml` job `secret-scan` | **weekly** |
 | **35** — Manifest version drift (manifests/ ↔ Cargo.toml ↔ Dockerfiles) | `audit.yml` job `manifest-drift` | **weekly** + on every PR |
 | **36** — Dependency review (vuln/licence diff vs base) | `audit.yml` job `dependency-review` | every PR |
-| **37** — Stale-doc grep (forwardproxy, sing-box ACME, etc.) | `audit.yml` job `stale-docs` | **weekly** |
-| 38–50 | placeholders for future codified checks | — |
+| **37** — Stale-doc grep (forwardproxy, sing-box ACME, AntiTrackingFilter, etc.) | `audit.yml` job `stale-docs` | **weekly** |
+| **38** — PHP style (Laravel Pint) | `audit.yml` job `php-style` | **weekly** + on every PR |
+| **39** — Blade asset-link 404 check (`href="/foo.css"` ⟂ `panel/public/`) | `audit.yml` job `blade-asset-links` | **weekly** + on every PR |
+| 40–50 | placeholders for future codified checks | — |
 
 ## What's scheduled vs. on-demand
 
 | Trigger | Jobs |
 | --- | --- |
-| Cron `17 8 * * 1` (Mon 08:17 UTC) | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, stale-docs |
-| Pull-request touching dependencies / manifests / Dockerfiles | cargo-audit, cargo-deny, composer-audit, manifest-drift, dependency-review |
+| Cron `17 8 * * 1` (Mon 08:17 UTC) | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, stale-docs, php-style, blade-asset-links |
+| Pull-request touching dependencies / manifests / Dockerfiles / Blade | cargo-audit, cargo-deny, composer-audit, manifest-drift, dependency-review, php-style, blade-asset-links |
 | Manual `workflow_dispatch` | every job |
 
 ## Adding a new cycle

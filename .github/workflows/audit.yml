@@ -19,8 +19,9 @@ on:
                             # without arriving overnight.
   workflow_dispatch: {}
 
-  # Also re-run on changes to dependency / manifest files so a PR
-  # that bumps a dep doesn't slip a vuln in.
+  # Also re-run on changes to dependency / manifest / Blade files
+  # so a PR that bumps a dep, drifts a manifest, or breaks a Blade
+  # asset link doesn't slip in.
   pull_request:
     paths:
       - 'core/Cargo.toml'
@@ -29,6 +30,9 @@ on:
       - 'core/ct-server-core/Cargo.toml'
       - 'panel/composer.json'
       - 'panel/composer.lock'
+      - 'panel/app/**'
+      - 'panel/resources/views/**'
+      - 'panel/public/**'
       - 'manifests/*.json'
       - 'docker/**/Dockerfile'
       - 'docker-compose.yml'
@@ -197,6 +201,21 @@ jobs:
               'forwardproxy@naive'
               # v0.0.3 → v0.0.4: sing-box ACME gone
               'sing-box.*built-in ACME|naive inbound.*ACME'
+              # v0.0.7 → v0.0.8: backup.sh used to snapshot singbox_data
+              # for ACME state; that's wrong since v0.0.4 (ACME state
+              # lives in caddy_data). Catch any regression that
+              # re-introduces the wrong volume name in a backup
+              # context.
+              'singbox_data.*ACME|ACME.*singbox_data'
+              # v0.0.7 → v0.0.8: AntiTrackingFilter.php was deleted.
+              # If anything outside CHANGELOG references it again,
+              # somebody re-added a dead file.
+              'AntiTrackingFilter'
+              # v0.0.7 → v0.0.8: camouflage Blade pages used to
+              # reference /static/style.css which 404s. If the link
+              # comes back, the cover site fails the "looks legit"
+              # smell test in scanner devtools.
+              'href="/static/style\.css"'
               # v0.0.5 → v0.0.6: caddyfile_safe_username calling-site
               # legacy is allowed (renaming is a v0.1 thing)
           )
@@ -209,12 +228,78 @@ jobs:
                    --exclude=CHANGELOG.md \
                    --exclude=NOTICE \
                    --exclude=THIRD_PARTY_LICENSES.md \
+                   --exclude=AUDIT.md \
+                   --exclude-dir=.github \
                    --include='*.md' --include='*.rs' --include='*.php' \
                    --include='*.tpl' --include='*.json' --include='*.yml' \
-                   --include='*.sh' --include='Dockerfile*' \
+                   --include='*.sh' --include='*.blade.php' \
+                   --include='Dockerfile*' \
                    . 2>/dev/null; then
                   echo "::error::stale reference matching /$pat/"
                   fail=1
               fi
           done
+          exit "$fail"
+
+  # ---------- Cycle 38: PHP style (Laravel Pint) ------------------
+  #
+  # Catches drift in PHP indentation, import ordering, declare(strict_types=1)
+  # placement etc. Pint is Laravel's pre-configured wrapper around php-cs-fixer.
+
+  php-style:
+    name: php style (laravel pint --test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer
+      - name: composer install (panel)
+        working-directory: panel
+        run: |
+          composer install --no-progress --no-interaction --prefer-dist
+      - name: pint --test
+        working-directory: panel
+        run: |
+          if [[ -x vendor/bin/pint ]]; then
+              vendor/bin/pint --test
+          else
+              echo "::warning::laravel/pint not in panel/composer.json — add it as a dev dep"
+          fi
+
+  # ---------- Cycle 39: Blade asset-link 404 check ----------------
+  #
+  # Catches the v0.0.7 camouflage-page bug class: <link href="/foo.css">
+  # or <script src="/foo.js"> pointing at a path that has no matching
+  # public file or registered route. False-negatives: dynamically
+  # generated paths (asset(...), Vite::asset, request()->root() etc.).
+  # Plain literal hrefs starting with / and ending in .css/.js/.svg/.png
+  # are checked.
+
+  blade-asset-links:
+    name: blade asset-link 404 check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: scan blade files for broken static-asset hrefs
+        run: |
+          set -euo pipefail
+          fail=0
+          # Find <link href="/..."> and <script src="/..."> with literal
+          # paths to .css/.js/.svg/.png/.ico/.webp/.woff(2). For each
+          # one, verify there's a corresponding file in panel/public/.
+          while IFS= read -r line; do
+              file=$(cut -d: -f1 <<< "$line")
+              path=$(grep -oE '(href|src)="/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)"' <<< "$line" \
+                     | grep -oE '/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)' || true)
+              if [[ -z "$path" ]]; then continue; fi
+              if [[ ! -f "panel/public${path}" ]]; then
+                  echo "::error file=$file::$path is referenced but panel/public${path} does not exist"
+                  fail=1
+              fi
+          done < <(grep -rEn '(href|src)="/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)"' \
+                       panel/resources/views 2>/dev/null || true)
           exit "$fail"

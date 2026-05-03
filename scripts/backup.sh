@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# backup.sh — snapshot db + .env + sing-box ACME data into one tarball.
+# backup.sh — snapshot db + .env + Caddy ACME state into one tarball.
 #
 # Drops a timestamped file in ./backups/. ACME state lives in the
-# singbox_data volume; without it, every fresh deploy burns Let's
-# Encrypt rate-limit budget.
+# caddy_data volume (post-v0.0.4 — Caddy is the ACME side, sing-box
+# reads cert + key files Caddy wrote). Without this, every fresh
+# deploy burns Let's Encrypt rate-limit budget on re-issue.
 
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -31,18 +32,18 @@ compose exec -T db mariadb-dump \
     > tmp/db.sql
 ok "db.sql written"
 
-step "Snapshot singbox_data volume (ACME state)"
+step "Snapshot caddy_data volume (ACME certificates + private keys)"
 docker run --rm \
-    -v cool-tunnel-server_singbox_data:/data:ro \
+    -v cool-tunnel-server_caddy_data:/data:ro \
     -v "$PWD/tmp":/out \
     alpine \
-    sh -c 'cd /data && tar czf /out/singbox_data.tgz .'
-ok "singbox_data.tgz written"
+    sh -c 'cd /data && tar czf /out/caddy_data.tgz .'
+ok "caddy_data.tgz written"
 
 step "Bundle into ${out}"
 tar -czf "$out" \
-    -C tmp db.sql singbox_data.tgz \
-    -C .. .env manifests sing-box/config.json.tpl
+    -C tmp db.sql caddy_data.tgz \
+    -C .. .env manifests sing-box/config.json.tpl caddy/Caddyfile.tpl
 rm -rf tmp
 # shellcheck disable=SC2012  # ls -lh's compact output is exactly what we want here
 ok "wrote $(ls -lh "$out" | awk '{print $5,$NF}')"

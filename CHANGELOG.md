@@ -22,6 +22,150 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.8] — 2026-05-03
+
+Second 50-cycle LTSC audit, this one focused on **UI / UX layout
+design** — the operator-facing Filament panel, the public-facing
+camouflage Blade pages, the operator-facing CLI scripts, and the
+docs that are visible during incident response. Cycles 1–30 by
+hand surfaced eleven real findings; cycles 31–50 are codified by
+adding two new jobs to the existing `audit.yml` (PHP style + Blade
+asset-link 404 check). The user also asked us to remove unused
+files; one orphan service was dropped.
+
+### Added
+
+- **Camouflage cover pages** (`blog`, `portfolio`, `corporate`)
+  now have parity on probe-resistance hygiene: `meta name=
+  "description"`, `meta name="robots"`, `og:type` / `og:title` /
+  `og:description`, and `link rel="canonical"` are present in all
+  three. Each template ships an inline-SVG favicon (no separate
+  HTTP request, no 404), and the CSS now respects
+  `prefers-color-scheme: dark`. Blog post links use proper slugged
+  hrefs and `<time datetime="…">` instead of every post pointing at
+  `/`.
+- **`panel/public/favicon.svg`** — admin-panel branding asset that
+  the new `AdminPanelProvider::favicon()` call resolves to.
+- **`scripts/render-caddyfile.sh`** — sibling to
+  `render-singbox.sh`. The old `render-singbox.sh` was
+  *named* sing-box but was actually shelling out to
+  `caddyfile render`; the body is fixed and a real
+  `render-caddyfile.sh` now exists.
+- **`AdminPanelProvider`** now enables `->profile()` (so an admin
+  can change their own password from the panel without needing
+  `php artisan tinker`), `->darkMode()`, `->sidebarCollapsibleOnDesktop()`,
+  and three navigation groups (`Users`, `Reporting`, `System`) so
+  the sidebar isn't a flat 5-item list.
+- **`TrafficLogResource`** now ships a date-range filter
+  (`from` / `to`) so an operator can answer "how much did
+  account X use last week" without a SQL console. Sent / Received
+  columns are right-aligned for easier visual scanning, with
+  hover tooltips disambiguating direction.
+- **`FakeWebsiteResource`** now has a "Currently active"
+  ternary filter and defaults the table sort to `is_active desc`
+  so the live cover site appears first.
+- **`ProxyAccountResource`** form is grouped into `Identity` and
+  `Limits` `Section`s (matching the visual hierarchy already used
+  on `ServerConfigPage`), and the `expires_at` picker now has
+  `minDate(now())` so an accidental past date isn't silently
+  accepted.
+- **Audit workflow cycles 38 + 39 codified**:
+  - **`php-style`** — runs `vendor/bin/pint --test` (Laravel
+    Pint, already in `panel/composer.json` require-dev) on weekly
+    cron and on every PR that touches `panel/app/**` or
+    `panel/resources/views/**`.
+  - **`blade-asset-links`** — greps every `panel/resources/views/**.blade.php`
+    for literal `href="/foo.css"` / `src="/foo.js"` /
+    `href="/foo.svg"` / `…/foo.png|ico|webp|woff|woff2` and fails
+    the build if the corresponding `panel/public/$path` file does
+    not exist. Catches the exact bug class that v0.0.8 found
+    (the `/static/style.css` 404 in three Blade files).
+
+### Fixed
+
+- **Camouflage pages were leaking `/static/style.css` 404s** to
+  any scanner that opens devtools — `blog.blade.php`,
+  `portfolio.blade.php`, and `corporate.blade.php` all linked a
+  stylesheet that has no matching public file or registered
+  route. Removed in all three.
+- **`scripts/backup.sh` was snapshotting the wrong volume.**
+  Comments said "ACME state lives in singbox_data" — that was
+  true in v0.0.2 / v0.0.3 but not since v0.0.4 reintroduced
+  Caddy as the ACME side. The script was tarring up an empty
+  volume and skipping the actual cert directory; restoring from
+  one of these backups would have burned Let's Encrypt
+  rate-limit budget on every recovery. Now snapshots
+  `caddy_data` (the real ACME state) and bundles
+  `caddy/Caddyfile.tpl` alongside `sing-box/config.json.tpl`
+  so a restore lands on a complete tree.
+- **`scripts/render-singbox.sh` was actually rendering the
+  Caddyfile.** Body said `caddyfile render`; comment said
+  sing-box. Now actually renders sing-box config (matches the
+  filename and the documentation in `STRUCTURE.md` /
+  `README.md`).
+- **`ServerConfigPage` description and save notification only
+  named Caddy.** Anti-tracking toggles + HTTP/3 also drive the
+  sing-box config (cert-mtime + DB hash → `singbox:render
+  --if-changed --reload` since v0.0.4); the user-visible text
+  now says "Caddyfile + sing-box config regenerated; both
+  services hot-reloading" so the operator's mental model
+  matches the actual machinery.
+- **`docs/installation-debian.md` § Renew TLS** still said
+  "sing-box's built-in ACME renews automatically" — three audit
+  cycles past v0.0.4 and the prose hadn't caught up. Now
+  correctly explains the cert-mtime → render-change-hash chain
+  and that `docker compose restart caddy` is the way to force a
+  renewal.
+- **`docs/architecture.md`** softened the "sing-box has a
+  built-in ACME implementation but it lacks Caddy's
+  CertMagic-grade reliability" wording so it doesn't read as
+  active recommendation against a feature we don't use; also
+  removed the dangling `forwardproxy` reference and pointed
+  readers at `CHANGELOG.md` for the v0.0.2 pivot.
+- **`README.md` filetree** still listed `AntiTrackingFilter`
+  as a Service, which had been orphaned and was deleted by
+  this audit. Now lists the actual services (`CaddyfileGenerator`
+  added; `AntiTrackingFilter` removed).
+- **`ProxyAccountResource.last_seen_at`** column was visible in
+  the default table layout but is always `never` in current
+  deployments (the column is written by `metrics::collect`
+  which is the no-op since v0.0.7 — see metrics.rs module
+  docstring). Now `toggleable(isToggledHiddenByDefault: true)`
+  so it doesn't show stale data, with a comment explaining why
+  and a clear path to flip the default once sing-box per-user
+  metrics land.
+- **`ComponentsPage` Blade view used hardcoded `grid-cols-3`**,
+  which was cramped on the phone an operator might pull out
+  during incident response. Now `grid-cols-1 sm:grid-cols-3`,
+  with `overflow-x-auto` on the table so wide diagnostic
+  messages scroll instead of breaking layout. Status badges
+  gained dark-mode variants (`dark:bg-success-900/40 dark:text-success-300`)
+  so they don't render as low-contrast on dark theme.
+  Accessibility: `<caption class="sr-only">`, `<th scope="col">`,
+  `role="status"` on the OK/NG pill, `aria-label` for screen
+  readers.
+- **`ServerConfigPage` Edge-auth section** previously had
+  `admin_basic_auth_hash` as a plain `TextInput` — the bcrypt
+  hash was rendering visibly on screen. Now `password()` +
+  `revealable()` with `autocomplete="new-password"` so it
+  doesn't autofill or shoulder-surf.
+
+### Removed
+
+- **`panel/app/Services/AntiTrackingFilter.php`** — defined a
+  `FEATURES` constant array intended for a Filament
+  Anti-Tracking page that never shipped. The class was
+  referenced nowhere in the codebase outside its own file
+  (verified by `grep -r AntiTrackingFilter`). Dead code, gone.
+
+### Tests
+
+50 passing (8 ct-protocol + 42 ct-server-core). Build + clippy
++ fmt + shellcheck still clean. Two new audit jobs (`php-style`,
+`blade-asset-links`) ship in `audit.yml`.
+
+---
+
 ## [0.0.7] — 2026-05-03
 
 50-cycle LTSC code audit. Cycles 1–5 were the v0.0.6 hand-audit;
@@ -354,7 +498,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.4...v0.0.5
