@@ -78,9 +78,20 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     (strip /ct-server-core || true) && \
     test -x /ct-server-core
 
-# Final stage: a tiny runtime image we never actually run, but use
+# Final runtime stage: a tiny image we never actually run, but use
 # as the source for `--from=` in the panel Dockerfile.
-FROM alpine:3.20
+#
+# IMPORTANT: this stage MUST be explicitly named (`AS runtime`)
+# because the file also contains an `AS sqlx-prepare` stage below.
+# BuildKit's default-when-no-target-specified is "the last stage
+# in the file" — without an explicit `target: runtime` in
+# docker-compose.yml's core-builder service, BuildKit would build
+# the sqlx-prepare stage and tag it as cool-tunnel-server-core,
+# resulting in an image that has cargo + sqlx-cli but NO
+# ct-server-core binary. The panel image's
+# `COPY --from=ct-core-stage /usr/local/bin/ct-server-core` then
+# fails with "/usr/local/bin/ct-server-core: not found".
+FROM alpine:3.20 AS runtime
 COPY --from=builder /ct-server-core /usr/local/bin/ct-server-core
 ENTRYPOINT ["/usr/local/bin/ct-server-core"]
 CMD ["--help"]

@@ -29,6 +29,13 @@ services:
     build:
       context: .
       dockerfile: docker/core/Dockerfile
+      # Explicitly target the `runtime` stage. The Dockerfile
+      # also contains an `sqlx-prepare` stage AFTER `runtime`;
+      # without this target, BuildKit would build the wrong
+      # stage (the rust/cargo image) and tag it as
+      # cool-tunnel-server-core:latest, which then has no
+      # ct-server-core binary at /usr/local/bin/.
+      target: runtime
     image: cool-tunnel-server-core:latest
     profiles: ["build-only"]      # never started by `compose up`
 
