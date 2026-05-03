@@ -30,11 +30,19 @@ pub async fn enforce(
     // matching rows so a concurrent panel save can't flip
     // `enabled` back on between our SELECT and the per-row
     // UPDATE below. Compile-time-checked SQL via sqlx::query!.
+    //
+    // The `!` after `is_expired` / `over_quota` in the column
+    // alias forces sqlx to treat the value as non-nullable. The
+    // expressions are `(IS NOT NULL AND <comparison>)` — they
+    // short-circuit to 0 when the column is NULL, so the result
+    // is always 0 or 1, never NULL. sqlx can't prove this from
+    // the SQL alone (MySQL boolean expressions COULD return
+    // NULL in general), so we tell it explicitly.
     let to_disable = sqlx::query!(
         r#"
         SELECT id, username,
-               (expires_at IS NOT NULL AND expires_at <= NOW())          AS is_expired,
-               (quota_bytes IS NOT NULL AND used_bytes >= quota_bytes)   AS over_quota
+               (expires_at IS NOT NULL AND expires_at <= NOW())          AS `is_expired!: i32`,
+               (quota_bytes IS NOT NULL AND used_bytes >= quota_bytes)   AS `over_quota!: i32`
         FROM proxy_accounts
         WHERE enabled = 1
           AND (
