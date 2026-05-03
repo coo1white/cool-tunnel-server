@@ -93,8 +93,12 @@ services:
 
   panel:
     build:
-      context: .
-      dockerfile: docker/panel/Dockerfile
+      # Context is docker/panel/ so the Dockerfile's
+      # `COPY opcache.ini …` etc. resolve to docker/panel/opcache.ini.
+      # The Rust core binary comes in via the CT_CORE_IMAGE arg's
+      # `FROM` reference, not the build context, so a narrow
+      # context is fine.
+      context: ./docker/panel
       args:
         CT_CORE_IMAGE: cool-tunnel-server-core:latest
     image: cool-tunnel-server-panel:latest
