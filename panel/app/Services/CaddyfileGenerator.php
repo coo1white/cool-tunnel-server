@@ -29,8 +29,15 @@ class CaddyfileGenerator
     {
         try {
             $out = $this->core->renderCaddyfile();
-        } catch (\RuntimeException $e) {
-            Log::error('caddyfile.render.failed', ['err' => $e->getMessage()]);
+        } catch (\Throwable $e) {
+            // Catch \Throwable rather than \RuntimeException so a
+            // future undefined-method / type-error / class-not-
+            // found Error doesn't propagate silently up to the
+            // panel and abort the surrounding model save.
+            Log::error('caddyfile.render.failed', [
+                'err'  => $e->getMessage(),
+                'type' => get_class($e),
+            ]);
             return null;
         }
         $changed = (bool) ($out['changed'] ?? false);

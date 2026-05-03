@@ -1,18 +1,21 @@
 # Audit policy
 
-This project has run three 50-cycle LTSC audits to date: v0.0.6 /
-v0.0.7 (general code), v0.0.8 (UI / UX), and v0.0.9
-(anti-network-tracking). The first 30 cycles of each pass are
-performed by hand and surface real findings (see `CHANGELOG.md`).
-Cycles 31–50 are codified as recurring machine-run checks: this
-is the **only** scalable way to keep an LTSC project honest
-across releases.
+This project has run four 50-cycle LTSC audits to date: v0.0.6 /
+v0.0.7 (general code), v0.0.8 (UI / UX), v0.0.9
+(anti-network-tracking), and v0.0.10 (code-robustness design).
+The first 30 cycles of each pass are performed by hand and
+surface real findings (see `CHANGELOG.md`). Cycles 31–50 are
+codified as recurring machine-run checks: this is the **only**
+scalable way to keep an LTSC project honest across releases.
 
 Each pass adds a few more cycles to the codified set as new
 classes of regression are discovered. v0.0.7 codified seven
 checks (cycles 31–37); v0.0.8 added two more (cycles 38–39) for
 PHP style and Blade asset-link validation; v0.0.9 added the
-anti-tracking config smell-test (cycle 40).
+anti-tracking config smell-test (cycle 40); v0.0.10 added the
+PSR-4 filename-vs-class lint (cycle 41) and PHPStan
+undefined-method analysis (cycle 42), both directly motivated by
+showstopper bugs that v0.0.10's hand-audit found.
 
 ## Where each cycle lives
 
@@ -33,14 +36,16 @@ anti-tracking config smell-test (cycle 40).
 | **38** — PHP style (Laravel Pint) | `audit.yml` job `php-style` | **weekly** + on every PR |
 | **39** — Blade asset-link 404 check (`href="/foo.css"` ⟂ `panel/public/`) | `audit.yml` job `blade-asset-links` | **weekly** + on every PR |
 | **40** — Anti-tracking config smell-test (sing-box TLS 1.3, no TCP clash, no disk cache; Caddy ghost site no recognisable string; no `X-CT-*` headers) | `audit.yml` job `anti-tracking-config` | **weekly** + on every PR |
-| 41–50 | placeholders for future codified checks | — |
+| **41** — PHP class-vs-filename PSR-4 lint (catches "file Foo.php declares `class Bar`") | `audit.yml` job `php-psr4` | **weekly** + on every PR touching `panel/app/**` |
+| **42** — PHPStan level-5 (undefined-method, type errors) | `audit.yml` job `phpstan` | **weekly** + on every PR touching `panel/app/**` |
+| 43–50 | placeholders for future codified checks | — |
 
 ## What's scheduled vs. on-demand
 
 | Trigger | Jobs |
 | --- | --- |
-| Cron `17 8 * * 1` (Mon 08:17 UTC) | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, stale-docs, php-style, blade-asset-links, anti-tracking-config |
-| Pull-request touching dependencies / manifests / Dockerfiles / Blade / templates | cargo-audit, cargo-deny, composer-audit, manifest-drift, dependency-review, php-style, blade-asset-links, anti-tracking-config |
+| Cron `17 8 * * 1` (Mon 08:17 UTC) | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, stale-docs, php-style, blade-asset-links, anti-tracking-config, php-psr4, phpstan |
+| Pull-request touching dependencies / manifests / Dockerfiles / Blade / templates / panel | cargo-audit, cargo-deny, composer-audit, manifest-drift, dependency-review, php-style, blade-asset-links, anti-tracking-config, php-psr4, phpstan |
 | Manual `workflow_dispatch` | every job |
 
 ## Adding a new cycle

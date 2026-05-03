@@ -200,7 +200,17 @@ async fn fetch_metrics_text(socket_path: &str) -> Result<String> {
         .method(Method::GET)
         .uri(uri)
         .body(Full::new(Bytes::new()))?;
-    let resp = client.request(req).await?;
+    // Bounded by 10s — a hung admin socket must not wedge the
+    // traffic:rollup scheduler (which already runs every minute).
+    // The legacy parser is a no-op anyway today; keeping the
+    // timeout here so the day sing-box exposes Prometheus-shape
+    // metrics this path doesn't regress.
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.request(req),
+    )
+    .await
+    .map_err(|_| Error::msg("admin /metrics GET timed out after 10s"))??;
     let body = resp.into_body().collect().await?;
     Ok(String::from_utf8_lossy(&body.to_bytes()).into_owned())
 }

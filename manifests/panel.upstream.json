@@ -1,7 +1,7 @@
 {
     "name": "panel",
     "kind": "container-image",
-    "version": "0.0.9",
+    "version": "0.0.10",
     "upstream": "https://github.com/coo1white/cool-tunnel-server",
     "verify": {
         "command": ["docker", "exec", "ct-panel", "php", "artisan", "--version"],

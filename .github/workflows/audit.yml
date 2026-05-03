@@ -320,6 +320,99 @@ jobs:
                        panel/resources/views 2>/dev/null || true)
           exit "$fail"
 
+  # ---------- Cycle 41: PHP class-vs-filename lint (PSR-4) -------
+  #
+  # Catches the v0.0.10 showstopper bug class: a PHP file
+  # declares `class Foo` but lives at `Bar.php`. Composer's PSR-4
+  # autoloader resolves `App\Services\Bar::class` to `Bar.php`,
+  # finds it, includes it — but the class declared inside is
+  # `Foo`, so the symbol Bar isn't loaded. Result: every
+  # `app(Bar::class)` call hits "Class not found" at runtime,
+  # invisible until someone clicks the path that triggers it.
+  # `composer dump-autoload --strict-psr` would catch this if
+  # composer was happy with our app, so we run that too.
+
+  php-psr4:
+    name: php class-vs-filename (PSR-4 strict)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer
+      - name: composer install
+        working-directory: panel
+        run: composer install --no-progress --no-interaction --prefer-dist
+      - name: composer dump-autoload --strict-psr
+        working-directory: panel
+        run: composer dump-autoload --strict-psr --no-scripts
+      - name: grep filename != classname
+        run: |
+          set -euo pipefail
+          fail=0
+          # For every PHP file under panel/app, find the first
+          # `class|interface|trait|abstract class|final class` decl
+          # and check its name matches the basename. Skips files
+          # without any decl (Migrations, helpers).
+          while IFS= read -r f; do
+              base=$(basename "$f" .php)
+              decl=$(grep -E '^[[:space:]]*(abstract[[:space:]]+|final[[:space:]]+)?(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' "$f" \
+                     | head -1 \
+                     | sed -E 's/.*(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/')
+              if [[ -z "$decl" ]]; then continue; fi
+              if [[ "$decl" != "$base" ]]; then
+                  echo "::error file=$f::declares \`$decl\` but file is \`$base.php\` — PSR-4 autoloading will fail"
+                  fail=1
+              fi
+          done < <(find panel/app -name '*.php' -type f)
+          exit "$fail"
+
+  # ---------- Cycle 42: PHPStan (undefined-method / type errors) -
+  #
+  # Catches the v0.0.10 second showstopper: PHP services calling
+  # `$this->core->renderCaddyfile()` on a CtServerCore class
+  # that has no such method. PHP only finds out at runtime
+  # (a fatal Error). PHPStan does method-existence + type
+  # checks at lint time. We start at level 5 — strict enough to
+  # catch undefined methods + wrong-type args, lenient enough to
+  # not require pervasive @phpstan annotations.
+
+  phpstan:
+    name: phpstan (level 5)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer, phpstan
+      - name: composer install
+        working-directory: panel
+        run: composer install --no-progress --no-interaction --prefer-dist
+      - name: phpstan analyse
+        working-directory: panel
+        run: |
+          if [[ ! -f phpstan.neon ]]; then
+              # Minimal config — analyse app/, level 5, exclude
+              # vendor/storage. Operators can drop in a more
+              # thorough phpstan.neon later.
+              cat > phpstan.neon <<'NEON'
+          parameters:
+              level: 5
+              paths:
+                  - app
+              excludePaths:
+                  - vendor
+                  - storage
+                  - bootstrap/cache
+              treatPhpDocTypesAsCertain: false
+          NEON
+          fi
+          phpstan analyse --memory-limit=512M --no-progress --error-format=github
+
   # ---------- Cycle 40: anti-tracking config smell-test ----------
   #
   # Static assertions on the sing-box and Caddy templates we ship.
