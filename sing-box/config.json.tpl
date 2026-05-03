@@ -49,10 +49,6 @@
     },
 
     "experimental": {
-        "clash_api": {
-            "external_controller_unix": "/run/sing-box/clash.sock",
-            "secret": "{{ .ClashSecret }}"
-        },
         "cache_file": {
             "enabled": false,
             "path": "/data/cache.db"
