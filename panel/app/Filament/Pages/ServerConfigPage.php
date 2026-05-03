@@ -50,7 +50,17 @@ class ServerConfigPage extends Page implements HasForms
                         Toggle::make('anti_tracking_probe_resistance')->label('probe_resistance'),
                         TextInput::make('anti_tracking_doh_resolver')
                             ->label('DoH resolver')->url(),
-                        Toggle::make('http3_enabled')->label('Enable HTTP/3 (QUIC)'),
+                        // The http3_enabled DB column survives for
+                        // forward-compat but is no longer surfaced as
+                        // a toggle: NaiveProxy is HTTP/2-only at the
+                        // protocol level, so enabling it produced a
+                        // recognisable network fingerprint
+                        // (clients try QUIC, fail, fall back). See
+                        // SubscriptionController class docstring.
+                        \Filament\Forms\Components\Placeholder::make('http3_note')
+                            ->label('HTTP/3 (QUIC)')
+                            ->content('Disabled: NaiveProxy is HTTP/2-only by protocol design. Advertising HTTP/3 caused clients to attempt QUIC and fall back, producing a fingerprintable failure pattern. See cross-platform-clients.md.')
+                            ->columnSpanFull(),
                     ])->columns(2),
 
                 Section::make('Edge auth (extra layer in front of /admin)')

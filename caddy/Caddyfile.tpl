@@ -25,22 +25,29 @@
 # Why the architecture is split this way:
 #
 #   - Caddy's auto-HTTPS / CertMagic is the most reliable ACME
-#     implementation in the Go ecosystem; sing-box's built-in ACME
-#     works but lacks Caddy's multi-challenge fallback and ZeroSSL
-#     fallback, so ACME failures hurt more.
+#     implementation in the Go ecosystem (multi-challenge fallback,
+#     ZeroSSL fallback, conservative retry pacing). For an operator
+#     deploying to a fresh VPS, "ACME just works" is worth its own
+#     container. Sing-box ships its own ACME but we don't use it
+#     here.
 #   - Caddy here is stock — no plugins. The unmaintained
 #     klzgrad/forwardproxy plugin we used in v0.0.1 is no longer
-#     part of this image.
+#     part of this image (see CHANGELOG for the v0.0.2 pivot).
 #
 
 {
     email {{ .AcmeEmail }}
     acme_ca {{ .AcmeDirectory }}
 
-    # On cert obtain / renewal, bump the flag file the panel watches.
+    # cert_obtained: bump the flag file the panel watches so the
+    # next singbox:render --if-changed picks up the new cert.
+    # cert_failed: log to STDERR (which docker logs captures + the
+    # daemon rotates) — the previous version appended timestamped
+    # failures to /data/cert-failures.log, a forensic trail in the
+    # caddy_data volume that nobody asked for.
     events {
-        on cert_obtained  exec touch /data/cert-renewed
-        on cert_failed    exec sh -c "echo \"$(date -u +%FT%TZ)\" >> /data/cert-failures.log"
+        on cert_obtained exec touch /data/cert-renewed
+        on cert_failed   exec sh -c "echo \"$(date -u +%FT%TZ) cert_failed\" >&2"
     }
 }
 
@@ -67,9 +74,19 @@
 
 {{ .Domain }}:8443 {
     # Disable TLS-ALPN-01 challenges since :443 is taken by sing-box;
-    # HTTP-01 on :80 is the only challenge type we can do here.
+    # HTTP-01 on :80 is the only challenge type we can do here. Pin
+    # to TLS 1.3 only — the ghost site never serves real traffic, so
+    # there's no compat reason to advertise legacy versions to
+    # anyone who probes :8443 inside the container network.
     tls {{ .AcmeEmail }} {
-        protocols tls1.2 tls1.3
+        protocols tls1.3
     }
-    respond "managed" 200
+    # If something probes :8443 (only reachable from inside the
+    # container network — the port is not host-mapped), close the
+    # connection cleanly with 444. The previous `respond "managed"
+    # 200` was a recognisable string signature; an empty 444
+    # response looks like a generic firewalled endpoint.
+    respond "" 444 {
+        close
+    }
 }

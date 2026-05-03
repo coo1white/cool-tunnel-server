@@ -13,6 +13,20 @@ use Illuminate\Http\Response;
 // the proxy account whose token matches the URL. Signed with HMAC-
 // SHA-256 using a per-account secret.
 //
+// Anti-tracking note: the response carries NO project-identifying
+// custom headers. The signature rides in the JSON body's
+// `signature` field (computed over the canonical body with that
+// field set to null). On the wire this looks like any other
+// authenticated JSON API response, not a "Cool Tunnel" tell.
+// (v0.0.8 and earlier emitted X-CT-Signature / X-CT-Protocol
+// response headers; those are gone.)
+//
+// HTTP/3 honesty: NaiveProxy is HTTP/2-only at the protocol level,
+// so the manifest's `capabilities.http3` is always false regardless
+// of any DB toggle. Advertising true would lead clients to attempt
+// QUIC, fail (no UDP listener), and fall back — a recognisable
+// network signature. See cross-platform-clients.md.
+//
 // Why a panel-side endpoint and not just `ct-server-core subscription`?
 // The cleartext password isn't in the DB (we only store the bcrypt
 // hash). The panel issues a one-time token at account creation that
@@ -54,24 +68,30 @@ class SubscriptionController extends Controller
                     $cfg->anti_tracking_hide_via         ? 'hide_via'         : null,
                     $cfg->anti_tracking_probe_resistance ? 'probe_resistance' : null,
                     $cfg->anti_tracking_doh_resolver     ? 'doh_resolver'     : null,
-                    $cfg->http3_enabled                  ? 'http3'            : null,
                 ])),
-                'http3'          => (bool) $cfg->http3_enabled,
+                // HTTP/3 always advertised as false — see class
+                // docstring. NaiveProxy does not do QUIC.
+                'http3'          => false,
                 'fake_site_slug' => optional(\App\Models\FakeWebsite::active())->slug,
             ],
             'issued_at'    => time(),
             'expires_at'   => time() + 60 * 60 * 24 * 30,
             'note'         => null,
+            'signature'    => null, // placeholder; signed below
         ];
 
-        $json = json_encode($body, JSON_UNESCAPED_SLASHES);
-        $sig  = hash_hmac('sha256', $json, $this->signingKey());
+        // Compute HMAC over the canonical body with `signature`
+        // set to null, then splice the hex digest back in. Verifies
+        // identically on the client without needing the original
+        // field order — clients re-canonicalise (set signature to
+        // null, re-serialise) before checking.
+        $canonical = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $body['signature'] = hash_hmac('sha256', $canonical, $this->signingKey());
+        $json = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         return response($json, 200)
-            ->header('Content-Type',    'application/json')
-            ->header('X-CT-Signature',   $sig)
-            ->header('X-CT-Protocol',    '1')
-            ->header('Cache-Control',    'no-store');
+            ->header('Content-Type', 'application/json')
+            ->header('Cache-Control', 'no-store');
     }
 
     private function resolve(string $token): ?ProxyAccount
