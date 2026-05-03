@@ -51,12 +51,15 @@ RUN mkdir -p /run/sing-box && chmod 0770 /run/sing-box
 #        QUIC scans, which is the opposite of probe-resistance.
 EXPOSE 443
 
-# Periodic liveness probe: ask the in-process clash API for its
-# current config. If the unix socket is up and answering, the server
-# is healthy. Three-strikes-and-restart is the docker default.
+# Periodic liveness probe: confirm the sing-box process is running.
+# We dropped the clash_api block from the rendered config (the
+# `external_controller_unix` field never existed upstream — see
+# git log), so there is no unix socket to probe. Process-presence
+# is the next-best signal: if sing-box crashed mid-flight (cert
+# read error, panic, OOM-kill), pidof returns non-zero and docker
+# restarts the container per the three-strikes default.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD test -S /run/sing-box/clash.sock \
-        || exit 1
+    CMD pidof sing-box >/dev/null || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/usr/local/bin/sing-box", "run", "--config-directory", "/etc/sing-box", "--directory", "/data"]

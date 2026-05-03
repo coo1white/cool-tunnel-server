@@ -204,11 +204,18 @@ enum ProbeOp {
 }
 
 fn main() -> ExitCode {
+    // tracing must write to stderr — several CLI subcommands
+    // (`--json` render output, `probe anti-tracking`, `singbox
+    // render`) emit machine-readable JSON on stdout that is parsed
+    // by the panel and the stress harness. Default fmt() writes to
+    // stdout, which would interleave INFO/WARN lines with the JSON
+    // and break every downstream parser.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_target(false)
+        .with_writer(std::io::stderr)
         .compact()
         .try_init();
 
