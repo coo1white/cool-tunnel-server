@@ -22,7 +22,12 @@ class FakeSiteController extends Controller
         // and we want probe traffic to look like a normal static-ish
         // site (Cache-Control: public). The panel busts this cache
         // by versioning rendered output via etag on save.
-        $body = view("fake-sites.{$site?->template ?? 'blog'}", [
+        //
+        // PHP's string-interpolation parser does not accept the
+        // null-coalescing operator inside `{...}`, so resolve the
+        // template name first.
+        $template = $site?->template ?? 'blog';
+        $body = view("fake-sites.{$template}", [
             'site' => $site,
             'path' => trim($request->path(), '/'),
         ])->render();
