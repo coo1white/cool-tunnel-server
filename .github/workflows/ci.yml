@@ -1,0 +1,133 @@
+# LTSC CI gate.
+#
+# Runs on every push and pull-request. Replicates exactly what
+# `make ci` runs locally so a green CI badge means a release-able
+# tree.
+#
+# We deliberately do NOT build Docker images in CI — that is left
+# to the release pipeline (RELEASE.md). CI's job is fast feedback;
+# image builds are a separate per-tag concern.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags:    ['v*']
+  pull_request:
+    branches: [main]
+
+# Don't run a stale workflow if a newer commit lands on the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust (build / test / clippy / fmt)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pinned Rust toolchain (matches rust-toolchain.toml)
+        # The toolchain.toml at core/rust-toolchain.toml pins to 1.86.
+        # The action below honours it automatically.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86
+          components: clippy, rustfmt
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('core/Cargo.lock') }}
+
+      - run: cargo fmt --all -- --check
+      - run: cargo build --release --workspace --locked
+      - run: cargo test  --release --workspace --locked
+      - run: cargo clippy --release --all-targets --locked -- -D warnings
+
+  php:
+    name: php (syntax / composer validate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer
+
+      - name: PHP syntax pass on every panel/**/*.php
+        working-directory: panel
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r -d '' f; do
+              if ! php -l "$f" >/dev/null 2>&1; then
+                  echo "::error file=panel/$f::syntax error"
+                  php -l "$f" || true
+                  fail=1
+              fi
+          done < <(find app database/migrations database/seeders config bootstrap routes \
+                    -name '*.php' -type f -print0)
+          exit "$fail"
+
+      - name: composer validate
+        working-directory: panel
+        run: composer validate composer.json --strict --no-check-publish
+
+  shell:
+    name: shell (shellcheck)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          severity: warning
+          scandir: ./scripts
+          additional_files: docker/panel/entrypoint.sh
+
+  manifests:
+    name: manifests (jq parse)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          for f in manifests/*.json; do
+              jq . "$f" > /dev/null \
+                || { echo "::error file=$f::invalid JSON"; exit 1; }
+          done
+
+  template:
+    name: templates (substitute + caddy/sing-box config syntax)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render and validate the Caddyfile
+        run: |
+          set -euo pipefail
+          rendered=$(mktemp)
+          sed -e 's|{{ \.Domain }}|test.local|g' \
+              -e 's|{{ \.AcmeEmail }}|t@x.com|g' \
+              -e 's|{{ \.AcmeDirectory }}|https://acme-staging-v02.api.letsencrypt.org/directory|g' \
+              caddy/Caddyfile.tpl > "$rendered"
+          docker run --rm -v "$rendered":/etc/caddy/Caddyfile caddy:2.8.4-alpine \
+              caddy validate --config /etc/caddy/Caddyfile
+
+      # Sing-box config validation is harder without the binary
+      # locally; the install.sh path covers it on real metal.

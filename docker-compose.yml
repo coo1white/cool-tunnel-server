@@ -136,6 +136,7 @@ services:
         condition: service_started
     networks:
       - ct-net
+      - ct-data
 
   db:
     image: mariadb:11
@@ -154,7 +155,9 @@ services:
       timeout: 5s
       retries: 12
     networks:
-      - ct-net
+      # db is on the internal-only network — no internet access from
+      # the database host. Only `panel` can reach it.
+      - ct-data
 
   redis:
     image: redis:7-alpine
@@ -164,7 +167,8 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - ct-net
+      # Same as db: internal-only.
+      - ct-data
 
 volumes:
   caddy_etc:
@@ -177,5 +181,18 @@ volumes:
   redis_data:
 
 networks:
+  # ct-net: the "front" network. caddy + sing-box + panel sit here.
+  # Has internet access (caddy needs ACME outbound, sing-box needs
+  # the upstream proxy targets, panel needs composer install at
+  # build time).
   ct-net:
     driver: bridge
+
+  # ct-data: the "back" network. Only db + redis + panel. `internal:
+  # true` cuts the internet entirely — a compromised db or redis
+  # cannot phone home or pull tooling. Panel bridges the two
+  # networks because it's the only thing that needs both DB access
+  # and outside-world connectivity.
+  ct-data:
+    driver: bridge
+    internal: true

@@ -1,0 +1,107 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": [
+        "config:recommended",
+        ":semanticCommitTypeAll(deps)",
+        ":timezone(Etc/UTC)"
+    ],
+    "description": "LTSC discipline: dependency updates land as tidy PRs grouped by ecosystem, with stability windows so we don't ride bleeding edges.",
+    "schedule": [
+        "before 8am on monday"
+    ],
+    "labels": [
+        "deps",
+        "automated"
+    ],
+    "rangeStrategy": "bump",
+    "rebaseWhen": "behind-base-branch",
+    "minimumReleaseAge": "7 days",
+    "lockFileMaintenance": {
+        "enabled": true,
+        "schedule": [
+            "before 8am on the first day of the month"
+        ]
+    },
+    "vulnerabilityAlerts": {
+        "labels": [
+            "security",
+            "deps"
+        ],
+        "minimumReleaseAge": null
+    },
+    "packageRules": [
+        {
+            "description": "Cargo workspace updates — group by package manifest so reviewers see related bumps together.",
+            "matchManagers": [
+                "cargo"
+            ],
+            "groupName": "cargo deps",
+            "schedule": [
+                "before 8am on monday"
+            ]
+        },
+        {
+            "description": "Composer updates — same idea for the panel.",
+            "matchManagers": [
+                "composer"
+            ],
+            "groupName": "composer deps",
+            "schedule": [
+                "before 8am on monday"
+            ]
+        },
+        {
+            "description": "Docker base images — separate group, longer release-age delay because base-image regressions are painful.",
+            "matchManagers": [
+                "dockerfile",
+                "docker-compose"
+            ],
+            "groupName": "docker base images",
+            "minimumReleaseAge": "14 days",
+            "schedule": [
+                "before 8am on monday"
+            ]
+        },
+        {
+            "description": "GitHub Actions — pinned by SHA where possible.",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "groupName": "github actions",
+            "pinDigests": true
+        },
+        {
+            "description": "Major upgrades require human review and a CHANGELOG entry. Don't auto-merge.",
+            "matchUpdateTypes": [
+                "major"
+            ],
+            "automerge": false,
+            "labels": [
+                "deps",
+                "major-upgrade",
+                "needs-changelog"
+            ]
+        },
+        {
+            "description": "Pinned upstream tags in manifests/ — these are LTSC pins; don't touch them automatically.",
+            "matchPackageNames": [
+                "caddy",
+                "sing-box",
+                "alpine",
+                "rust",
+                "php",
+                "mariadb",
+                "redis"
+            ],
+            "matchPaths": [
+                "manifests/**"
+            ],
+            "enabled": false
+        }
+    ],
+    "ignorePaths": [
+        "**/target/**",
+        "**/vendor/**",
+        "**/node_modules/**"
+    ]
+}

@@ -5,7 +5,11 @@
 # binary and copy it into the panel image. (See the panel image's
 # multi-stage build, which uses --from=ct-server-core-builder.)
 
-FROM rust:1.78-alpine AS builder
+# LTSC pin: Rust toolchain matches core/rust-toolchain.toml exactly.
+# Bumping one without the other will surface as a "rustc 1.X is not
+# supported" error during cargo build. Both files name the same
+# version on purpose.
+FROM rust:1.86-alpine AS builder
 
 # Build deps: musl for static linking, openssl/pkg-config for sqlx +
 # rustls (which we use, but transitive deps still need pkg-config).
