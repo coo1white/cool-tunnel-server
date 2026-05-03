@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 return [
     'name'     => env('APP_NAME', 'Cool Tunnel Server'),
     'env'      => env('APP_ENV', 'production'),

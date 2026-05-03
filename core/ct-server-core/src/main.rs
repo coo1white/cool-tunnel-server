@@ -20,6 +20,7 @@ mod quota;
 mod redis_bridge;
 mod singbox;
 mod subscription;
+mod template;
 mod util;
 
 pub use err::{Error, Result};
@@ -38,18 +39,30 @@ struct Cli {
     database_url: Option<String>,
 
     /// sing-box config template path.
-    #[arg(long, env = "SINGBOX_CONFIG_TEMPLATE",
-          default_value = "/srv/sing-box/config.json.tpl", global = true)]
+    #[arg(
+        long,
+        env = "SINGBOX_CONFIG_TEMPLATE",
+        default_value = "/srv/sing-box/config.json.tpl",
+        global = true
+    )]
     template: String,
 
     /// sing-box config output path.
-    #[arg(long, env = "SINGBOX_CONFIG_PATH",
-          default_value = "/etc/sing-box/config.json", global = true)]
+    #[arg(
+        long,
+        env = "SINGBOX_CONFIG_PATH",
+        default_value = "/etc/sing-box/config.json",
+        global = true
+    )]
     output: String,
 
     /// sing-box clash-API unix socket.
-    #[arg(long, env = "SINGBOX_CLASH_SOCKET",
-          default_value = "/run/sing-box/clash.sock", global = true)]
+    #[arg(
+        long,
+        env = "SINGBOX_CLASH_SOCKET",
+        default_value = "/run/sing-box/clash.sock",
+        global = true
+    )]
     admin_socket: String,
 
     /// Print machine-readable JSON instead of human-readable lines.
@@ -91,8 +104,11 @@ enum Cmd {
     /// to the Redis revocation channel for ≤100 ms Filament-to-
     /// sing-box reload propagation.
     Daemon {
-        #[arg(long, env = "CT_CORE_SOCKET",
-              default_value = "/run/cool-tunnel/core.sock")]
+        #[arg(
+            long,
+            env = "CT_CORE_SOCKET",
+            default_value = "/run/cool-tunnel/core.sock"
+        )]
         socket: String,
         /// Redis URL for the revocation bridge subscription. Empty
         /// (default) skips the subscriber — single-host dev only.
@@ -202,8 +218,14 @@ async fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Singbox { op } => match op {
             SingboxOp::Render { dry_run } => {
-                singbox::render(&cli.database_url, &cli.template, &cli.output, dry_run, cli.json)
-                    .await
+                singbox::render(
+                    &cli.database_url,
+                    &cli.template,
+                    &cli.output,
+                    dry_run,
+                    cli.json,
+                )
+                .await
             }
             SingboxOp::Validate => singbox::validate(&cli.output).await,
         },
@@ -216,8 +238,13 @@ async fn dispatch(cli: Cli) -> Result<()> {
         },
         Cmd::Quota { op } => match op {
             QuotaOp::Enforce => {
-                quota::enforce(&cli.database_url, &cli.template, &cli.output, &cli.admin_socket)
-                    .await
+                quota::enforce(
+                    &cli.database_url,
+                    &cli.template,
+                    &cli.output,
+                    &cli.admin_socket,
+                )
+                .await
             }
         },
         Cmd::Probe { op } => match op {
@@ -246,9 +273,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
             )
             .await
         }
-        Cmd::Subscription { account_id } => {
-            subscription::emit(&cli.database_url, account_id).await
-        }
+        Cmd::Subscription { account_id } => subscription::emit(&cli.database_url, account_id).await,
         Cmd::Component { op } => match op {
             ComponentOp::List { manifests } => {
                 let list = components::list(&manifests).await?;
@@ -266,9 +291,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 }
                 Ok(())
             }
-            ComponentOp::Check { manifests } => {
-                components::print_check(&manifests, cli.json).await
-            }
+            ComponentOp::Check { manifests } => components::print_check(&manifests, cli.json).await,
         },
         Cmd::Version => {
             println!(

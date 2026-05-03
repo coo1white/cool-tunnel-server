@@ -1,10 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-use App\Services\CaddyReloader;
-use App\Services\CaddyfileGenerator;
 use App\Services\RedisRevocationBus;
+use App\Services\SingBoxConfigGenerator;
+use App\Services\SingBoxReloader;
 use Illuminate\Database\Eloquent\Model;
 
 // Singleton — exactly one row, id=1. The seeder creates it on first
@@ -51,10 +53,10 @@ class ServerConfig extends Model
             // hot path, synchronous render+reload as a backstop.
             app(RedisRevocationBus::class)->announceServerConfigChanged();
 
-            $generator = app(CaddyfileGenerator::class);
+            $generator = app(SingBoxConfigGenerator::class);
             $hash      = $generator->renderToFile();
             if ($hash !== null) {
-                app(CaddyReloader::class)->reload();
+                app(SingBoxReloader::class)->reload();
             }
         });
     }

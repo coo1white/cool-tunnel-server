@@ -6,8 +6,8 @@
 // runs alongside a single panel container; the panel itself uses a
 // separate larger pool.
 
-use crate::Result;
 use crate::domain::{ProxyAccount, ServerConfig};
+use crate::Result;
 use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 use sqlx::Row;
@@ -111,7 +111,9 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
             enabled: r.try_get::<i8, _>("enabled")? != 0,
             quota_bytes: r.try_get("quota_bytes").ok(),
             used_bytes: r.try_get::<i64, _>("used_bytes").unwrap_or(0),
-            expires_at: r.try_get::<Option<DateTime<Utc>>, _>("expires_at").unwrap_or(None),
+            expires_at: r
+                .try_get::<Option<DateTime<Utc>>, _>("expires_at")
+                .unwrap_or(None),
         });
     }
     Ok(out)
@@ -178,11 +180,9 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
 
 pub async fn disable_account(pool: &MySqlPool, id: i64, reason: &str) -> Result<()> {
     tracing::info!(account = id, reason, "disabling account");
-    sqlx::query(
-        r"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?",
-    )
-    .bind(id)
-    .execute(pool)
-    .await?;
+    sqlx::query(r"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }

@@ -45,5 +45,12 @@ RUN mkdir -p /run/sing-box && chmod 0770 /run/sing-box
 # 443/udp — HTTP/3 if/when sing-box's naive inbound supports it.
 EXPOSE 80 443 443/udp
 
+# Periodic liveness probe: ask the in-process clash API for its
+# current config. If the unix socket is up and answering, the server
+# is healthy. Three-strikes-and-restart is the docker default.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD test -S /run/sing-box/clash.sock \
+        || exit 1
+
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/usr/local/bin/sing-box", "run", "--config-directory", "/etc/sing-box", "--directory", "/data"]

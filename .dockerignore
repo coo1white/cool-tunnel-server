@@ -1,0 +1,47 @@
+# What NOT to ship into Docker build contexts. Keeps the contexts
+# small and stops local secrets from accidentally landing in an
+# image layer.
+
+# Local secrets — must never be in any image.
+.env
+.env.*.local
+.env.local
+backups/
+
+# VCS + IDE noise.
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Rust build artefacts.
+core/target/
+**/target/
+core/Cargo.lock        # we want it in the image actually — see negation below
+
+# Composer / Laravel local state.
+panel/vendor/
+panel/node_modules/
+panel/storage/app/*
+panel/storage/framework/cache/data/*
+panel/storage/framework/sessions/*
+panel/storage/framework/views/*
+panel/storage/logs/*
+panel/bootstrap/cache/*
+panel/public/storage
+panel/public/hot
+
+# Tests + dev fixtures (we don't run them inside the prod images).
+panel/tests/
+
+# Generated / one-off documentation outputs.
+*.tar.gz
+*.tar.bz2
+*.tgz
+
+# Re-allow files that were excluded by patterns above but we
+# definitely want in the build context.
+!core/Cargo.lock

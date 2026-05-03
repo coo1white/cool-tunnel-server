@@ -35,17 +35,32 @@ pub enum WireRequestV1 {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WireResponseV1 {
     Ok,
-    CaddyfileRendered { hash: Option<String>, bytes: usize, accounts: usize },
-    CaddyReloaded { duration_ms: u64 },
-    TrafficCollected { rows: usize, total_bytes: u64 },
-    QuotaEnforced { disabled: usize, reload_triggered: bool },
+    CaddyfileRendered {
+        hash: Option<String>,
+        bytes: usize,
+        accounts: usize,
+    },
+    CaddyReloaded {
+        duration_ms: u64,
+    },
+    TrafficCollected {
+        rows: usize,
+        total_bytes: u64,
+    },
+    QuotaEnforced {
+        disabled: usize,
+        reload_triggered: bool,
+    },
     AntiTrackingProbe {
         hide_ip_effective: bool,
         hide_via_effective: bool,
         probe_resistance_effective: bool,
     },
     HealthOk,
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +70,11 @@ pub enum WireEventV1 {
     /// timestamp without polling.
     CaddyReloaded { hash: String },
     /// An account hit its quota and was disabled.
-    AccountDisabled { id: i64, username: String, reason: String },
+    AccountDisabled {
+        id: i64,
+        username: String,
+        reason: String,
+    },
     /// The daemon is shutting down (graceful).
     Shutdown,
 }

@@ -42,14 +42,13 @@ pub async fn collect(database_url: &Option<String>, socket_path: &str) -> Result
     let mut total = 0i64;
 
     // Resolve username → id once.
-    let username_to_id: HashMap<String, i64> = sqlx::query_as::<_, (i64, String)>(
-        r"SELECT id, username FROM proxy_accounts",
-    )
-    .fetch_all(&pool)
-    .await?
-    .into_iter()
-    .map(|(id, u)| (u, id))
-    .collect();
+    let username_to_id: HashMap<String, i64> =
+        sqlx::query_as::<_, (i64, String)>(r"SELECT id, username FROM proxy_accounts")
+            .fetch_all(&pool)
+            .await?
+            .into_iter()
+            .map(|(id, u)| (u, id))
+            .collect();
 
     for (user, s) in &samples {
         let Some(&id) = username_to_id.get(user) else {
@@ -151,7 +150,9 @@ fn parse_labels(raw: &str) -> HashMap<&str, &str> {
 
 async fn fetch_metrics_text(socket_path: &str) -> Result<String> {
     if !Path::new(socket_path).exists() {
-        return Err(Error::msg(format!("admin socket {socket_path} not present")));
+        return Err(Error::msg(format!(
+            "admin socket {socket_path} not present"
+        )));
     }
     let client: Client<UnixConnector, Full<Bytes>> = Client::unix();
     let uri: hyper::Uri = UnixUri::new(socket_path, "/metrics").into();

@@ -134,7 +134,9 @@ mod tests {
             note: Some("BSD-3".into()),
         };
         let j = serde_json::to_string(&m).unwrap_or_default();
-        let m2: ComponentManifestV1 = serde_json::from_str(&j).map_err(|_| ()).unwrap_or(m.clone());
+        let m2: ComponentManifestV1 = serde_json::from_str(&j)
+            .map_err(|_| ())
+            .unwrap_or(m.clone());
         assert_eq!(m, m2);
     }
 

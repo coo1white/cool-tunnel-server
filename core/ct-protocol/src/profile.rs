@@ -39,14 +39,14 @@ pub enum ProfileParseError {
 impl core::fmt::Display for ProfileParseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
-            Self::MissingScheme        => "URL missing scheme",
-            Self::UnsupportedScheme    => "scheme must be naive+https://",
-            Self::MissingCredentials   => "URL has no user:pass@ part",
-            Self::EmptyUsername        => "username is empty",
-            Self::EmptyPassword        => "password is empty",
-            Self::EmptyHost            => "host is empty",
-            Self::InvalidPort          => "port must be a u16",
-            Self::UnsafeUsername       => "username contains characters disallowed in basic_auth",
+            Self::MissingScheme => "URL missing scheme",
+            Self::UnsupportedScheme => "scheme must be naive+https://",
+            Self::MissingCredentials => "URL has no user:pass@ part",
+            Self::EmptyUsername => "username is empty",
+            Self::EmptyPassword => "password is empty",
+            Self::EmptyHost => "host is empty",
+            Self::InvalidPort => "port must be a u16",
+            Self::UnsafeUsername => "username contains characters disallowed in basic_auth",
         })
     }
 }
@@ -60,13 +60,15 @@ impl ProfileV1 {
         let s = s.trim();
         let rest = s
             .strip_prefix("naive+https://")
-            .or_else(|| s.strip_prefix("naive+http://").map(|_| {
-                // map_or_else trick to differentiate; we only return
-                // Some on the supported scheme. http is intentionally
-                // unsupported — proxying over plaintext defeats the
-                // entire point.
-                ""
-            }))
+            .or_else(|| {
+                s.strip_prefix("naive+http://").map(|_| {
+                    // map_or_else trick to differentiate; we only return
+                    // Some on the supported scheme. http is intentionally
+                    // unsupported — proxying over plaintext defeats the
+                    // entire point.
+                    ""
+                })
+            })
             .ok_or(ProfileParseError::MissingScheme)?;
 
         if rest.is_empty() {
@@ -118,7 +120,8 @@ impl ProfileV1 {
         // basic_auth already restricts what we accept on the server
         // side. Clients displaying the URL should still escape for
         // their UI's needs.
-        let mut s = String::with_capacity(64 + self.username.len() + self.password.len() + self.host.len());
+        let mut s =
+            String::with_capacity(64 + self.username.len() + self.password.len() + self.host.len());
         s.push_str("naive+https://");
         s.push_str(&self.username);
         s.push(':');
@@ -134,7 +137,8 @@ impl ProfileV1 {
 fn is_safe_username(u: &str) -> bool {
     !u.is_empty()
         && u.len() <= 64
-        && u.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        && u.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
 }
 
 #[cfg(test)]
@@ -149,7 +153,10 @@ mod tests {
         assert_eq!(p.port, 443);
         assert_eq!(p.username, "alice");
         assert_eq!(p.password, "s3cr3t");
-        assert_eq!(p.to_url(), "naive+https://alice:s3cr3t@proxy.example.com:443");
+        assert_eq!(
+            p.to_url(),
+            "naive+https://alice:s3cr3t@proxy.example.com:443"
+        );
     }
 
     #[test]

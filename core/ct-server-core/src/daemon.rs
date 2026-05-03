@@ -6,7 +6,7 @@
 // that matters for the "save in Filament → reload visible" cycle the
 // admin clicks through dozens of times.
 
-use crate::{admin, singbox, db, metrics, Error, Result};
+use crate::{admin, db, metrics, singbox, Error, Result};
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

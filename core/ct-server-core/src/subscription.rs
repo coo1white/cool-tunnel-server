@@ -9,8 +9,7 @@
 
 use crate::{db, Error, Result};
 use ct_protocol::{
-    AntiTrackingFeature, ProfileV1, ServerCapabilitiesV1, SubscriptionManifestV1,
-    PROTOCOL_VERSION,
+    AntiTrackingFeature, ProfileV1, ServerCapabilitiesV1, SubscriptionManifestV1, PROTOCOL_VERSION,
 };
 use sqlx::Row;
 use std::time::{SystemTime, UNIX_EPOCH};
