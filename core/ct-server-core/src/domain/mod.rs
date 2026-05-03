@@ -65,3 +65,64 @@ pub struct UsageDelta {
     pub downlink: i64,
     pub connections: i64,
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    fn account(name: &str) -> ProxyAccount {
+        ProxyAccount {
+            id: 1,
+            username: name.into(),
+            password_hash: "$2y$10$x".into(),
+            cleartext_password: None,
+            enabled: true,
+            quota_bytes: None,
+            used_bytes: 0,
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn safe_username_accepts_normal_alpha_digit_dash_dot_underscore() {
+        for u in ["alice", "bob123", "user_name", "a-b", "a.b", "A.B_c-d.0"] {
+            assert!(account(u).caddyfile_safe_username(), "{u} should be safe");
+        }
+    }
+
+    #[test]
+    fn safe_username_rejects_empty_or_oversize() {
+        assert!(!account("").caddyfile_safe_username());
+        // 65 chars > limit of 64
+        let long: String = "a".repeat(65);
+        assert!(!account(&long).caddyfile_safe_username());
+    }
+
+    #[test]
+    fn safe_username_rejects_dangerous_chars() {
+        for u in [
+            "alice space",
+            "alice\nb",
+            "alice\tb",
+            "alice@host",
+            "alice/path",
+            "alice'quote",
+            "alice\"quote",
+            "alice;rm",
+            "alice$inject",
+            "alice\\\\back",
+        ] {
+            assert!(
+                !account(u).caddyfile_safe_username(),
+                "{u} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_username_accepts_max_length() {
+        let max: String = "a".repeat(64);
+        assert!(account(&max).caddyfile_safe_username());
+    }
+}

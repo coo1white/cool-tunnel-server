@@ -154,20 +154,23 @@ mod tests {
 
     #[tokio::test]
     async fn render_pure_substitution() {
-        // Don't go through render() (which needs a DB) — exercise just
-        // the template substitution against the production template.
-        let tpl = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .ancestors()
-                .nth(2)
-                .unwrap()
-                .join("caddy/Caddyfile.tpl"),
-        );
-        let Ok(tpl) = tpl else {
-            // Running from a sandbox where the template isn't on disk
-            // — skip. The other render tests cover the substitution
-            // shape.
-            return;
+        // Don't go through render() (which needs a DB) — exercise
+        // just the template substitution against the production
+        // template. Use tokio::fs (not std::fs) so we don't block
+        // the test runtime.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .join("caddy/Caddyfile.tpl");
+        let tpl = match tokio::fs::read_to_string(&path).await {
+            Ok(t) => t,
+            Err(_) => {
+                // Running from a sandbox where the template isn't on
+                // disk — skip. The other render tests cover the
+                // substitution shape.
+                return;
+            }
         };
         let bindings = template::Bindings::new()
             .set("Domain", &cfg().domain)

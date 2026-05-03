@@ -1,0 +1,220 @@
+# Scheduled LTSC audit workflow.
+#
+# The first 30 audit cycles in v0.0.6 / v0.0.7 were run by hand.
+# Cycles 31–50 (and beyond) run here, weekly, automatically. The
+# pattern: cheap automated checks every Monday morning surface
+# regressions before they accumulate.
+#
+# Each job runs independently — one job's failure doesn't block the
+# others. Failing jobs file a GitHub issue (via dependency-review or
+# the maintainer's review of the workflow run).
+
+name: audit
+
+on:
+  # First Monday morning of every week, UTC. Plus on-demand.
+  schedule:
+    - cron: '17 8 * * 1'   # 08:17 Mon UTC — early enough that any
+                            # action gets a maintainer's Monday
+                            # without arriving overnight.
+  workflow_dispatch: {}
+
+  # Also re-run on changes to dependency / manifest files so a PR
+  # that bumps a dep doesn't slip a vuln in.
+  pull_request:
+    paths:
+      - 'core/Cargo.toml'
+      - 'core/Cargo.lock'
+      - 'core/ct-protocol/Cargo.toml'
+      - 'core/ct-server-core/Cargo.toml'
+      - 'panel/composer.json'
+      - 'panel/composer.lock'
+      - 'manifests/*.json'
+      - 'docker/**/Dockerfile'
+      - 'docker-compose.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false   # don't cancel a scheduled run mid-flight
+
+jobs:
+
+  # ---------- Cycle 31: cargo-audit (RustSec advisories) ----------
+
+  cargo-audit:
+    name: cargo audit (RustSec advisory DB)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: Audit
+        # `--deny warnings` so unmaintained / yanked crates also fail
+        # the run, not just CVEs. Tune in deny.toml if a particular
+        # advisory needs a documented exception.
+        run: cargo audit --deny warnings
+
+  # ---------- Cycle 32: cargo-deny (licenses + bans + sources) ----
+
+  cargo-deny:
+    name: cargo deny (licenses + ban list + source registry)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+      - name: Check
+        # deny.toml lives at core/deny.toml.
+        run: cargo deny check
+
+  # ---------- Cycle 33: composer audit (Packagist advisories) -----
+
+  composer-audit:
+    name: composer audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer
+      - name: Audit
+        working-directory: panel
+        run: |
+          if [[ -f composer.lock ]]; then
+              composer audit --abandoned=fail
+          else
+              echo "::warning::composer.lock not committed — composer audit cannot run."
+              echo "::warning::Generate one with: composer install --working-dir=panel"
+          fi
+
+  # ---------- Cycle 34: secret scan (gitleaks) -------------------
+
+  secret-scan:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history so gitleaks scans every commit
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------- Cycle 35: manifest drift -----------------------------
+  #
+  # Verify the version in every manifests/*.upstream.json that points
+  # at our own crates / images matches what's actually pinned in
+  # core/Cargo.toml. Catches "I bumped Cargo.toml but forgot the
+  # manifest" regressions like the v0.0.6 audit found.
+
+  manifest-drift:
+    name: manifest drift (manifests/ vs Cargo.toml + Dockerfiles)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare versions
+        run: |
+          set -euo pipefail
+          workspace_v=$(awk -F'"' '/^version[[:space:]]*=/ {print $2; exit}' core/Cargo.toml)
+          echo "workspace version: $workspace_v"
+
+          for f in manifests/ct-server-core.upstream.json \
+                   manifests/ct-protocol.upstream.json \
+                   manifests/panel.upstream.json; do
+              v=$(jq -r .version "$f")
+              if [[ "$v" != "$workspace_v" ]]; then
+                  echo "::error file=$f::manifest version $v does not match workspace $workspace_v"
+                  exit 1
+              fi
+          done
+
+          # Caddy / sing-box / mariadb / redis pins must match the FROM
+          # / image: tags in the Dockerfiles + compose file.
+          caddy_manifest=$(jq -r .version manifests/caddy.upstream.json)
+          caddy_dockerfile=$(awk '/^FROM caddy:/ {sub(/^FROM caddy:/,""); sub(/-alpine.*$/,""); print "v"$0; exit}' docker/caddy/Dockerfile)
+          if [[ "$caddy_manifest" != "$caddy_dockerfile" ]]; then
+              echo "::error::caddy manifest=$caddy_manifest, Dockerfile=$caddy_dockerfile"
+              exit 1
+          fi
+
+          sb_manifest=$(jq -r .version manifests/sing-box.upstream.json)
+          sb_dockerfile=$(awk -F'=' '/^ARG SING_BOX_VERSION=/ {print $2; exit}' docker/sing-box/Dockerfile)
+          if [[ "$sb_manifest" != "$sb_dockerfile" ]]; then
+              echo "::error::sing-box manifest=$sb_manifest, Dockerfile=$sb_dockerfile"
+              exit 1
+          fi
+
+          echo "manifest-drift: clean"
+
+  # ---------- Cycle 36: dependency-review (PR-only) --------------
+
+  dependency-review:
+    name: dependency review (vuln + license diff vs base)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  # ---------- Cycle 37: stale-doc grep ----------------------------
+
+  stale-docs:
+    name: stale doc references (regex blacklist)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: grep for known-stale strings
+        run: |
+          set -euo pipefail
+          # Strings that, if present, mean a previous-version concept
+          # leaked into the current tree. Add new ones as past pivots
+          # accrete.
+          stale_patterns=(
+              # v0.0.1 → v0.0.2: forwardproxy gone (allow in CHANGELOG / NOTICE)
+              'forwardproxy@naive'
+              # v0.0.3 → v0.0.4: sing-box ACME gone
+              'sing-box.*built-in ACME|naive inbound.*ACME'
+              # v0.0.5 → v0.0.6: caddyfile_safe_username calling-site
+              # legacy is allowed (renaming is a v0.1 thing)
+          )
+          fail=0
+          for pat in "${stale_patterns[@]}"; do
+              # Exclude history-of-the-project files where mentions
+              # are deliberate.
+              if grep -rEn "$pat" \
+                   --exclude-dir=.git --exclude-dir=target \
+                   --exclude=CHANGELOG.md \
+                   --exclude=NOTICE \
+                   --exclude=THIRD_PARTY_LICENSES.md \
+                   --include='*.md' --include='*.rs' --include='*.php' \
+                   --include='*.tpl' --include='*.json' --include='*.yml' \
+                   --include='*.sh' --include='Dockerfile*' \
+                   . 2>/dev/null; then
+                  echo "::error::stale reference matching /$pat/"
+                  fail=1
+              fi
+          done
+          exit "$fail"

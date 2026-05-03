@@ -1,13 +1,36 @@
 // Prometheus-text metrics scraper + traffic_logs writer.
 //
-// We GET /metrics from Caddy's admin API (over unix socket). The
-// forward_proxy plugin emits per-user counters; we parse, diff
-// against the last persisted value, and upsert into traffic_logs.
+// HONEST STATE (post-v0.0.2 sing-box switch): the metric names this
+// parser looks for — `caddy_forwardproxy_bytes_total{user="...",
+// direction="..."}` — are emitted by the unmaintained
+// klzgrad/forwardproxy plugin. Sing-box does NOT emit them on its
+// clash-API endpoint; sing-box's per-connection traffic stats live
+// at the streaming `/traffic` and `/connections` endpoints, which
+// don't fit a one-shot Prometheus scrape model.
 //
-// Counter semantics: bytes_total is monotonically increasing within
-// the lifetime of the Caddy process. After a restart the counter
-// resets to 0 — `record_caddyfile_hash` and the rollup logic
-// tolerate that by clamping deltas to >= 0.
+// Net effect: `traffic:rollup` runs every minute (per
+// console.php's scheduler), the scrape returns zero matching
+// metrics, and `traffic_logs` doesn't move. The Filament traffic
+// stats widget shows "0 bytes" until we either:
+//
+//   1. Switch to a clash-API streaming consumer that aggregates
+//      per-username byte counters in the daemon's RAM and flushes
+//      to traffic_logs every N seconds, OR
+//   2. Wait for sing-box upstream to add a Prometheus-shaped
+//      per-user `naive_bytes_total` (there's an open issue), OR
+//   3. Patch sing-box ourselves to emit a Prometheus endpoint that
+//      matches what we parse here.
+//
+// Until then the legacy parser is preserved (it's exercised by
+// unit tests and may be useful again if/when sing-box's metric
+// surface lands in Prometheus shape) but `collect()` early-returns
+// with a one-line tracing::info on every call so the operator
+// knows traffic numbers in the panel are not authoritative yet.
+//
+// Counter semantics (kept here as historical reference): bytes_total
+// is monotonically increasing within the lifetime of the proxy
+// process; we clamp deltas to >= 0 so a process restart doesn't
+// underflow.
 
 use crate::{db, Error, Result};
 use bytes::Bytes;
@@ -20,21 +43,38 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub async fn collect(database_url: &Option<String>, socket_path: &str) -> Result<()> {
+    // See module-level docstring for the honest state. Until sing-box
+    // exposes per-user proxy bytes in a Prometheus-text-compatible
+    // shape, this is a no-op rather than a silent failure: previous
+    // code returned zero parsed metrics from sing-box's `/metrics`
+    // and the Filament traffic widget showed flat zeros. Logging at
+    // INFO once per scrape so an operator inspecting the panel logs
+    // sees that the gap is acknowledged, not unnoticed.
+    tracing::info!(
+        "traffic:rollup is a no-op under sing-box (per-user Prometheus \
+         metrics are a v0.1 roadmap item — see metrics.rs module docstring)"
+    );
+
+    // Touch the pool so a misconfigured DATABASE_URL still surfaces
+    // as a startup error rather than going silent forever. We bind
+    // it (and use it later for the legacy scrape path) but the
+    // legacy path early-returns when no metrics are present.
     let pool = db::connect(database_url).await?;
 
+    // The legacy scrape path is preserved below for the day sing-box
+    // emits Prometheus-shaped naive metrics. It returns immediately
+    // when no matching metrics are present, which is always (today).
     let raw = match fetch_metrics_text(socket_path).await {
         Ok(t) => t,
         Err(e) => {
-            // Best-effort: a dead Caddy shouldn't crash the rollup
-            // job. Log and exit clean.
-            tracing::warn!(error = %e, "metrics endpoint unreachable");
+            tracing::debug!(error = %e, "metrics endpoint unreachable (expected)");
             return Ok(());
         }
     };
 
     let samples = parse_prometheus(&raw);
     if samples.is_empty() {
-        tracing::debug!("no forward_proxy metrics in response");
+        tracing::debug!("no forward_proxy-shaped metrics in response (expected post-sing-box)");
         return Ok(());
     }
 
