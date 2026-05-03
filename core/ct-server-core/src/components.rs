@@ -11,18 +11,53 @@ use crate::Result;
 use ct_protocol::{ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1};
 use std::path::Path;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+
+/// Manifest files are small (every shipping one is < 2 KiB). 64 KiB
+/// is generous and bounds the worst case if a rogue file is dropped
+/// into the manifests directory — without this, a 10 GiB file would
+/// be slurped into RAM before json-parse fails.
+const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+
+/// Cap on number of manifests in the directory. The shipping count
+/// is 5; 256 is generous and bounds the worst case if the directory
+/// is ever pointed at the wrong place (e.g. `/srv` instead of
+/// `/srv/manifests`) and starts walking unrelated files.
+const MAX_MANIFESTS: usize = 256;
 
 pub async fn list(manifests_dir: &str) -> Result<Vec<ComponentManifestV1>> {
     let mut out = Vec::new();
     let mut rd = fs::read_dir(manifests_dir).await?;
     while let Some(entry) = rd.next_entry().await? {
+        if out.len() >= MAX_MANIFESTS {
+            tracing::warn!(
+                limit = MAX_MANIFESTS,
+                "manifest count limit reached; skipping remaining files"
+            );
+            break;
+        }
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        let raw = fs::read_to_string(&path).await?;
-        match serde_json::from_str::<ComponentManifestV1>(&raw) {
+        let meta = fs::metadata(&path).await?;
+        if meta.len() > MAX_MANIFEST_BYTES {
+            tracing::warn!(
+                path = %path.display(),
+                size = meta.len(),
+                limit = MAX_MANIFEST_BYTES,
+                "manifest exceeds size limit; skipping"
+            );
+            continue;
+        }
+        // Bounded read: the metadata size check above already
+        // capped the file, but we use take() defensively in case
+        // the file grew between metadata and read.
+        let f = fs::File::open(&path).await?;
+        let mut buf = String::with_capacity(meta.len() as usize);
+        f.take(MAX_MANIFEST_BYTES).read_to_string(&mut buf).await?;
+        match serde_json::from_str::<ComponentManifestV1>(&buf) {
             Ok(m) => out.push(m),
             Err(e) => {
                 tracing::warn!(path = %path.display(), error = %e, "skipping bad manifest");

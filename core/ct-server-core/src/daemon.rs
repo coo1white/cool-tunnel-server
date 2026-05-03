@@ -12,6 +12,13 @@ use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
+/// Max bytes per request line (JSON-per-line protocol). A
+/// well-formed request is well under 1 KiB; 1 MiB is generous and
+/// also bounds the worst case if a buggy client sends a huge blob
+/// without newlines (we'd otherwise grow the read buffer
+/// unboundedly).
+const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
+
 pub async fn serve(
     socket_path: &str,
     database_url: &Option<String>,
@@ -40,19 +47,54 @@ pub async fn serve(
     let output = output.to_owned();
     let admin_socket = admin_socket.to_owned();
 
+    // Graceful shutdown: stop accepting new connections on
+    // SIGINT / SIGTERM, drop the listener so its socket file is
+    // freed, and let in-flight handlers finish naturally (each
+    // is its own tokio task and holds nothing process-global).
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+
     loop {
-        let (stream, _) = listener.accept().await?;
-        let database_url = database_url.clone();
-        let template = template.clone();
-        let output = output.clone();
-        let admin_socket = admin_socket.clone();
-        tokio::spawn(async move {
-            if let Err(e) =
-                handle_client(stream, &database_url, &template, &output, &admin_socket).await
-            {
-                tracing::warn!(error = %e, "client handler errored");
+        tokio::select! {
+            _ = &mut shutdown => {
+                tracing::info!(path = socket_path, "ct-server-core daemon shutting down");
+                drop(listener);
+                let _ = tokio::fs::remove_file(socket_path).await;
+                return Ok(());
             }
-        });
+            res = listener.accept() => {
+                let (stream, _) = res?;
+                let database_url = database_url.clone();
+                let template = template.clone();
+                let output = output.clone();
+                let admin_socket = admin_socket.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        handle_client(stream, &database_url, &template, &output, &admin_socket).await
+                    {
+                        tracing::warn!(error = %e, "client handler errored");
+                    }
+                });
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sigterm = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not install SIGTERM handler; ctrl-c only");
+            // Still wait on ctrl-c if SIGTERM install failed.
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
     }
 }
 
@@ -64,9 +106,44 @@ async fn handle_client(
     admin_socket: &str,
 ) -> Result<()> {
     let (rd, mut wr) = stream.into_split();
-    let mut lines = BufReader::new(rd).lines();
-    while let Some(line) = lines.next_line().await? {
-        let req: WireRequestV1 = match serde_json::from_str(&line) {
+    // Cap the read buffer so a misbehaving client sending an
+    // unterminated line can't make us allocate forever. The
+    // BufReader::lines() API doesn't enforce a size limit by
+    // itself; we pre-cap by reading bytes-with-limit then
+    // splitting.
+    let mut rd = BufReader::with_capacity(8 * 1024, rd);
+    loop {
+        let mut buf = Vec::with_capacity(256);
+        let n = rd.read_until(b'\n', &mut buf).await?;
+        if n == 0 {
+            break; // EOF
+        }
+        if buf.len() > MAX_REQUEST_LINE_BYTES {
+            let resp = WireResponseV1::Error {
+                code: "request_too_large".into(),
+                message: format!(
+                    "request line exceeds {MAX_REQUEST_LINE_BYTES} bytes; closing connection"
+                ),
+            };
+            send(&mut wr, &resp).await?;
+            return Err(Error::msg("oversized request; closing"));
+        }
+        // Strip the trailing newline if present (read_until includes it).
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+        }
+        let line = match std::str::from_utf8(&buf) {
+            Ok(s) => s,
+            Err(e) => {
+                let resp = WireResponseV1::Error {
+                    code: "bad_request".into(),
+                    message: format!("non-utf8 input: {e}"),
+                };
+                send(&mut wr, &resp).await?;
+                continue;
+            }
+        };
+        let req: WireRequestV1 = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
                 let resp = WireResponseV1::Error {
@@ -106,15 +183,21 @@ async fn handle(
 ) -> Result<WireResponseV1> {
     match req {
         WireRequestV1::RenderCaddyfile => {
-            // Reuse the CLI render but capture the structured outcome
-            // by re-implementing the logic here. (We could refactor
-            // singbox::render to return RenderOutcome; left for v0.0.2.)
+            // Wire-protocol name is historical (the v0.0.1 stack
+            // used Caddy + forwardproxy). Today this dispatches to
+            // sing-box render — sing-box owns :443 / proxy traffic
+            // since v0.0.2; Caddy is ACME-only since v0.0.4.
+            // Renaming the variant is a v0.1 task (it'd break
+            // every connected client core that speaks WireV1).
             singbox::render(database_url, template, output, false, false).await?;
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::ReloadCaddy => {
+            // Same naming caveat as RenderCaddyfile: this reloads
+            // sing-box via its clash API. Variant name preserved
+            // for WireV1 compat.
             let started = std::time::Instant::now();
-            admin::reload_caddyfile_text(admin_socket, output).await?;
+            admin::reload(admin_socket, output).await?;
             Ok(WireResponseV1::CaddyReloaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             })

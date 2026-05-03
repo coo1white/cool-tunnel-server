@@ -65,18 +65,24 @@ pub async fn anti_tracking(target: &str, via: Option<&str>) -> Result<()> {
     // server returns 200 + HTML to unauthenticated CONNECT-shaped
     // requests; that's the whole point of probe_resistance.
     let probe_resistance_effective = match via.and_then(strip_creds) {
-        Some(public_url) => match client_no_proxy().get(&public_url).send().await {
-            Ok(r) => {
-                let status = r.status();
-                let ctype = r
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_owned();
-                status.is_success() && ctype.starts_with("text/html")
+        Some(public_url) => match client_no_proxy() {
+            Ok(c) => match c.get(&public_url).send().await {
+                Ok(r) => {
+                    let status = r.status();
+                    let ctype = r
+                        .headers()
+                        .get(reqwest::header::CONTENT_TYPE)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_owned();
+                    status.is_success() && ctype.starts_with("text/html")
+                }
+                Err(_) => false,
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "probe-resistance check skipped");
+                false
             }
-            Err(_) => false,
         },
         None => false,
     };
@@ -118,10 +124,14 @@ fn strip_creds(url: &str) -> Option<String> {
     Some(format!("{scheme}://{host_port}"))
 }
 
-fn client_no_proxy() -> reqwest::Client {
+fn client_no_proxy() -> Result<reqwest::Client> {
+    // No silent fallback to `Client::new()` — that path would lose
+    // the 10s timeout and the no_proxy() opt-out, both of which
+    // are load-bearing for the probe's correctness. If TLS init
+    // genuinely fails on this machine, propagate the error.
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .no_proxy()
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .map_err(|e| Error::msg(format!("probe: could not construct no-proxy client: {e}")))
 }

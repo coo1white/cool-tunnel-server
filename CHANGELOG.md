@@ -22,6 +22,169 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.10] — 2026-05-03
+
+Fourth 50-cycle LTSC audit, focused on **code-robustness design**:
+panic potential, error propagation, subprocess + network timeouts,
+transaction boundaries, resource caps, and the unhappy paths the
+existing test suite doesn't exercise. Cycles 1–30 by hand surfaced
+ten findings, two of them outright **showstopper bugs** that have
+been broken in production since v0.0.4 — never caught because
+nobody had clicked through the panel save flow on a real deploy.
+Cycles 31–50 added two new codified jobs whose absence let those
+showstoppers ship: a PSR-4 filename-vs-class lint and PHPStan
+level-5 undefined-method analysis.
+
+### Fixed (showstopper, was broken since v0.0.4)
+
+- **`panel/app/Services/SingBoxReloader.php` declared
+  `class CaddyReloader`.** PSR-4 autoloading resolves
+  `App\Services\SingBoxReloader::class` to `SingBoxReloader.php`,
+  finds it, includes it — but the class declared inside is
+  `CaddyReloader`, so the symbol `SingBoxReloader` is undefined.
+  Result: every `app(SingBoxReloader::class)` resolution from
+  `AppServiceProvider` raised "Class not found" at runtime,
+  breaking every panel save that fired the model-saved event.
+  Class renamed to match the filename; `reload()` now calls
+  `reloadSingBox()` (was `reloadCaddy()` — also undefined).
+- **`CaddyfileGenerator::renderToFile()`,
+  `SingBoxConfigGenerator::renderToFile()`, and
+  `SingBoxReloader::reload()` called methods that don't exist
+  on `CtServerCore` (`renderCaddyfile`, `reloadCaddy`, etc.).**
+  Each invocation raised PHP `Error` ("call to undefined
+  method"), which the surrounding `catch (\RuntimeException
+  $e)` did NOT catch (Error doesn't extend Exception). Result:
+  every `ServerConfig::saved` and `ProxyAccount::saved` event
+  threw a fatal Error, abandoning the model save mid-flight.
+  v0.0.10 adds the missing `renderCaddyfile()` method,
+  corrects the `SingBoxConfigGenerator` to call
+  `renderSingBoxConfig()`, and broadens all generator catches
+  from `\RuntimeException` to `\Throwable` so a future class
+  of similar bug at least gets logged instead of silently
+  bringing the panel down.
+
+### Fixed (other robustness)
+
+- **Hyper unix-socket calls had no timeout.** `admin::reload`,
+  `admin::dump_config`, and `metrics::fetch_metrics_text` all
+  did `client.request(req).await?` with no `tokio::time::timeout`
+  wrapper. A hung sing-box process (deadlock, signal-blocked,
+  etc.) accepting the connection but never responding would
+  have wedged the panel's reload path forever. Now wrapped:
+  reload + dump in 15s, metrics in 10s.
+- **Daemon's JSON-per-line reader was unbounded.** A misbehaving
+  client sending a huge line without a newline could grow the
+  read buffer until OOM. Now caps at 1 MiB per line; an
+  oversized request triggers a `request_too_large` error
+  response and the connection is closed.
+- **Daemon had no graceful shutdown.** SIGTERM/SIGINT during
+  `accept()` killed the process leaving the unix socket file
+  on disk, which the next start would have to clean up. Now
+  installs SIGINT + SIGTERM handlers; shutdown drops the
+  listener, removes the socket file, returns Ok.
+- **`db::active_proxy_accounts` silently defaulted on schema
+  mismatches.** `try_get("quota_bytes").ok()` /
+  `try_get("used_bytes").unwrap_or(0)` /
+  `try_get("expires_at").unwrap_or(None)` would have masked a
+  schema migration that dropped or retyped any of those
+  columns — every account would have silently become
+  "unlimited quota, never expires." Now returns an Error with
+  context ("schema regression?") on type mismatch; the only
+  silent path remains `password_cleartext_encrypted` (which
+  is legitimately Optional and just gets logged on type
+  mismatch instead of returning an error).
+- **`db::add_used_bytes` accepted any delta.** A buggy metric
+  source could add `i64::MAX` and silently disable every
+  account via the quota path. Now rejects negative deltas
+  outright and clamps the upper bound at 1 PiB
+  (`MAX_USED_BYTES_DELTA`) — well above any plausible
+  per-window traffic for a single account; values above
+  almost certainly indicate a parser regression.
+- **`quota::enforce` SELECT + UPDATE had no transaction.** An
+  operator re-enabling an account in the panel between our
+  `SELECT enabled = 1 WHERE expired/quota` and our subsequent
+  `UPDATE enabled = 0` would have had their re-enable
+  silently overwritten. Now wraps both in a transaction with
+  `SELECT ... FOR UPDATE`, so concurrent panel saves block on
+  our row locks for the (typically sub-millisecond)
+  enforcement window.
+- **`probe::client_no_proxy()` fell back to
+  `reqwest::Client::new()` if the timeout-configured builder
+  failed.** That fallback path silently lost the 10s timeout
+  and the `no_proxy()` opt-out — both load-bearing for the
+  probe's correctness. Now propagates the build error
+  instead.
+- **`components::list` was unbounded.** No size limit per
+  manifest file (a 10 GiB rogue file would have OOM'd the
+  process), no count limit on the directory (pointing at the
+  wrong path could have walked unrelated JSON files). Now
+  caps at 64 KiB per manifest, 256 manifests total, with
+  warnings logged on overflow.
+- **`CtServerCore::run()` captured unbounded
+  stdout/stderr.** A regression where ct-server-core looped
+  printing could have OOM'd the panel container via the
+  captured String. Now bounds capture at 1 MiB per channel
+  with a `…[truncated]` marker in the error message; sets a
+  Symfony `setIdleTimeout` to detect a wedged subprocess.
+- **`reload_caddyfile_text` alias removed.** The misleading
+  v0.0.4-era backward-compat shim referenced "Caddyfile" but
+  reloaded sing-box. All callers updated to use `admin::reload`
+  directly.
+
+### Changed
+
+- `daemon::handle_client` now uses `read_until(b'\n')` with a
+  pre-cap instead of `BufReader::lines()`, so the per-line
+  size limit is enforced before a full line is consumed.
+- `daemon` `WireRequestV1::RenderCaddyfile` and
+  `WireRequestV1::ReloadCaddy` variants kept their historical
+  names for WireV1 compat; added comments explaining the
+  v0.0.2 rename plan was deferred to v0.1.
+- `redis_bridge::fire_reload` log line corrected: was "caddy
+  reload applied", now "sing-box reload applied" (post-v0.0.4
+  this is sing-box via clash API).
+
+### Added
+
+- **Cycle 41 codified: `php-psr4` audit job.** Runs
+  `composer dump-autoload --strict-psr` plus a grep that
+  verifies every `class|interface|trait|enum` declaration in
+  `panel/app/**/*.php` matches the basename of the file
+  declaring it. Would have caught the v0.0.10 Showstopper #1
+  the moment it was committed.
+- **Cycle 42 codified: `phpstan` audit job.** Runs PHPStan
+  level 5 against `panel/app`. Catches undefined-method
+  calls + type errors at lint time. Would have caught the
+  v0.0.10 Showstopper #2 the moment it was committed.
+  PHPStan added to `panel/composer.json` `require-dev`.
+
+### Tests
+
+51 passing (8 ct-protocol + 42 ct-server-core + 1 doc-tests at 0).
+Build + clippy + fmt + shellcheck all clean. The added
+robustness reads (size-bounded manifest reads, type-strict
+`try_get`s, transaction-wrapped quota enforcement) all
+exercised by existing tests.
+
+### Security
+
+- The hyper-without-timeout class of bug is a denial-of-
+  service vector: a single hung sing-box process would have
+  wedged every subsequent panel save indefinitely. v0.0.10
+  closes the class for all three call sites
+  (`admin::reload`, `admin::dump_config`,
+  `metrics::fetch_metrics_text`).
+- The unbounded daemon line buffer is a memory-exhaustion
+  vector for any process that can connect to the daemon
+  socket (which is mode 0660; only the panel and root). Not
+  a public risk but a robustness vector. Capped at 1 MiB.
+- The schema-mismatch silent-default class of bug is the
+  category of "the database changed under us and we
+  accidentally became permissive." Now fails loudly on
+  schema regression.
+
+---
+
 ## [0.0.9] — 2026-05-03
 
 Third 50-cycle LTSC audit, focused on **anti-network-tracking** —
@@ -640,7 +803,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.9...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.10...HEAD
+[0.0.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.6...v0.0.7

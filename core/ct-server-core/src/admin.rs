@@ -22,8 +22,13 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::client::legacy::Client;
 use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
+
+/// Bounded HTTP timeout for clash-API calls over the unix socket.
+/// A reload should complete in well under a second; a hung
+/// sing-box (deadlock, signal-blocked) must not wedge the panel.
+const CLASH_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Reload sing-box from `config_path` via the clash-API unix socket.
 /// Falls back to `docker compose restart` when the socket isn't
@@ -45,7 +50,17 @@ pub async fn reload(socket_path: &str, config_path: &str) -> Result<()> {
         .header(hyper::header::CONTENT_TYPE, "application/json")
         .body(Full::new(Bytes::from_static(b"{}")))?;
 
-    let resp = client.request(req).await?;
+    let resp = tokio::time::timeout(CLASH_HTTP_TIMEOUT, client.request(req))
+        .await
+        .map_err(|_| {
+            Error::msg(format!(
+                "sing-box clash /configs PUT timed out after {}s. \
+                 Likely a hung sing-box process — try \
+                 `docker compose restart sing-box`. The clash socket \
+                 was reachable but did not respond.",
+                CLASH_HTTP_TIMEOUT.as_secs(),
+            ))
+        })??;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = read_body(resp).await.unwrap_or_default();
@@ -64,13 +79,6 @@ pub async fn reload(socket_path: &str, config_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Backward-compat alias for the old caller name. Same semantics —
-/// the daemon (redis_bridge, quota) used `reload_caddyfile_text` so
-/// we keep the name to avoid touching every call site.
-pub async fn reload_caddyfile_text(socket_path: &str, config_path: &str) -> Result<()> {
-    reload(socket_path, config_path).await
-}
-
 pub async fn dump_config(socket_path: &str) -> Result<()> {
     if !Path::new(socket_path).exists() {
         return Err(Error::msg(format!(
@@ -86,7 +94,14 @@ pub async fn dump_config(socket_path: &str) -> Result<()> {
         .method(Method::GET)
         .uri(uri)
         .body(Full::new(Bytes::new()))?;
-    let resp = client.request(req).await?;
+    let resp = tokio::time::timeout(CLASH_HTTP_TIMEOUT, client.request(req))
+        .await
+        .map_err(|_| {
+            Error::msg(format!(
+                "sing-box clash /configs GET timed out after {}s",
+                CLASH_HTTP_TIMEOUT.as_secs(),
+            ))
+        })??;
     if resp.status() != StatusCode::OK {
         return Err(Error::msg(format!(
             "sing-box clash /configs failed: {}",

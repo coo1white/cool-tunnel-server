@@ -6,7 +6,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Log;
 
-// Thin shell-out to `ct-server-core caddyfile render`.
+// Thin shell-out to `ct-server-core singbox render`.
 //
 // Why we don't render in PHP anymore:
 // - The Rust core does atomic-write with fsync, type-validated DB
@@ -18,8 +18,14 @@ use Illuminate\Support\Facades\Log;
 //
 // Public API is preserved so model events that previously called
 // renderToFile() / render() still work.
+//
+// v0.0.9 and earlier called $this->core->renderCaddyfile() from
+// here (a copy-paste from the actual CaddyfileGenerator that
+// matched the file name), which raised "method not found" Error
+// at runtime on every panel save. Now correctly calls
+// renderSingBoxConfig().
 
-class CaddyfileGenerator
+class SingBoxConfigGenerator
 {
     public function __construct(
         private CtServerCore $core,
@@ -33,14 +39,21 @@ class CaddyfileGenerator
     public function renderToFile(): ?string
     {
         try {
-            $out = $this->core->renderCaddyfile();
-        } catch (\RuntimeException $e) {
-            Log::error('caddyfile.render.failed', ['err' => $e->getMessage()]);
+            $out = $this->core->renderSingBoxConfig();
+        } catch (\Throwable $e) {
+            // Catch \Throwable rather than \RuntimeException so a
+            // future undefined-method / type-error / class-not-
+            // found Error doesn't propagate silently up to the
+            // panel and abort the surrounding model save.
+            Log::error('singbox.render.failed', [
+                'err'  => $e->getMessage(),
+                'type' => get_class($e),
+            ]);
             return null;
         }
-        // ct-server-core --json caddyfile render emits {hash, bytes,
-        // changed, accounts, path}. We only need the hash for the
-        // existing contract.
+        // ct-server-core --json singbox render emits {hash, bytes,
+        // changed, active_users, path}. We only need the hash for
+        // the existing contract.
         $changed = (bool) ($out['changed'] ?? false);
         return $changed ? ($out['hash'] ?? null) : null;
     }

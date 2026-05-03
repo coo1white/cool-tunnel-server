@@ -93,7 +93,20 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
     let app_key = std::env::var("APP_KEY").ok();
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        let encrypted: Option<String> = r.try_get("password_cleartext_encrypted").ok();
+        // password_cleartext_encrypted is allowed to be NULL (pre-
+        // migration rows or rows the operator never re-saved). We
+        // log on type mismatch / decode error rather than silently
+        // skipping — a schema migration that changed the column
+        // type to e.g. BLOB without updating this code would be
+        // visible in logs instead of resulting in every user being
+        // locked out with "could not decrypt".
+        let encrypted: Option<String> = match r.try_get("password_cleartext_encrypted") {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "password_cleartext_encrypted column type mismatch");
+                None
+            }
+        };
         let cleartext = encrypted.and_then(|enc| {
             match crate::laravel_crypt::decrypt(&enc, app_key.as_deref().unwrap_or("")) {
                 Ok(s) => Some(s),
@@ -103,17 +116,44 @@ pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>
                 }
             }
         });
+        // quota_bytes / expires_at are nullable in the schema. We
+        // distinguish "column NULL" (legitimate, means unlimited /
+        // never-expire) from "column missing or wrong type"
+        // (schema regression — fail loudly instead of silently
+        // unlimited-quota every account).
+        let quota_bytes = match r.try_get::<Option<i64>, _>("quota_bytes") {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(crate::Error::msg(format!(
+                    "proxy_accounts.quota_bytes read failed (schema regression?): {e}"
+                )));
+            }
+        };
+        let used_bytes = match r.try_get::<i64, _>("used_bytes") {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(crate::Error::msg(format!(
+                    "proxy_accounts.used_bytes read failed (schema regression?): {e}"
+                )));
+            }
+        };
+        let expires_at = match r.try_get::<Option<DateTime<Utc>>, _>("expires_at") {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(crate::Error::msg(format!(
+                    "proxy_accounts.expires_at read failed (schema regression?): {e}"
+                )));
+            }
+        };
         out.push(ProxyAccount {
             id: r.try_get::<i64, _>("id")?,
             username: r.try_get("username")?,
             password_hash: r.try_get("password_hash")?,
             cleartext_password: cleartext,
             enabled: r.try_get::<i8, _>("enabled")? != 0,
-            quota_bytes: r.try_get("quota_bytes").ok(),
-            used_bytes: r.try_get::<i64, _>("used_bytes").unwrap_or(0),
-            expires_at: r
-                .try_get::<Option<DateTime<Utc>>, _>("expires_at")
-                .unwrap_or(None),
+            quota_bytes,
+            used_bytes,
+            expires_at,
         });
     }
     Ok(out)
@@ -163,7 +203,27 @@ pub async fn upsert_traffic(
     Ok(res.rows_affected() as i64)
 }
 
+/// Maximum byte delta accepted in a single call. 1 PiB is well
+/// above any plausible per-window traffic for a single proxy
+/// account; values above this are almost certainly a parsing bug
+/// in the metric source (sing-box upgrade changed the line shape,
+/// the parser misread a label, etc.) and we reject them rather
+/// than instantly disabling everyone via the quota path.
+const MAX_USED_BYTES_DELTA: i64 = 1 << 50; // 1 PiB
+
 pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64) -> Result<()> {
+    if delta < 0 {
+        return Err(crate::Error::msg(format!(
+            "add_used_bytes: refusing negative delta {delta} for account {proxy_account_id}"
+        )));
+    }
+    if delta > MAX_USED_BYTES_DELTA {
+        return Err(crate::Error::msg(format!(
+            "add_used_bytes: delta {delta} for account {proxy_account_id} \
+             exceeds {MAX_USED_BYTES_DELTA} (sane upper bound); \
+             likely a metric-source regression — refusing to apply"
+        )));
+    }
     sqlx::query(
         r"
         UPDATE proxy_accounts
@@ -178,6 +238,12 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
     Ok(())
 }
 
+/// Single-account disable. Kept for the daemon's per-account
+/// revocation path (Redis pub/sub) where the SQL is a one-shot
+/// outside any larger transaction. The quota enforcer inlines its
+/// own UPDATE inside a transaction since it needs SELECT FOR
+/// UPDATE atomicity.
+#[allow(dead_code)]
 pub async fn disable_account(pool: &MySqlPool, id: i64, reason: &str) -> Result<()> {
     tracing::info!(account = id, reason, "disabling account");
     sqlx::query(r"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?")

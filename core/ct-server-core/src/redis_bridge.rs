@@ -161,7 +161,7 @@ async fn run_subscriber(
     Ok(())
 }
 
-/// Run one Caddyfile-render + admin-API-reload cycle. Errors are
+/// Run one sing-box render + clash-API reload cycle. Errors are
 /// logged but never propagated — a failed reload must not kill the
 /// subscriber loop, since the next event will retry the work.
 async fn fire_reload(
@@ -176,12 +176,12 @@ async fn fire_reload(
         tracing::warn!(error = %e, edge, "render failed during revocation");
         return;
     }
-    if let Err(e) = admin::reload_caddyfile_text(admin_socket, output).await {
+    if let Err(e) = admin::reload(admin_socket, output).await {
         tracing::warn!(error = %e, edge, "reload failed during revocation");
         return;
     }
     let elapsed_ms = started.elapsed().as_millis() as u64;
-    tracing::info!(edge, elapsed_ms, "caddy reload applied");
+    tracing::info!(edge, elapsed_ms, "sing-box reload applied");
 }
 
 /// Wait one window, then run the trailing flush. The flush itself
