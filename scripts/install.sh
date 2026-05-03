@@ -122,12 +122,19 @@ ok "migrations applied + default seed in place"
 # ---------- Render the initial Caddyfile + sing-box config --------
 
 step "Render initial Caddyfile + sing-box config from DB"
+# Render each config; track failures so the post-step `ok`
+# doesn't lie when a render actually failed (papercut spotted in
+# the v0.0.11 audit — operator saw "✗ FAILED" + "✓ rendered" on
+# the same step, misleading the eye to believe the step
+# succeeded).
+caddy_render_ok=true
+singbox_render_ok=true
 compose exec -T panel ct-server-core --json caddyfile render \
-    || warn "Caddyfile render failed — Caddy will start with no domain configured"
+    || { warn "Caddyfile render failed — Caddy will start with no domain configured"; caddy_render_ok=false; }
 compose exec -T panel ct-server-core --json singbox render \
-    || warn "sing-box render failed — first proxy account creation will retry"
-ok "Caddyfile rendered to /etc/caddy/Caddyfile (caddy_etc volume)"
-ok "config.json rendered to /etc/sing-box/config.json (singbox_etc volume)"
+    || { warn "sing-box render failed — first proxy account creation will retry"; singbox_render_ok=false; }
+[[ "$caddy_render_ok"   == true ]] && ok "Caddyfile rendered to /etc/caddy/Caddyfile (caddy_etc volume)"
+[[ "$singbox_render_ok" == true ]] && ok "config.json rendered to /etc/sing-box/config.json (singbox_etc volume)"
 
 # ---------- Start Caddy first; wait for the cert to land ----------
 
@@ -156,7 +163,7 @@ wait_for "Caddy cert at ${cert_path}" 45 2 \
 
 step "Start sing-box (reads cert from caddy_data volume)"
 compose up -d sing-box
-ok "sing-box running on :443 + :443/udp"
+ok "sing-box running on :443 (TCP only — NaiveProxy is HTTP/2-only)"
 
 # ---------- Create first Filament admin ----------------------------
 
