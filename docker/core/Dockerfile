@@ -29,8 +29,25 @@ COPY manifests /build/manifests
 
 WORKDIR /build/core
 
-# Static link against musl so the binary runs in any minimal base.
-ENV RUSTFLAGS="-C target-feature=+crt-static"
+# Static link against musl so the resulting binary runs in any
+# minimal Alpine OR debian base without a musl-libc dependency.
+#
+# IMPORTANT: this flag is set via the per-target env var, NOT via
+# global RUSTFLAGS. With global RUSTFLAGS="-C target-feature=
+# +crt-static", Cargo applies the flag to EVERY compilation
+# including the host-side proc-macros (async-trait, serde_derive,
+# tokio-macros, etc.) — and those need cdylib output, which
+# crt-static refuses. The build fails partway through with:
+#
+#   error: cannot produce proc-macro for `async-trait` as the
+#   target `x86_64-unknown-linux-musl` does not support these
+#   crate types
+#
+# Per-target env scopes the flag to ONLY the binary's
+# x86_64-unknown-linux-musl build; proc-macros are compiled for
+# the host toolchain default (also musl on rust:alpine, but
+# without crt-static so cdylibs work).
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static"
 
 # Build with the registry cache mount only. We deliberately do NOT
 # cache-mount /build/core/target — that interacts badly with the
@@ -44,8 +61,8 @@ ENV RUSTFLAGS="-C target-feature=+crt-static"
 # is actually correct end-to-end.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --release --bin ct-server-core && \
-    install -Dm755 target/release/ct-server-core /ct-server-core && \
+    cargo build --release --bin ct-server-core --target x86_64-unknown-linux-musl && \
+    install -Dm755 target/x86_64-unknown-linux-musl/release/ct-server-core /ct-server-core && \
     (strip /ct-server-core || true) && \
     test -x /ct-server-core
 
