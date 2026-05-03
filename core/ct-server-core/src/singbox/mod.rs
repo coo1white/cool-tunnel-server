@@ -207,21 +207,27 @@ async fn render_to_string(
 }
 
 /// Derive the certificate / key paths Caddy uses for our domain.
-/// Caddy's auto-HTTPS layout is:
+/// Caddy stores certs under `$XDG_DATA_HOME/caddy/certificates/...`,
+/// and the official caddy image sets `XDG_DATA_HOME=/data`, so
+/// inside the caddy container the cert lands at:
 ///
 ///   /data/caddy/certificates/<ca-folder>/<domain>/<domain>.crt
-///                                                          .key
 ///
-/// Where `<ca-folder>` is derived from the ACME directory URL by
-/// stripping the scheme and replacing slashes with dashes (so
-/// `https://acme-v02.api.letsencrypt.org/directory` becomes
-/// `acme-v02.api.letsencrypt.org-directory`). We mount the same
-/// /data/caddy directory read-only into the sing-box container at
-/// /data/caddy, so the same path works on both sides.
+/// The `caddy_data` named volume's root is therefore the directory
+/// caddy writes to (i.e. it contains a top-level `caddy/` subdir).
+/// We mount `caddy_data` at `/data/caddy` in the sing-box container,
+/// so from sing-box's perspective the cert is at:
+///
+///   /data/caddy/caddy/certificates/<ca-folder>/<domain>/<domain>.crt
+///
+/// (The double `caddy/` is the volume's own subdir surfacing under
+/// the chosen mount point, not a typo.) `<ca-folder>` is derived
+/// from the ACME directory URL by stripping the scheme and
+/// replacing slashes with dashes — see ca_folder_from_directory.
 fn cert_paths(cfg: &ServerConfig) -> (String, String) {
     let ca_folder = ca_folder_from_directory(&cfg.acme_directory);
     let base = format!(
-        "/data/caddy/certificates/{ca}/{d}/{d}",
+        "/data/caddy/caddy/certificates/{ca}/{d}/{d}",
         ca = ca_folder,
         d = cfg.domain,
     );
@@ -389,7 +395,7 @@ mod tests {
         // pinned Let's Encrypt production directory.
         assert!(
             body.contains(
-                "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.crt"
+                "/data/caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.crt"
             ),
             "rendered body should contain the standard LE cert path; got: {body}"
         );
@@ -424,11 +430,11 @@ mod tests {
         let (cert, key) = cert_paths(&c);
         assert_eq!(
             cert,
-            "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.crt"
+            "/data/caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.crt"
         );
         assert_eq!(
             key,
-            "/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.key"
+            "/data/caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/proxy.example.com/proxy.example.com.key"
         );
     }
 
