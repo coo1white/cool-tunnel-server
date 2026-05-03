@@ -120,8 +120,6 @@ services:
       #   /data/caddy/certificates/<ca>/<domain>/<domain>.crt
       # which is the standard Caddy auto-HTTPS layout.
       - caddy_data:/data/caddy:ro
-      # Shared admin socket so ct-server-core can hot-reload.
-      - singbox_run:/run/sing-box
     depends_on:
       caddy:
         condition: service_started
@@ -129,6 +127,11 @@ services:
         condition: service_started
     networks:
       - ct-net
+    # No 9090 here. The clash API listens on 0.0.0.0:9090 inside the
+    # container so the panel (also on `ct-net`) can reach it via
+    # `ct-singbox:9090`, but the host MUST NOT expose it. Audit-
+    # enforced in .github/workflows/audit.yml — the guard greps this
+    # service's `ports:` block for ":9090" and fails CI if found.
 
   panel:
     build:
@@ -159,8 +162,12 @@ services:
       # Where the CaddyfileGenerator (panel) writes the rendered Caddyfile.
       CADDYFILE_PATH:         /etc/caddy/Caddyfile
       CADDYFILE_TEMPLATE:     /srv/caddy/Caddyfile.tpl
-      # sing-box clash-API unix socket.
-      SINGBOX_CLASH_SOCKET:   /run/sing-box/clash.sock
+      # sing-box clash-API base URL. Bound to the docker-internal
+      # `ct-singbox:9090` listener; never published on the host
+      # (audit guard enforces no 9090 in sing-box `ports:`). The
+      # bearer token is derived from ServerConfig at each reload —
+      # see core/ct-server-core/src/singbox/mod.rs::clash_secret.
+      SINGBOX_CLASH_URL:      http://ct-singbox:9090
       # Where the daemon's own JSON-over-unix-socket lives.
       CT_CORE_SOCKET:         /run/cool-tunnel/core.sock
       CT_MANIFESTS_DIR:       /srv/manifests
@@ -182,7 +189,6 @@ services:
       - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
       - panel_storage:/var/www/html/storage
       - singbox_etc:/etc/sing-box
-      - singbox_run:/run/sing-box
       # Caddyfile is rendered into this volume so caddy picks it up.
       - caddy_etc:/etc/caddy
       # Panel reads the cert-renewed flag Caddy writes here.
@@ -233,7 +239,6 @@ volumes:
   caddy_data:
   singbox_etc:
   singbox_data:
-  singbox_run:
   panel_storage:
   db_data:
   redis_data:

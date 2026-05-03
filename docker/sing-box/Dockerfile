@@ -38,18 +38,21 @@ RUN apk add --no-cache ca-certificates curl tzdata tini \
 
 # Persistent state: the rendered config.json lives in /etc/sing-box/
 # (mounted from a docker volume the panel/core write to); /data is
-# kept for the cache_file when enabled. /run/sing-box holds the unix
-# socket the clash API listens on so we can hot-reload without TCP
-# exposure. ACME state lives in caddy_data, not here — Caddy is the
-# ACME side post-v0.0.4.
+# kept for the cache_file when enabled. ACME state lives in
+# caddy_data, not here — Caddy is the ACME side post-v0.0.4.
 VOLUME ["/etc/sing-box", "/data"]
-RUN mkdir -p /run/sing-box && chmod 0770 /run/sing-box
 
 # 443  — TLS-terminating naive inbound (HTTP/2 CONNECT). NaiveProxy
 #        is HTTP/2-only at the protocol level — no UDP/443 here. A
 #        UDP listen with no service produces fingerprintable RSTs on
 #        QUIC scans, which is the opposite of probe-resistance.
-EXPOSE 443
+# 9090 — clash-API HTTP listener (bound by the rendered config's
+#        experimental.clash_api.external_controller). EXPOSE here
+#        documents that the listener exists on the docker-internal
+#        network. The compose `ports:` map for sing-box MUST NOT
+#        publish 9090 to the host (audit-enforced); EXPOSE alone
+#        does not make a port reachable from outside docker.
+EXPOSE 443 9090
 
 # Periodic liveness probe: confirm the sing-box process is running.
 # We dropped the clash_api block from the rendered config (the

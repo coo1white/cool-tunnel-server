@@ -20,7 +20,7 @@ pub async fn enforce(
     database_url: &Option<String>,
     template: &str,
     output: &str,
-    admin_socket: &str,
+    admin_url: &str,
 ) -> Result<()> {
     let pool = db::connect(database_url).await?;
 
@@ -85,7 +85,9 @@ pub async fn enforce(
         // If render says "unchanged" we still reload; disabling an
         // account always changes the sing-box `users` array.
         singbox::render(database_url, template, output, false, false).await?;
-        if let Err(e) = admin::reload(admin_socket, output).await {
+        let secret = singbox::current_clash_secret(database_url).await?;
+        let admin_client = admin::ClashAdmin::new(admin_url, &secret);
+        if let Err(e) = admin_client.reload(output).await {
             tracing::warn!(error = %e, "reload after quota enforcement failed");
         } else {
             reloaded = true;
