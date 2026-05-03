@@ -33,10 +33,33 @@ pub enum CryptError {
 impl fmt::Display for CryptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::EmptyAppKey     => "APP_KEY is empty — pass it in the env",
-            Self::BadAppKey       => "APP_KEY is not a base64:<32-byte-key> envelope",
-            Self::InvalidPayload  => "Crypt payload is not a valid Laravel envelope",
-            Self::DecryptFailed   => "AES-GCM decryption failed (wrong key or tampering)",
+            Self::EmptyAppKey => {
+                "APP_KEY env var is empty. \
+                The Rust core needs the SAME APP_KEY the panel uses so it can \
+                decrypt cleartext proxy passwords. \
+                Check that docker-compose.yml passes APP_KEY through to the \
+                panel container (it lives in .env at the repo root) and that \
+                the supervisord-managed daemon inherits it."
+            }
+            Self::BadAppKey => {
+                "APP_KEY is set but does not look like a Laravel key. \
+                Expected format: `base64:<44 base64 chars decoding to 32 bytes>`. \
+                Generate a fresh one with: \
+                `docker compose exec panel php artisan key:generate --show`"
+            }
+            Self::InvalidPayload => {
+                "Encrypted payload is not a valid Laravel Crypt envelope. \
+                This usually means a column was hand-edited in the DB or restored from a \
+                backup made under a different APP_KEY. Regenerate the affected proxy \
+                account's password from the panel — that re-encrypts under the current key."
+            }
+            Self::DecryptFailed => {
+                "AES-GCM decryption failed. \
+                The stored ciphertext is well-formed but the key is wrong (or the row was \
+                tampered with). Most common cause: APP_KEY was rotated and old rows weren't \
+                re-encrypted. Regenerate the affected proxy account's password from the \
+                panel; that fixes it for that user."
+            }
         })
     }
 }
@@ -67,9 +90,15 @@ pub fn decrypt(payload_b64: &str, app_key: &str) -> Result<String, CryptError> {
     let env: Envelope =
         serde_json::from_slice(&envelope_json).map_err(|_| CryptError::InvalidPayload)?;
 
-    let iv = B64.decode(&env.iv).map_err(|_| CryptError::InvalidPayload)?;
-    let ct = B64.decode(&env.value).map_err(|_| CryptError::InvalidPayload)?;
-    let tag = B64.decode(&env.tag).map_err(|_| CryptError::InvalidPayload)?;
+    let iv = B64
+        .decode(&env.iv)
+        .map_err(|_| CryptError::InvalidPayload)?;
+    let ct = B64
+        .decode(&env.value)
+        .map_err(|_| CryptError::InvalidPayload)?;
+    let tag = B64
+        .decode(&env.tag)
+        .map_err(|_| CryptError::InvalidPayload)?;
 
     if iv.len() != 12 || tag.len() != 16 {
         return Err(CryptError::InvalidPayload);
@@ -90,7 +119,9 @@ pub fn decrypt(payload_b64: &str, app_key: &str) -> Result<String, CryptError> {
 
 fn parse_app_key(app_key: &str) -> Result<[u8; 32], CryptError> {
     // Laravel stores APP_KEY as `base64:<32B-key-base64>`.
-    let stripped = app_key.strip_prefix("base64:").ok_or(CryptError::BadAppKey)?;
+    let stripped = app_key
+        .strip_prefix("base64:")
+        .ok_or(CryptError::BadAppKey)?;
     let decoded = B64.decode(stripped).map_err(|_| CryptError::BadAppKey)?;
     if decoded.len() != 32 {
         return Err(CryptError::BadAppKey);
@@ -155,6 +186,9 @@ mod tests {
 
     #[test]
     fn parse_app_key_rejects_non_base64_prefix() {
-        assert!(matches!(parse_app_key("rawhex"), Err(CryptError::BadAppKey)));
+        assert!(matches!(
+            parse_app_key("rawhex"),
+            Err(CryptError::BadAppKey)
+        ));
     }
 }

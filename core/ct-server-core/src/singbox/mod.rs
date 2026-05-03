@@ -123,43 +123,53 @@ async fn render_to_string(
     cfg: &ServerConfig,
     accounts: &[ProxyAccount],
 ) -> Result<String> {
-    let template = fs::read_to_string(template_path).await?;
+    let template = fs::read_to_string(template_path).await.map_err(|e| {
+        Error::msg(format!(
+            "could not read sing-box template at `{template_path}`: {e}. \
+             Set --template / SINGBOX_CONFIG_TEMPLATE if it lives elsewhere."
+        ))
+    })?;
 
-    // Build the users array. sing-box wants {"username":"...",
-    // "password":"..."} entries with cleartext passwords.
+    // Build the users JSON. sing-box's `naive` inbound wants an array
+    // of `{"username", "password"}` cleartext pairs. Accounts whose
+    // cleartext we couldn't decrypt (encrypted with a different
+    // APP_KEY, or pre-migration rows) are skipped here — the panel
+    // forces a regen on first save after the migration so this is a
+    // transient state.
     let users: Vec<Value> = accounts
         .iter()
         .filter_map(|a| {
-            a.cleartext_password.as_deref().map(|pw| {
-                json!({"username": a.username, "password": pw})
-            })
+            a.cleartext_password
+                .as_deref()
+                .map(|pw| json!({"username": a.username, "password": pw}))
         })
         .collect();
 
-    if users.is_empty() {
+    let users_json = if users.is_empty() {
         // sing-box's naive inbound requires at least one user. Emit a
-        // placeholder that nothing will match — same idea as the
-        // Caddyfile fallback we used to do.
-        let placeholder = json!([{
+        // placeholder no real client will match.
+        serde_json::to_string(&json!([{
             "username": "__no_active_accounts__",
             "password": "__placeholder_password_no_one_can_guess__"
-        }]);
-        let users_str = serde_json::to_string(&placeholder)?;
-        return Ok(substitute(&template, cfg, &users_str));
-    }
+        }]))?
+    } else {
+        serde_json::to_string(&Value::Array(users))?
+    };
 
-    let users_str = serde_json::to_string(&Value::Array(users))?;
-    Ok(substitute(&template, cfg, &users_str))
-}
+    let bindings = crate::template::Bindings::new()
+        .set("Domain", &cfg.domain)
+        .set("AcmeEmail", &cfg.acme_email)
+        .set("AcmeDirectory", &cfg.acme_directory)
+        .set("UsersJson", &users_json)
+        .set("DohResolver", &cfg.doh_resolver)
+        .set("ClashSecret", &clash_secret(cfg))
+        .into_map();
 
-fn substitute(template: &str, cfg: &ServerConfig, users_block: &str) -> String {
-    template
-        .replace("__DOMAIN__", &cfg.domain)
-        .replace("__ACME_EMAIL__", &cfg.acme_email)
-        .replace("__ACME_DIRECTORY__", &cfg.acme_directory)
-        .replace("__USERS_BLOCK__", users_block)
-        .replace("__DOH_RESOLVER__", &cfg.doh_resolver)
-        .replace("__CLASH_SECRET__", &clash_secret(cfg))
+    crate::template::render(&template, &bindings).map_err(|e| {
+        Error::msg(format!(
+            "could not render sing-box template `{template_path}`: {e}"
+        ))
+    })
 }
 
 /// Derive a clash-API secret from the ServerConfig. We don't want it
@@ -252,12 +262,12 @@ mod tests {
         tokio::fs::write(
             &tpl,
             r#"{
-                "domain": "__DOMAIN__",
-                "email": "__ACME_EMAIL__",
-                "directory": "__ACME_DIRECTORY__",
-                "users": __USERS_BLOCK__,
-                "resolver": "__DOH_RESOLVER__",
-                "clash": "__CLASH_SECRET__"
+                "domain": "{{ .Domain }}",
+                "email": "{{ .AcmeEmail }}",
+                "directory": "{{ .AcmeDirectory }}",
+                "users": {{ .UsersJson }},
+                "resolver": "{{ .DohResolver }}",
+                "clash": "{{ .ClashSecret }}"
             }"#,
         )
         .await
@@ -289,7 +299,7 @@ mod tests {
     async fn empty_user_set_emits_placeholder() {
         let dir = tempdir().unwrap();
         let tpl = dir.path().join("config.json.tpl");
-        tokio::fs::write(&tpl, r#"{"users": __USERS_BLOCK__}"#)
+        tokio::fs::write(&tpl, r#"{"users": {{ .UsersJson }}}"#)
             .await
             .unwrap();
 

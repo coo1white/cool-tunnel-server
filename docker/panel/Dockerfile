@@ -58,7 +58,7 @@ RUN chmod +x /usr/local/bin/ct-server-core \
 COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
 # nginx fronts php-fpm; supervisord runs both inside the container so
-# we present a single TCP endpoint (port 9000) to caddy.
+# we present a single TCP endpoint (port 9000) to sing-box.
 COPY nginx.conf       /etc/nginx/nginx.conf
 COPY supervisord.conf /etc/supervisord.conf
 COPY entrypoint.sh    /usr/local/bin/entrypoint.sh
@@ -67,6 +67,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 WORKDIR /var/www/html
 
 EXPOSE 9000
+
+# Periodic liveness probe: hit Laravel's /up health endpoint via
+# nginx on the local port. If Laravel boots and routes /up the
+# container is healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:9000/up >/dev/null \
+        || exit 1
 
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["supervisord", "-c", "/etc/supervisord.conf", "-n"]

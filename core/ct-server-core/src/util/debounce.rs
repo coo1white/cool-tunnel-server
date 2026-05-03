@@ -49,15 +49,18 @@ pub const DEFAULT_WINDOW: Duration = Duration::from_millis(100);
 
 /// Per-key fixed-window debouncer. See module docs.
 ///
-/// `K` is whatever uniquely identifies a burst — for the redis bridge
-/// we use a `&'static str` ("reload"); for future per-account work
-/// we could use the account id. Distinct keys are independent.
+/// `K` is whatever uniquely identifies a burst — production uses
+/// the [`Coalescer`] below; this Debouncer is exposed for future
+/// per-account / per-event-type work and is exercised by the
+/// stress tests.
 #[derive(Debug)]
+#[allow(dead_code)] // Debouncer is library-style; in v0.0.3 only the Coalescer is wired into redis_bridge
 pub struct Debouncer<K> {
     window: Duration,
     last_admitted: HashMap<K, Instant>,
 }
 
+#[allow(dead_code)] // see struct comment
 impl<K> Debouncer<K>
 where
     K: Eq + Hash,
@@ -104,22 +107,26 @@ where
     /// full window past their effective expiry so a probe arriving
     /// slightly out of order cannot re-admit a recently-suppressed
     /// key.
+    #[allow(dead_code)] // exposed for callers that prune on a slow timer
     pub fn prune_stale(&mut self, now: Instant) {
         let cutoff = self.window.saturating_mul(2);
         self.last_admitted
             .retain(|_, prev| now.duration_since(*prev) < cutoff);
     }
 
+    #[allow(dead_code)] // exposed for restart-state-clearing callers
     pub fn reset(&mut self) {
         self.last_admitted.clear();
     }
 
     #[must_use]
+    #[allow(dead_code)] // exposed for introspection / tests
     pub fn window(&self) -> Duration {
         self.window
     }
 
     #[must_use]
+    #[allow(dead_code)] // exposed for introspection / tests
     pub fn tracked_keys(&self) -> usize {
         self.last_admitted.len()
     }
@@ -140,14 +147,17 @@ impl<K: Eq + Hash> Default for Debouncer<K> {
 pub enum Decision {
     /// Fire the action now. No trailing flush is needed — this is the
     /// first event after a quiet period and nothing is queued.
+    /// Currently unused by `redis_bridge` (it always returns
+    /// `FireNowAndScheduleFlush` for leading edges); reserved for
+    /// future callers that want a one-shot leading-only fire.
+    #[allow(dead_code)]
     FireNow,
     /// Suppress the event. A trailing flush is already scheduled for
-    /// some earlier `FireNowSchedule` return. The caller does nothing.
+    /// some earlier admission. The caller does nothing.
     Suppress,
     /// Fire the action now, AND schedule a trailing flush at
-    /// `now + window`. Returned only by [`Coalescer::admit`] when the
-    /// caller did not already arm a flush — the typical first-event
-    /// case of a burst.
+    /// `now + window`. Returned by [`Coalescer::admit`] for the first
+    /// event of a burst.
     FireNowAndScheduleFlush,
 }
 
@@ -214,17 +224,27 @@ impl Coalescer {
         had_pending
     }
 
+    /// Suppression window this Coalescer was constructed with.
+    /// Read-only — changing it mid-stream would invalidate the
+    /// contract callers rely on.
     #[must_use]
+    #[allow(dead_code)]
     pub fn window(&self) -> Duration {
         self.window
     }
 
+    /// True iff at least one event was suppressed since the last
+    /// admit/flush — i.e. a trailing flush will do real work.
     #[must_use]
+    #[allow(dead_code)]
     pub fn pending(&self) -> bool {
         self.pending_flush
     }
 
+    /// When the most recent leading-edge admit fired. None at
+    /// startup. Useful for tests and debug logging.
     #[must_use]
+    #[allow(dead_code)]
     pub fn last_fired(&self) -> Option<Instant> {
         self.last_fired
     }
@@ -263,16 +283,18 @@ mod tests {
         assert_eq!(d.tracked_keys(), 3);
     }
 
-    /// Stress: hammer the debouncer with 100k duplicates inside a
-    /// single window. Exactly one admission must survive.
+    /// Stress: hammer the debouncer with 1,000,000 duplicates inside
+    /// a single window. Exactly one admission must survive.
     #[test]
     fn debouncer_stress_collapses_burst_to_one_per_window() {
         let window = Duration::from_millis(100);
         let mut d = Debouncer::new(window);
         let t0 = Instant::now();
         let mut admitted = 0_usize;
-        for i in 0..100_000_u32 {
-            let now = t0 + Duration::from_micros(u64::from(i) * 50_000 / 100_000);
+        for i in 0..1_000_000_u32 {
+            // Spread 1M virtual events across 50 ms — well inside the
+            // 100 ms window. Only the first should win.
+            let now = t0 + Duration::from_nanos(u64::from(i) * 50_000_000 / 1_000_000);
             if d.admit("flapping", now) {
                 admitted += 1;
             }
@@ -280,6 +302,30 @@ mod tests {
         assert_eq!(admitted, 1, "expected exactly 1 admission per 100ms window");
         assert!(d.admit("flapping", t0 + Duration::from_millis(120)));
         assert!(d.admit("flapping", t0 + Duration::from_millis(240)));
+    }
+
+    /// Stress: 10,000 distinct keys, each hit twice. All 10,000 first
+    /// hits should admit; all 10,000 duplicates must drop. The lazy
+    /// prune is exercised heavily here (10,000 ≫ PRUNE_THRESHOLD).
+    #[test]
+    fn debouncer_stress_many_distinct_keys() {
+        let mut d = Debouncer::new(Duration::from_millis(100));
+        let t0 = Instant::now();
+        let mut first_hits = 0_usize;
+        for k in 0..10_000_u32 {
+            if d.admit(k, t0) {
+                first_hits += 1;
+            }
+        }
+        assert_eq!(first_hits, 10_000);
+
+        let mut duplicates_dropped = 0_usize;
+        for k in 0..10_000_u32 {
+            if !d.admit(k, t0 + Duration::from_millis(50)) {
+                duplicates_dropped += 1;
+            }
+        }
+        assert_eq!(duplicates_dropped, 10_000);
     }
 
     /// Auto-prune fires once the map exceeds `PRUNE_THRESHOLD`.
@@ -364,16 +410,17 @@ mod tests {
         assert!(!c.pending());
     }
 
-    /// Stress: 10,000 events inside a 100ms window. Exactly one
+    /// Stress: 100,000 events inside a 100ms window. Exactly one
     /// FireNow* and at most one trailing flush — total 2 reloads.
+    /// 10× the previous version of this test.
     #[test]
     fn coalescer_stress_burst_collapses_to_at_most_two_fires() {
         let mut c = Coalescer::new(Duration::from_millis(100));
         let t0 = Instant::now();
         let mut fires = 0_usize;
 
-        for i in 0..10_000_u32 {
-            let now = t0 + Duration::from_micros(u64::from(i) * 50_000 / 10_000);
+        for i in 0..100_000_u32 {
+            let now = t0 + Duration::from_nanos(u64::from(i) * 50_000_000 / 100_000);
             match c.admit(now) {
                 Decision::FireNow | Decision::FireNowAndScheduleFlush => fires += 1,
                 Decision::Suppress => {}
@@ -385,7 +432,67 @@ mod tests {
         if c.on_flush(t0 + Duration::from_millis(100)) {
             fires += 1;
         }
-        assert_eq!(fires, 2, "10k events collapse to ≤ 2 reloads");
+        assert_eq!(fires, 2, "100k events collapse to ≤ 2 reloads");
+    }
+
+    /// Concurrent stress: the way `redis_bridge` actually uses the
+    /// Coalescer is `Arc<tokio::sync::Mutex<Coalescer>>` shared
+    /// between many tasks (each pubsub message). This test simulates
+    /// 64 tokio tasks racing to admit 1,000 events each into the same
+    /// coalescer and verifies the FireNow* count is ≤ 2 per window
+    /// regardless of contention.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn coalescer_concurrent_admits_collapse_correctly() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let coalescer = Arc::new(Mutex::new(Coalescer::new(Duration::from_millis(100))));
+        let fires = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let t0 = Instant::now();
+
+        let mut handles = Vec::new();
+        for task in 0..64_u32 {
+            let coalescer = coalescer.clone();
+            let fires = fires.clone();
+            handles.push(tokio::spawn(async move {
+                for i in 0..1_000_u32 {
+                    // Spread virtual events across 50 ms.
+                    let now = t0
+                        + Duration::from_nanos(
+                            (u64::from(task) * 1_000 + u64::from(i)) * 50_000_000 / (64 * 1_000),
+                        );
+                    let decision = coalescer.lock().await.admit(now);
+                    if matches!(
+                        decision,
+                        Decision::FireNow | Decision::FireNowAndScheduleFlush
+                    ) {
+                        fires.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // Trailing flush.
+        let trailing = coalescer
+            .lock()
+            .await
+            .on_flush(t0 + Duration::from_millis(100));
+        let total = fires.load(std::sync::atomic::Ordering::SeqCst) + usize::from(trailing);
+
+        // 64 × 1000 = 64,000 events into one window. Under any
+        // interleaving, at most one `FireNowAndScheduleFlush` plus
+        // at most one trailing flush should land — total ≤ 2.
+        assert!(
+            total <= 2,
+            "64-task burst over one 100ms window must collapse to ≤ 2 fires; got {total}"
+        );
+        assert!(
+            total >= 1,
+            "at least the leading edge must fire; got {total}"
+        );
     }
 
     /// Stress: many bursts back-to-back. Each burst should emit
@@ -400,7 +507,10 @@ mod tests {
             // Burst of 100 events spread over 50 ms.
             for i in 0..100_u32 {
                 let now = t + Duration::from_micros(u64::from(i) * 50_000 / 100);
-                if matches!(c.admit(now), Decision::FireNow | Decision::FireNowAndScheduleFlush) {
+                if matches!(
+                    c.admit(now),
+                    Decision::FireNow | Decision::FireNowAndScheduleFlush
+                ) {
                     fires += 1;
                 }
             }
@@ -416,6 +526,9 @@ mod tests {
             fires <= 10,
             "5 bursts × 100 events should collapse to ≤ 10 fires; got {fires}"
         );
-        assert!(fires >= 5, "each burst must emit at least the leading fire; got {fires}");
+        assert!(
+            fires >= 5,
+            "each burst must emit at least the leading fire; got {fires}"
+        );
     }
 }

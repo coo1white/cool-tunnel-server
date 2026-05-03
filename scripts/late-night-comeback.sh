@@ -8,12 +8,14 @@
 # Exit 0 on pass, 1 on fail. Suitable for cron / CI.
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 # Source .env so $DOMAIN, $REDIS_PASSWORD, etc. are available.
 if [[ -f .env ]]; then
-    # shellcheck disable=SC1091
-    set -a; . .env; set +a
+    set -a
+    # shellcheck source=/dev/null
+    . .env
+    set +a
 fi
 
 DOMAIN=${DOMAIN:-}
@@ -21,9 +23,9 @@ PASS_GLYPH=$'\033[32mOK\033[0m'
 FAIL_GLYPH=$'\033[31mNG\033[0m'
 
 structural_fails=0
+# shellcheck disable=SC2034  # tracked for clarity even though unused
 nonstructural_fails=0
 total_pass=0
-results=()
 
 record() {
     # record <slot> <ok|ng> <label>

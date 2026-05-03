@@ -5,7 +5,7 @@
 // If any account changed state, re-render the Caddyfile and reload
 // Caddy so basic_auth lines come into effect immediately.
 
-use crate::{admin, singbox, db, Result};
+use crate::{admin, db, singbox, Result};
 use chrono::Utc;
 use sqlx::Row;
 
@@ -63,8 +63,6 @@ pub async fn enforce(
         }
     }
 
-    println!(
-        r#"{{"disabled": {disabled}, "reload_triggered": {reloaded}}}"#,
-    );
+    println!(r#"{{"disabled": {disabled}, "reload_triggered": {reloaded}}}"#,);
     Ok(())
 }

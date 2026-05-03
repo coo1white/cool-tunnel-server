@@ -71,8 +71,7 @@ pub fn spawn(
         // `on_flush`). A `tokio::sync::Mutex` is fine — both touch it
         // briefly and never across an `.await` that depends on the
         // other side.
-        let coalescer: Arc<Mutex<Coalescer>> =
-            Arc::new(Mutex::new(Coalescer::new(DEFAULT_WINDOW)));
+        let coalescer: Arc<Mutex<Coalescer>> = Arc::new(Mutex::new(Coalescer::new(DEFAULT_WINDOW)));
 
         let mut backoff_ms = 250_u64;
         loop {
@@ -111,8 +110,11 @@ async fn run_subscriber(
     let client = Client::open(redis_url)?;
     let mut pubsub = client.get_async_pubsub().await?;
     pubsub.subscribe(REVOCATION_CHANNEL).await?;
-    tracing::info!(channel = REVOCATION_CHANNEL, window_ms = DEFAULT_WINDOW.as_millis() as u64,
-        "redis subscriber attached (with leading-edge + trailing-flush coalescer)");
+    tracing::info!(
+        channel = REVOCATION_CHANNEL,
+        window_ms = DEFAULT_WINDOW.as_millis() as u64,
+        "redis subscriber attached (with leading-edge + trailing-flush coalescer)"
+    );
 
     let mut stream = pubsub.on_message();
     while let Some(msg) = futures_next(&mut stream).await {

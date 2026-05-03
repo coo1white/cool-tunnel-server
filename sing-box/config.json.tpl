@@ -11,17 +11,17 @@
             "tag": "naive-in",
             "listen": "::",
             "listen_port": 443,
-            "users": __USERS_BLOCK__,
+            "users": {{ .UsersJson }},
             "tls": {
                 "enabled": true,
-                "server_name": "__DOMAIN__",
+                "server_name": "{{ .Domain }}",
                 "alpn": ["h2", "http/1.1"],
                 "min_version": "1.2",
                 "acme": {
-                    "domain": ["__DOMAIN__"],
-                    "default_server_name": "__DOMAIN__",
-                    "email": "__ACME_EMAIL__",
-                    "provider": "__ACME_DIRECTORY__",
+                    "domain": ["{{ .Domain }}"],
+                    "default_server_name": "{{ .Domain }}",
+                    "email": "{{ .AcmeEmail }}",
+                    "provider": "{{ .AcmeDirectory }}",
                     "data_directory": "/data/acme",
                     "alternative_http_port": 80
                 }
@@ -35,7 +35,7 @@
     ],
 
     "route": {
-        "default_domain_resolver": "__DOH_RESOLVER__",
+        "default_domain_resolver": "{{ .DohResolver }}",
         "rules": [
             {"protocol": "dns", "outbound": "block"}
         ]
@@ -44,7 +44,7 @@
     "experimental": {
         "clash_api": {
             "external_controller": "127.0.0.1:9090",
-            "secret": "__CLASH_SECRET__",
+            "secret": "{{ .ClashSecret }}",
             "external_controller_unix": "/run/sing-box/clash.sock"
         },
         "cache_file": {

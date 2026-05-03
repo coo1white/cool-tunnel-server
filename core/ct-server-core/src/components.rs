@@ -8,9 +8,7 @@
 // component that fails its check.
 
 use crate::Result;
-use ct_protocol::{
-    ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1,
-};
+use ct_protocol::{ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1};
 use std::path::Path;
 use tokio::fs;
 use tokio::process::Command;
@@ -68,9 +66,7 @@ pub async fn check_one(m: &ComponentManifestV1) -> ComponentStatusV1 {
     }
 }
 
-async fn verify_via_command(
-    m: &ComponentManifestV1,
-) -> (ComponentStateV1, String, Option<String>) {
+async fn verify_via_command(m: &ComponentManifestV1) -> (ComponentStateV1, String, Option<String>) {
     let Some(spec) = m.verify.as_ref() else {
         return (
             ComponentStateV1::Unknown,

@@ -2,96 +2,151 @@
 # install.sh — first-time bootstrap for Cool Tunnel Server.
 #
 # Run from the repo root after editing .env. Idempotent: safe to
-# re-run if anything fails halfway.
+# re-run if anything fails halfway. Designed to be friendly to
+# operators who just SSH'd into a fresh Debian VPS:
+#
+#  - Numbered, colour-coded steps so you know exactly where you are.
+#  - Pre-flight checks with apt-install hints if a tool is missing.
+#  - Helpful "↳ try:" hints on every failure.
+#  - The whole script is shellcheck-clean.
 
 set -euo pipefail
+cd "$(dirname "$0")/.." || exit 1
 
-cd "$(dirname "$0")/.."
-ROOT="$PWD"
+# shellcheck source=lib.sh
+. scripts/lib.sh
 
-bold() { printf "\033[1m%s\033[0m\n" "$*"; }
-warn() { printf "\033[33m%s\033[0m\n" "$*" >&2; }
-die()  { printf "\033[31m%s\033[0m\n" "$*" >&2; exit 1; }
+# ---------- Pre-flight ---------------------------------------------
 
-# ---- Pre-flight ---------------------------------------------------
-[[ -f .env ]] || die ".env not found — copy .env.example to .env first"
-command -v docker >/dev/null || die "docker not on PATH"
-docker compose version >/dev/null 2>&1 \
-    || die "docker compose v2 not available — see docs/installation-debian.md"
+step "Pre-flight: required tools"
+require_cmd openssl  "apt install -y openssl"
+require_cmd sed      "apt install -y sed"
+require_docker
+ok "all required tools present"
 
-# Source .env so we can sanity-check required values.
-# shellcheck disable=SC1091
-set -a; . .env; set +a
+step "Pre-flight: .env"
+if [[ ! -f .env ]]; then
+    if prompt_yn "No .env file found. Copy .env.example to .env now?" y; then
+        cp .env.example .env
+        ok "created .env from template"
+        warn "you must edit .env (DOMAIN, ACME_EMAIL, *_PASSWORD) before continuing"
+        die "open .env, fill in real values, then re-run ./scripts/install.sh" \
+            "\$EDITOR .env"
+    else
+        die ".env is required" "cp .env.example .env  &&  \$EDITOR .env"
+    fi
+fi
+load_env .env
+ok ".env loaded"
 
-[[ "${DOMAIN:-}"     != "" && "${DOMAIN:-}" != "proxy.example.com" ]] \
-    || warn "DOMAIN looks like the placeholder; ACME will fail"
-[[ "${ACME_EMAIL:-}" != "" && "${ACME_EMAIL:-}" != "admin@example.com" ]] \
-    || warn "ACME_EMAIL looks like the placeholder"
-[[ "${DB_PASSWORD:-}"      != "" && "${DB_PASSWORD:-}"      != "change-me-please" ]] \
-    || die "DB_PASSWORD is unset / unchanged from the template"
-[[ "${REDIS_PASSWORD:-}"   != "" && "${REDIS_PASSWORD:-}"   != "change-me-also"   ]] \
-    || die "REDIS_PASSWORD is unset / unchanged from the template"
+# Sanity-check the values that absolutely must not be placeholders.
+if [[ "${DOMAIN:-proxy.example.com}" == "proxy.example.com" ]]; then
+    warn "DOMAIN is still set to the placeholder 'proxy.example.com'"
+    warn "ACME will fail unless you point a real domain at this server"
+    if ! prompt_yn "Continue anyway (e.g. for local docker-only testing)?" n; then
+        die "aborted on placeholder DOMAIN" "edit .env"
+    fi
+fi
+if [[ "${ACME_EMAIL:-admin@example.com}" == "admin@example.com" ]]; then
+    warn "ACME_EMAIL is still the placeholder; Let's Encrypt sends renewal warnings to it"
+fi
+require_env DB_PASSWORD     "openssl rand -base64 32 # paste into .env DB_PASSWORD="
+require_env REDIS_PASSWORD  "openssl rand -base64 32 # paste into .env REDIS_PASSWORD="
 
-# ---- Build images -------------------------------------------------
-bold "==> Building ct-server-core (Rust)"
-docker compose --profile build-only build core-builder
+# ---------- Build images -------------------------------------------
 
-bold "==> Building sing-box (upstream binary download)
-docker compose build sing-box
+step "Build ct-server-core (Rust, musl-static)"
+compose --profile build-only build core-builder
+ok "ct-server-core built"
 
-bold "==> Building panel (PHP-FPM + Composer + ct-server-core binary)"
-docker compose build panel
+step "Build sing-box image (downloads upstream pre-built binary)"
+compose build sing-box
+ok "sing-box image built"
 
-# ---- Bring up data layer -----------------------------------------
-bold "==> Starting db + redis"
-docker compose up -d db redis
+step "Build panel image (PHP-FPM + Composer + nginx + ct-server-core baked in)"
+compose build panel
+ok "panel image built"
 
-# Wait for DB healthcheck to go green.
-bold "==> Waiting for db healthcheck"
-for i in $(seq 1 30); do
-    state=$(docker inspect -f '{{.State.Health.Status}}' ct-db 2>/dev/null || echo starting)
-    [[ "$state" == "healthy" ]] && break
-    sleep 2
-    [[ $i -eq 30 ]] && die "db never became healthy"
-done
+# ---------- Bring up data layer ------------------------------------
 
-# ---- Bring up panel + run migrations -----------------------------
-bold "==> Starting panel"
-docker compose up -d panel
+step "Start db + redis"
+compose up -d db redis
+ok "db + redis containers started"
 
-# The panel entrypoint runs composer install + migrate, but it's
-# best-effort and may race with first-boot timing. Re-run explicitly.
-bold "==> Running migrations"
-docker compose exec -T panel php artisan migrate --force --no-interaction
-docker compose exec -T panel php artisan db:seed --force --no-interaction || true
+# shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
+wait_for "MariaDB healthcheck" 30 2 \
+    bash -c '[[ "$(docker inspect -f "{{.State.Health.Status}}" ct-db 2>/dev/null)" == "healthy" ]]'
 
-# ---- Render the initial sing-box config -------------------------------
-bold "==> Rendering initial sing-box config (no proxy accounts yet)"
-docker compose exec -T panel ct-server-core --json singbox render || true
+# ---------- Bring up panel + run migrations ------------------------
 
-# ---- Bring up sing-box ----------------------------------------------
-bold "==> Starting sing-box (ACME will issue certs in the background)"
-docker compose up -d sing-box
+step "Start panel and run database migrations"
+compose up -d panel
+# Give the panel entrypoint a moment to finish composer install +
+# key:generate before we shell into it.
+sleep 3
+compose exec -T panel php artisan migrate --force --no-interaction \
+    || die "migrations failed — see panel logs" \
+           "docker compose logs --tail=80 panel"
+compose exec -T panel php artisan db:seed --force --no-interaction || true
+ok "migrations applied + default seed in place"
 
-# ---- Create first Filament admin --------------------------------
-bold "==> Creating first Filament admin user"
-docker compose exec panel php artisan make:filament-user
+# ---------- Render the initial sing-box config ---------------------
 
-# ---- OK/NG check -------------------------------------------------
-bold "==> Component check"
-docker compose exec -T panel ct-server-core component check --manifests /srv/manifests || true
+step "Render initial sing-box config (no proxy accounts yet)"
+compose exec -T panel ct-server-core --json singbox render \
+    || warn "render failed — first proxy account creation will retry"
+ok "config.json rendered to /etc/sing-box/config.json (in the volume)"
+
+# ---------- Start sing-box -----------------------------------------
+
+step "Start sing-box (ACME will issue certs in the background)"
+compose up -d sing-box
+ok "sing-box running"
+warn "the first ACME issuance can take 10-60 seconds; tail logs with:"
+warn "    docker compose logs -f --tail=80 sing-box"
+
+# ---------- Create first Filament admin ----------------------------
+
+step "Create the first Filament admin user (interactive prompt follows)"
+if [[ -t 0 ]]; then
+    compose exec panel php artisan make:filament-user \
+        || warn "could not create admin — re-run later with: docker compose exec panel php artisan make:filament-user"
+else
+    warn "non-interactive run - skipping admin creation"
+    warn "create one later with: docker compose exec panel php artisan make:filament-user"
+fi
+
+# ---------- Final OK/NG check --------------------------------------
+
+step "Component check (OK/NG status of every dependency)"
+compose exec -T panel ct-server-core component check --manifests /srv/manifests \
+    || warn "some components reported NG - investigate before serving real users"
+
+# ---------- Done ---------------------------------------------------
 
 cat <<EOF
 
-$(bold "Cool Tunnel Server is up.")
+${CT_BOLD}${CT_GREEN}Cool Tunnel Server is up.${CT_RESET}
 
-Panel:        https://${DOMAIN}/admin
-Subscription: https://${DOMAIN}/api/v1/subscription/<token>  (issued from the panel)
+  Panel         https://${DOMAIN}/admin
+  Subscription  https://${DOMAIN}/api/v1/subscription/<token>
+                  (issued from the panel)
 
-Watch ACME finish:   docker compose logs -f --tail=80 sing-box
-Recheck components:  docker compose exec panel ct-server-core component check --manifests /srv/manifests
-Run a probe:         docker compose exec panel ct-server-core probe anti-tracking --via "https://<user>:<pass>@${DOMAIN}:443"
+What to do next:
 
-Read docs/components.md for how to swap a part. Read Disclaimer.md
-before letting anyone else use it.
+  1. Watch ACME finish:
+       ${CT_BOLD}docker compose logs -f --tail=80 sing-box${CT_RESET}
+
+  2. Create your first proxy account:
+       open https://${DOMAIN}/admin -> ProxyAccounts -> New
+       (cleartext password is shown ONCE - copy it then)
+
+  3. Point the macOS client at:
+       ${CT_BOLD}naive+https://<username>:<password>@${DOMAIN}:443${CT_RESET}
+
+  4. Run the readiness gate when you have a test account:
+       ${CT_BOLD}LNC_TEST_PROXY_URL=... ./scripts/late-night-comeback.sh${CT_RESET}
+
+Read docs/components.md for how to swap a part.
+Read Disclaimer.md before letting anyone else use it.
 EOF

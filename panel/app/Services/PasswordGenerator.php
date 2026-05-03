@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 // Tiny utility — generates a cleartext proxy password and the bcrypt
