@@ -11,10 +11,13 @@
 #     ACME directory ({{ .AcmeDirectory }}) — Caddy stores the cert
 #     in /data/caddy/certificates/. The sing-box container has that
 #     directory mounted read-only and uses the cert files directly.
-#   - On every successful obtain / renewal, Caddy `touch`es a flag
-#     file at /data/caddy/cert-renewed. The panel's scheduled task
-#     watches this file and triggers a sing-box hot reload via the
-#     clash API; sing-box re-reads the new certificate on reload.
+#   - sing-box's render path watches the cert file's mtime
+#     directly (folded into the render-change SHA-256 hash in
+#     `core/ct-server-core/src/singbox/mod.rs::read_cert_mtime`),
+#     so a Caddy renewal flips the rendered hash and the
+#     scheduled `singbox:render --if-changed --reload` picks
+#     it up automatically. No flag file or events handler
+#     needed.
 #
 # What this Caddy does NOT do:
 #
@@ -39,16 +42,17 @@
     email {{ .AcmeEmail }}
     acme_ca {{ .AcmeDirectory }}
 
-    # cert_obtained: bump the flag file the panel watches so the
-    # next singbox:render --if-changed picks up the new cert.
-    # cert_failed: log to STDERR (which docker logs captures + the
-    # daemon rotates) — the previous version appended timestamped
-    # failures to /data/cert-failures.log, a forensic trail in the
-    # caddy_data volume that nobody asked for.
-    events {
-        on cert_obtained exec touch /data/cert-renewed
-        on cert_failed   exec sh -c "echo \"$(date -u +%FT%TZ) cert_failed\" >&2"
-    }
+    # No `events { ... exec ... }` block: stock Caddy 2.8 does
+    # not include the third-party `events.handlers.exec` module,
+    # so any exec handler in the Caddyfile fails to load with
+    # "module not registered: events.handlers.exec". The
+    # cert-renewed flag this used to write was already
+    # vestigial — sing-box's render path reads the cert file's
+    # mtime directly (see read_cert_mtime in singbox/mod.rs) and
+    # the existing scheduled reload picks up renewals via the
+    # render-change hash. Caddy renewal failures show up in
+    # `docker compose logs caddy` at WARN level, which is
+    # already what an operator inspects on cert trouble.
 }
 
 # ---------- :80 — public ACME challenge handler + HTTP→HTTPS ----
