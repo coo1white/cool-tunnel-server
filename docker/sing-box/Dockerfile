@@ -12,11 +12,15 @@
 
 FROM alpine:3.20
 
-ARG SING_BOX_VERSION=1.11.4
+ARG SING_BOX_VERSION=1.13.11
 ARG TARGETARCH
 
 # `with_clash_api` is included in the official release tarball so we
 # don't have to compile sing-box ourselves to get the management API.
+#
+# Use the `-musl` variant: as of v1.13 the upstream split into glibc/
+# musl tarballs (the no-suffix tarball is dynamically linked against
+# glibc and fails to exec on alpine with a misleading "not found").
 RUN apk add --no-cache ca-certificates curl tzdata tini \
     && case "$TARGETARCH" in \
             amd64) ARCH=amd64 ;; \
@@ -24,7 +28,7 @@ RUN apk add --no-cache ca-certificates curl tzdata tini \
             arm)   ARCH=armv7 ;; \
             *)     echo "unsupported arch: $TARGETARCH" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-linux-${ARCH}.tar.gz" \
+    && curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-linux-${ARCH}-musl.tar.gz" \
          -o /tmp/sing-box.tgz \
     && tar -xzf /tmp/sing-box.tgz -C /tmp \
     && mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box \

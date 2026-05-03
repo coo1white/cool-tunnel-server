@@ -181,12 +181,19 @@ async fn render_to_string(
     // layout. See cert_paths() for the layout rules.
     let (cert_path, key_path) = cert_paths(cfg);
 
+    // sing-box 1.12+ replaced the single `dns.servers[].address` field
+    // (a full URL) with separate `type` / `server` / `path` fields.
+    // Split DohResolver here so the template can emit the new shape.
+    let (doh_server, doh_path) = split_doh_url(&cfg.doh_resolver);
+
     let bindings = crate::template::Bindings::new()
         .set("Domain", &cfg.domain)
         .set("AcmeEmail", &cfg.acme_email)
         .set("AcmeDirectory", &cfg.acme_directory)
         .set("UsersJson", &users_json)
         .set("DohResolver", &cfg.doh_resolver)
+        .set("DohServer", &doh_server)
+        .set("DohPath", &doh_path)
         .set("ClashSecret", &clash_secret(cfg))
         .set("CertPath", &cert_path)
         .set("KeyPath", &key_path)
@@ -219,6 +226,23 @@ fn cert_paths(cfg: &ServerConfig) -> (String, String) {
         d = cfg.domain,
     );
     (format!("{base}.crt"), format!("{base}.key"))
+}
+
+/// Split a DoH URL like "https://1.1.1.1/dns-query" into (server, path).
+/// sing-box 1.12+ requires DNS server `type` + `server` + `path` fields
+/// rather than the legacy single `address` URL. Empty/malformed input
+/// yields an empty server with the standard `/dns-query` path so the
+/// rendered template stays well-formed (sing-box will reject it at
+/// validation time, surfacing the real misconfiguration).
+fn split_doh_url(url: &str) -> (String, String) {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    match rest.find('/') {
+        Some(i) => (rest[..i].to_string(), rest[i..].to_string()),
+        None => (rest.to_string(), "/dns-query".to_string()),
+    }
 }
 
 fn ca_folder_from_directory(url: &str) -> String {
@@ -414,6 +438,30 @@ mod tests {
         assert!(!a.caddyfile_safe_username());
         a.username = "alice".into();
         assert!(a.caddyfile_safe_username());
+    }
+
+    #[test]
+    fn split_doh_url_handles_common_shapes() {
+        assert_eq!(
+            split_doh_url("https://1.1.1.1/dns-query"),
+            ("1.1.1.1".to_string(), "/dns-query".to_string()),
+        );
+        assert_eq!(
+            split_doh_url("https://dns.google/some/custom"),
+            ("dns.google".to_string(), "/some/custom".to_string()),
+        );
+        // No path: falls back to /dns-query so the rendered template
+        // remains valid for sing-box's default expectations.
+        assert_eq!(
+            split_doh_url("https://1.1.1.1"),
+            ("1.1.1.1".to_string(), "/dns-query".to_string()),
+        );
+        // Empty input: empty server, default path. sing-box check
+        // will reject the empty server, surfacing the misconfig.
+        assert_eq!(
+            split_doh_url(""),
+            (String::new(), "/dns-query".to_string()),
+        );
     }
 
     #[tokio::test]
