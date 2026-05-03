@@ -221,6 +221,7 @@ fn indent(text: &str, spaces: usize) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use chrono::Utc;
@@ -258,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn render_substitutes_all_placeholders() {
-        let dir = tempdir().unwrap_or_else(|_| panic!("tempdir"));
+        let dir = tempdir().unwrap();
         let tpl = dir.path().join("Caddyfile.tpl");
         tokio::fs::write(
             &tpl,
@@ -271,16 +272,15 @@ mod tests {
              DOH={{DOH_RESOLVER_BLOCK}}\n",
         )
         .await
-        .unwrap_or_default();
+        .unwrap();
 
         let body = render_to_string(
-            tpl.to_str().unwrap_or_default(),
+            tpl.to_str().unwrap(),
             &cfg(),
             &[account("alice")],
         )
         .await
-        .map_err(|_| ())
-        .unwrap_or_default();
+        .unwrap();
 
         assert!(body.contains("DOMAIN=proxy.example.com"));
         assert!(body.contains("basic_auth alice $2y$10$"));

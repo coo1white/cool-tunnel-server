@@ -7,11 +7,11 @@
 // expected version + hash, verify before trusting, refuse to use a
 // component that fails its check.
 
-use crate::{Error, Result};
+use crate::Result;
 use ct_protocol::{
-    ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1, VerifySpecV1,
+    ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1,
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs;
 use tokio::process::Command;
 
@@ -167,15 +167,18 @@ pub async fn print_check(manifests_dir: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Convenience: load a single manifest from a path.
+/// Convenience: load a single manifest from a path. Reserved for the
+/// future component-update flow (download → load → verify → swap).
+#[allow(dead_code)]
 pub async fn load_one(path: impl AsRef<Path>) -> Result<ComponentManifestV1> {
     let raw = fs::read_to_string(path.as_ref()).await?;
     Ok(serde_json::from_str(&raw)?)
 }
 
-pub fn default_manifests_dir() -> PathBuf {
-    PathBuf::from(
-        std::env::var("CT_MANIFESTS_DIR")
-            .unwrap_or_else(|_| "/srv/manifests".into()),
+/// Default manifest directory. Reserved for the same future flow.
+#[allow(dead_code)]
+pub fn default_manifests_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(
+        std::env::var("CT_MANIFESTS_DIR").unwrap_or_else(|_| "/srv/manifests".into()),
     )
 }
