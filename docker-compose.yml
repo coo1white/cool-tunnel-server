@@ -32,6 +32,29 @@ services:
     image: cool-tunnel-server-core:latest
     profiles: ["build-only"]      # never started by `compose up`
 
+  # On-demand sqlx-cli runner. Brought up by `make sqlx-prepare`
+  # to refresh core/.sqlx/ when migrations change column types.
+  # Uses the `sqlx-prepare` stage of docker/core/Dockerfile,
+  # which BuildKit caches alongside the `builder` stage — no
+  # extra rust:1.86-alpine pull (Docker Hub rate-limit-safe).
+  sqlx-prepare:
+    build:
+      context: .
+      dockerfile: docker/core/Dockerfile
+      target: sqlx-prepare
+    image: cool-tunnel-server-sqlx-prepare:latest
+    profiles: ["sqlx"]            # never started by `compose up`
+    environment:
+      DATABASE_URL: "mysql://${DB_USERNAME}:${DB_PASSWORD}@db:3306/${DB_DATABASE}"
+    volumes:
+      - ./core:/build/core
+    working_dir: /build/core
+    networks:
+      - ct-data
+    depends_on:
+      db:
+        condition: service_healthy
+
   caddy:
     build:
       context: ./docker/caddy

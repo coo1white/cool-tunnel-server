@@ -83,22 +83,17 @@ HOST_DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@127.0.0.1:3306/${DB_DAT
 CONTAINER_DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@db:3306/${DB_DATABASE}"
 
 run_in_container() {
-    step "cargo sqlx prepare (containerised, rust:1.86-alpine)"
-    warn "first run downloads + compiles sqlx-cli inside the container"
-    warn "(~3-5 min on a 1-vCPU VPS); subsequent runs are seconds"
-    # shellcheck disable=SC2016
-    docker run --rm \
-        --network cool-tunnel-server_ct-data \
-        -v "$PWD/core:/work" \
-        -e DATABASE_URL="$CONTAINER_DATABASE_URL" \
-        -w /work \
-        rust:1.86-alpine \
-        sh -c 'set -eux ; \
-               apk add --no-cache musl-dev pkgconfig openssl-dev \
-                                  openssl-libs-static ca-certificates \
-               && cargo install sqlx-cli --version "~0.8" --no-default-features \
-                                          --features "rustls,mysql" --locked \
-               && cargo sqlx prepare --workspace'
+    # Build the project's own sqlx-prepare image (a stage of
+    # docker/core/Dockerfile) — BuildKit reuses the cached
+    # rust:1.86-alpine + alpine layers from previous core-builder
+    # builds, so no fresh Docker Hub pull is needed (rate-limit-safe).
+    # First run takes ~3-5 min on a 1-vCPU VPS to compile sqlx-cli;
+    # subsequent runs land in seconds because the layer is cached.
+    step "Build sqlx-prepare image (cached after first run)"
+    compose --profile sqlx build sqlx-prepare
+
+    step "cargo sqlx prepare (compose service)"
+    compose --profile sqlx run --rm sqlx-prepare prepare --workspace
 }
 
 if [[ "$USE_CONTAINER" == 1 ]]; then

@@ -84,3 +84,33 @@ FROM alpine:3.20
 COPY --from=builder /ct-server-core /usr/local/bin/ct-server-core
 ENTRYPOINT ["/usr/local/bin/ct-server-core"]
 CMD ["--help"]
+
+# Optional stage: a Rust toolchain image with sqlx-cli pre-built,
+# used by `make sqlx-prepare` to regenerate core/.sqlx/ on a host
+# that doesn't have rustup installed (typical VPS).
+#
+# Why a stage in this Dockerfile rather than a pull from
+# Docker Hub: anonymous Docker Hub pulls are rate-limited
+# (100/6h per IP). On a fresh VPS that just pulled
+# rust:1.86-alpine + alpine:3.20 + caddy + sing-box + php:8.3-fpm
+# + mariadb + redis to bring the stack up, the limit is already
+# half-consumed; one extra `docker run rust:1.86-alpine` at
+# prepare time can tip over. Building this stage as part of the
+# project's compose graph lets BuildKit reuse the cached layers
+# from the `builder` stage above — no fresh registry pull.
+#
+# Brought up via:
+#   docker compose --profile sqlx run --rm sqlx-prepare
+FROM rust:1.86-alpine AS sqlx-prepare
+RUN apk add --no-cache \
+        musl-dev \
+        pkgconfig \
+        openssl-dev \
+        openssl-libs-static \
+        ca-certificates \
+        git
+RUN cargo install sqlx-cli --version "~0.8" \
+        --no-default-features --features "rustls,mysql" --locked
+WORKDIR /build/core
+ENTRYPOINT ["cargo", "sqlx"]
+CMD ["prepare", "--workspace"]
