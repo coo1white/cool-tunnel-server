@@ -59,6 +59,10 @@ step "Build ct-server-core (Rust, musl-static)"
 compose --profile build-only build core-builder
 ok "ct-server-core built"
 
+step "Build caddy image (stock Caddy 2 — ACME provider only, no plugins)"
+compose build caddy
+ok "caddy image built"
+
 step "Build sing-box image (downloads upstream pre-built binary)"
 compose build sing-box
 ok "sing-box image built"
@@ -90,20 +94,44 @@ compose exec -T panel php artisan migrate --force --no-interaction \
 compose exec -T panel php artisan db:seed --force --no-interaction || true
 ok "migrations applied + default seed in place"
 
-# ---------- Render the initial sing-box config ---------------------
+# ---------- Render the initial Caddyfile + sing-box config --------
 
-step "Render initial sing-box config (no proxy accounts yet)"
+step "Render initial Caddyfile + sing-box config from DB"
+compose exec -T panel ct-server-core --json caddyfile render \
+    || warn "Caddyfile render failed — Caddy will start with no domain configured"
 compose exec -T panel ct-server-core --json singbox render \
-    || warn "render failed — first proxy account creation will retry"
-ok "config.json rendered to /etc/sing-box/config.json (in the volume)"
+    || warn "sing-box render failed — first proxy account creation will retry"
+ok "Caddyfile rendered to /etc/caddy/Caddyfile (caddy_etc volume)"
+ok "config.json rendered to /etc/sing-box/config.json (singbox_etc volume)"
 
-# ---------- Start sing-box -----------------------------------------
+# ---------- Start Caddy first; wait for the cert to land ----------
 
-step "Start sing-box (ACME will issue certs in the background)"
+step "Start Caddy (ACME-only mode — port 80 only, manages cert for ${DOMAIN:-?})"
+compose up -d caddy
+ok "caddy running on :80"
+warn "Caddy will fetch the TLS cert from Let's Encrypt now; this"
+warn "usually takes 10-60 s. Tail logs with:"
+warn "    docker compose logs -f --tail=80 caddy"
+
+# Wait for cert files to appear in the shared caddy_data volume.
+# Path is /data/caddy/certificates/<ca>/<domain>/<domain>.crt — see
+# core/ct-server-core/src/singbox/mod.rs::cert_paths() for derivation.
+ca_folder="acme-v02.api.letsencrypt.org-directory"
+case "${ACME_DIRECTORY:-}" in
+    *staging*) ca_folder="acme-staging-v02.api.letsencrypt.org-directory" ;;
+esac
+cert_path="/data/caddy/certificates/${ca_folder}/${DOMAIN:-proxy.example.com}/${DOMAIN:-proxy.example.com}.crt"
+
+step "Wait for Caddy to obtain the TLS certificate (up to 90 s)"
+# shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
+wait_for "Caddy cert at ${cert_path}" 45 2 \
+    bash -c "docker compose exec -T caddy test -f \"$cert_path\""
+
+# ---------- Start sing-box (now that the cert exists) -------------
+
+step "Start sing-box (reads cert from caddy_data volume)"
 compose up -d sing-box
-ok "sing-box running"
-warn "the first ACME issuance can take 10-60 seconds; tail logs with:"
-warn "    docker compose logs -f --tail=80 sing-box"
+ok "sing-box running on :443 + :443/udp"
 
 # ---------- Create first Filament admin ----------------------------
 

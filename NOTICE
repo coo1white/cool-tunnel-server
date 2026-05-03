@@ -16,15 +16,28 @@ THIRD_PARTY_LICENSES.md.
 
 ------------------------------------------------------------------------
 
+* Caddy (https://github.com/caddyserver/caddy)
+  Copyright the Caddy Authors.
+  Licensed under the Apache License, Version 2.0.
+  Stock Caddy 2 (no plugins) used as the ACME provider only. Binds
+  :80 for HTTP-01 challenges; manages the TLS certificate for the
+  operator's domain via Let's Encrypt; stores the cert in a shared
+  Docker volume that sing-box reads. We chose Caddy here because
+  its CertMagic-based ACME implementation is the most reliable in
+  the Go ecosystem.
+
 * sing-box (https://github.com/SagerNet/sing-box)
   Copyright SagerNet and contributors.
   Licensed under the GNU General Public License, Version 3.0.
   Actively-maintained Go reimplementation of the NaiveProxy server
-  protocol with multi-user basic_auth, built-in ACME, HTTP/3, and a
-  clash-style management API for hot config reload. Bundled as a
-  separate process / image (cool-tunnel-server-singbox); not statically
-  linked with this proprietary code, so its GPL-3 stays scoped to its
-  own image. Replaces the unmaintained klzgrad/forwardproxy plugin.
+  protocol with multi-user basic_auth, HTTP/3, and a clash-style
+  management API for hot config reload. Reads its TLS certificate
+  from the shared Caddy volume (Caddy does ACME, sing-box does
+  TLS termination + the actual proxy). Bundled as a separate
+  process / image; not statically linked with this proprietary
+  code, so its GPL-3 stays scoped to its own image. Replaces the
+  unmaintained klzgrad/forwardproxy plugin we depended on in
+  v0.0.1.
 
 * NaiveProxy (https://github.com/klzgrad/naiveproxy)
   Copyright klzgrad and contributors.

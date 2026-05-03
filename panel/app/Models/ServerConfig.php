@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Services\CaddyfileGenerator;
 use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
 use App\Services\SingBoxReloader;
@@ -53,9 +54,17 @@ class ServerConfig extends Model
             // hot path, synchronous render+reload as a backstop.
             app(RedisRevocationBus::class)->announceServerConfigChanged();
 
-            $generator = app(SingBoxConfigGenerator::class);
-            $hash      = $generator->renderToFile();
-            if ($hash !== null) {
+            // Re-render Caddyfile (Caddy picks the new domain / email
+            // up on its own admin-API reload; nothing extra to do
+            // from our side besides writing the file). If the operator
+            // changed the domain, Caddy will obtain a fresh cert via
+            // ACME the next time it boots, and the cert-mtime in our
+            // sing-box render hash flips on first renewal.
+            app(CaddyfileGenerator::class)->renderToFile();
+
+            // Re-render sing-box and hot-reload via the clash API.
+            $singbox = app(SingBoxConfigGenerator::class);
+            if ($singbox->renderToFile() !== null) {
                 app(SingBoxReloader::class)->reload();
             }
         });

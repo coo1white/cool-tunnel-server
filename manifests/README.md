@@ -14,7 +14,8 @@ Windows / Linux desktop client.
 
 | File | Component | Why pinned |
 | --- | --- | --- |
-| `sing-box.upstream.json` | The actively-maintained NaiveProxy server | Verify clash API + multi-user reload work |
+| `caddy.upstream.json` | Stock Caddy 2 (no plugins) — ACME provider only | Caddy's auto-HTTPS is the most reliable ACME impl; we use it because sing-box's built-in ACME is less robust |
+| `sing-box.upstream.json` | The actively-maintained NaiveProxy server | Reads cert from Caddy's volume; does the actual TLS termination |
 | `naiveproxy.upstream.json` | The NaiveProxy client family (klzgrad/naiveproxy) | Wire-protocol reference; bundled by clients, not the server |
 | `ct-server-core.upstream.json` | The Rust engine binary | Versioned alongside the panel |
 | `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform contract |

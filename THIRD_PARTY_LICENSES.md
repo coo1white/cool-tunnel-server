@@ -23,7 +23,8 @@ directories that come pre-populated by Debian / Alpine.
 
 | Component | Upstream | Licence |
 | --- | --- | --- |
-| sing-box | https://github.com/SagerNet/sing-box | **GPL-3.0** |
+| Caddy (ACME provider) | https://github.com/caddyserver/caddy | Apache-2.0 |
+| sing-box (proxy) | https://github.com/SagerNet/sing-box | **GPL-3.0** |
 | NaiveProxy (client) | https://github.com/klzgrad/naiveproxy | BSD-3-Clause |
 | Laravel | https://github.com/laravel/laravel | MIT |
 | Filament | https://github.com/filamentphp/filament | MIT |
@@ -77,6 +78,7 @@ predominantly MIT.
 
 | Image | Component | Licence |
 | --- | --- | --- |
+| `caddy:2.8.4-alpine` | ACME provider | Apache-2.0 + Alpine |
 | `alpine:3.20` | sing-box runtime + builder stage | Alpine licence collection |
 | `rust:1.86-alpine` | Rust core build env | MIT/Apache-2.0 + Alpine |
 | `php:8.3-fpm-alpine` | Panel runtime | PHP licence + Alpine |

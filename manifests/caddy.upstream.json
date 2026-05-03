@@ -1,0 +1,12 @@
+{
+    "name": "caddy",
+    "kind": "container-image",
+    "version": "v2.8.4",
+    "upstream": "https://github.com/caddyserver/caddy",
+    "verify": {
+        "command": ["docker", "exec", "ct-caddy", "caddy", "version"],
+        "expect_stdout_contains": "v2.",
+        "expect_zero_exit": true
+    },
+    "note": "Apache-2.0. Stock Caddy (no plugins) used as the ACME provider only — binds :80 for HTTP-01 challenges, manages the cert for the operator's domain, and writes it to a shared volume that sing-box reads. Caddy does NOT bind :443; that's sing-box. We chose Caddy here because its ACME (CertMagic) is the most reliable TLS-management implementation in the Go ecosystem; sing-box's built-in ACME works but doesn't offer Caddy's multi-challenge fallback or operator-friendly error messages."
+}

@@ -8,6 +8,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod admin;
+mod caddy;
 mod components;
 mod daemon;
 mod db;
@@ -79,6 +80,11 @@ enum Cmd {
     Singbox {
         #[command(subcommand)]
         op: SingboxOp,
+    },
+    /// Caddyfile generation (ACME-only Caddy — see docs/architecture.md).
+    Caddyfile {
+        #[command(subcommand)]
+        op: CaddyfileOp,
     },
     /// Talk to sing-box's clash API.
     Server {
@@ -155,6 +161,21 @@ enum SingboxOp {
 }
 
 #[derive(Subcommand, Debug)]
+enum CaddyfileOp {
+    /// Render template → /etc/caddy/Caddyfile (atomic).
+    Render {
+        #[arg(long)]
+        dry_run: bool,
+        /// Override template path.
+        #[arg(long, env = "CADDYFILE_TEMPLATE", default_value = "/srv/caddy/Caddyfile.tpl")]
+        template: String,
+        /// Override output path.
+        #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
+        output: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum ServerOp {
     /// Hot-reload via the clash API.
     Reload,
@@ -228,6 +249,15 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 .await
             }
             SingboxOp::Validate => singbox::validate(&cli.output).await,
+        },
+        Cmd::Caddyfile { op } => match op {
+            CaddyfileOp::Render {
+                dry_run,
+                template,
+                output,
+            } => {
+                caddy::render(&cli.database_url, &template, &output, dry_run, cli.json).await
+            }
         },
         Cmd::Server { op } => match op {
             ServerOp::Reload => admin::reload(&cli.admin_socket, &cli.output).await,
