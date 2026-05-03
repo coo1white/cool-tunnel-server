@@ -17,14 +17,8 @@
                 "server_name": "{{ .Domain }}",
                 "alpn": ["h2", "http/1.1"],
                 "min_version": "1.2",
-                "acme": {
-                    "domain": ["{{ .Domain }}"],
-                    "default_server_name": "{{ .Domain }}",
-                    "email": "{{ .AcmeEmail }}",
-                    "provider": "{{ .AcmeDirectory }}",
-                    "data_directory": "/data/acme",
-                    "alternative_http_port": 80
-                }
+                "certificate_path": "{{ .CertPath }}",
+                "key_path":         "{{ .KeyPath }}"
             }
         }
     ],

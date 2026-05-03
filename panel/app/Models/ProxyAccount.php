@@ -35,13 +35,28 @@ class ProxyAccount extends Model
 {
     use HasFactory;
 
+    /**
+     * Mass-assignable attributes.
+     *
+     * password_hash and password_cleartext_encrypted are deliberately
+     * NOT in this list. Anything that needs to set them must go
+     * through {@see setCleartextPassword()}, which writes both
+     * consistently. This makes it impossible for a Filament form
+     * field, an API endpoint, or a stray array-fill to poison those
+     * columns by accident — Eloquent's MassAssignmentException
+     * fires immediately.
+     */
     protected $fillable = [
-        'username', 'password_hash', 'password_cleartext_encrypted',
-        'label', 'enabled',
+        'username', 'label', 'enabled',
         'quota_bytes', 'used_bytes', 'expires_at', 'last_seen_at',
         'metadata',
     ];
 
+    /**
+     * Hidden from array / JSON serialisation. The cleartext column
+     * MUST stay hidden — leaking it in a panel response would defeat
+     * the encrypt-at-rest scheme entirely.
+     */
     protected $hidden = [
         'password_hash',
         'password_cleartext_encrypted',
