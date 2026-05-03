@@ -2,9 +2,10 @@
 
 COOL TUNNEL SERVER is the **server-side** companion to the
 [Cool Tunnel](https://github.com/coo1white/cool-tunnel) macOS client.
-It bundles a Caddy + NaiveProxy `forward_proxy` stack with a Filament
-admin panel for proxy account management, fake-site camouflage,
-traffic accounting, and Caddyfile generation.
+It bundles a sing-box `naive` inbound (multi-user, ACME, hot-reload
+via clash API) with a Filament admin panel for proxy account
+management, fake-site camouflage, traffic accounting, and
+sing-box config generation.
 
 It is provided **as-is**, for educational and research purposes only.
 
@@ -14,8 +15,8 @@ This software is intended for legitimate uses such as:
 
 - Operating a personal proxy on infrastructure **you own** or are
   **explicitly authorised** to use.
-- Learning how `forward_proxy`-mode Caddy, NaiveProxy, and the
-  HTTP/2 CONNECT path interact with TLS termination and ACME.
+- Learning how sing-box's `naive` inbound, the NaiveProxy protocol,
+  and the HTTP/2 CONNECT path interact with TLS termination and ACME.
 - Performing security research, auditing, and academic study of
   HTTPS-disguised proxy protocols.
 
@@ -99,7 +100,9 @@ COOL TUNNEL SERVER builds and runs the following third-party software
 unmodified. Their licenses are reproduced or referenced in
 [NOTICE](./NOTICE) and must be preserved in any redistribution:
 
-- [Caddy](https://github.com/caddyserver/caddy) — Apache-2.0
+- [sing-box](https://github.com/SagerNet/sing-box) — GPL-3.0
+  (the actively-maintained NaiveProxy server we use; bundled as a
+  separate process, not statically linked)
 - [NaiveProxy](https://github.com/klzgrad/naiveproxy) server-side plugin — Apache-2.0
 - [Laravel](https://github.com/laravel/laravel) — MIT
 - [Filament](https://github.com/filamentphp/filament) — MIT

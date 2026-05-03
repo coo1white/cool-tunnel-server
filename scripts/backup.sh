@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# backup.sh — snapshot db + .env + caddy_data into one tarball.
+# backup.sh — snapshot db + .env + singbox_data into one tarball.
 #
 # Drops a timestamped file in ./backups/. ACME state lives in the
-# caddy_data volume; without it, every fresh deploy burns a Let's
+# singbox_data volume; without it, every fresh deploy burns a Let's
 # Encrypt rate-limit.
 
 set -euo pipefail
@@ -24,18 +24,18 @@ docker compose exec -T db mariadb-dump \
         "${DB_DATABASE:-cooltunnel}" \
     > tmp/db.sql
 
-# --- caddy_data volume → tar ---------------------------------------
-echo "==> Snapshotting caddy_data"
+# --- singbox_data volume → tar ---------------------------------------
+echo "==> Snapshotting singbox_data"
 docker run --rm \
-    -v cool-tunnel-server_caddy_data:/data:ro \
+    -v cool-tunnel-server_singbox_data:/data:ro \
     -v "$PWD/tmp":/out alpine \
-    sh -c 'cd /data && tar czf /out/caddy_data.tgz .'
+    sh -c 'cd /data && tar czf /out/singbox_data.tgz .'
 
 # --- bundle ---------------------------------------------------------
 echo "==> Bundling into ${out}"
 tar -czf "$out" \
-    -C tmp db.sql caddy_data.tgz \
-    -C .. .env manifests caddy/Caddyfile.tpl
+    -C tmp db.sql singbox_data.tgz \
+    -C .. .env manifests sing-box/config.json.tpl
 
 rm -rf tmp
 echo "==> ${out}"

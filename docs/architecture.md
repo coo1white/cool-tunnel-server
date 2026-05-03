@@ -5,7 +5,7 @@ Cool Tunnel client's three-layer stack one-to-one:
 
 |  | UI tier | Glue tier (cross-platform Rust) | Anti-tracking engine |
 | --- | --- | --- | --- |
-| **Server** | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` | `forwardproxy@naive` plugin baked into Caddy |
+| **Server** | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` | sing-box (`naive` inbound, GPL-3.0) |
 | **macOS client (today)** | SwiftUI + AppKit | `cool-tunnel-core` (Rust) — already ships in [coo1white/cool-tunnel](https://github.com/coo1white/cool-tunnel) | Bundled `naive` Mach-O |
 | **Future iOS / Android / Windows / Linux desktop clients** | Per-platform native (Swift / Kotlin / C++ / GTK or Qt) | Same `ct-protocol` crate + a per-platform `ct-client-core` | Per-platform `naive` build |
 
@@ -14,18 +14,18 @@ The two horizontal lines that connect every row are:
 1. **`ct-protocol`** — the same Rust crate every client and the
    server pull from. Defines `ProfileV1`, `SubscriptionManifestV1`,
    the JSON wire format, and the **component manifest** schema.
-2. **NaiveProxy** — the same wire protocol on every platform: HTTP/2
-   CONNECT over TLS to a `forward_proxy`-mode Caddy. The server
-   speaks it via the `forwardproxy@naive` Caddy plugin; clients
-   speak it via the `naive` binary they bundle.
+2. **NaiveProxy protocol** — HTTP/2 CONNECT over TLS, with the
+   probe-resistance + traffic-padding shape that makes it look like
+   plain HTTPS browsing. The server speaks it via sing-box's `naive`
+   inbound; clients speak it via the `naive` binary they bundle.
+   Same wire, two implementations of the same protocol.
 
 ## Component-as-machine-part
 
-Every replaceable piece — Rust core, the protocol crate, the
-NaiveProxy engine, Caddy, the panel, the database, the cache — is
-declared in `manifests/*.upstream.json`. The shape is defined once
-in `ct-protocol::components` so server and every Rust-cored client
-agree.
+Every replaceable piece — sing-box, the Rust crates, the panel image,
+the database, the cache — is declared in `manifests/*.upstream.json`.
+The shape is defined once in `ct-protocol::components` so server and
+every Rust-cored client agree.
 
 Each component carries:
 
@@ -36,16 +36,16 @@ Each component carries:
 
 `ct-server-core component check` walks every manifest, runs each
 verifier, and prints an OK/NG line per component. Same data renders
-in the Filament *Components* page. The macOS client today doesn't
-yet have this page, but its `naive.upstream.json` is already a
-manifest in the same spirit and will move under `ct-protocol`'s
-shared schema once we cut that integration.
+in the Filament *Components* page. The macOS client today uses the
+same pattern for its bundled `naive` via `naive.upstream.json` +
+`NaiveBinaryResolver`; it'll move under `ct-protocol`'s shared schema
+once we cut that integration.
 
 ```
                       ┌──────────────────────────────────────┐
                       │  manifests/*.upstream.json            │
                       │  ┌──────────────┐  ┌──────────────┐  │
-                      │  │ caddy        │  │ forwardproxy │  │
+                      │  │ sing-box     │  │ naiveproxy   │  │
                       │  │ ct-server-…  │  │ ct-protocol  │  │
                       │  │ panel        │  │ mariadb      │  │
                       │  │ redis        │  │ …            │  │
@@ -77,32 +77,32 @@ shared schema once we cut that integration.
                                     │ unix-socket JSON
                    ┌────────────────▼────────────────────────────┐
                    │           ct-server-core (Rust)              │
-                   │   caddyfile::render   admin::reload          │
-                   │   metrics::collect    quota::enforce         │
+                   │   singbox::render    admin::reload (clash)   │
+                   │   metrics::collect   quota::enforce          │
                    │   probe::anti_tracking  components::check    │
-                   │   daemon (long-running)                      │
+                   │   redis_bridge (Coalescer + pub/sub)         │
                    └─────┬──────────────────────────────────┬────┘
                          │                                  │
-            POST /load    │                                  │ POST /load
-            (text/caddyfile)                                 │ (admin API)
+            atomic write to                                 │ PUT /configs?path=…
+            /etc/sing-box/config.json                       │ (clash unix socket)
                          ▼                                  │
                    ┌──────────────────────────────────┐    │
-                   │            Caddy                  │◀───┘
-                   │   forward_proxy { hide_ip,        │
-                   │                   hide_via,       │
-                   │                   probe_resistance}│
-                   │   tls (ACME)                      │
-                   │   reverse_proxy → panel (cover    │
-                   │                        site)      │
+                   │           sing-box                 │◀──┘
+                   │   naive inbound { users, tls(ACME)}│
+                   │   listen :443 (h2 + h3) + :80 (ACME)│
+                   │   fallback → panel:9000 (cover     │
+                   │                          site)     │
                    └──────────────────────────────────┘
                          ▲                  ▲
-                         │ TLS:443          │ panel:9000 (cover-site fallthrough)
+                         │ TLS:443          │ panel:9000 (cover-site fallback)
                          │                  │
                          │          ┌───────┴────────┐
                          │          │     panel      │
-                         │          │  (PHP-FPM)     │
+                         │          │  (PHP-FPM +    │
+                         │          │   nginx +      │
+                         │          │   ct-server-   │
+                         │          │   core daemon) │
                          │          └────────────────┘
-                         │
                          │
               ┌──────────┴────────────┐
               │  Cool Tunnel client    │
@@ -113,19 +113,25 @@ shared schema once we cut that integration.
 
 ### What runs where
 
-- **`caddy` container** — Caddy (with `forwardproxy@naive` baked in
-  via `xcaddy`), terminates TLS, runs the proxy. Has the unix socket
-  the panel writes Caddyfile to and that `ct-server-core` posts
-  reloads to.
+- **`sing-box` container** — sing-box with the `naive` inbound.
+  Multi-user `users` array (cleartext passwords from the panel,
+  decrypted at render time). Built-in ACME on :80; TLS-terminating
+  HTTP/2 CONNECT on :443. Fallback for unauthenticated traffic
+  reverse-proxies to `panel:9000` so probes see the cover site.
+  The clash-API unix socket at `/run/sing-box/clash.sock` is what
+  `ct-server-core` PUTs `/configs?force=true&path=…` to for hot
+  reloads.
 - **`panel` container** — PHP-FPM + nginx + Laravel + Filament,
-  plus a copy of the `ct-server-core` Rust binary on PATH. The PHP
-  services in `app/Services/` are thin shell-outs to the Rust binary.
-  A queue worker serializes Caddy reload requests so they never
-  collide.
-- **`db` container** — MariaDB. Stores everything: proxy accounts,
-  fake-site templates, server config, traffic rollups, panel
-  admins.
-- **`redis` container** — cache, sessions, queue.
+  plus a copy of the `ct-server-core` Rust binary on PATH and the
+  ct-server-core daemon running under supervisord. The PHP services
+  in `app/Services/` are thin shell-outs to the Rust binary; the
+  Rust daemon owns the Redis pub/sub subscription with the burst
+  Coalescer.
+- **`db` container** — MariaDB. Stores everything: proxy accounts
+  (incl. encrypted cleartext passwords), fake-site templates, server
+  config, traffic rollups, panel admins.
+- **`redis` container** — cache, sessions, queue, and the
+  `cool_tunnel:revocations` pub/sub channel.
 
 ## Why split UI / glue / engine three ways
 
@@ -135,9 +141,9 @@ Each layer has a different change cadence:
 | --- | --- | --- |
 | **UI** | Daily | Operator preferences, new admin features |
 | **Rust glue** | Weekly to monthly | Wire-format changes, new diagnostic probes |
-| **NaiveProxy engine** | Tied to upstream releases | Censorship-resistance research |
+| **NaiveProxy engine (sing-box)** | Tied to upstream releases | Censorship-resistance research |
 
-Mixing them in one process means an upstream `naive` rev bump
+Mixing them in one process means an upstream sing-box rev bump
 forces you to redeploy your UI. The split lets each piece move on
 its own schedule, with the **component manifests** giving you a
 machine-readable record of what version of each piece you're
@@ -156,7 +162,8 @@ A future `ct-client-core` (any platform) would:
    with the local `naive` binary and the local Rust core checked
    the same way the server checks its own components.
 5. Speak NaiveProxy (HTTP/2 CONNECT) to the server's :443 — same
-   wire as today.
+   wire as today, regardless of whether the server is sing-box,
+   forwardproxy-on-Caddy, or some future implementation.
 
 Nothing client-side has to know any PHP exists. The protocol crate
 is the contract; everything else is implementation detail.

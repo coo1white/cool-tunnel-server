@@ -33,7 +33,7 @@
 // forwardproxy plugin patch (v0.1 roadmap).
 
 use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
-use crate::{admin, caddyfile, Result};
+use crate::{admin, singbox, Result};
 use redis::{aio::ConnectionManager, AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -170,7 +170,7 @@ async fn fire_reload(
     edge: &'static str,
 ) {
     let started = Instant::now();
-    if let Err(e) = caddyfile::render(database_url, template, output, false, false).await {
+    if let Err(e) = singbox::render(database_url, template, output, false, false).await {
         tracing::warn!(error = %e, edge, "render failed during revocation");
         return;
     }

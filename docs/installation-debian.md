@@ -218,15 +218,15 @@ enabled = true
 mode    = aggressive
 maxretry = 4
 
-# Caddy access-log jail. Disabled by default because cool-tunnel-server
-# does not write Caddy access logs (privacy). Enable only if YOU
-# explicitly turn on Caddy access logging in the Caddyfile and accept
-# the privacy trade-off.
-# [caddy-auth]
+# sing-box access-log jail. Disabled by default because
+# cool-tunnel-server does not write proxy access logs (privacy).
+# Enable only if YOU explicitly turn on sing-box log output that
+# captures auth failures and accept the privacy trade-off.
+# [singbox-auth]
 # enabled  = false
 # port     = http,https
-# filter   = caddy-auth
-# logpath  = /var/log/caddy/access.log
+# filter   = singbox-auth
+# logpath  = /var/log/sing-box/access.log
 # maxretry = 10
 # findtime = 5m
 # bantime  = 6h
@@ -371,16 +371,19 @@ sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
 # Pick a strong password — this is what you'll type in front of the
 # Filament login page (a second factor before the Filament password).
 read -r -s -p "Admin edge password: " ADMIN_PW; echo
-ADMIN_HASH=$(docker run --rm caddy:alpine caddy hash-password -plaintext "$ADMIN_PW")
+# bcrypt-hash the admin password. Any tool works; we use httpd's
+# htpasswd helper here because it's tiny and ubiquitous.
+apt install -y apache2-utils
+ADMIN_HASH=$(htpasswd -nbB admin "$ADMIN_PW" | cut -d: -f2-)
 sed -i "s|^PANEL_BASIC_AUTH_HASH=.*|PANEL_BASIC_AUTH_HASH='${ADMIN_HASH}'|" .env
 unset ADMIN_PW
 ```
 
 > **Why two passwords for the admin panel?** Filament auth lives
-> behind another layer (the edge `basic_auth` block in the Caddyfile)
-> so the Filament login page is never directly probable. Use two
-> different passwords; the edge layer is what stops drive-by scanners
-> from even seeing the Laravel login form.
+> behind another layer (the edge `basic_auth` block in sing-box's
+> fallback) so the Filament login page is never directly probable.
+> Use two different passwords; the edge layer is what stops drive-by
+> scanners from even seeing the Laravel login form.
 
 ---
 
@@ -392,18 +395,18 @@ unset ADMIN_PW
 
 `install.sh` does, in order:
 
-1. `docker compose build` — Caddy + xcaddy + forwardproxy@naive,
+1. `docker compose build` — sing-box (binary download),
    panel + Composer install.
 2. `docker compose up -d db redis` — bring up the data layer first.
 3. Wait for MariaDB healthcheck to go green.
 4. `docker compose up -d panel` — runs the entrypoint, which does
    `composer install`, `key:generate`, `migrate`, and renders the
-   initial `Caddyfile`.
+   initial `sing-box config.json`.
 5. Prompts you for a first Filament admin user (email + password).
-6. `docker compose up -d caddy` — ACME kicks in, certs land in
-   `caddy_data` volume.
-7. Tails caddy logs until it prints `certificate obtained
-   successfully` for your domain.
+6. `docker compose up -d sing-box` — ACME kicks in, certs land in
+   `singbox_data` volume.
+7. Tails sing-box logs until it prints `certificate obtained` (or
+   the equivalent ACME success line) for your domain.
 
 When it finishes, browse to:
 
@@ -424,7 +427,7 @@ echo | openssl s_client -servername proxy.example.com \
 ```
 
 You want `issuer=… Let's Encrypt`. If you see a self-signed cert,
-ACME hasn't completed yet — `docker logs ct-caddy` will tell you why
+ACME hasn't completed yet — `docker logs ct-singbox` will tell you why
 (usually port 80 not reachable, or DNS not yet propagated).
 
 ---
@@ -442,10 +445,12 @@ In the Filament panel: **Proxy Accounts → New**.
 
 When you save, the panel:
 
-1. Writes the bcrypt hash to `proxy_accounts`.
-2. Re-renders `Caddyfile` from the DB.
-3. Calls Caddy's admin API on `/run/caddy/admin.sock` to reload —
-   no downtime, no dropped connections.
+1. Writes the bcrypt hash AND a Laravel-Crypt-encrypted cleartext to
+   `proxy_accounts`.
+2. Publishes a `cool_tunnel:revocations` Redis message.
+3. The ct-server-core daemon (subscribed) re-renders the sing-box
+   `config.json` and PUTs `/configs?force=true&path=…` to sing-box's
+   clash-API unix socket — zero-downtime reload.
 
 Verify from another machine:
 
@@ -454,8 +459,7 @@ curl -v --proxy "https://alice:<password>@proxy.example.com:443" \
     https://ipinfo.io
 ```
 
-Expected: `ipinfo.io` shows the **server's** IP (not yours), and the
-`server:` line in the verbose output is `Caddy`.
+Expected: `ipinfo.io` shows the **server's** IP (not yours).
 
 ### Point the macOS client at it
 
@@ -479,20 +483,20 @@ cd /opt/cool-tunnel-server
 ```
 
 `update.sh` does `git pull`, `docker compose build --pull`, runs new
-migrations, re-renders the Caddyfile, and `docker compose up -d`.
+migrations, re-renders the sing-box config, and `docker compose up -d`.
 
 ### Back up
 
 ```bash
 ./scripts/backup.sh
 # → backups/cool-tunnel-YYYY-MM-DD.tar.gz
-#   contains: .env, db dump, caddy_data (certs), caddy_etc (Caddyfile)
+#   contains: .env, db dump, singbox_data (certs), singbox_etc (config.json)
 ```
 
 ### Tail logs
 
 ```bash
-docker compose logs -f --tail=200 caddy   # ACME + proxy access
+docker compose logs -f --tail=200 sing-box   # ACME + proxy access
 docker compose logs -f --tail=200 panel   # Laravel + queue worker
 docker compose logs -f --tail=200 db
 ```
@@ -501,14 +505,16 @@ docker compose logs -f --tail=200 db
 
 Filament panel → ProxyAccounts → click the user → **Regenerate
 password**. New cleartext shown once; old credential stops working
-on the next Caddy reload (a few seconds).
+within ~100 ms (Redis pub/sub → sing-box reload).
 
 ### Renew TLS
 
-Caddy renews automatically 30 days before expiry. To force a renewal:
+sing-box's built-in ACME renews automatically. To force a renewal,
+either bump the renewal threshold in `sing-box/config.json.tpl` and
+re-render, or restart the container (it will re-check on boot):
 
 ```bash
-docker exec ct-caddy caddy reload --force
+docker compose restart sing-box
 ```
 
 ---
@@ -518,8 +524,8 @@ docker exec ct-caddy caddy reload --force
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `dial tcp ...:80: connection refused` during ACME | Port 80 not open at cloud firewall, or another web server running | Check `ss -ltnp | grep :80`; open port at provider firewall |
-| `unable to verify the first certificate` from `curl` | ACME hasn't completed yet (self-signed in use) | `docker logs ct-caddy` and wait |
-| `SSL_ERROR_SYSCALL` from the macOS client | Caddy is up but `forward_proxy` didn't load | `docker exec ct-caddy caddy list-modules \| grep forward` — if empty, image was built without xcaddy plugin |
+| `unable to verify the first certificate` from `curl` | ACME hasn't completed yet (self-signed in use) | `docker logs ct-singbox` and wait |
+| `SSL_ERROR_SYSCALL` from the macOS client | sing-box up but config didn't load — check `docker logs ct-singbox` for the last clash-API reload | `docker exec ct-singbox sing-box check -c /etc/sing-box/config.json` |
 | Connections work but feel slow | BBR not active | `sysctl net.ipv4.tcp_congestion_control` should be `bbr` |
 | QUIC (`Alt-Svc h3`) not advertised | UDP/443 blocked or buffer too small | Open UDP/443 at provider; verify `sysctl net.core.rmem_max` ≥ 7500000 |
 | Browser shows your fake site instead of proxying | Client misconfigured (using HTTP instead of CONNECT), or password wrong | Re-check `naive+https://...` URL on the client |
@@ -536,10 +542,10 @@ docker exec ct-caddy caddy reload --force
   TLDs see disproportionate abuse and end up on collective
   blocklists. A 1+ year old domain on a "boring" TLD (`.com`,
   `.net`, `.org`) is far less fingerprintable.
-- **Cover-site choice matters.** The fake site Caddy serves at the
-  apex is what unauthenticated probes see. Pick (or generate, in
-  the panel) a cover that *fits the domain* — a `.tech` site
-  shouldn't render a coffee-shop landing page.
+- **Cover-site choice matters.** The fake site sing-box serves via
+  fallback at the apex is what unauthenticated probes see. Pick (or
+  generate, in the panel) a cover that *fits the domain* — a `.tech`
+  site shouldn't render a coffee-shop landing page.
 - **Don't reuse credentials.** One proxy account per real human.
   If a credential leaks, you can rotate just that one without
   disturbing anyone else.
@@ -549,13 +555,12 @@ docker exec ct-caddy caddy reload --force
 - **Two boxes are better than one.** Run a second instance on a
   different cloud / different region as a hot-spare. The macOS
   client supports profile switching.
-- **Audit `caddy list-modules`** every release. If the panel build
-  ever forgets the `--with` flag for forwardproxy, the proxy will
-  silently degrade to "just a web server" and your basic_auth lines
-  in the Caddyfile become invalid syntax → Caddy refuses to load
-  → you get a 502 on the cover site. The CI in this repo guards
-  against that, but a customised image you build locally might not.
-- **Backup the `caddy_data` volume**, not just the DB. ACME state
+- **Audit `ct-server-core component check`** every release. If the
+  panel build ever produces a sing-box image that's missing the
+  `naive` inbound (e.g. someone swapped to a build without it),
+  the proxy will silently degrade to "just an ACME endpoint" and
+  client connections will fail. The OK/NG check is the canary.
+- **Backup the `singbox_data` volume**, not just the DB. ACME state
   lives there; without it, every `docker compose down -v` resets
   your cert and burns LE rate-limit budget.
 - **Public IPv6** — if your VPS has v6, set the `AAAA` record. Some

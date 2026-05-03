@@ -6,7 +6,7 @@
 // that matters for the "save in Filament → reload visible" cycle the
 // admin clicks through dozens of times.
 
-use crate::{admin, caddyfile, db, metrics, Error, Result};
+use crate::{admin, singbox, db, metrics, Error, Result};
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -108,8 +108,8 @@ async fn handle(
         WireRequestV1::RenderCaddyfile => {
             // Reuse the CLI render but capture the structured outcome
             // by re-implementing the logic here. (We could refactor
-            // caddyfile::render to return RenderOutcome; left for v0.0.2.)
-            caddyfile::render(database_url, template, output, false, false).await?;
+            // singbox::render to return RenderOutcome; left for v0.0.2.)
+            singbox::render(database_url, template, output, false, false).await?;
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::ReloadCaddy => {

@@ -19,14 +19,14 @@ git pull --ff-only || die "git pull failed (uncommitted changes?)"
 bold "==> Rebuild ct-server-core (Rust)"
 docker compose --profile build-only build core-builder
 
-bold "==> Rebuild caddy + panel"
-docker compose build caddy panel
+bold "==> Rebuild sing-box + panel"
+docker compose build sing-box panel
 
 bold "==> Run migrations (idempotent)"
 docker compose exec -T panel php artisan migrate --force --no-interaction
 
-bold "==> Re-render Caddyfile"
-docker compose exec -T panel ct-server-core --json caddyfile render
+bold "==> Re-render sing-box config"
+docker compose exec -T panel ct-server-core --json singbox render
 
 bold "==> Component check (post-build, pre-swap)"
 if ! docker compose exec -T panel ct-server-core component check --manifests /srv/manifests; then
@@ -34,13 +34,13 @@ if ! docker compose exec -T panel ct-server-core component check --manifests /sr
 fi
 
 bold "==> Bringing new images up"
-docker compose up -d panel caddy
+docker compose up -d panel sing-box
 
 bold "==> Component check (post-swap)"
 docker compose exec -T panel ct-server-core component check --manifests /srv/manifests \
     || die "post-swap check NG — investigate logs"
 
-bold "==> Reload Caddy via admin API"
-docker compose exec -T panel ct-server-core caddy reload
+bold "==> Reload sing-box via clash API"
+docker compose exec -T panel ct-server-core server reload
 
 bold "Update complete."

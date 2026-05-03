@@ -5,7 +5,7 @@
 // If any account changed state, re-render the Caddyfile and reload
 // Caddy so basic_auth lines come into effect immediately.
 
-use crate::{admin, caddyfile, db, Result};
+use crate::{admin, singbox, db, Result};
 use chrono::Utc;
 use sqlx::Row;
 
@@ -55,7 +55,7 @@ pub async fn enforce(
     if disabled > 0 {
         // Render + reload. If render says "unchanged" we still reload
         // — disabling an account always changes basic_auth lines.
-        caddyfile::render(database_url, template, output, false, false).await?;
+        singbox::render(database_url, template, output, false, false).await?;
         if let Err(e) = admin::reload_caddyfile_text(admin_socket, output).await {
             tracing::warn!(error = %e, "reload after quota enforcement failed");
         } else {

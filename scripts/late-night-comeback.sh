@@ -142,7 +142,7 @@ check_redis_bridge() {
     ' 2>/dev/null || { record 8 ng "Could not publish to Redis"; return; }
     sleep 1
     if docker compose logs --tail=200 panel 2>/dev/null \
-            | grep -qiE 'revocation received|caddy reloaded'; then
+            | grep -qiE 'revocation received|sing-?box reload|caddy reloaded'; then
         record 8 ok "Redis bridge alive (Rust daemon ack'd a resync)"
     else
         record 8 ng "Published, but no daemon ack in panel logs"

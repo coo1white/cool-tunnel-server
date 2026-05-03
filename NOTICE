@@ -3,45 +3,47 @@ Copyright (c) 2026 the Cool Tunnel Server contributors. All Rights Reserved.
 
 The original code in this repository — the Filament/Laravel panel
 under panel/app/, the Rust crates under core/, the Dockerfiles, the
-Caddyfile.tpl, the upstream-pin manifests under manifests/, the
-operator-facing scripts under scripts/, and the documentation under
-docs/ — is proprietary. See LICENSE.
+sing-box config template, the upstream-pin manifests under manifests/,
+the operator-facing scripts under scripts/, and the documentation
+under docs/ — is proprietary. See LICENSE.
 
 This product builds and runs the following third-party software,
-unmodified, via Docker images and language-specific package
-managers. Each retains its own copyright and licence; the licences
-must be preserved in any redistribution of the resulting stack.
-The full text of every applicable licence is reproduced or
-referenced in THIRD_PARTY_LICENSES.md.
+unmodified, via Docker images and language-specific package managers.
+Each retains its own copyright and licence; the licences must be
+preserved in any redistribution of the resulting stack. The full
+text of every applicable licence is reproduced or referenced in
+THIRD_PARTY_LICENSES.md.
 
 ------------------------------------------------------------------------
 
-* Caddy (https://github.com/caddyserver/caddy)
-  Copyright the Caddy Authors.
-  Licensed under the Apache License, Version 2.0.
-  Built into the cool-tunnel-server-caddy image via xcaddy from the
-  upstream caddy:builder + caddy:latest base images.
+* sing-box (https://github.com/SagerNet/sing-box)
+  Copyright SagerNet and contributors.
+  Licensed under the GNU General Public License, Version 3.0.
+  Actively-maintained Go reimplementation of the NaiveProxy server
+  protocol with multi-user basic_auth, built-in ACME, HTTP/3, and a
+  clash-style management API for hot config reload. Bundled as a
+  separate process / image (cool-tunnel-server-singbox); not statically
+  linked with this proprietary code, so its GPL-3 stays scoped to its
+  own image. Replaces the unmaintained klzgrad/forwardproxy plugin.
 
-* NaiveProxy server-side plugin (https://github.com/klzgrad/naiveproxy)
-  Copyright the Caddy Authors and contributors.
-  Licensed under the Apache License, Version 2.0.
-  The server side of the NaiveProxy project — a Caddy plugin
-  (basic_auth + hide_ip + hide_via + probe_resistance) that
-  NaiveProxy clients connect to. Source lives at
-  github.com/klzgrad/forwardproxy@naive (same author, same project
-  family); xcaddy fetches it from there at image build time. The
-  project as a whole is what github.com/klzgrad/naiveproxy refers
-  to and is the upstream we track.
+* NaiveProxy (https://github.com/klzgrad/naiveproxy)
+  Copyright klzgrad and contributors.
+  Licensed under the BSD-3-Clause License.
+  The client-side `naive` binary that runs on the user's device. Not
+  bundled in this server image; the cool-tunnel client family bundles
+  it per platform. Listed here because the wire protocol sing-box
+  speaks is the NaiveProxy protocol, and operators reading this
+  NOTICE should know the link.
 
 * Laravel (https://github.com/laravel/laravel)
   Copyright Taylor Otwell.
   Licensed under the MIT License.
-  Used as the framework underlying the admin panel.
+  Framework underlying the admin panel.
 
 * Filament (https://github.com/filamentphp/filament)
   Copyright the Filament contributors.
   Licensed under the MIT License.
-  Used as the admin panel UI.
+  Admin panel UI.
 
 * predis/predis (https://github.com/predis/predis)
   Copyright the Predis contributors.
@@ -50,10 +52,11 @@ referenced in THIRD_PARTY_LICENSES.md.
 
 * Cargo dependencies (see core/Cargo.lock for the full graph): tokio,
   serde, serde_json, sqlx, hyper, hyper-util, hyperlocal, http-body-util,
-  bytes, reqwest, redis, chrono, tracing, tracing-subscriber, sha2, hex,
-  hmac, clap, regex, and their transitive dependencies. Each is
-  distributed under its own licence (predominantly MIT or
-  Apache-2.0); see crates.io for canonical licence text per crate.
+  bytes, reqwest, redis, aes-gcm, base64, chrono, tracing,
+  tracing-subscriber, sha2, hex, hmac, clap, futures-core, and their
+  transitive dependencies. Each is distributed under its own licence
+  (predominantly MIT or Apache-2.0); see crates.io for canonical
+  licence text per crate.
 
 * MariaDB (https://mariadb.org/) — GPL-2.0 (server). Bundled as the
   upstream mariadb:11 OCI image, unmodified.
@@ -61,15 +64,8 @@ referenced in THIRD_PARTY_LICENSES.md.
 * Redis (https://redis.io/) — BSD-3-Clause for redis 7.x stable.
   Bundled as the upstream redis:7-alpine OCI image, unmodified.
 
-* NaiveProxy (https://github.com/klzgrad/naiveproxy) — BSD-3-Clause.
-  Not bundled directly in this server image; clients (macOS today,
-  iOS/Android/Windows/Linux desktop on the roadmap) bundle their
-  own platform-specific naive binary and connect to the
-  forward_proxy@naive endpoint Caddy exposes here.
-
-* Docker base images: caddy:builder-alpine, caddy:alpine,
-  rust:1.78-alpine, php:8.3-fpm-alpine, mariadb:11, redis:7-alpine,
-  alpine:3.20. Each retains its own upstream licence.
+* Docker base images: alpine:3.20, rust:1.86-alpine, php:8.3-fpm-alpine,
+  mariadb:11, redis:7-alpine. Each retains its own upstream licence.
 
 ------------------------------------------------------------------------
 
@@ -78,3 +74,11 @@ or any compiled binary derived from this repository requires
 preservation of this NOTICE file, the LICENSE file, the
 THIRD_PARTY_LICENSES.md file, and any per-component LICENSE.txt files
 shipped inside the upstream containers — verbatim, in their entirety.
+
+GPL-3.0 specifically (sing-box): you must also distribute (or offer
+to distribute, on request) the corresponding sing-box source code
+under the same licence terms. Pinning the upstream version in
+manifests/sing-box.upstream.json + linking to the upstream tag in
+this NOTICE is sufficient because we ship sing-box unmodified; if
+you ever modify sing-box's source you must distribute your modified
+source under GPL-3.0.

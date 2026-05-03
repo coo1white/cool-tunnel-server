@@ -9,13 +9,13 @@ parts in a machine.
 
 | Slug | Kind | What it is | Verifier |
 | --- | --- | --- | --- |
-| `caddy` | binary | The TLS-terminating web/proxy server | `caddy version` |
-| `forwardproxy` | binary | NaiveProxy fork of Caddy's plugin (compiled in) | `caddy list-modules` shows `http.handlers.forward_proxy` |
+| `sing-box` | container-image | The TLS-terminating multi-user NaiveProxy server (GPL-3.0) | `sing-box version` |
+| `naiveproxy` | binary | The NaiveProxy client family (klzgrad/naiveproxy) — wire-protocol reference | bundled by clients, not the server |
 | `ct-server-core` | binary | Rust engine the panel shells out to | `ct-server-core version` |
 | `ct-protocol` | rust-crate | Shared cross-platform contract | trusted by Cargo.lock |
 | `panel` | container-image | Filament + Laravel admin | `php artisan --version` |
 | `mariadb` | container-image | DB | `mariadb --version` |
-| `redis` | container-image | cache + queue | `redis-cli --version` |
+| `redis` | container-image | cache + queue + revocation pub/sub | `redis-cli --version` |
 
 The list will grow. The structure won't.
 
@@ -26,16 +26,16 @@ Schema is `ComponentManifestV1` in `ct-protocol::components`.
 
 ```json
 {
-    "name": "caddy",
-    "kind": "binary",
-    "version": "v2.8.4",
-    "upstream": "https://github.com/caddyserver/caddy",
+    "name": "sing-box",
+    "kind": "container-image",
+    "version": "1.10.7",
+    "upstream": "https://github.com/SagerNet/sing-box",
     "verify": {
-        "command": ["caddy", "version"],
-        "expect_stdout_contains": "v2.",
+        "command": ["docker", "exec", "ct-singbox", "sing-box", "version"],
+        "expect_stdout_contains": "sing-box version 1.",
         "expect_zero_exit": true
     },
-    "note": "Apache-2.0 …"
+    "note": "GPL-3.0 …"
 }
 ```
 
@@ -57,13 +57,13 @@ ct-server-core component check --manifests /srv/manifests
 ```
 
 ```
- OK  caddy                pinned=v2.8.4         installed=v2.8.4
  OK  ct-protocol          pinned=0.0.1          installed=0.0.1
  OK  ct-server-core       pinned=0.0.1          installed=0.0.1
- OK  forwardproxy         pinned=naive-branch   installed=—
  OK  mariadb              pinned=11             installed=11.4.2
+ OK  naiveproxy           pinned=v147.…         installed=— (client-side)
  OK  panel                pinned=0.0.1          installed=Laravel 11
  OK  redis                pinned=7-alpine       installed=redis-cli 7.2
+ OK  sing-box             pinned=1.10.7         installed=sing-box version 1.10.7
 ```
 
 Or: panel → **Components** → big OK/NG table, **Re-check** button.

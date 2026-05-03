@@ -13,9 +13,12 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
-// Manage proxy accounts (the basic_auth lines that end up in the
-// Caddyfile). On create/regen we show the cleartext password ONCE in
-// a notification — it's never persisted.
+// Manage proxy accounts (the {username, password} entries that end
+// up in sing-box's naive inbound `users` array). On create / regen
+// we show the cleartext ONCE in a notification; the cleartext is
+// also persisted encrypted (Laravel Crypt → AES-256-GCM) so
+// ct-server-core can render it into the sing-box config without
+// needing to ask the operator again.
 
 class ProxyAccountResource extends Resource
 {
@@ -86,7 +89,7 @@ class ProxyAccountResource extends Resource
                     ->requiresConfirmation()
                     ->action(function (ProxyAccount $record) {
                         $pw = PasswordGenerator::make();
-                        $record->password_hash = $pw['hash'];
+                        $record->setCleartextPassword($pw['cleartext']);
                         $record->save();
                         Notification::make()
                             ->title('New password — copy now, shown once')

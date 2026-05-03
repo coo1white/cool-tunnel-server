@@ -36,8 +36,8 @@ set -a; . .env; set +a
 bold "==> Building ct-server-core (Rust)"
 docker compose --profile build-only build core-builder
 
-bold "==> Building caddy (xcaddy + forwardproxy@naive)"
-docker compose build caddy
+bold "==> Building sing-box (upstream binary download)
+docker compose build sing-box
 
 bold "==> Building panel (PHP-FPM + Composer + ct-server-core binary)"
 docker compose build panel
@@ -65,13 +65,13 @@ bold "==> Running migrations"
 docker compose exec -T panel php artisan migrate --force --no-interaction
 docker compose exec -T panel php artisan db:seed --force --no-interaction || true
 
-# ---- Render the initial Caddyfile -------------------------------
-bold "==> Rendering initial Caddyfile (no proxy accounts yet)"
-docker compose exec -T panel ct-server-core --json caddyfile render || true
+# ---- Render the initial sing-box config -------------------------------
+bold "==> Rendering initial sing-box config (no proxy accounts yet)"
+docker compose exec -T panel ct-server-core --json singbox render || true
 
-# ---- Bring up caddy ----------------------------------------------
-bold "==> Starting caddy (ACME will issue certs in the background)"
-docker compose up -d caddy
+# ---- Bring up sing-box ----------------------------------------------
+bold "==> Starting sing-box (ACME will issue certs in the background)"
+docker compose up -d sing-box
 
 # ---- Create first Filament admin --------------------------------
 bold "==> Creating first Filament admin user"
@@ -88,7 +88,7 @@ $(bold "Cool Tunnel Server is up.")
 Panel:        https://${DOMAIN}/admin
 Subscription: https://${DOMAIN}/api/v1/subscription/<token>  (issued from the panel)
 
-Watch ACME finish:   docker compose logs -f --tail=80 caddy
+Watch ACME finish:   docker compose logs -f --tail=80 sing-box
 Recheck components:  docker compose exec panel ct-server-core component check --manifests /srv/manifests
 Run a probe:         docker compose exec panel ct-server-core probe anti-tracking --via "https://<user>:<pass>@${DOMAIN}:443"
 
