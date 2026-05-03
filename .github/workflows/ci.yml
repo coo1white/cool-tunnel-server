@@ -142,5 +142,49 @@ jobs:
           docker run --rm -v "$rendered":/etc/caddy/Caddyfile caddy:2.8.4-alpine \
               caddy validate --config /etc/caddy/Caddyfile
 
-      # Sing-box config validation is harder without the binary
-      # locally; the install.sh path covers it on real metal.
+      # Render and validate sing-box config against the EXACT
+      # binary version pinned in manifests/sing-box.upstream.json.
+      # This is the poka-yoke for the v0.0.11 deploy bug:
+      #
+      #   FATAL: route.default_domain_resolver: json: unknown
+      #          field "default_domain_resolver"
+      #
+      # …caused by adding a 1.11+ field to a 1.10.7-pinned
+      # template. With this CI step, the same change would have
+      # failed at PR time instead of during a live operator
+      # deploy.
+      - name: Render and validate sing-box config
+        run: |
+          set -euo pipefail
+          rendered=$(mktemp)
+          # Substitute every Go-template binding with a plausible
+          # sample value. UsersJson must be a valid JSON object
+          # (sing-box parses it as the `users` array's structure
+          # — empty `{}` won't pass schema, so we use a one-user
+          # sample that lints clean).
+          sed -e 's|{{ \.Domain }}|test.example.com|g' \
+              -e 's|{{ \.CertPath }}|/tmp/cert.pem|g' \
+              -e 's|{{ \.KeyPath }}|/tmp/key.pem|g' \
+              -e 's|{{ \.DohResolver }}|https://1.1.1.1/dns-query|g' \
+              -e 's|{{ \.ClashSecret }}|test-clash-secret|g' \
+              -e 's|{{ \.UsersJson }}|[{"username":"sample","password":"x"}]|g' \
+              sing-box/config.json.tpl > "$rendered"
+
+          # Pull the EXACT version from the manifest so this stays
+          # in sync. If the operator bumps the manifest, the CI
+          # validation upgrades too.
+          version=$(jq -r .version manifests/sing-box.upstream.json | sed 's/^v//')
+          echo "validating against sing-box ${version}"
+
+          # Touch dummy cert + key so file-existence sanity checks
+          # in the parser don't trip the validation. Sing-box's
+          # `check` command parses but doesn't actually load TLS,
+          # so empty files are fine.
+          : > /tmp/cert.pem
+          : > /tmp/key.pem
+          docker run --rm \
+              -v "$rendered":/etc/sing-box/config.json:ro \
+              -v /tmp/cert.pem:/tmp/cert.pem:ro \
+              -v /tmp/key.pem:/tmp/key.pem:ro \
+              ghcr.io/sagernet/sing-box:v${version} \
+              check -c /etc/sing-box/config.json
