@@ -66,7 +66,11 @@ services:
       - NET_BIND_SERVICE
     ports:
       - "443:443"           # naive inbound — TLS, HTTP/2 CONNECT
-      - "443:443/udp"       # HTTP/3 / QUIC
+      # No UDP/443 — NaiveProxy is HTTP/2-only at the protocol level;
+      # exposing UDP/443 with no listener produces a fingerprintable
+      # connection-refused on QUIC scans. Add a UDP map only if a
+      # real QUIC inbound (e.g. tuic) is configured in
+      # sing-box/config.json.tpl.
     volumes:
       # Panel-rendered config.json lands here.
       - singbox_etc:/etc/sing-box

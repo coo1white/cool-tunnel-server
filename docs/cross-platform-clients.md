@@ -111,3 +111,32 @@ For every release tagged here:
 - The `/api/v1/subscription/<token>` endpoint always emits a body
   that round-trips through `SubscriptionManifestV1` of the same
   major version the URL declares.
+
+## Anti-tracking notes for client implementers
+
+A few protocol details exist *because* the server is trying to look
+like a generic HTTPS endpoint to anyone scanning it. Clients should
+not rely on any tell that contradicts this:
+
+- **Subscription signature lives in the JSON body, not in HTTP
+  headers.** v0.0.8 and earlier used `X-CT-Signature` /
+  `X-CT-Protocol` response headers; v0.0.9+ removed them because
+  they were unmistakable project tells. The signature is now in the
+  body's `signature` field, computed as
+  `HMAC-SHA-256(canonical_body_with_signature_null, account_secret)`.
+  To verify: clear `signature` to `null`, re-canonicalise (same
+  serialiser settings, key order preserved), HMAC, compare against
+  the spliced value with constant-time equality.
+- **`capabilities.http3` is always `false`.** NaiveProxy is
+  HTTP/2-only at the protocol level — sing-box's `naive` inbound
+  does not serve QUIC. The server intentionally does NOT advertise
+  HTTP/3 support; clients that attempt QUIC against this server
+  will fail and fall back to TCP, producing a fingerprintable
+  network signature. Don't try.
+- **Invalid subscription tokens get a 404 + HTML body** that's
+  indistinguishable from the camouflage cover-site catch-all.
+  Don't probe a token you don't have — the server cannot tell you
+  it's wrong without breaking that property.
+- **No `Server:` or `X-Powered-By:` headers** on the subscription
+  response. If you're testing a client and see one, that's a bug
+  on the server side; please report.

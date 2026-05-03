@@ -36,6 +36,8 @@ on:
       - 'manifests/*.json'
       - 'docker/**/Dockerfile'
       - 'docker-compose.yml'
+      - 'sing-box/config.json.tpl'
+      - 'caddy/Caddyfile.tpl'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -216,6 +218,20 @@ jobs:
               # comes back, the cover site fails the "looks legit"
               # smell test in scanner devtools.
               'href="/static/style\.css"'
+              # v0.0.8 → v0.0.9: X-CT-Signature / X-CT-Protocol
+              # response headers leaked the project name to anyone
+              # hitting the subscription endpoint. v0.0.9 moved the
+              # signature into the JSON body. If these strings come
+              # back as ->header() calls or as outbound HTTP headers,
+              # somebody re-introduced the fingerprint.
+              "->header\\('X-CT-"
+              # v0.0.8 → v0.0.9: NaiveProxy is HTTP/2-only at the
+              # protocol level, so UDP/443 should not be mapped
+              # anywhere in the stack — a UDP listen with no
+              # service produces fingerprintable RSTs on QUIC scans.
+              # CI catches "443:443/udp" / "443/udp" port maps in
+              # any compose / Dockerfile.
+              '"443:443/udp"|EXPOSE.*443/udp'
               # v0.0.5 → v0.0.6: caddyfile_safe_username calling-site
               # legacy is allowed (renaming is a v0.1 thing)
           )
@@ -302,4 +318,88 @@ jobs:
               fi
           done < <(grep -rEn '(href|src)="/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)"' \
                        panel/resources/views 2>/dev/null || true)
+          exit "$fail"
+
+  # ---------- Cycle 40: anti-tracking config smell-test ----------
+  #
+  # Static assertions on the sing-box and Caddy templates we ship.
+  # These catch regressions in the on-the-wire shape that
+  # NaiveProxy clients expect — TLS 1.3-only, no TCP clash API, no
+  # disk cache, no recognisable hostname or string signature.
+  # If a future edit weakens any of these, CI fails before the
+  # change ships. Static check on the file content; we don't run
+  # sing-box itself here.
+
+  anti-tracking-config:
+    name: anti-tracking config smell-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: assert sing-box config hardening
+        run: |
+          set -euo pipefail
+          tpl=sing-box/config.json.tpl
+          fail=0
+          # min_version must be 1.3 (no TLS 1.2 fallback — modern HTTPS
+          # is mostly 1.3 and a 1.2 connection stands out).
+          if ! grep -qE '"min_version":\s*"1\.3"' "$tpl"; then
+              echo "::error file=$tpl::tls.min_version must be \"1.3\" (anti-fingerprinting)"
+              fail=1
+          fi
+          # log.level must be warn or higher — info logs every
+          # connection, which is a forensic risk on seizure.
+          if grep -qE '"log".*\{[^}]*"level":\s*"(debug|info|trace)"' "$tpl"; then
+              echo "::error file=$tpl::log.level must be warn or higher (no per-connection logging)"
+              fail=1
+          fi
+          # external_controller (TCP) must NOT be set in clash_api.
+          # Only the unix socket should be exposed; a TCP listener
+          # is a public attack surface if firewall is misconfigured.
+          if grep -qE '"external_controller"\s*:' "$tpl"; then
+              echo "::error file=$tpl::clash_api.external_controller (TCP) must not be set; use external_controller_unix only"
+              fail=1
+          fi
+          # cache_file should be disabled by default — DNS / connection
+          # cache on disk is a forensic risk.
+          if ! grep -qE '"cache_file":\s*\{[^}]*"enabled":\s*false' "$tpl"; then
+              echo "::error file=$tpl::experimental.cache_file.enabled must be false by default"
+              fail=1
+          fi
+          exit "$fail"
+      - name: assert Caddyfile hardening
+        run: |
+          set -euo pipefail
+          tpl=caddy/Caddyfile.tpl
+          fail=0
+          # The :8443 ghost site must NOT respond with a recognisable
+          # string ("managed", "ok", "alive"). Empty body + 444 is the
+          # contract.
+          if grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"' "$tpl"; then
+              echo "::error file=$tpl:::8443 ghost site must not respond with a recognisable string (use empty + 444)"
+              fail=1
+          fi
+          # tls1.2 must not be in the ghost site's protocols list.
+          if grep -qE 'protocols\s+tls1\.2' "$tpl"; then
+              echo "::error file=$tpl::Caddy protocols list must not include tls1.2 on the ghost site"
+              fail=1
+          fi
+          # cert_failed must NOT append to a file in /data — that's a
+          # forensic trail. Log to stderr instead.
+          if grep -qE 'cert_failed.*>>\s*/data' "$tpl"; then
+              echo "::error file=$tpl::cert_failed event must log to stderr, not append to a file in /data"
+              fail=1
+          fi
+          exit "$fail"
+      - name: assert subscription endpoint has no project-identifying headers
+        run: |
+          set -euo pipefail
+          fail=0
+          # Custom X-CT-* response headers were a project tell on
+          # /api/v1/subscription/* responses. Anything ->header()ing
+          # an X-CT-* name is a regression.
+          if grep -rEn "->header\\(['\"]X-CT-" panel/app 2>/dev/null; then
+              echo "::error::SubscriptionController must not emit X-CT-* response headers (signature lives in JSON body)"
+              fail=1
+          fi
           exit "$fail"

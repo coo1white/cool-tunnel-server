@@ -32,18 +32,20 @@ RUN apk add --no-cache ca-certificates curl tzdata tini \
     && chmod +x /usr/local/bin/sing-box \
     && /usr/local/bin/sing-box version
 
-# Persistent state: ACME certs land in /data/acme; the rendered
-# config.json lives in /etc/sing-box/ (mounted from a docker volume
-# the panel/core write to). /run/sing-box holds the unix socket the
-# clash API listens on so we can hot-reload without TCP exposure.
+# Persistent state: the rendered config.json lives in /etc/sing-box/
+# (mounted from a docker volume the panel/core write to); /data is
+# kept for the cache_file when enabled. /run/sing-box holds the unix
+# socket the clash API listens on so we can hot-reload without TCP
+# exposure. ACME state lives in caddy_data, not here — Caddy is the
+# ACME side post-v0.0.4.
 VOLUME ["/etc/sing-box", "/data"]
 RUN mkdir -p /run/sing-box && chmod 0770 /run/sing-box
 
-# 80   — ACME HTTP-01 challenge listener (sing-box auto-binds when
-#        renewing; idle otherwise).
-# 443  — TLS terminating naive inbound (HTTP/2 CONNECT).
-# 443/udp — HTTP/3 if/when sing-box's naive inbound supports it.
-EXPOSE 80 443 443/udp
+# 443  — TLS-terminating naive inbound (HTTP/2 CONNECT). NaiveProxy
+#        is HTTP/2-only at the protocol level — no UDP/443 here. A
+#        UDP listen with no service produces fingerprintable RSTs on
+#        QUIC scans, which is the opposite of probe-resistance.
+EXPOSE 443
 
 # Periodic liveness probe: ask the in-process clash API for its
 # current config. If the unix socket is up and answering, the server

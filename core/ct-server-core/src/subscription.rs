@@ -2,9 +2,12 @@
 // server_config from the DB and prints the JSON manifest that any
 // platform's client can fetch via /api/v1/subscription.
 //
-// Signing: the panel wraps this output with an HMAC-SHA-256 over a
-// per-account secret in the `X-CT-Signature` header before serving.
-// We don't sign here — keeping signing in the panel keeps the secret
+// Signing: the panel takes the JSON we emit, computes an
+// HMAC-SHA-256 over the canonical body (with `signature` set to
+// null), splices the hex digest into the body's `signature`
+// field, and serves the result. There are NO project-identifying
+// custom HTTP headers on the response (anti-fingerprinting). We
+// don't sign here — keeping signing in the panel keeps the secret
 // out of the Rust process, which is good defense-in-depth.
 
 use crate::{db, Error, Result};
@@ -67,9 +70,13 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
     if !cfg.doh_resolver.is_empty() {
         features.push(AntiTrackingFeature::DohResolver);
     }
-    if cfg.http3_enabled {
-        features.push(AntiTrackingFeature::Http3);
-    }
+    // HTTP/3 is intentionally NOT advertised here regardless of
+    // the DB toggle. NaiveProxy is HTTP/2-only at the protocol
+    // level — sing-box's `naive` inbound does not serve QUIC.
+    // Advertising true would lead clients to attempt HTTP/3, fail
+    // (no UDP listener), and fall back — a recognisable network
+    // fingerprint. The DB column survives for forward-compat in
+    // case a future protocol pivot adds genuine QUIC support.
 
     let manifest = SubscriptionManifestV1 {
         version: PROTOCOL_VERSION,
@@ -83,7 +90,7 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
         }],
         capabilities: ServerCapabilitiesV1 {
             anti_tracking: features,
-            http3: cfg.http3_enabled,
+            http3: false,
             fake_site_slug: None,
         },
         issued_at: now,
@@ -93,6 +100,7 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
              splice in the cleartext before signing and serving."
                 .into(),
         ),
+        signature: None,
     };
 
     println!("{}", serde_json::to_string_pretty(&manifest)?);

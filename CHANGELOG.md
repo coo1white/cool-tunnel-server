@@ -22,6 +22,148 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.9] — 2026-05-03
+
+Third 50-cycle LTSC audit, focused on **anti-network-tracking** —
+the fingerprintable surfaces a censorship system or scanner sees
+when probing the server. Cycles 1–30 by hand surfaced eleven real
+findings, of which four were active **anti-tracking** bugs (custom
+`X-CT-*` response headers, the HTTP/3 advertising-but-not-serving
+loop, sing-box's TCP-bound clash API, and the "managed" string
+respond on the Caddy ghost site). Cycles 31–50 added one more
+codified job: an anti-tracking config smell-test that asserts on
+the rendered template content.
+
+### Changed (wire-format)
+
+- **Subscription manifest signature moved into the JSON body.**
+  v0.0.8 and earlier sent `X-CT-Signature: <hex>` and
+  `X-CT-Protocol: 1` response headers — both unmistakable
+  project tells to anyone hitting `/api/v1/subscription/<token>`.
+  v0.0.9 removes both headers; the signature now rides in the
+  body's `signature` field (HMAC-SHA-256 over the canonical body
+  with `signature` set to null). On the wire the response now
+  looks like any other authenticated JSON API response. **This
+  is a breaking change for clients consuming v0.0.8 manifests** —
+  see `docs/cross-platform-clients.md` for the new verification
+  rule. The `SubscriptionManifestV1` Rust struct gained a
+  `signature: Option<String>` field with `skip_serializing_if =
+  "Option::is_none"` so unsigned construction round-trips
+  unchanged.
+- **`capabilities.http3` is now always `false`** in the
+  subscription manifest, regardless of the `http3_enabled` DB
+  toggle. NaiveProxy is HTTP/2-only at the protocol level —
+  sing-box's `naive` inbound does not serve QUIC. Advertising
+  HTTP/3 made clients attempt QUIC, fail (no UDP listener), and
+  fall back via TCP — a recognisable network signature. Honest
+  `false` removes the fingerprint. The DB column survives for
+  forward-compat in case a future protocol pivot adds genuine
+  QUIC support.
+- **Sing-box config (`sing-box/config.json.tpl`) hardened:**
+  - `log.level` lowered from `"info"` → `"warn"`. Info-level
+    logs every connection, a forensic goldmine on seizure.
+    `warn` keeps operational issues visible without per-user
+    traces.
+  - `tls.min_version` raised from `"1.2"` → `"1.3"` plus
+    `tls.max_version: "1.3"`. Pins the wire fingerprint to
+    TLS 1.3 only — modern HTTPS is overwhelmingly 1.3, so a
+    1.2 fallback connection stands out in flow analysis.
+  - `clash_api.external_controller: "127.0.0.1:9090"` (TCP)
+    **removed**. Only `external_controller_unix:
+    "/run/sing-box/clash.sock"` remains. The TCP listener was
+    a public-attack surface if firewall is misconfigured;
+    nothing in this stack ever connected via TCP.
+  - `experimental.cache_file.enabled: true` → `false`. The
+    DNS / connection cache was written to disk at
+    `/data/cache.db`; if the server is ever seized, that file
+    is forensic. Disabled by default; operators wanting the
+    perf can flip it locally with full awareness.
+- **Caddyfile (`caddy/Caddyfile.tpl`) hardened:**
+  - The `:8443` ghost site no longer responds with the literal
+    string `"managed"` (a recognisable signature for
+    "Cool-Tunnel-style split-port stack"). Now responds with
+    empty body + status 444 + `close` — looks like a generic
+    firewalled endpoint to anyone who somehow reaches it
+    inside the container network.
+  - The ghost site's `protocols tls1.2 tls1.3` is now
+    `protocols tls1.3` (it never serves real traffic, so
+    there's no compat reason to advertise legacy versions).
+  - `events { on cert_failed exec sh -c "echo \"$(date ...)\"
+    >> /data/cert-failures.log" }` rewritten to log to STDERR
+    (which docker logs captures + the daemon rotates). The
+    previous line wrote a timestamped failure trail into the
+    `caddy_data` volume — a forensic artefact nobody asked
+    for.
+- **Docker port maps and Dockerfile EXPOSE lines** stopped
+  advertising UDP/443:
+  - `docker-compose.yml`: removed `"443:443/udp"` mapping
+    from the sing-box service.
+  - `docker/sing-box/Dockerfile`: `EXPOSE 80 443 443/udp` →
+    `EXPOSE 443`. (The :80 line was also stale — Caddy
+    handles HTTP-01 in this stack, sing-box no longer
+    binds :80.) Exposing UDP/443 with no listener produced
+    fingerprintable RSTs on QUIC scans.
+- **`docs/cross-platform-clients.md`** gained an
+  "Anti-tracking notes for client implementers" section that
+  documents the new signature-in-body shape, the
+  always-`false` HTTP/3 advertise, the 404+HTML invalid-token
+  response (matches the camouflage catch-all), and the
+  no-`Server:`/`X-Powered-By:` header guarantee.
+- **`panel/app/Filament/Pages/ServerConfigPage.php`** —
+  removed the `Toggle::make('http3_enabled')` form control;
+  replaced with a `Placeholder` explaining why the toggle is
+  retired (NaiveProxy is HTTP/2-only). The DB column is kept
+  for forward-compat.
+
+### Added
+
+- **Cycle 40 codified: `anti-tracking-config` audit job.**
+  Static assertions on `sing-box/config.json.tpl` and
+  `caddy/Caddyfile.tpl`:
+  - sing-box `tls.min_version` must be `"1.3"`
+  - sing-box `log.level` must not be `debug` / `info` / `trace`
+  - sing-box `clash_api.external_controller` (TCP) must not
+    be present
+  - sing-box `experimental.cache_file.enabled` must be `false`
+  - Caddy ghost site `respond` must not be a recognisable
+    string (`managed`, `ok`, `alive`, `cool`, `tunnel`,
+    `naive`, `sing-box`)
+  - Caddy ghost site `protocols` must not include `tls1.2`
+  - Caddy `cert_failed` event must not append to `/data/...`
+  - `panel/app/**` must not call `->header('X-CT-...')`
+- **`stale-docs` blacklist gained two new patterns:**
+  - `->header('X-CT-` — catches header regression in PHP
+  - `"443:443/udp"|EXPOSE.*443/udp` — catches UDP port-map
+    regression in compose / Dockerfiles
+- **Pull-request paths trigger expanded** to include
+  `sing-box/config.json.tpl` and `caddy/Caddyfile.tpl`, so a PR
+  that touches either template runs the smell-test job.
+
+### Tests
+
+51 passing (was 50): one new `signature_field_is_skipped_when_none`
+test in `core/ct-protocol/src/subscription.rs` asserts that
+`signature: None` is omitted from the serialised JSON (load-
+bearing for canonicalisation on the client side). Build +
+clippy + fmt + shellcheck still clean.
+
+### Security
+
+- The clash-API TCP listener was the highest-impact finding
+  this audit. A misconfigured firewall (or an operator running
+  `docker compose down && up` after editing docker-compose to
+  expose 9090 for "debugging" and forgetting to revert) could
+  have exposed every connection's per-user metadata to the
+  internet. The unix-socket-only path was always there; v0.0.9
+  removes the TCP fallback entirely.
+- The HTTP/3-advertise-but-no-listener pattern was a slow-burn
+  fingerprint: every NaiveProxy client that opted into QUIC
+  produced one observable failed-handshake-then-fall-back
+  signature per connection. v0.0.9's always-false advertise
+  removes the signature class entirely.
+
+---
+
 ## [0.0.8] — 2026-05-03
 
 Second 50-cycle LTSC audit, this one focused on **UI / UX layout
@@ -498,7 +640,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.9...HEAD
+[0.0.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.5...v0.0.6

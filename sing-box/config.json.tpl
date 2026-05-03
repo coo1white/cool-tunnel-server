@@ -1,6 +1,6 @@
 {
     "log": {
-        "level": "info",
+        "level": "warn",
         "timestamp": true,
         "disabled": false
     },
@@ -16,7 +16,8 @@
                 "enabled": true,
                 "server_name": "{{ .Domain }}",
                 "alpn": ["h2", "http/1.1"],
-                "min_version": "1.2",
+                "min_version": "1.3",
+                "max_version": "1.3",
                 "certificate_path": "{{ .CertPath }}",
                 "key_path":         "{{ .KeyPath }}"
             }
@@ -37,12 +38,11 @@
 
     "experimental": {
         "clash_api": {
-            "external_controller": "127.0.0.1:9090",
-            "secret": "{{ .ClashSecret }}",
-            "external_controller_unix": "/run/sing-box/clash.sock"
+            "external_controller_unix": "/run/sing-box/clash.sock",
+            "secret": "{{ .ClashSecret }}"
         },
         "cache_file": {
-            "enabled": true,
+            "enabled": false,
             "path": "/data/cache.db"
         }
     }
