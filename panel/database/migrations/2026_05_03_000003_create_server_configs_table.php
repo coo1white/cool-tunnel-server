@@ -31,10 +31,6 @@ return new class extends Migration {
             // HTTP/3 toggle (some networks throttle UDP/443)
             $table->boolean('http3_enabled')->default(true);
 
-            // Edge admin auth (read into Caddyfile)
-            $table->string('admin_basic_auth_user')->nullable();
-            $table->string('admin_basic_auth_hash')->nullable();
-
             // Internal: the SHA-256 of the last successfully rendered
             // Caddyfile so the scheduler can skip reloads when nothing
             // changed.

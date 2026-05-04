@@ -20,7 +20,6 @@ class ServerConfig extends Model
         'anti_tracking_hide_ip', 'anti_tracking_hide_via',
         'anti_tracking_probe_resistance', 'anti_tracking_doh_resolver',
         'http3_enabled',
-        'admin_basic_auth_user', 'admin_basic_auth_hash',
         'last_caddyfile_hash', 'last_rendered_at',
     ];
 

@@ -120,12 +120,12 @@ require_env() {
 # Source a .env file with shellcheck-friendly handling. Default path
 # is `.env` in the current working directory.
 #
-# Common operator papercut: bcrypt hashes (PANEL_BASIC_AUTH_HASH) and
-# random passwords often contain literal $ characters. Without single
-# quotes, bash sees `$2y$10$...` as the positional arg $2 followed by
-# literal text — `set -u` then aborts with "$2: unbound variable".
-# We pre-scan for the most common shape and print a friendlier
-# pointer before letting the actual source error fire.
+# Common operator papercut: bcrypt hashes and random passwords often
+# contain literal $ characters. Without single quotes, bash sees
+# `$2y$10$...` as the positional arg $2 followed by literal text —
+# `set -u` then aborts with "$2: unbound variable". We pre-scan for
+# the most common shape and print a friendlier pointer before
+# letting the actual source error fire.
 load_env() {
     local path="${1:-.env}"
     require_file "$path" "cp .env.example .env  &&  \$EDITOR .env"
@@ -141,8 +141,8 @@ load_env() {
         grep -nE '^[A-Z_][A-Z0-9_]*=\$2[ayb]\$' "$path" \
             | sed 's/^/      /' >&2
         echo "" >&2
-        echo "    Change   PANEL_BASIC_AUTH_HASH=\$2y\$10\$abc..." >&2
-        echo "    To       PANEL_BASIC_AUTH_HASH='\$2y\$10\$abc...'" >&2
+        echo "    Change   SOME_HASH=\$2y\$10\$abc..." >&2
+        echo "    To       SOME_HASH='\$2y\$10\$abc...'" >&2
         echo "" >&2
         return 1
     fi

@@ -18,8 +18,6 @@ pub struct ServerConfig {
     pub probe_resistance: bool,
     pub doh_resolver: String,
     pub http3_enabled: bool,
-    pub admin_basic_auth_user: Option<String>,
-    pub admin_basic_auth_hash: Option<String>,
     pub last_caddyfile_hash: Option<String>,
     pub last_rendered_at: Option<DateTime<Utc>>,
 }

@@ -290,10 +290,8 @@ async fn read_cert_mtime(cfg: &ServerConfig) -> Option<u64> {
 }
 
 /// Derive a clash-API secret from the ServerConfig. We don't want it
-/// persisted in the DB (it's not a user-facing setting). Derive it
-/// from the bcrypt admin_basic_auth_hash if available, or from the
-/// ACME email as a fallback. Any deterministic input works — sing-box
-/// treats this as an opaque token.
+/// persisted in the DB (it's not a user-facing setting). Sing-box
+/// treats this as an opaque token; any deterministic input works.
 ///
 /// This is `pub(crate)` rather than module-private because the
 /// daemon / quota / redis-bridge reload paths need the same value
@@ -301,14 +299,15 @@ async fn read_cert_mtime(cfg: &ServerConfig) -> Option<u64> {
 /// `Authorization: Bearer …` header to the clash API. Callers that
 /// already hold a `ServerConfig` can call this directly; everyone
 /// else can use [`current_clash_secret`] which loads the cfg.
+///
+/// NOTE: The acme_email seed is derivable by anyone who reads the
+/// CT log for the operator's domain (R2-2 in the 2026-05-04 audit).
+/// The follow-up R2-2 commit replaces this with a per-install random
+/// byte string written to singbox_data/ on first boot.
 pub(crate) fn clash_secret(cfg: &ServerConfig) -> String {
     let mut h = Sha256::new();
     h.update(b"ct-clash-secret-v1:");
-    if let Some(s) = cfg.admin_basic_auth_hash.as_deref() {
-        h.update(s.as_bytes());
-    } else {
-        h.update(cfg.acme_email.as_bytes());
-    }
+    h.update(cfg.acme_email.as_bytes());
     hex::encode(h.finalize())
 }
 
@@ -359,8 +358,6 @@ mod tests {
             probe_resistance: true,
             doh_resolver: "https://1.1.1.1/dns-query".into(),
             http3_enabled: true,
-            admin_basic_auth_user: None,
-            admin_basic_auth_hash: None,
             last_caddyfile_hash: None,
             last_rendered_at: None,
         }

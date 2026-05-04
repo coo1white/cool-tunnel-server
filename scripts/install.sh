@@ -24,7 +24,6 @@ require_cmd sed       "apt install -y sed"
 require_cmd dig       "apt install -y dnsutils      # for DNS sanity in late-night-comeback.sh"
 require_cmd curl      "apt install -y curl"
 require_cmd jq        "apt install -y jq            # used by manifest checks + sbom.sh"
-require_cmd htpasswd  "apt install -y apache2-utils # for the bcrypt PANEL_BASIC_AUTH_HASH"
 require_docker
 ok "all required tools present"
 
@@ -75,7 +74,6 @@ if [[ "${ACME_EMAIL:-admin@example.com}" == "admin@example.com" ]]; then
     warn "ACME_EMAIL is still the placeholder; Let's Encrypt sends renewal warnings to it"
 fi
 require_env DB_PASSWORD            "openssl rand -base64 32 # paste into .env DB_PASSWORD="
-require_env PANEL_BASIC_AUTH_HASH  "htpasswd -nbB admin '<your-pw>' | cut -d: -f2- # paste into .env PANEL_BASIC_AUTH_HASH="
 require_env REDIS_PASSWORD  "openssl rand -base64 32 # paste into .env REDIS_PASSWORD="
 
 # ---------- Build images -------------------------------------------

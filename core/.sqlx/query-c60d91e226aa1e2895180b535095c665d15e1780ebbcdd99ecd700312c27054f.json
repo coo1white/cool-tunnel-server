@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "\n        SELECT\n            id, domain, acme_email, acme_directory,\n            anti_tracking_hide_ip,\n            anti_tracking_hide_via,\n            anti_tracking_probe_resistance,\n            anti_tracking_doh_resolver,\n            http3_enabled,\n            admin_basic_auth_user,\n            admin_basic_auth_hash,\n            last_caddyfile_hash,\n            last_rendered_at\n        FROM server_configs\n        WHERE id = 1\n        ",
+  "query": "\n        SELECT\n            id, domain, acme_email, acme_directory,\n            anti_tracking_hide_ip,\n            anti_tracking_hide_via,\n            anti_tracking_probe_resistance,\n            anti_tracking_doh_resolver,\n            http3_enabled,\n            last_caddyfile_hash,\n            last_rendered_at\n        FROM server_configs\n        WHERE id = 1\n        ",
   "describe": {
     "columns": [
       {
@@ -86,24 +86,6 @@
       },
       {
         "ordinal": 9,
-        "name": "admin_basic_auth_user",
-        "type_info": {
-          "type": "VarString",
-          "flags": "",
-          "max_size": 1020
-        }
-      },
-      {
-        "ordinal": 10,
-        "name": "admin_basic_auth_hash",
-        "type_info": {
-          "type": "VarString",
-          "flags": "",
-          "max_size": 1020
-        }
-      },
-      {
-        "ordinal": 11,
         "name": "last_caddyfile_hash",
         "type_info": {
           "type": "VarString",
@@ -112,7 +94,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 10,
         "name": "last_rendered_at",
         "type_info": {
           "type": "Timestamp",
@@ -135,10 +117,8 @@
       false,
       false,
       true,
-      true,
-      true,
       true
     ]
   },
-  "hash": "473872678a9c0e9283317434b804b139c18e52f240f86e1fc2353f936a10315b"
+  "hash": "c60d91e226aa1e2895180b535095c665d15e1780ebbcdd99ecd700312c27054f"
 }

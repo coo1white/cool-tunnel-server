@@ -46,7 +46,7 @@ apt update && apt -y upgrade
 apt install -y \
     ca-certificates curl gnupg ufw dnsutils \
     chrony fail2ban unattended-upgrades \
-    git apache2-utils
+    git
 ```
 
 What this does:
@@ -59,8 +59,6 @@ What this does:
 - `fail2ban` — auto-bans SSH brute-forcers.
 - `unattended-upgrades` — applies security patches automatically.
 - `git` — to clone this repository.
-- `apache2-utils` — gives you `htpasswd`, used to bcrypt-hash the
-  panel admin password.
 
 ### Open the firewall
 
@@ -143,17 +141,8 @@ You **must** edit:
 | `DB_ROOT_PASSWORD` | run `openssl rand -base64 32` and paste the output |
 | `DB_PASSWORD` | a different `openssl rand -base64 32` |
 | `REDIS_PASSWORD` | a third `openssl rand -base64 32` |
-| `PANEL_BASIC_AUTH_HASH` | run `htpasswd -nbB admin '<your-password>' \| cut -d: -f2-` and paste the output (the bcrypt part after `admin:`) |
 
 The other keys can stay at their defaults.
-
-### Why two admin passwords?
-
-The Filament login page is reached over the public internet. To stop
-drive-by scanners from even *seeing* it, sing-box's fallback inbound
-forces an extra HTTP basic-auth challenge first (the
-`PANEL_BASIC_AUTH_*` keys). Use a different password from the
-Filament admin password so the two layers really are independent.
 
 ---
 

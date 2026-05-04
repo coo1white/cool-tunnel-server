@@ -62,20 +62,6 @@ class ServerConfigPage extends Page implements HasForms
                             ->content('Disabled: NaiveProxy is HTTP/2-only by protocol design. Advertising HTTP/3 caused clients to attempt QUIC and fall back, producing a fingerprintable failure pattern. See cross-platform-clients.md.')
                             ->columnSpanFull(),
                     ])->columns(2),
-
-                Section::make('Edge auth (extra layer in front of /admin)')
-                    ->description('Generate the hash with: caddy hash-password -plaintext "your-password"')
-                    ->schema([
-                        TextInput::make('admin_basic_auth_user')
-                            ->label('Username')
-                            ->autocomplete('off'),
-                        TextInput::make('admin_basic_auth_hash')
-                            ->label('Bcrypt hash')
-                            ->password()
-                            ->revealable()
-                            ->autocomplete('new-password')
-                            ->helperText('Stored as a bcrypt hash. Run "caddy hash-password" on the host and paste the output here.'),
-                    ])->columns(2),
             ])
             ->statePath('data');
     }
