@@ -1,0 +1,34 @@
+{
+  "db_name": "MySQL",
+  "query": "\n        SELECT id, username\n        FROM proxy_accounts\n        WHERE enabled = 1\n          AND expires_at IS NOT NULL\n          AND expires_at <= NOW()\n        FOR UPDATE\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | AUTO_INCREMENT",
+          "max_size": 20
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "max_size": 256
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "a5fe19040db0068c81b552c8c7cedf337c9fd059e9c9525c14147b58e716b608"
+}

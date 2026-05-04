@@ -1,6 +1,13 @@
-// Quota + expiry enforcer. Disables proxy_accounts whose:
-//   - expires_at  is in the past, OR
-//   - quota_bytes is non-null and used_bytes >= quota_bytes
+// Expiry enforcer. Disables proxy_accounts whose expires_at is in
+// the past.
+//
+// Per-byte quota enforcement (used_bytes >= quota_bytes) is a v0.1
+// roadmap item: until metrics::collect emits per-user traffic counts
+// from sing-box, used_bytes never increments and any "over quota"
+// branch is dead code. (R3-2 + R4-4, docs/audits/2026-05-04T06-31-58Z.md.)
+// When per-user metrics land, re-introduce the
+// `(quota_bytes IS NOT NULL AND used_bytes >= quota_bytes)` predicate
+// here and the `over_quota` arm in the disable loop.
 //
 // If any account changed state, re-render the sing-box config and
 // hot-reload via the clash API so the new `users` array (with the
@@ -26,30 +33,17 @@ pub async fn enforce(
 
     let mut tx = pool.begin().await?;
 
-    // Find accounts to disable. SELECT ... FOR UPDATE locks the
-    // matching rows so a concurrent panel save can't flip
-    // `enabled` back on between our SELECT and the per-row
-    // UPDATE below. Compile-time-checked SQL via sqlx::query!.
-    //
-    // The `!` after `is_expired` / `over_quota` in the column
-    // alias forces sqlx to treat the value as non-nullable. The
-    // expressions are `(IS NOT NULL AND <comparison>)` — they
-    // short-circuit to 0 when the column is NULL, so the result
-    // is always 0 or 1, never NULL. sqlx can't prove this from
-    // the SQL alone (MySQL boolean expressions COULD return
-    // NULL in general), so we tell it explicitly.
+    // Find expired accounts to disable. SELECT ... FOR UPDATE locks
+    // the matching rows so a concurrent panel save can't flip
+    // `enabled` back on between our SELECT and the per-row UPDATE
+    // below. Compile-time-checked SQL via sqlx::query!.
     let to_disable = sqlx::query!(
         r#"
-        SELECT id, username,
-               (expires_at IS NOT NULL AND expires_at <= NOW())          AS `is_expired!: i32`,
-               (quota_bytes IS NOT NULL AND used_bytes >= quota_bytes)   AS `over_quota!: i32`
+        SELECT id, username
         FROM proxy_accounts
         WHERE enabled = 1
-          AND (
-                (expires_at IS NOT NULL AND expires_at <= NOW())
-                OR
-                (quota_bytes IS NOT NULL AND used_bytes >= quota_bytes)
-              )
+          AND expires_at IS NOT NULL
+          AND expires_at <= NOW()
         FOR UPDATE
         "#,
     )
@@ -58,15 +52,7 @@ pub async fn enforce(
 
     let mut disabled = 0_usize;
     for row in &to_disable {
-        // proxy_accounts.id is BIGINT UNSIGNED → u64 from macro.
-        let is_expired = row.is_expired != 0;
-        let over_quota = row.over_quota != 0;
-        let reason = match (is_expired, over_quota) {
-            (true, _) => "expired",
-            (_, true) => "over_quota",
-            _ => "unknown",
-        };
-        tracing::info!(account = %row.username, reason, "disabling at {}", Utc::now());
+        tracing::info!(account = %row.username, reason = "expired", "disabling at {}", Utc::now());
         sqlx::query!(
             r#"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?"#,
             row.id,
