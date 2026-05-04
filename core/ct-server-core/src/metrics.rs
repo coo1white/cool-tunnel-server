@@ -49,15 +49,13 @@ pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Resul
          metrics are a v0.1 roadmap item — see metrics.rs module docstring)"
     );
 
-    // Touch the pool so a misconfigured DATABASE_URL still surfaces
-    // as a startup error rather than going silent forever. We bind
-    // it (and use it later for the legacy scrape path) but the
-    // legacy path early-returns when no metrics are present.
-    let pool = db::connect(database_url).await?;
-
     // The legacy scrape path is preserved below for the day sing-box
     // emits Prometheus-shaped naive metrics. It returns immediately
     // when no matching metrics are present, which is always (today).
+    // We connect to the DB only after both early-returns clear, so
+    // the every-minute tick costs zero DB round-trips on the no-op
+    // path; a misconfigured DATABASE_URL still surfaces — just the
+    // first time the legacy path actually has metrics to write.
     let raw = match admin.fetch_metrics_text().await {
         Ok(t) => t,
         Err(e) => {
@@ -72,6 +70,7 @@ pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Resul
         return Ok(());
     }
 
+    let pool = db::connect(database_url).await?;
     let day = Utc::now().date_naive();
     let mut total = 0i64;
 
