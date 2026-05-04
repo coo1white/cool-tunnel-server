@@ -148,6 +148,15 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      # Bind to the host's loopback only so an SSH-local-port-forward
+      # (`ssh -L 9000:127.0.0.1:9000 host`) can reach the panel from
+      # the operator's laptop. Public reachability of `/admin` is a
+      # deferred v0.1 architectural item (R1-1 / R1-2 in the
+      # 2026-05-04 audit; design seed at docs/design/sni-router-v0.1.md).
+      # The 0.0.0.0 bind would expose the panel publicly with no TLS
+      # and no auth; loopback bind keeps it SSH-gated.
+      - "127.0.0.1:9000:9000"
     environment:
       DB_HOST: db
       DB_PORT: 3306

@@ -174,10 +174,21 @@ command to make your first proxy account.
 
 ## Step 5 — Make a proxy account
 
-In your browser, open `https://your-domain/admin`. The browser will
-prompt for the **edge** basic-auth first (username `admin`, password
-the cleartext you bcrypted earlier). Then Filament's own login page
-asks for the admin user the installer asked you to create.
+The admin panel is bound to `127.0.0.1:9000` on the VPS, **not**
+public on `:443/admin`. Public reachability is a deferred v0.1
+item (see `docs/design/sni-router-v0.1.md`). Open it through an
+SSH local-port-forward:
+
+```sh
+# In a separate terminal on your laptop:
+ssh -N -L 9000:127.0.0.1:9000 root@your-vps
+
+# Leave that running; in your browser, open:
+http://127.0.0.1:9000/admin
+```
+
+Filament's login page asks for the admin user the installer asked
+you to create. TLS is provided by the SSH session.
 
 Inside the panel:
 
