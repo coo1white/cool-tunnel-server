@@ -84,8 +84,11 @@ services:
     volumes:
       # The panel renders Caddyfile into this shared volume.
       - caddy_etc:/etc/caddy
-      # Caddy stores certs + ACME state under /data. sing-box reads
-      # this volume RO; the panel needs RW for the cert-renewed flag.
+      # Caddy stores certs + ACME state under /data and needs RW
+      # to write/renew them. sing-box and the panel mount this
+      # volume RO — the panel-side ct-server-core reads cert
+      # mtime here to detect renewals (see read_cert_mtime in
+      # singbox/mod.rs); there is no flag-file written by Caddy.
       - caddy_data:/data
       # Caddy admin socket (loopback HTTP at :2019 — used by the
       # health probe inside the container).
@@ -200,7 +203,9 @@ services:
       - singbox_etc:/etc/sing-box
       # Caddyfile is rendered into this volume so caddy picks it up.
       - caddy_etc:/etc/caddy
-      # Panel reads the cert-renewed flag Caddy writes here.
+      # Panel-side ct-server-core reads cert mtime from here so the
+      # render path picks up Caddy's renewals (read_cert_mtime in
+      # singbox/mod.rs). RO — only Caddy writes this volume.
       - caddy_data:/data/caddy:ro
     depends_on:
       db:
