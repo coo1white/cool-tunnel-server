@@ -1,17 +1,48 @@
 // Active anti-tracking probe.
 //
-// We dial *through* the configured proxy and hit a small JSON endpoint
-// that echoes the request headers it received. If hide_ip / hide_via
-// are working, the response should NOT contain X-Forwarded-For,
-// Forwarded, X-Real-IP, or Via headers seen from the client side.
+// We dial *through* the configured proxy and hit a small JSON
+// endpoint that echoes the request headers it received. If
+// hide_ip / hide_via are working, the response should NOT contain
+// X-Forwarded-For, Forwarded, X-Real-IP, or Via headers seen from
+// the client side.
+//
+// Transport: a packaged `naive` client binary (klzgrad/naiveproxy)
+// is spawned as a child process bound to a free port on
+// 127.0.0.1, and reqwest dials through it as an HTTP CONNECT
+// proxy. This is required because sing-box's `naive` inbound
+// enforces a padding extension on CONNECT; vanilla reqwest is
+// dropped at the inbound with `missing naive padding` (R4-3 in
+// docs/audits/2026-05-04T06-31-58Z.md). Shelling out to the
+// upstream reference client is the lowest-risk way to speak the
+// padding correctly without re-implementing it in Rust. The
+// binary is pinned in docker/panel/Dockerfile (ARG NAIVE_VERSION
+// + ARG NAIVE_SHA256) and verified by manifests/naiveproxy-client
+// .upstream.json.
 //
 // The probe is best-effort — it doesn't tell you whether a
-// censorship system can fingerprint your TLS handshake, only whether
-// the configured Caddy mitigations are *actually* on the wire.
+// censorship system can fingerprint your TLS handshake, only
+// whether the configured Caddy mitigations are *actually* on the
+// wire.
 
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::net::TcpStream;
+use tokio::process::{Child, Command};
+use tokio::time::sleep;
+
+/// Path to the bundled naive client binary inside the panel image.
+const NAIVE_BINARY: &str = "/usr/local/bin/naive";
+
+/// How long we wait for the spawned naive subprocess to bind its
+/// local listener before declaring failure. Naive's startup is
+/// dominated by Chromium net stack init (~50-200 ms on the panel
+/// container's CPU class); 3 s is generous headroom for a slow
+/// VPS without making a wedged process hang the probe call.
+const NAIVE_STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Polling interval for the readiness loop.
+const NAIVE_STARTUP_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProbeResult {
@@ -24,13 +55,22 @@ pub struct ProbeResult {
 }
 
 pub async fn anti_tracking(target: &str, via: Option<&str>) -> Result<()> {
+    // The naive subprocess is held in `_naive_proc` for its kill-
+    // on-drop behaviour: when this function returns, the child is
+    // killed and its sockets close. Without this, a probe failure
+    // path could leak a SOCKS/HTTP listener inside the panel image.
+    let _naive_proc: Option<NaiveLocal>;
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .danger_accept_invalid_certs(false);
 
     if let Some(via_url) = via {
-        let proxy = reqwest::Proxy::all(via_url)?;
+        let local = NaiveLocal::spawn(via_url).await?;
+        let proxy = reqwest::Proxy::all(local.proxy_url())?;
         builder = builder.proxy(proxy);
+        _naive_proc = Some(local);
+    } else {
+        _naive_proc = None;
     }
 
     let client = builder.build().map_err(|e| Error::msg(e.to_string()))?;
@@ -107,6 +147,73 @@ pub async fn anti_tracking(target: &str, via: Option<&str>) -> Result<()> {
         hide_via_effective: !saw_via,
         probe_resistance_effective,
     })
+}
+
+/// A locally-spawned naive client subprocess. Translates plain
+/// HTTP CONNECT requests on a 127.0.0.1 port into authenticated,
+/// padding-aware HTTP/2 CONNECTs to the upstream proxy. Holding
+/// this struct keeps the child alive; dropping it kills the child
+/// (Command::kill_on_drop).
+struct NaiveLocal {
+    _child: Child,
+    port: u16,
+}
+
+impl NaiveLocal {
+    async fn spawn(via_url: &str) -> Result<Self> {
+        let port = pick_free_port()?;
+        let listen = format!("http://127.0.0.1:{port}");
+        let mut child = Command::new(NAIVE_BINARY)
+            .args(["--listen", &listen, "--proxy", via_url])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| Error::msg(format!("spawn {NAIVE_BINARY}: {e}")))?;
+
+        // Poll the local port until naive is bound, or until we've
+        // burned NAIVE_STARTUP_TIMEOUT. If the child exits inside
+        // that window, naive could not run at all (bad arg, missing
+        // dep, etc.) — surface that as a distinct error rather than
+        // letting the bind-poll keep ticking.
+        let deadline = Instant::now() + NAIVE_STARTUP_TIMEOUT;
+        while Instant::now() < deadline {
+            if let Ok(Some(status)) = child.try_wait() {
+                return Err(Error::msg(format!(
+                    "naive client exited before binding 127.0.0.1:{port} (status={:?})",
+                    status.code()
+                )));
+            }
+            if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+                return Ok(Self {
+                    _child: child,
+                    port,
+                });
+            }
+            sleep(NAIVE_STARTUP_POLL).await;
+        }
+        Err(Error::msg(format!(
+            "naive client did not bind 127.0.0.1:{port} within {:?}",
+            NAIVE_STARTUP_TIMEOUT
+        )))
+    }
+
+    fn proxy_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+}
+
+fn pick_free_port() -> Result<u16> {
+    // Bind, capture the assigned port, drop the listener so naive
+    // can take it. A short TOCTTOU window between drop and naive's
+    // bind exists; in the panel container's tight environment, the
+    // race is acceptably remote.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| Error::msg(format!("probe: bind ephemeral port: {e}")))?;
+    listener
+        .local_addr()
+        .map(|a| a.port())
+        .map_err(|e| Error::msg(format!("probe: local_addr: {e}")))
 }
 
 fn print_result(r: &ProbeResult) -> Result<()> {
