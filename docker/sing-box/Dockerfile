@@ -55,11 +55,16 @@ VOLUME ["/etc/sing-box", "/data"]
 EXPOSE 443 9090
 
 # Periodic liveness probe: confirm the sing-box process is running.
-# We dropped the clash_api block from the rendered config (the
-# `external_controller_unix` field never existed upstream — see
-# git log), so there is no unix socket to probe. Process-presence
-# is the next-best signal: if sing-box crashed mid-flight (cert
-# read error, panic, OOM-kill), pidof returns non-zero and docker
+# The rendered config DOES carry a clash_api block (TCP listener on
+# 0.0.0.0:9090, reachable from the panel over the docker bridge —
+# see `core/ct-server-core/src/admin.rs`), but we deliberately do
+# NOT probe it here: a clash-API HTTP probe is gated by the API
+# listener coming up after sing-box has parsed config and bound its
+# inbounds, which adds a startup-order dependency to liveness. We
+# also can't probe the unix-socket variant — `external_controller_unix`
+# never existed upstream. Process-presence is the cheapest signal
+# that covers the crash modes we actually care about (cert read
+# error, panic, OOM-kill); pidof returns non-zero and docker
 # restarts the container per the three-strikes default.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD pidof sing-box >/dev/null || exit 1
