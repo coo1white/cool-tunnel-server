@@ -44,7 +44,7 @@ You verify, decide, then either release or report why you cannot.
 | G4 | No `state/STUCK` for current HEAD | file absent OR its `HEAD-at-stuck` ≠ current HEAD |
 | G5 | Audit current for HEAD | `state/AUDIT_DONE` exists AND its `HEAD-at-audit` = current HEAD |
 | G6 | No outstanding Critical/High audit findings | latest report in `docs/audits/` shows 0 Critical AND 0 High, OR `state/SHIP_COMPLETE` matches current HEAD |
-| G7 | Build passes | `docker compose build core panel` exits 0 (no run, build only) |
+| G7 | Build passes | `docker compose build core-builder panel` exits 0 (no run, build only) |
 | G8 | Target tag is new | `git tag -l <TARGET>` empty AND `git ls-remote --tags origin <TARGET>` empty |
 
 `<TARGET>` = first whitespace-trimmed line of `state/RELEASE_AUTHORISATION`,
