@@ -32,13 +32,33 @@ step "Pre-flight: .env"
 if [[ ! -f .env ]]; then
     if prompt_yn "No .env file found. Copy .env.example to .env now?" y; then
         cp .env.example .env
-        ok "created .env from template"
+        # Tighten before the file ever holds real secrets — `cp`
+        # inherits the operator's umask (often 0022 on Debian, which
+        # creates world-readable files). APP_KEY + DB credentials
+        # leaking via 0644 .env is R2-1 in the audit.
+        chmod 0600 .env
+        ok "created .env from template (mode 0600)"
         warn "you must edit .env (DOMAIN, ACME_EMAIL, *_PASSWORD) before continuing"
         die "open .env, fill in real values, then re-run ./scripts/install.sh" \
             "\$EDITOR .env"
     else
         die ".env is required" "cp .env.example .env  &&  \$EDITOR .env"
     fi
+fi
+# Refuse to proceed if .env is world-readable. APP_KEY encrypts every
+# proxy_accounts.password_cleartext_encrypted row and signs every
+# subscription manifest; leaking it recovers all tenant cleartext.
+# (R2-1, docs/audits/2026-05-04T06-31-58Z.md.)
+env_mode=$(stat -c '%a' .env)
+# Last octal digit is the "other" rwx bits; >= 4 means any reader on
+# the host filesystem can pull APP_KEY out of .env. Extract the
+# trailing character of the mode string rather than arithmetic on
+# the whole value (e.g. mode 666 decimal % 8 = 2, not the octal 6
+# we want).
+other_bits=${env_mode: -1}
+if (( other_bits >= 4 )); then
+    die ".env is world-readable (mode $env_mode); APP_KEY + DB credentials would leak" \
+        "chmod 0600 .env"
 fi
 load_env .env
 ok ".env loaded"
