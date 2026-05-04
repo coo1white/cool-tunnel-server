@@ -42,3 +42,11 @@ core/target/
 # directory holds the compile-time SQL type contract every build
 # validates against (see docs/sqlx-offline.md, scripts/sqlx-prepare.sh).
 # CI's sqlx-offline-check job fails if it's missing.
+
+# Runtime + session artefacts (VPS-local, never committed)
+.claude/
+state/
+results/
+panel/.env.bak*
+# Audit reports are VPS evidence, not git history (compliance via VPS file retention)
+docs/audits/
