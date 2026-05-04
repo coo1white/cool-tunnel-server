@@ -76,6 +76,11 @@ RUN chmod +x /usr/local/bin/ct-server-core \
 # daemon, so we tune for fast warm-up.
 COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
+# Anti-fingerprint hardening: turn off the `X-Powered-By: PHP/8.3.x`
+# response header that the upstream php:8.3-fpm-alpine image ships
+# with by default. Loaded as a separate conf.d drop-in for clarity.
+COPY php-hardening.ini /usr/local/etc/php/conf.d/php-hardening.ini
+
 # nginx fronts php-fpm; supervisord runs both inside the container so
 # we present a single TCP endpoint (port 9000) to sing-box.
 COPY nginx.conf       /etc/nginx/nginx.conf
