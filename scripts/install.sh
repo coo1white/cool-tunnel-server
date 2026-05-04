@@ -76,6 +76,28 @@ fi
 require_env DB_PASSWORD            "openssl rand -base64 32 # paste into .env DB_PASSWORD="
 require_env REDIS_PASSWORD  "openssl rand -base64 32 # paste into .env REDIS_PASSWORD="
 
+# Per-install random seed for the clash API bearer token. Generated
+# from /dev/urandom on first boot if the .env line is empty. Sing-
+# box and ct-server-core both derive the bearer as sha256("ct-clash-
+# secret-v1:" + this); rotation invalidates any captured bearer.
+# (R2-2 in the 2026-05-04 audit — the prior derivation seeded from
+# acme_email, which is publicly recoverable from the CT log for the
+# operator's domain.)
+if [[ -z "${CT_CLASH_SECRET_SEED:-}" ]]; then
+    seed=$(openssl rand -hex 32)
+    # Replace the placeholder line if present, otherwise append.
+    if grep -qE '^CT_CLASH_SECRET_SEED=' .env; then
+        sed -i "s|^CT_CLASH_SECRET_SEED=.*|CT_CLASH_SECRET_SEED=${seed}|" .env
+    else
+        printf '\nCT_CLASH_SECRET_SEED=%s\n' "${seed}" >> .env
+    fi
+    export CT_CLASH_SECRET_SEED="${seed}"
+    unset seed
+    ok "generated CT_CLASH_SECRET_SEED (clash-API bearer seed; .env updated)"
+else
+    ok "CT_CLASH_SECRET_SEED already set"
+fi
+
 # ---------- Build images -------------------------------------------
 
 step "Build ct-server-core (Rust, musl-static)"
