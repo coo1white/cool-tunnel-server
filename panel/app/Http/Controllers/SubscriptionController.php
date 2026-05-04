@@ -58,8 +58,7 @@ class SubscriptionController extends Controller
                 'host'     => $cfg->domain,
                 'port'     => 443,
                 'username' => $account->username,
-                // The cleartext is sealed in metadata at issue-time.
-                'password' => $account->metadata['cleartext'] ?? '',
+                'password' => $account->getCleartextPassword() ?? '',
                 'label'    => "{$cfg->domain} ({$account->username})",
             ]],
             'capabilities' => [
