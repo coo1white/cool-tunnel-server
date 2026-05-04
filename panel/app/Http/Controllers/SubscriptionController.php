@@ -42,11 +42,13 @@ class SubscriptionController extends Controller
         // id + a panel-wide secret, presented base64url-encoded.
         $account = $this->resolve($token);
         if (! $account || ! $account->isActive()) {
-            // Match Caddy's probe_resistance default: 404 looking
-            // exactly like the cover-site catch-all, so an invalid
-            // token can't be distinguished from "no such page".
-            return response('', 404)
-                ->header('Content-Type', 'text/html; charset=utf-8');
+            // Forward to the cover-site catch-all so an invalid /
+            // expired subscription URL returns the same bytes (body
+            // shape, status, headers) as any other unmatched path.
+            // Returning a short empty body — even with text/html —
+            // would distinguish a bogus /subscription/<token> from a
+            // regular cover-site path purely by Content-Length.
+            return (new FakeSiteController())->show($request);
         }
 
         $cfg = ServerConfig::current();
