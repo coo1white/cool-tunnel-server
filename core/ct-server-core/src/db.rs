@@ -61,8 +61,6 @@ pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
             anti_tracking_probe_resistance,
             anti_tracking_doh_resolver,
             http3_enabled,
-            admin_basic_auth_user,
-            admin_basic_auth_hash,
             last_caddyfile_hash,
             last_rendered_at
         FROM server_configs
@@ -82,8 +80,6 @@ pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
         probe_resistance: row.anti_tracking_probe_resistance != 0,
         doh_resolver: row.anti_tracking_doh_resolver,
         http3_enabled: row.http3_enabled != 0,
-        admin_basic_auth_user: row.admin_basic_auth_user,
-        admin_basic_auth_hash: row.admin_basic_auth_hash,
         last_caddyfile_hash: row.last_caddyfile_hash,
         last_rendered_at: row.last_rendered_at,
     })

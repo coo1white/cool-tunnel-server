@@ -366,24 +366,15 @@ sed -i "s|^ACME_EMAIL=.*|ACME_EMAIL=admin@example.com|"        .env
 sed -i "s|^DB_ROOT_PASSWORD=.*|DB_ROOT_PASSWORD=${DB_ROOT}|"    .env
 sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${DB_PASS}|"              .env
 sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
-
-# Generate the bcrypt hash for edge-level basic auth on /admin.
-# Pick a strong password — this is what you'll type in front of the
-# Filament login page (a second factor before the Filament password).
-read -r -s -p "Admin edge password: " ADMIN_PW; echo
-# bcrypt-hash the admin password. Any tool works; we use httpd's
-# htpasswd helper here because it's tiny and ubiquitous.
-apt install -y apache2-utils
-ADMIN_HASH=$(htpasswd -nbB admin "$ADMIN_PW" | cut -d: -f2-)
-sed -i "s|^PANEL_BASIC_AUTH_HASH=.*|PANEL_BASIC_AUTH_HASH='${ADMIN_HASH}'|" .env
-unset ADMIN_PW
 ```
 
-> **Why two passwords for the admin panel?** Filament auth lives
-> behind another layer (the edge `basic_auth` block in sing-box's
-> fallback) so the Filament login page is never directly probable.
-> Use two different passwords; the edge layer is what stops drive-by
-> scanners from even seeing the Laravel login form.
+> The panel `/admin` is **not** publicly reachable in the current
+> stack — it binds to `127.0.0.1:9000` on the VPS and is opened
+> through an SSH local-port-forward (see step 8 below). Public
+> reachability is a deferred v0.1 architectural item; the design
+> seed lives in `docs/design/sni-router-v0.1.md`. There is no
+> edge basic-auth layer in front of Filament because there is no
+> public surface for it to gate.
 
 ---
 
@@ -584,10 +575,11 @@ docker compose restart caddy
 - **Public IPv6** — if your VPS has v6, set the `AAAA` record. Some
   censorship systems are weaker over v6, and clients pick up the
   faster path automatically (Happy Eyeballs).
-- **Don't run the panel publicly without the edge basic_auth.** The
-  Filament login is bcrypt-hashed and rate-limited, but a bare login
-  page is still a fingerprint. The two-layer setup hides it from
-  drive-by scanners.
+- **The panel is SSH-tunneled, not public.** `/admin` binds to
+  `127.0.0.1:9000` on the VPS; reach it via `ssh -L 9000:127.0.0.1
+  :9000`. The architectural piece that would make `/admin` reachable
+  on `:443` lives in `docs/design/sni-router-v0.1.md` as a v0.1
+  item; until that ships, treat SSH as the gate.
 
 ---
 

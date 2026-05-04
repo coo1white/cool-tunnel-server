@@ -145,8 +145,6 @@ mod tests {
             probe_resistance: true,
             doh_resolver: "https://1.1.1.1/dns-query".into(),
             http3_enabled: true,
-            admin_basic_auth_user: None,
-            admin_basic_auth_hash: None,
             last_caddyfile_hash: None,
             last_rendered_at: None,
         }
