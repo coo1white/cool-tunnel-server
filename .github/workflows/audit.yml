@@ -488,17 +488,41 @@ jobs:
               echo "::error file=$tpl::log.level must be warn or higher (no per-connection logging)"
               fail=1
           fi
-          # external_controller (TCP) must NOT be set in clash_api.
-          # Only the unix socket should be exposed; a TCP listener
-          # is a public attack surface if firewall is misconfigured.
-          if grep -qE '"external_controller"\s*:' "$tpl"; then
-              echo "::error file=$tpl::clash_api.external_controller (TCP) must not be set; use external_controller_unix only"
+          # external_controller (TCP) is bound to 0.0.0.0:9090 inside
+          # the sing-box container — intentional, used by the panel
+          # over ct-net for hot reload. Required: bound to that
+          # docker-internal address only (any other host:port could
+          # be a misconfiguration that ends up listening publicly).
+          # The host-exposure cross-check on docker-compose.yml's
+          # ports: block is below.
+          if ! grep -qE '"external_controller"\s*:\s*"0\.0\.0\.0:9090"' "$tpl"; then
+              echo "::error file=$tpl::clash_api.external_controller must be \"0.0.0.0:9090\" (docker-internal interface)"
+              fail=1
+          fi
+          # The bearer secret must be templated, not a static literal.
+          # Static literals are a public attack surface if firewall is
+          # misconfigured; the templated value comes from
+          # ServerConfig::clash_secret() (see core/ct-server-core/src/
+          # singbox/mod.rs).
+          if ! grep -qE '"secret"\s*:\s*"\{\{\s*\.ClashSecret\s*\}\}"' "$tpl"; then
+              echo "::error file=$tpl::clash_api.secret must be templated as {{ .ClashSecret }}"
               fail=1
           fi
           # cache_file should be disabled by default — DNS / connection
-          # cache on disk is a forensic risk.
-          if ! grep -qE '"cache_file":\s*\{[^}]*"enabled":\s*false' "$tpl"; then
+          # cache on disk is a forensic risk. Flatten newlines because
+          # the cache_file block in the template spans multiple lines
+          # and grep is line-oriented.
+          if ! tr -d '\n' < "$tpl" | grep -qE '"cache_file"[[:space:]]*:[[:space:]]*\{[^}]*"enabled"[[:space:]]*:[[:space:]]*false'; then
               echo "::error file=$tpl::experimental.cache_file.enabled must be false by default"
+              fail=1
+          fi
+          # Cross-check: the clash API listener at 0.0.0.0:9090 must
+          # not be host-exposed by any service in docker-compose.yml.
+          # Any list item (`- ...`) containing 9090 in a ports: or
+          # similar block is a leak. The only legitimate 9090 is the
+          # SINGBOX_CLASH_URL env var, which doesn't start with `-`.
+          if grep -nE '^[[:space:]]+-[[:space:]]+"?[^"]*9090' docker-compose.yml; then
+              echo "::error file=docker-compose.yml::clash API port 9090 must not appear in any service's ports: block"
               fail=1
           fi
           exit "$fail"
