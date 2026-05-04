@@ -164,6 +164,37 @@ impl Bindings {
     }
 }
 
+/// Escape `s` so it is safe to interpolate verbatim inside a JSON
+/// string literal. Quotes, backslashes, and ASCII control characters
+/// are turned into their JSON-string escape sequences (per RFC 8259
+/// §7); everything else passes through. Use this defensively at the
+/// binding site for any value that lands inside a `"…"` JSON context
+/// — operator-supplied fields like Domain / AcmeEmail / cert paths
+/// don't normally carry `"` or `\`, but a typo or paste of a Windows
+/// path would otherwise corrupt the rendered config.
+#[must_use]
+pub fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                // 0x00–0x1F (excluding the named ones above) — \u00XX.
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn find_two(bytes: &[u8], from: usize, a: u8, b: u8) -> Option<usize> {
     let mut i = from;
     while i + 1 < bytes.len() {
@@ -262,6 +293,30 @@ mod tests {
     fn template_with_no_tags_passes_through_verbatim() {
         let body = "no tags here {single brace}";
         assert_eq!(render(body, &b(&[])).unwrap(), body);
+    }
+
+    #[test]
+    fn json_escape_handles_quote_and_backslash() {
+        assert_eq!(json_escape(r#"a"b"#), r#"a\"b"#);
+        assert_eq!(json_escape(r"a\b"), r"a\\b");
+        assert_eq!(json_escape("plain"), "plain");
+    }
+
+    #[test]
+    fn json_escape_handles_control_and_named_escapes() {
+        assert_eq!(json_escape("a\nb"), "a\\nb");
+        assert_eq!(json_escape("a\tb"), "a\\tb");
+        assert_eq!(json_escape("a\rb"), "a\\rb");
+        assert_eq!(json_escape("a\x08b"), "a\\bb");
+        assert_eq!(json_escape("a\x0cb"), "a\\fb");
+        // Other control char gets \u00XX form.
+        assert_eq!(json_escape("a\x01b"), "a\\u0001b");
+    }
+
+    #[test]
+    fn json_escape_passes_unicode_through() {
+        // Non-ASCII does not need to be escaped per RFC 8259.
+        assert_eq!(json_escape("héllo"), "héllo");
     }
 
     #[test]

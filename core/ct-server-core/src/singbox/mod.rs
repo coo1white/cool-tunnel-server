@@ -199,17 +199,24 @@ async fn render_to_string(
     let (doh_server, doh_path) = split_doh_url(&cfg.doh_resolver);
 
     let secret = clash_secret()?;
+    // Defense-in-depth: every binding below lands inside a JSON `"..."`
+    // string in the rendered sing-box config (or feeds one further
+    // down the line), so we apply `template::json_escape` at the
+    // binding site. UsersJson is already a fully-rendered JSON
+    // fragment (object/array, not a string-context substitution),
+    // and ClashSecret is hex by construction (clash_secret()), so
+    // both are passed through verbatim.
     let bindings = crate::template::Bindings::new()
-        .set("Domain", &cfg.domain)
-        .set("AcmeEmail", &cfg.acme_email)
-        .set("AcmeDirectory", &cfg.acme_directory)
+        .set("Domain", crate::template::json_escape(&cfg.domain))
+        .set("AcmeEmail", crate::template::json_escape(&cfg.acme_email))
+        .set("AcmeDirectory", crate::template::json_escape(&cfg.acme_directory))
         .set("UsersJson", &users_json)
-        .set("DohResolver", &cfg.doh_resolver)
-        .set("DohServer", &doh_server)
-        .set("DohPath", &doh_path)
+        .set("DohResolver", crate::template::json_escape(&cfg.doh_resolver))
+        .set("DohServer", crate::template::json_escape(&doh_server))
+        .set("DohPath", crate::template::json_escape(&doh_path))
         .set("ClashSecret", &secret)
-        .set("CertPath", &cert_path)
-        .set("KeyPath", &key_path)
+        .set("CertPath", crate::template::json_escape(&cert_path))
+        .set("KeyPath", crate::template::json_escape(&key_path))
         .into_map();
 
     crate::template::render(&template, &bindings).map_err(|e| {
