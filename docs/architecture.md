@@ -94,33 +94,29 @@ once we cut that integration.
                    └─────┬──────────────────────────────────┬────┘
                          │                                  │
             atomic write to                                 │ PUT /configs?path=…
-            /etc/sing-box/config.json                       │ (clash unix socket)
+            /etc/sing-box/config.json                       │ (clash-API TCP, 9090)
                          ▼                                  │
                    ┌──────────────────────────────────┐    │
                    │           sing-box                 │◀──┘
                    │   naive inbound { users }          │
                    │   tls { cert+key from              │
                    │     /data/caddy/certificates/... } │
-                   │   listen :443 (h2 + h3)            │
-                   │   fallback → panel:9000 (cover     │
-                   │                          site)     │
+                   │   listen :443 (h2)                 │
                    └──────────────────────────────────┘
-                         ▲                  ▲
-                         │ TLS:443          │ panel:9000 (cover-site fallback)
-                         │                  │
-                         │          ┌───────┴────────┐
-                         │          │     panel      │
-                         │          │  (PHP-FPM +    │
-                         │          │   nginx +      │
-                         │          │   ct-server-   │
-                         │          │   core daemon) │
-                         │          └────────────────┘
+                         ▲
+                         │ TLS:443
                          │
               ┌──────────┴────────────┐
               │  Cool Tunnel client    │
               │  (any platform)        │
               │  → naive (CONNECT)     │
               └────────────────────────┘
+
+(The panel container — PHP-FPM + nginx + Filament + the ct-server-
+core daemon under supervisord — is reachable via the loopback host
+port-map at 127.0.0.1:9000 only; there is no `:443` SNI fallback
+to it from sing-box at v1.13.11. See `docs/design/sni-router-v0.1.md`
+for the deferred public cover-site path under R1-1.)
 ```
 
 ### What runs where
@@ -128,11 +124,12 @@ once we cut that integration.
 - **`sing-box` container** — sing-box with the `naive` inbound.
   Multi-user `users` array (cleartext passwords from the panel,
   decrypted at render time). Built-in ACME on :80; TLS-terminating
-  HTTP/2 CONNECT on :443. Fallback for unauthenticated traffic
-  reverse-proxies to `panel:9000` so probes see the cover site.
-  The clash-API unix socket at `/run/sing-box/clash.sock` is what
-  `ct-server-core` PUTs `/configs?force=true&path=…` to for hot
-  reloads.
+  HTTP/2 CONNECT on :443. There is no `:443` SNI fallback at
+  v1.13.11 (upstream schema gap, tracked under R1-1; design seed
+  at `docs/design/sni-router-v0.1.md`). The clash-API TCP listener
+  on `0.0.0.0:9090` (docker-bridge-only; not host-published) is
+  what `ct-server-core` PUTs `/configs?force=true&path=…` to for
+  hot reloads.
 - **`panel` container** — PHP-FPM + nginx + Laravel + Filament,
   plus a copy of the `ct-server-core` Rust binary on PATH and the
   ct-server-core daemon running under supervisord. The PHP services
