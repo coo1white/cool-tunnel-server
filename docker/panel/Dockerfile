@@ -22,6 +22,7 @@ RUN apk add --no-cache \
         curl \
         git \
         unzip \
+        xz \
         icu-dev \
         oniguruma-dev \
         libzip-dev \
@@ -47,6 +48,24 @@ RUN apk add --no-cache \
         -o /usr/local/bin/composer \
     && chmod +x /usr/local/bin/composer \
     && rm -rf /var/cache/apk/*
+
+# Bundle the upstream naive client binary so the anti-tracking probe
+# (core/ct-server-core/src/probe.rs) can speak NaiveProxy's HTTP/2-
+# with-padding extension. Vanilla reqwest is dropped at sing-box's
+# `naive` inbound with "missing naive padding" (R4-3 in the
+# 2026-05-04 audit); the upstream client speaks the padding
+# correctly. Pinned to a specific release tag + tarball SHA-256;
+# bumps are explicit, version-controlled events.
+ARG NAIVE_VERSION=v148.0.7778.96-2
+ARG NAIVE_SHA256=acd2359291d4248a12e8c1ce51a685562449a9cefe24b97f75929a48e348830f
+RUN set -eux; \
+    cd /tmp; \
+    curl -fsSL -o naiveproxy.tar.xz \
+        "https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz"; \
+    echo "${NAIVE_SHA256}  naiveproxy.tar.xz" | sha256sum -c -; \
+    tar -xJf naiveproxy.tar.xz; \
+    install -m 0755 "naiveproxy-${NAIVE_VERSION}-linux-x64/naive" /usr/local/bin/naive; \
+    rm -rf naiveproxy.tar.xz "naiveproxy-${NAIVE_VERSION}-linux-x64"
 
 # Drop in the ct-server-core binary the panel shells out to.
 COPY --from=ct-core-stage /usr/local/bin/ct-server-core /usr/local/bin/ct-server-core
