@@ -34,7 +34,7 @@
 
 use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
 use crate::{admin, singbox, Result};
-use redis::{aio::ConnectionManager, AsyncCommands, Client};
+use redis::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -233,22 +233,6 @@ where
         Poll::Ready(x) => Poll::Ready(x),
     })
     .await
-}
-
-/// Steady-state account status reader. The panel writes
-/// `account:status:<username>` to "active" / "expired" / "revoked"
-/// on every save; the daemon can consult it as a side channel
-/// (currently informational only — Caddyfile is still the auth
-/// authority).
-#[allow(dead_code)]
-pub async fn read_account_status(
-    conn: &Arc<Mutex<ConnectionManager>>,
-    username: &str,
-) -> Result<Option<String>> {
-    let mut guard = conn.lock().await;
-    let key = format!("account:status:{username}");
-    let val: Option<String> = guard.get(&key).await?;
-    Ok(val)
 }
 
 #[cfg(test)]
