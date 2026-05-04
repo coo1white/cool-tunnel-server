@@ -408,15 +408,29 @@ unset ADMIN_PW
 7. Tails sing-box logs until it prints `certificate obtained` (or
    the equivalent ACME success line) for your domain.
 
-When it finishes, browse to:
+When it finishes, the panel is reachable from inside `ct-net` and
+on the VPS host's `127.0.0.1:9000`, but **not directly from the
+public internet**. Public `/admin` reachability is a deferred v0.1
+architectural item (R1-1 / R1-2 in the 2026-05-04 audit — sing-box
+v1.13.11's `naive` inbound has no schema-level fallback to a cover
+site, and the stack has no front-door reverse proxy on `:443`. See
+`docs/design/sni-router-v0.1.md` for the planned path.)
 
-```
-https://<your-domain>/admin
+Open the panel through an SSH local-port-forward from your laptop:
+
+```bash
+# On your laptop, in one terminal:
+ssh -N -L 9000:127.0.0.1:9000 root@<your-vps>
+
+# Leave that running; in your browser:
+http://127.0.0.1:9000/admin
 ```
 
-The browser will challenge you for the **edge** basic auth first
-(the username + password you set in `PANEL_BASIC_AUTH_*`), then
-Filament's own login page asks for the admin you created in step 5.
+The forward maps `127.0.0.1:9000` on your laptop to the VPS's
+loopback-bound panel port. Because the bind is loopback-only, no
+one can reach the panel without first holding an SSH session on
+the VPS. Filament's own login page asks for the admin user you
+created in step 5; TLS is provided by the SSH session, not by HTTP.
 
 ### Check the certificate landed
 
