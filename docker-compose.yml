@@ -102,6 +102,15 @@ services:
     image: cool-tunnel-server-caddy:latest
     container_name: ct-caddy
     restart: unless-stopped
+    # 1 GB-VPS sizing (v0.0.22). Caddy here is ACME-only (no proxy
+    # traffic; no plugins) — measured idle 17 MiB, peak under
+    # cert-renewal hot loop ~30 MiB. 64 MiB is generous and
+    # deterministic — under-load behaviour is fail-fast OOM-kill,
+    # never grow-and-crowd-the-host.
+    mem_limit: 64m
+    # Tiny Go runtime + ACME goroutines. 32 process slots is plenty
+    # — a fork-bomb in the container can't escalate past it.
+    pids_limit: 32
     cap_add:
       - NET_BIND_SERVICE
     ports:
@@ -130,6 +139,16 @@ services:
     image: cool-tunnel-server-singbox:latest
     container_name: ct-singbox
     restart: unless-stopped
+    # 1 GB-VPS sizing (v0.0.22). Measured idle 10 MiB, per-active-
+    # user steady cost ~1-2 MiB on the Go runtime. 128 MiB caps
+    # ~50-100 concurrent users on the documented minimum spec —
+    # well above the "few users" the README promises, and the
+    # OOM-kill on overflow is a clearer signal than slow grind.
+    mem_limit: 128m
+    # Each NaiveProxy session is a goroutine (cheap, not a pid).
+    # 64 OS threads cover the Go runtime's M:N scheduling +
+    # connection-handling threads.
+    pids_limit: 64
     cap_add:
       - NET_BIND_SERVICE
     ports:
@@ -190,6 +209,22 @@ services:
     image: cool-tunnel-server-panel:latest
     container_name: ct-panel
     restart: unless-stopped
+    # 1 GB-VPS sizing (v0.0.22). The panel is the largest service —
+    # PHP-FPM master + 4 ondemand workers (v0.0.17) at ~30-50 MiB
+    # each, plus nginx, supervisord, the queue worker, the
+    # scheduler loop, and the ct-server-core daemon. Measured idle
+    # is ~110 MiB; under load with all 4 FPM workers active and a
+    # bulk-action job processing, peak measured ~250 MiB. 320 MiB
+    # gives a 30 % headroom for opcache touching its 64 MiB cap.
+    # Lower mem_limit below this and the queue worker OOM-kills
+    # under bulk-delete fan-out, leaving the panel half-functional.
+    mem_limit: 320m
+    # FPM ondemand caps to PHP_FPM_MAX_CHILDREN (default 4 in
+    # v0.0.17) + master + scheduler + queue + ct-core daemon +
+    # nginx workers + supervisord + opcache cleanup threads. 256
+    # process slots is generous and bounds any future fork-bomb
+    # path.
+    pids_limit: 256
     env_file:
       - .env
     ports:
@@ -283,6 +318,19 @@ services:
     image: mariadb:11
     container_name: ct-db
     restart: unless-stopped
+    # 1 GB-VPS sizing (v0.0.22). v0.0.17's `command:` block already
+    # tuned MariaDB's internal buffers (innodb-buffer-pool-size=64M,
+    # performance-schema=OFF, max-connections=20). Resident under
+    # those caps is ~95-100 MiB. 192 MiB hard cap accommodates the
+    # full buffer pool + max_connections × per-thread overhead with
+    # ~2x headroom; OOM-kill on overflow is the tightest signal
+    # available.
+    mem_limit: 192m
+    # MariaDB connection threads are pids in cgroup accounting.
+    # max-connections=20 + background threads (purge, master,
+    # InnoDB IO) + healthcheck.sh forks. 128 is generous; cap
+    # protects against a runaway query spawning more.
+    pids_limit: 128
     # MariaDB low-mem tuning (2026-05-05 low-mem-server pass).
     # Stock mariadb:11 reserves ~130 MiB on this box at idle —
     # mostly performance_schema (~80 MiB) plus the default 128 MB
@@ -322,6 +370,16 @@ services:
     image: redis:7-alpine
     container_name: ct-redis
     restart: unless-stopped
+    # 1 GB-VPS sizing (v0.0.22). Redis here is the cache + pub/sub
+    # bus + queue backend. Measured idle 9 MiB, peak under
+    # bulk-revocation fan-out ~25 MiB. 64 MiB is generous; the OOM-
+    # kill on overflow signals an unbounded data structure (which
+    # we don't have today, but the cap protects against future
+    # regressions).
+    mem_limit: 64m
+    # Single-threaded Redis core + a few I/O threads + bgsave fork
+    # at AOF-rewrite time. 32 is plenty.
+    pids_limit: 32
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
