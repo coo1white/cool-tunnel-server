@@ -212,9 +212,15 @@ async fn render_to_string(
     let bindings = crate::template::Bindings::new()
         .set("Domain", crate::template::json_escape(&cfg.domain))
         .set("AcmeEmail", crate::template::json_escape(&cfg.acme_email))
-        .set("AcmeDirectory", crate::template::json_escape(&cfg.acme_directory))
+        .set(
+            "AcmeDirectory",
+            crate::template::json_escape(&cfg.acme_directory),
+        )
         .set("UsersJson", &users_json)
-        .set("DohResolver", crate::template::json_escape(&cfg.doh_resolver))
+        .set(
+            "DohResolver",
+            crate::template::json_escape(&cfg.doh_resolver),
+        )
         .set("DohServer", crate::template::json_escape(&doh_server))
         .set("DohPath", crate::template::json_escape(&doh_path))
         .set("ClashSecret", &secret)
@@ -505,10 +511,7 @@ mod tests {
             "acme-staging-v02.api.letsencrypt.org-directory",
         );
         // No scheme — passes through.
-        assert_eq!(
-            ca_folder_from_directory("local-test"),
-            "local-test",
-        );
+        assert_eq!(ca_folder_from_directory("local-test"), "local-test",);
         // Trailing slash gets eaten.
         assert_eq!(
             ca_folder_from_directory("https://example.com/dir/"),
@@ -556,10 +559,7 @@ mod tests {
         );
         // Empty input: empty server, default path. sing-box check
         // will reject the empty server, surfacing the misconfig.
-        assert_eq!(
-            split_doh_url(""),
-            (String::new(), "/dns-query".to_string()),
-        );
+        assert_eq!(split_doh_url(""), (String::new(), "/dns-query".to_string()),);
     }
 
     #[tokio::test]

@@ -372,4 +372,67 @@ mod tests {
         assert_eq!(m.get("A").map(String::as_str), Some("1"));
         assert_eq!(m.get("B").map(String::as_str), Some("2"));
     }
+
+    // --- caddyfile_validate (v0.0.16 fix, tested in v0.0.18) ---
+    //
+    // The Caddyfile-injection guard. Each metasyntactic char must
+    // independently produce an Err. A regression that drops the
+    // check (or mis-spells one of the chars) re-opens the
+    // injection vector.
+
+    #[test]
+    fn caddyfile_validate_accepts_clean_values() {
+        // Exact charset that ServerConfig fields are expected to
+        // hold today: domain (a-z 0-9 . -), email (+ @), URL
+        // (+ : / ? & =).
+        for v in [
+            "proxy.example.com",
+            "admin@example.com",
+            "https://acme-v02.api.letsencrypt.org/directory",
+            "ABC.123-xyz_subdomain.example.co.uk",
+        ] {
+            assert!(
+                caddyfile_validate("Domain", v).is_ok(),
+                "expected `{v}` to validate, got err",
+            );
+        }
+    }
+
+    #[test]
+    fn caddyfile_validate_rejects_each_metasyntax_char() {
+        // Each rejected character independently — a future
+        // regression that drops one from the match arm must fail
+        // its corresponding case here.
+        for (label, c) in [
+            ("newline", '\n'),
+            ("carriage-return", '\r'),
+            ("open-brace", '{'),
+            ("close-brace", '}'),
+            ("double-quote", '"'),
+        ] {
+            let v = format!("safe-prefix{c}safe-suffix");
+            let err = caddyfile_validate("Domain", &v).unwrap_err();
+            assert!(
+                err.contains("Domain") && err.contains("metasyntax"),
+                "{label}: error message should name field + 'metasyntax': {err}",
+            );
+        }
+    }
+
+    #[test]
+    fn caddyfile_validate_rejects_realistic_injection_payload() {
+        // The exact injection shape the v0.0.16 fix was written
+        // against — break out of the {{ .Domain }}:8443 { … } block
+        // and inject a Caddy admin endpoint.
+        let payload = "example.com\n}\nadmin localhost:2019\n{";
+        let err = caddyfile_validate("Domain", payload).unwrap_err();
+        // First metasyntactic char hit is `\n`.
+        assert!(err.contains("metasyntax"), "{err}");
+    }
+
+    #[test]
+    fn caddyfile_validate_field_name_propagates_into_error() {
+        let err = caddyfile_validate("AcmeEmail", "bad}value").unwrap_err();
+        assert!(err.contains("AcmeEmail"), "{err}");
+    }
 }
