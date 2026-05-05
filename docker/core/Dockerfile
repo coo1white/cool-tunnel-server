@@ -20,6 +20,21 @@ RUN apk add --no-cache \
         openssl-libs-static \
         ca-certificates
 
+# Map Docker's TARGETARCH (amd64|arm64|arm) to the matching musl
+# rustc target triple. BuildKit auto-populates TARGETARCH from
+# `--platform` or the daemon's native arch — the project shipped
+# x86_64-only before, which broke arm64 hosts (Lima on Apple
+# Silicon, AWS Graviton, RPi-class Debian).
+ARG TARGETARCH
+RUN case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/armv7l/arm/')}" in \
+        amd64) RUST_TARGET=x86_64-unknown-linux-musl ;; \
+        arm64) RUST_TARGET=aarch64-unknown-linux-musl ;; \
+        arm)   RUST_TARGET=armv7-unknown-linux-musleabihf ;; \
+        *)     echo "unsupported TARGETARCH: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
+    esac && \
+    rustup target add "${RUST_TARGET}" && \
+    printf '%s' "${RUST_TARGET}" > /tmp/rust-target
+
 WORKDIR /build
 
 # Copy the workspace and build in release. We use BuildKit cache
@@ -44,7 +59,7 @@ ENV SQLX_OFFLINE=true
 # Static link against musl so the resulting binary runs in any
 # minimal Alpine OR debian base without a musl-libc dependency.
 #
-# IMPORTANT: this flag is set via the per-target env var, NOT via
+# IMPORTANT: these flags are set via the per-target env vars, NOT via
 # global RUSTFLAGS. With global RUSTFLAGS="-C target-feature=
 # +crt-static", Cargo applies the flag to EVERY compilation
 # including the host-side proc-macros (async-trait, serde_derive,
@@ -52,14 +67,16 @@ ENV SQLX_OFFLINE=true
 # crt-static refuses. The build fails partway through with:
 #
 #   error: cannot produce proc-macro for `async-trait` as the
-#   target `x86_64-unknown-linux-musl` does not support these
-#   crate types
+#   target `<host-musl>` does not support these crate types
 #
-# Per-target env scopes the flag to ONLY the binary's
-# x86_64-unknown-linux-musl build; proc-macros are compiled for
-# the host toolchain default (also musl on rust:alpine, but
-# without crt-static so cdylibs work).
+# Per-target env scopes the flag to ONLY the final binary's musl
+# build; proc-macros are compiled for the host toolchain default
+# (also musl on rust:alpine, but without crt-static so cdylibs work).
+# One env var per supported triple — Cargo only consults the one
+# matching the active --target.
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static"
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static"
+ENV CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS="-C target-feature=+crt-static"
 
 # Build with the registry cache mount only. We deliberately do NOT
 # cache-mount /build/core/target — that interacts badly with the
@@ -73,8 +90,9 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-sta
 # is actually correct end-to-end.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --release --bin ct-server-core --target x86_64-unknown-linux-musl && \
-    install -Dm755 target/x86_64-unknown-linux-musl/release/ct-server-core /ct-server-core && \
+    RUST_TARGET=$(cat /tmp/rust-target) && \
+    cargo build --release --bin ct-server-core --target "${RUST_TARGET}" && \
+    install -Dm755 "target/${RUST_TARGET}/release/ct-server-core" /ct-server-core && \
     (strip /ct-server-core || true) && \
     test -x /ct-server-core
 
