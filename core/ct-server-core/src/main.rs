@@ -366,7 +366,9 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 }
                 Ok(())
             }
-            ComponentOp::Check { manifests } => components::print_check(&manifests, cli.json).await,
+            ComponentOp::Check { manifests } => {
+                components::print_check(&manifests, &cli.database_url, cli.json).await
+            }
         },
         Cmd::Version => {
             println!(

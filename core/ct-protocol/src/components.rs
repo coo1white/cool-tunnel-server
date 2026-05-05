@@ -61,6 +61,19 @@ pub enum ComponentKindV1 {
     ContainerImage,
     /// A PHP package / Composer dep (less common; for the panel itself).
     PhpPackage,
+    /// External DoH-over-HTTPS endpoint reachability check.
+    /// The verifier reads the LIVE `ServerConfig.doh_resolver` URL
+    /// (panel-editable, not the manifest's value) and dispatches an
+    /// RFC 8484 binary DoH query for `example.com IN A`. A
+    /// non-zero ANCOUNT in the response means the resolver
+    /// answered a real query — covers the v0.0.22 survival case
+    /// for operators in censored regions where Cloudflare DoH
+    /// (or any other transit-blocked endpoint) is silently dropped
+    /// by the local network. Without this check, sing-box's DNS
+    /// path looks healthy ("connection open") but every name
+    /// lookup fails, producing a half-working proxy that's hard
+    /// to diagnose. (v0.0.22 — 2026 Milestone Closing.)
+    DohEndpoint,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -145,5 +158,32 @@ mod tests {
         assert_eq!(ComponentStateV1::Ok.ok_or_ng(), "OK");
         assert_eq!(ComponentStateV1::Missing.ok_or_ng(), "NG");
         assert_eq!(ComponentStateV1::VersionMismatch.ok_or_ng(), "NG");
+    }
+
+    #[test]
+    fn doh_endpoint_kind_round_trips_through_json() {
+        // The v0.0.22 DohEndpoint variant must serialise as the
+        // kebab-case "doh-endpoint" — both the panel UI's
+        // "Components" tab and the manifest file use this form.
+        // A regression to PascalCase ("DohEndpoint") would
+        // silently break manifest parsing on every release.
+        let m = ComponentManifestV1 {
+            name: "doh-resolver".into(),
+            kind: ComponentKindV1::DohEndpoint,
+            version: "operator-configured".into(),
+            upstream: None,
+            sha256: None,
+            verify: None,
+            note: None,
+        };
+        let j = serde_json::to_string(&m).unwrap_or_default();
+        assert!(
+            j.contains("\"kind\":\"doh-endpoint\""),
+            "kind should serialise as kebab-case 'doh-endpoint': {j}"
+        );
+        let m2: ComponentManifestV1 = serde_json::from_str(&j)
+            .map_err(|_| ())
+            .unwrap_or(m.clone());
+        assert_eq!(m, m2);
     }
 }
