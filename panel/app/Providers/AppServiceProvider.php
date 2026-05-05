@@ -32,10 +32,26 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // The Filament login page reaches us over HTTPS via sing-box's
-        // fallback inbound; force https in URL generation so generated
-        // form actions don't downgrade.
-        if ($this->app->environment('production')) {
+        // Force HTTPS in URL generation only when the request itself
+        // is secure. Pre-v0.0.28 this was unconditional in production,
+        // which broke the documented SSH-tunnel access path
+        // (`ssh -L 9000:127.0.0.1:9000 host` → http://127.0.0.1:9000/
+        // admin) — Laravel emitted https:// redirects that the
+        // browser then failed to TLS-handshake against the plain-HTTP
+        // tunnel listener (ERR_SSL_PROTOCOL_ERROR), and stamped
+        // session cookies with `Secure` (so the browser refused to
+        // send them back over plain HTTP, blocking login).
+        //
+        // request()->isSecure() is the right gate: it returns true
+        // when the request was either direct HTTPS (a hypothetical
+        // future TLS terminator on this listener) or arrived with
+        // `X-Forwarded-Proto: https` from a trusted proxy
+        // (TrustProxies in bootstrap/app.php trusts 127.0.0.1 and
+        // 172.16/12 — covers the SSH-tunnel peer and the docker
+        // bridge subnet ahead of the deferred R1-1 / R1-2 SNI router).
+        // The SSH-tunnel path is plain HTTP, so isSecure() is false
+        // and we leave URL generation alone — http:// in, http:// out.
+        if (request()->isSecure()) {
             URL::forceScheme('https');
         }
 
