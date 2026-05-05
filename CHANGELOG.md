@@ -22,6 +22,91 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.25] — 2026-05-05 — deployment hotfix #3
+
+**Real-world bug #4 from the v0.0.22 deployment arc.** With the
+v0.0.24 cap_drop fix in, MariaDB came up healthy and the panel
+booted past migrations on the user's RackNerd Debian 13 VPS. Two
+new errors surfaced on the very next install step:
+
+```
+PHP: syntax error, unexpected BOOL_TRUE in /usr/local/etc/php/conf.d/opcache.ini on line 4
+error: error with configuration: invalid port number
+✗ FAILED Render initial Caddyfile + sing-box config from DB
+! Caddyfile render failed — Caddy will start with no domain configured
+```
+
+Both surface during `install.sh` step 8 ("Render initial
+Caddyfile + sing-box config"). The first one prints during PHP
+startup; the second crashes the Rust core's `caddyfile render`
+and `singbox render` subcommands. Together they cascade into
+"Caddy never requests a cert" → "ACME timeout" → "fresh deploy
+hangs at step 9 with no obvious culprit."
+
+### Fixed
+
+- **`docker/panel/opcache.ini`: switched all comments from `#` to
+  `;`.** PHP's INI parser officially uses `;` for line comments;
+  it tolerates `#` only when the line contains no `=`. Once a
+  `#`-prefixed line had both `=` and a value-shaped tail
+  (`# JIT buffer = 192 MB just to cache compiled PHP, which on a
+  small`), PHP read it as `key = value`, tokenised the value, and
+  hit the literal `on` in "which **on** a small" — which the
+  lexer classified as `BOOL_TRUE`, aborting startup with
+  `unexpected BOOL_TRUE in opcache.ini on line 4`. Tested fine on
+  Lima Debian-12/13 because Lima's images use a different PHP
+  build with a slightly more permissive `#`-comment handler;
+  Debian 13 RackNerd ships php:8.3-fpm-alpine that's strict.
+  All comments in opcache.ini are now `;`-prefixed for portability;
+  the sibling `php-hardening.ini` already used `;` (audited as
+  part of the fix). Header in opcache.ini documents the trap so
+  future drop-ins copy the right pattern.
+- **`core/ct-server-core/src/db.rs`: typed connection options
+  replace URL-formatting on the discrete-env-vars path.** The
+  pre-fix `assemble_from_parts()` formatted DB_HOST / DB_PORT /
+  DB_USERNAME / DB_PASSWORD into `mysql://user:pass@host:port/db`
+  and re-parsed it through `MySqlConnectOptions::from_str`. That
+  path silently broke on any password containing `/`, `@`, `:`,
+  `#`, or `?` — i.e. characters the URL grammar treats as
+  delimiters. install.sh's recommended `openssl rand -base64 32`
+  outputs `/` in roughly a third of values; once a `/` landed in
+  DB_PASSWORD, the URL parser read it as the path separator,
+  treated everything after as the URL path, and resolved the
+  authority as `cooltunnel:abcXYZ` — making the "port" the
+  password's prefix. `url::ParseError::InvalidPort` then
+  surfaced through sqlx as the famously unhelpful
+  `error: error with configuration: invalid port number`.
+  v0.0.25 builds `MySqlConnectOptions` directly from the env
+  vars via the typed builder; secrets never touch the URL grammar.
+  Added 4 regression tests in `db::tests` covering the slash-
+  password case, malformed `DB_PORT` fallback, default-on-no-env
+  agreement with the compose env block, and the
+  explicit-DATABASE_URL path still working unchanged.
+
+### Note
+
+Both bugs are install-time only. Anyone already running v0.0.22
+or v0.0.24 with the same .env (where the password was generated
+*after* the panel container boot, or via `openssl rand -hex 24`
+which produces no URL-meta chars) is unaffected. The hotfix
+re-runs the existing first-deploy flow without manual intervention
+once the operator pulls v0.0.25 and re-runs `install.sh`.
+
+The Lima smoke tests didn't catch either of these because:
+1. The opcache.ini case needs a strict `#`-comment handler, which
+   the Alpine-PHP build in production uses but Lima's stock image
+   doesn't.
+2. The URL-port case needs a password generated with
+   `openssl rand -base64 32` (containing `/`); Lima's smoke tests
+   were seeded with deterministic short test passwords that
+   happened to never contain URL-meta characters.
+
+Future smoke tests need to seed passwords with the exact
+generator install.sh recommends (`openssl rand -base64 32`) and
+loop a few times to exercise the `/`-tail probability.
+
+---
+
 ## [0.0.24] — 2026-05-05 — deployment hotfix #2
 
 **Real-world bug #3 from v0.0.22 deployment.** A user pulling
