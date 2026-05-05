@@ -129,10 +129,19 @@ services:
       panel:
         condition: service_started
     networks:
-      - ct-net
-    # No 9090 here. The clash API listens on 0.0.0.0:9090 inside the
-    # container so the panel (also on `ct-net`) can reach it via
-    # `ct-singbox:9090`, but the host MUST NOT expose it. Audit-
+      ct-net:
+      # H3 (2026-05-05 audit) — clash-API binds to `ct-singbox-mgmt`
+      # (172.30.0.10) on this internal-only network. Caddy is NOT a
+      # member of ct-clash, so a compromise of caddy can no longer
+      # reach the management plane. The bind address is set in
+      # core/ct-server-core/src/singbox/mod.rs::clash_listen() from
+      # CT_CLASH_LISTEN, which the panel passes to the renderer.
+      ct-clash:
+        ipv4_address: 172.30.0.10
+        aliases:
+          - ct-singbox-mgmt
+    # No 9090 in `ports:` — the clash API is reachable only on the
+    # internal `ct-clash` network, never from the host. Audit-
     # enforced in .github/workflows/audit.yml — the guard greps this
     # service's `ports:` block for ":9090" and fails CI if found.
 
@@ -174,12 +183,23 @@ services:
       # Where the CaddyfileGenerator (panel) writes the rendered Caddyfile.
       CADDYFILE_PATH:         /etc/caddy/Caddyfile
       CADDYFILE_TEMPLATE:     /srv/caddy/Caddyfile.tpl
-      # sing-box clash-API base URL. Bound to the docker-internal
-      # `ct-singbox:9090` listener; never published on the host
-      # (audit guard enforces no 9090 in sing-box `ports:`). The
-      # bearer token is derived from ServerConfig at each reload —
-      # see core/ct-server-core/src/singbox/mod.rs::clash_secret.
-      SINGBOX_CLASH_URL:      http://ct-singbox:9090
+      # sing-box clash-API base URL. Reaches sing-box via the
+      # internal `ct-clash` network's static IP (172.30.0.10), which
+      # is the only interface sing-box binds clash-API on. The
+      # `ct-singbox-mgmt` alias resolves to that IP via docker DNS
+      # so the URL stays readable. (H3 in 2026-05-05 audit — caddy
+      # is not on ct-clash, so it can no longer reach the management
+      # plane even though the audit guard already blocked host-side
+      # exposure.) Bearer token derived from ServerConfig per reload
+      # — see core/ct-server-core/src/singbox/mod.rs::clash_secret.
+      SINGBOX_CLASH_URL:      http://ct-singbox-mgmt:9090
+      # Bind address ct-server-core writes into the rendered
+      # sing-box config.json. Must match sing-box's static IP on
+      # ct-clash (172.30.0.10). An operator with a different
+      # network plan tunes both this and the `ipv4_address` on the
+      # sing-box service together. Read by
+      # core/ct-server-core/src/singbox/mod.rs::clash_listen().
+      CT_CLASH_LISTEN:        172.30.0.10:9090
       # Where the daemon's own JSON-over-unix-socket lives.
       CT_CORE_SOCKET:         /run/cool-tunnel/core.sock
       CT_MANIFESTS_DIR:       /srv/manifests
@@ -215,6 +235,11 @@ services:
     networks:
       - ct-net
       - ct-data
+      # ct-clash: management-plane network shared only with sing-box.
+      # The panel's ct-server-core daemon reaches sing-box's clash-API
+      # over this network at 172.30.0.10:9090 (alias ct-singbox-mgmt).
+      # Caddy is deliberately not a member.
+      - ct-clash
 
   db:
     image: mariadb:11
@@ -273,3 +298,20 @@ networks:
   ct-data:
     driver: bridge
     internal: true
+
+  # ct-clash: management-plane network. Members: panel + sing-box.
+  # Carries clash-API HTTP between the panel's ct-server-core daemon
+  # and sing-box. `internal: true` so a compromised either side can
+  # not pivot to the internet via this leg — caddy and any future
+  # service stay off this network entirely. Static subnet so
+  # core/ct-server-core/src/singbox/mod.rs::clash_listen() can pin
+  # the bind address (172.30.0.10:9090) at config-render time.
+  # H3 mitigation from 2026-05-05 audit. (Tuning the subnet
+  # requires updating CT_CLASH_LISTEN in the panel env block above
+  # and `ipv4_address` on sing-box's network membership.)
+  ct-clash:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
