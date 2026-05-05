@@ -33,6 +33,53 @@ return Application::configure(basePath: dirname(__DIR__))
         );
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        // Default handler is fine. We don't want stack traces leaking
-        // to the cover-site fallback path.
+        // Anti-censorship cover-site preservation (v0.0.14).
+        //
+        // Default Laravel rendering for an uncaught Throwable is a
+        // 5xx HTML error page (or a stack-trace dump with
+        // APP_DEBUG=true). Either is a wire-level distinguisher
+        // between "this server runs Cool Tunnel" and "this is a
+        // static website" — a censor's mass scanner that sees a
+        // Symfony / Laravel error page knows exactly what it's
+        // looking at, blacklists the IP, and the operator's users
+        // in the censored region lose access.
+        //
+        // For PUBLIC routes (everything except `/admin/*`,
+        // `/livewire/*`, `/up`) any uncaught exception now
+        // re-renders FakeSiteController so the wire response is
+        // byte-identical to a vanilla unknown-path probe. The
+        // operator still sees the real exception in `Log::critical`
+        // (stderr → `docker compose logs panel`) so debugging
+        // isn't lost.
+        //
+        // /admin/* routes keep the default handler — they're
+        // loopback-bound (127.0.0.1:9000:9000 in compose) and an
+        // operator SSH-tunnelled into the panel needs the actual
+        // 5xx + stack trace to debug.
+        $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            $path = $request->path();
+            $isAdminLike = str_starts_with($path, 'admin')
+                        || str_starts_with($path, 'livewire')
+                        || $path === 'up';
+            if ($isAdminLike) {
+                return null; // delegate to the default renderer
+            }
+
+            \Illuminate\Support\Facades\Log::critical('public.route.exception', [
+                'path' => $path,
+                'err'  => $e->getMessage(),
+                'type' => get_class($e),
+            ]);
+
+            try {
+                return (new \App\Http\Controllers\FakeSiteController())->show($request);
+            } catch (\Throwable) {
+                // Cover site itself couldn't render (DB down, no
+                // FakeWebsite seeded, etc.). Emit a minimal 200
+                // empty body — still better than a 5xx stack
+                // trace; the cover invariant degrades gracefully.
+                return response('', 200)
+                    ->header('Content-Type', 'text/html; charset=utf-8');
+            }
+        });
     })->create();
