@@ -76,6 +76,28 @@ fi
 require_env DB_PASSWORD            "openssl rand -base64 32 # paste into .env DB_PASSWORD="
 require_env REDIS_PASSWORD  "openssl rand -base64 32 # paste into .env REDIS_PASSWORD="
 
+# Cross-validate CT_CLASH_SUBNET vs CT_CLASH_SINGBOX_IP. Both have
+# defaults that match each other (172.30.0.0/24 + 172.30.0.10), so
+# operators who don't touch them are fine. Operators who override
+# the subnet to escape a docker-network collision (per
+# .env.example's "Network — clash management plane" block) MUST
+# update both lines together; otherwise `docker compose up` fails
+# with the unhelpful "Invalid Address: it does not belong to any
+# of this network's subnets". Catch it here with a clear hint
+# instead. (v0.0.17 — DX from loop-3 audit.)
+if [[ -n "${CT_CLASH_SUBNET:-}" && -n "${CT_CLASH_SINGBOX_IP:-}" ]]; then
+    # 10.99.99.0/24  →  10.99.99   (strip ".0/24" via shortest-suffix
+    #                                match of the pattern ".*/*")
+    # 10.99.99.10    →  10.99.99   (strip ".10" via shortest-suffix
+    #                                match of ".*")
+    subnet_first_three="${CT_CLASH_SUBNET%.*/*}"
+    ip_first_three="${CT_CLASH_SINGBOX_IP%.*}"
+    if [[ "$subnet_first_three" != "$ip_first_three" ]]; then
+        die "CT_CLASH_SINGBOX_IP=${CT_CLASH_SINGBOX_IP} is not inside CT_CLASH_SUBNET=${CT_CLASH_SUBNET}" \
+            "edit .env so both lines share the first three octets, e.g. CT_CLASH_SUBNET=10.99.99.0/24 + CT_CLASH_SINGBOX_IP=10.99.99.10"
+    fi
+fi
+
 # Per-install random seed for the clash API bearer token. Generated
 # from /dev/urandom on first boot if the .env line is empty. Sing-
 # box and ct-server-core both derive the bearer as sha256("ct-clash-
