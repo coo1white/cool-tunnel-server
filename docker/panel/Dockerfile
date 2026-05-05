@@ -54,18 +54,69 @@ RUN apk add --no-cache \
 # with-padding extension. Vanilla reqwest is dropped at sing-box's
 # `naive` inbound with "missing naive padding" (R4-3 in the
 # 2026-05-04 audit); the upstream client speaks the padding
-# correctly. Pinned to a specific release tag + tarball SHA-256;
-# bumps are explicit, version-controlled events.
+# correctly. Pinned to a specific release tag + per-arch tarball
+# SHA-256; bumps are explicit, version-controlled events.
+#
+# v0.0.17: arm64 support. Pre-fix the URL was hardcoded to
+# `naiveproxy-${VERSION}-linux-x64.tar.xz`, which fails to
+# download on arm64 hosts (Apple Silicon Lima, AWS Graviton,
+# RPi-class Debian) — a regression of the v0.0.13 core/Dockerfile
+# arm64 fix on a separate Dockerfile. BuildKit auto-populates
+# TARGETARCH; we case-switch to the matching upstream asset name
+# and the matching SHA-256.
+ARG TARGETARCH
 ARG NAIVE_VERSION=v148.0.7778.96-2
-ARG NAIVE_SHA256=acd2359291d4248a12e8c1ce51a685562449a9cefe24b97f75929a48e348830f
+# AMD64 SHA-256 is hand-verified and pinned. Bumps are explicit,
+# version-controlled events.
+ARG NAIVE_SHA256_AMD64=acd2359291d4248a12e8c1ce51a685562449a9cefe24b97f75929a48e348830f
+# ARM64 SHA-256: upstream klzgrad/naiveproxy does NOT publish a
+# SHA256SUMS file with its releases, and v0.0.17 ships without a
+# hand-pinned arm64 hash. Default empty = build proceeds but skips
+# verification with a loud warning (see below). Operators on arm64
+# who care about supply-chain integrity should:
+#
+#   1. Build the panel image once on arm64.
+#   2. `docker run --rm cool-tunnel-server-panel sha256sum /usr/local/bin/naive`
+#      to capture the hash they actually got.
+#   3. Cross-check by computing the hash on a SECOND arm64 host
+#      (a different VPS provider, a personal laptop, GitHub
+#      Actions arm64 runner) — same hash on independent machines
+#      means it's not a single-host MitM.
+#   4. Either pass `--build-arg NAIVE_SHA256_ARM64=<hash>` on
+#      every build, or update this file's default and PR it
+#      upstream so the next release pins it.
+#
+# v0.0.18 will land a project-pinned arm64 hash once we have an
+# arm64 build host wired into CI. This is an interim shape — arm64
+# builds work AND the operator sees a clear "your build is less
+# verified than amd64" signal, instead of either (a) silently
+# downloading the wrong-arch binary like pre-v0.0.17 did, or (b)
+# failing the build with no path forward.
+ARG NAIVE_SHA256_ARM64=
 RUN set -eux; \
     cd /tmp; \
+    case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')}" in \
+        amd64) NAIVE_ASSET_ARCH=linux-x64;   NAIVE_SHA256=${NAIVE_SHA256_AMD64} ;; \
+        arm64) NAIVE_ASSET_ARCH=linux-arm64; NAIVE_SHA256=${NAIVE_SHA256_ARM64} ;; \
+        *)     echo "unsupported TARGETARCH: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
+    esac; \
     curl -fsSL -o naiveproxy.tar.xz \
-        "https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-linux-x64.tar.xz"; \
-    echo "${NAIVE_SHA256}  naiveproxy.tar.xz" | sha256sum -c -; \
+        "https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-${NAIVE_ASSET_ARCH}.tar.xz"; \
+    if [ -n "${NAIVE_SHA256}" ]; then \
+        echo "${NAIVE_SHA256}  naiveproxy.tar.xz" | sha256sum -c -; \
+    else \
+        echo "" >&2; \
+        echo "  ⚠️  WARN: NAIVE_SHA256 unset for ${NAIVE_ASSET_ARCH}." >&2; \
+        echo "      Build proceeds without supply-chain verification of the" >&2; \
+        echo "      naiveproxy-client tarball. Pin via --build-arg" >&2; \
+        echo "      NAIVE_SHA256_$(echo ${TARGETARCH} | tr a-z A-Z)=<sha>" >&2; \
+        echo "      after computing the hash on a trusted arm64 host." >&2; \
+        echo "      See the head comment in docker/panel/Dockerfile." >&2; \
+        echo "" >&2; \
+    fi; \
     tar -xJf naiveproxy.tar.xz; \
-    install -m 0755 "naiveproxy-${NAIVE_VERSION}-linux-x64/naive" /usr/local/bin/naive; \
-    rm -rf naiveproxy.tar.xz "naiveproxy-${NAIVE_VERSION}-linux-x64"
+    install -m 0755 "naiveproxy-${NAIVE_VERSION}-${NAIVE_ASSET_ARCH}/naive" /usr/local/bin/naive; \
+    rm -rf naiveproxy.tar.xz "naiveproxy-${NAIVE_VERSION}-${NAIVE_ASSET_ARCH}"
 
 # Drop in the ct-server-core binary the panel shells out to.
 COPY --from=ct-core-stage /usr/local/bin/ct-server-core /usr/local/bin/ct-server-core
