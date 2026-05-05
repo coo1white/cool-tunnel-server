@@ -199,13 +199,16 @@ async fn render_to_string(
     let (doh_server, doh_path) = split_doh_url(&cfg.doh_resolver);
 
     let secret = clash_secret()?;
+    let listen = clash_listen();
     // Defense-in-depth: every binding below lands inside a JSON `"..."`
     // string in the rendered sing-box config (or feeds one further
     // down the line), so we apply `template::json_escape` at the
     // binding site. UsersJson is already a fully-rendered JSON
     // fragment (object/array, not a string-context substitution),
     // and ClashSecret is hex by construction (clash_secret()), so
-    // both are passed through verbatim.
+    // both are passed through verbatim. ClashListen is host:port from
+    // CT_CLASH_LISTEN — operator-controlled, but escaped anyway for
+    // consistency with the rest of the binding table.
     let bindings = crate::template::Bindings::new()
         .set("Domain", crate::template::json_escape(&cfg.domain))
         .set("AcmeEmail", crate::template::json_escape(&cfg.acme_email))
@@ -215,6 +218,7 @@ async fn render_to_string(
         .set("DohServer", crate::template::json_escape(&doh_server))
         .set("DohPath", crate::template::json_escape(&doh_path))
         .set("ClashSecret", &secret)
+        .set("ClashListen", crate::template::json_escape(&listen))
         .set("CertPath", crate::template::json_escape(&cert_path))
         .set("KeyPath", crate::template::json_escape(&key_path))
         .into_map();
@@ -310,6 +314,35 @@ async fn read_cert_mtime(cfg: &ServerConfig) -> Option<u64> {
 /// previously fell back to the publicly-readable acme_email when
 /// the per-install seed wasn't set).
 ///
+/// Listen address (`host:port`) for sing-box's clash-API HTTP
+/// listener. Substituted into config.json.tpl as `{{ .ClashListen }}`.
+///
+/// H3 (2026-05-05 audit) — pre-fix this was hardcoded to
+/// `0.0.0.0:9090` in the template, binding the management API on
+/// every interface inside the sing-box container. The compose
+/// `ports:` block deliberately does not publish 9090, so external
+/// reach was blocked, but any neighbour on the `ct-net` docker
+/// network (caddy, panel) could reach it. The audit-enforced CI
+/// guard catches accidental host-port mappings, but does NOT cap
+/// the inter-container blast radius.
+///
+/// Default chosen for fail-closed semantics: `127.0.0.1:9090`. An
+/// operator running ct-server-core outside docker-compose with no
+/// env override gets a loopback-only listener. The shipped
+/// docker-compose.yml overrides via `CT_CLASH_LISTEN=172.30.0.10:9090`
+/// (a static IP on the `ct-clash` internal network — only the panel
+/// container is on that network, so caddy can no longer reach
+/// clash-API even though sing-box keeps its public 443 on `ct-net`).
+///
+/// The env var is read at every render call, so a deployment can
+/// tighten or relax this without rebuilding the image.
+pub(crate) fn clash_listen() -> String {
+    std::env::var("CT_CLASH_LISTEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "127.0.0.1:9090".to_string())
+}
+
 /// `pub(crate)` so callers in the same crate (template renderer,
 /// admin client, quota, redis bridge) can derive the same value.
 /// External callers should use [`current_clash_secret`].

@@ -50,7 +50,7 @@
 
     "experimental": {
         "clash_api": {
-            "external_controller": "0.0.0.0:9090",
+            "external_controller": "{{ .ClashListen }}",
             "secret": "{{ .ClashSecret }}"
         },
         "cache_file": {
@@ -59,3 +59,4 @@
         }
     }
 }
+
