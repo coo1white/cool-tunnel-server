@@ -65,9 +65,17 @@ jobs:
         run: cargo install --locked cargo-audit
       - name: Audit
         # `--deny warnings` so unmaintained / yanked crates also fail
-        # the run, not just CVEs. Tune in deny.toml if a particular
-        # advisory needs a documented exception.
-        run: cargo audit --deny warnings
+        # the run, not just CVEs.
+        #
+        # cargo-audit does NOT read project-local audit.toml by
+        # default (only ~/.cargo/audit.toml), so we pass --ignore
+        # flags explicitly mirroring core/audit.toml's policy.
+        # cargo-deny (cycle 32) reads core/deny.toml's
+        # [advisories].ignore on its own. Keep all three in sync.
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2023-0071    # rsa 0.9 / Marvin via sqlx-mysql
+                                          # — see core/audit.toml comment
 
   # ---------- Cycle 32: cargo-deny (licenses + bans + sources) ----
 
