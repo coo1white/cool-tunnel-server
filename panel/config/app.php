@@ -23,9 +23,18 @@ return [
     // this change to re-encrypt existing rows.
     'cipher'   => 'AES-256-GCM',
     'key'      => env('APP_KEY'),
-    'previous_keys' => [
-        ...array_filter(explode(',', (string) env('APP_PREVIOUS_KEYS', ''))),
-    ],
+    // APP_PREVIOUS_KEYS: comma-separated list of older APP_KEYs that
+    // Crypt::decryptString() will try as fallbacks (used during a
+    // key-rotation grace period). Trim each segment before
+    // array_filter — without trim, a stray space or `\n` in .env
+    // produces a malformed key, which silently fails decryption.
+    // The user-visible symptom previously: ProxyAccount rows
+    // dropping out of the rendered manifest after a key rotation.
+    // (M-panel-1 in 2026-05-05 audit.)
+    'previous_keys' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('APP_PREVIOUS_KEYS', '')),
+    ))),
     'maintenance' => [
         'driver' => 'file',
         'store'  => 'database',
