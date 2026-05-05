@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Http\Middleware\SecurityHeaders;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -69,6 +70,12 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
+                // Browser-side hardening on every /admin response —
+                // X-Frame-Options DENY, nosniff, Referrer-Policy,
+                // Permissions-Policy, no-store Cache-Control, HSTS.
+                // Filament 3 does not emit any of these by default;
+                // see App\Http\Middleware\SecurityHeaders. (v0.0.18.)
+                SecurityHeaders::class,
             ])
             ->authMiddleware([
                 Authenticate::class,
