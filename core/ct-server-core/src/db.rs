@@ -269,14 +269,15 @@ pub async fn disable_account(pool: &MySqlPool, id: i64, reason: &str) -> Result<
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn from(map: &HashMap<&'static str, &'static str>) -> MySqlConnectOptions {
-        let owned: HashMap<String, String> = map
+    fn from(pairs: &[(&str, &str)]) -> MySqlConnectOptions {
+        let owned: HashMap<String, String> = pairs
             .iter()
-            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect();
         options_from_env(|k| owned.get(k).cloned())
     }
@@ -311,7 +312,7 @@ mod tests {
         //
         // AFTER: the typed builder accepts the raw password byte-
         // for-byte; no URL escaping is involved on the env-var path.
-        let env: HashMap<&str, &str> = [
+        let opts = from(&[
             ("DB_HOST", "db"),
             ("DB_PORT", "3306"),
             ("DB_DATABASE", "cooltunnel"),
@@ -319,10 +320,7 @@ mod tests {
             // Realistic openssl-base64 sample with `/`, `+`, `=`,
             // every URL-meta char that used to break the URL parser.
             ("DB_PASSWORD", "abc/def+ghi:jkl@mno#pqr=stu?vwx"),
-        ]
-        .into_iter()
-        .collect();
-        let opts = from(&env);
+        ]);
         assert_eq!(opts.get_host(), "db");
         assert_eq!(opts.get_port(), 3306);
         assert_eq!(opts.get_database(), Some("cooltunnel"));
@@ -336,11 +334,7 @@ mod tests {
         // to the documented default rather than refusing to render
         // at all (rendering with the wrong port is better than
         // halting Caddy + sing-box bring-up).
-        let env: HashMap<&str, &str> =
-            [("DB_PORT", "not-a-number"), ("DB_HOST", "db")]
-                .into_iter()
-                .collect();
-        let opts = from(&env);
+        let opts = from(&[("DB_PORT", "not-a-number"), ("DB_HOST", "db")]);
         assert_eq!(opts.get_port(), 3306);
         assert_eq!(opts.get_host(), "db");
     }
@@ -351,13 +345,8 @@ mod tests {
         // out-of-stack tooling) we still feed it through
         // MySqlConnectOptions::from_str. Regression guard: that
         // path must keep parsing a well-formed URL with no surprises.
-        // (.expect / .unwrap are denied workspace-wide, hence the
-        // map_err+unwrap_or fallback pattern used elsewhere in this
-        // crate's tests.)
         let url = "mysql://cooltunnel:hex0123@db:3306/cooltunnel";
-        let opts = MySqlConnectOptions::from_str(url)
-            .map_err(|_| ())
-            .unwrap_or_else(|_| MySqlConnectOptions::new());
+        let opts = MySqlConnectOptions::from_str(url).unwrap();
         assert_eq!(opts.get_host(), "db");
         assert_eq!(opts.get_port(), 3306);
         assert_eq!(opts.get_database(), Some("cooltunnel"));
