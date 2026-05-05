@@ -22,6 +22,63 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.20] — 2026-05-05
+
+**Loop-6: closes the deferred items + a CI gap discovered along
+the way.** Wires the v0.0.19 PHPUnit suite into CI, adds the test
+that guards the v0.0.15 critical `DB::afterCommit` fix, sweeps
+five releases of doc drift in README + SECURITY, and fixes a
+silent CI false-green where the sing-box template-validate job
+was rendering literal `{{ .DohServer }}` / `{{ .DohPath }}` /
+`{{ .ClashListen }}` placeholders into "validated" configs.
+
+### Added
+
+- **`panel/tests/Feature/ProxyAccountAfterCommitTest`** — four
+  cases covering the v0.0.15 C1 fix (rolled-back save → no
+  dispatch, committed save → 1 dispatch, no-txn save → dispatch
+  immediately, rolled-back delete → no dispatch + row preserved).
+  Pre-fix the C1 bug was real and shipped without a test; this
+  is the regression guard.
+- **CI step `phpunit (panel)`** in `.github/workflows/ci.yml`'s
+  `php` job. Runs `composer install --no-scripts` (matching
+  v0.0.16's supply-chain hardening pattern) followed by
+  `vendor/bin/phpunit --colors=never`. The v0.0.19 scaffold + 9
+  tests + the v0.0.20 4-case AfterCommit test now exercise on
+  every PR.
+
+### Fixed
+
+- **CI sing-box template substitution gap.** The `template` job
+  in ci.yml was sed-substituting six bindings into the
+  Caddyfile.tpl + sing-box config.json.tpl before passing them
+  to upstream `caddy validate` and `sing-box check`. Since
+  v0.0.13's H3 fix added `{{ .ClashListen }}` (and the prior
+  sing-box 1.12+ DohServer/DohPath split landed without a
+  matching CI substitution update), three bindings were leaking
+  through as literal placeholder strings in the rendered file.
+  Both validators happily accepted any string as the field value
+  — no shape constraint fired — so CI was silently green on
+  configs that wouldn't actually load. Adds the missing
+  substitutions.
+
+### Changed (docs only)
+
+- **`README.md`** updated for v0.0.15-v0.0.19 properties:
+  upgrade-checkout example v0.0.14 → v0.0.20, mention of
+  `scripts/restore.sh` (v0.0.15) in Common operations,
+  readiness-gate count 10 → 11 checks (v0.0.18 added the
+  cover-site invariant check).
+- **`SECURITY.md` Defensive defaults** updated: DB::afterCommit
+  (v0.0.15), atomic_write parent fsync (v0.0.15), Caddyfile-
+  injection guard (v0.0.16), composer --no-scripts (v0.0.16),
+  cap_drop ALL + no-new-privileges (v0.0.17), SecurityHeaders
+  middleware (v0.0.18), schedule onFailure logging (v0.0.18).
+  New "Test coverage" section documents the v0.0.19/v0.0.20
+  PHPUnit + Rust counts.
+
+---
+
 ## [0.0.19] — 2026-05-05
 
 **Loop-5: panel test scaffold + automated coverage of the cover-site

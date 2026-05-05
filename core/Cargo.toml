@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version       = "0.0.19"
+version       = "0.0.20"
 edition       = "2021"
 # 1.85 introduced edition2024 (needed by clap_lex 1.1); some sqlx
 # transitives (icu_*) further require 1.86. The Docker build image
