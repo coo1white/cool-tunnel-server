@@ -22,6 +22,43 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.17] — 2026-05-05
+
+**Loop-3 self-check pass: 1 HIGH (arm64 panel build) + 3 MEDIUM
+(backup secret on argv, cap_drop / no-new-privileges, json-file
+rotation) + 1 LOW (DX).** The lens this round: storage / secrets /
+runtime resource limits / observability gaps.
+
+### Fixed
+
+- **HIGH — `docker/panel/Dockerfile`: TARGETARCH-aware naive
+  client.** Pre-fix the URL was hardcoded `linux-x64`, so on
+  arm64 hosts the build "succeeded" but installed an x86_64
+  binary that fails to exec when the probe path runs. Same
+  class as v0.0.13's core/Dockerfile fix; the panel had been
+  missed. amd64 SHA stays strict-pinned; arm64 emits a loud
+  WARN when no SHA is provided (klzgrad/naiveproxy doesn't
+  publish a SHA256SUMS file — operator can pin via
+  `--build-arg NAIVE_SHA256_ARM64=<hash>`).
+- **MEDIUM — `scripts/backup.sh`: DB root password via
+  `MYSQL_PWD` env, not `-p` on argv.** Pre-fix the password
+  surfaced in `ps -ef` for the duration of the dump.
+- **MEDIUM — `docker-compose.yml`: `cap_drop: [ALL]` +
+  `security_opt: [no-new-privileges:true]` on every service**
+  via a `x-svc-hardening` YAML anchor. caddy + sing-box add
+  back NET_BIND_SERVICE; nothing else needs any capability.
+- **MEDIUM — `docker-compose.yml`: json-file log rotation** (10
+  MB × 3 files) on every service. Bounds container-log disk
+  growth — the docker daemon default is unbounded.
+- **LOW (DX) — `scripts/install.sh`: cross-validate
+  `CT_CLASH_SUBNET` vs `CT_CLASH_SINGBOX_IP`.** Operators who
+  override the subnet to escape a docker-network collision now
+  get a clear "first three octets must match" error at pre-
+  flight rather than the unhelpful Docker-side "Invalid
+  Address" later.
+
+---
+
 ## [0.0.16] — 2026-05-05
 
 **Loop-2 self-check pass: 1 HIGH (Caddyfile injection) + 2 MEDIUM
