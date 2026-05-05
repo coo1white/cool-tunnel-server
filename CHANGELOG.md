@@ -22,6 +22,92 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.26] — 2026-05-05 — deployment hotfix #4 (migrate-race fix)
+
+**Real-world bug #5 from the v0.0.22 deployment arc.** With v0.0.25
+in place, the user re-ran a fresh `down -v` + `install.sh` on the
+RackNerd Debian 13 VPS. Both render commands now succeed — the
+URL-grammar trap is gone — but install.sh died at step 8 with:
+
+```
+0001_01_01_000001_create_cache_table ........................... 3.70ms FAIL
+SQLSTATE[42S01]: Base table or view already exists: 1050 Table 'cache' already exists
+```
+
+### Root cause: concurrent `migrate` race
+
+`docker/panel/entrypoint.sh` runs `php artisan migrate --force
+--no-interaction || true` on every container boot (line 103) so a
+fresh first-boot brings the schema up before supervisord starts
+PHP-FPM. install.sh then runs its OWN `php artisan migrate --force`
+(line 197) immediately after `vendor/autoload.php` appears,
+intending to surface a "concrete success/failure" signal that the
+entrypoint's `|| true` swallows.
+
+`vendor/autoload.php` lands ~5s into composer install. The
+entrypoint then keeps running for another ~30-60s doing migrate +
+{filament,config,route,view}:cache + caddyfile/singbox render in
+serial. install.sh's `migrate` therefore fires WHILE the
+entrypoint's `migrate` is mid-flight. Two `php artisan migrate`
+processes against the same DB:
+
+1. Process A (entrypoint): `CREATE TABLE cache` — succeeds —
+   has not yet committed `INSERT INTO migrations(cache_table)`
+2. Process B (install.sh): `SELECT name FROM migrations` returns
+   empty → decides every migration is pending → `CREATE TABLE
+   cache` → SQLSTATE 42S01 collision
+
+`db_data` was confirmed fresh (the user did `down -v`) and v0.0.25's
+typed sqlx options worked correctly — this was install.sh racing
+itself, not a code bug in the renderer.
+
+### Fixed
+
+- **`docker/panel/entrypoint.sh`: write a sentinel file at the END
+  of first-boot setup.** After migrate + cache:* + render:*, the
+  entrypoint now does
+  `: >/tmp/cool-tunnel/entrypoint-complete`
+  before `exec`'ing supervisord. `/tmp` is tmpfs in this image so
+  the sentinel auto-clears on every container restart and the
+  next first-boot run waits cleanly without manual reset.
+
+- **`scripts/install.sh`: wait for the sentinel, then verify with
+  `migrate:status`.** The pre-fix code waited only for
+  `vendor/autoload.php` (a 5-second signal that doesn't bound the
+  entrypoint's serial work) and then ran its own concurrent
+  `migrate`. The fix replaces that with:
+  - `wait_for "panel entrypoint setup complete (sentinel)" 90 5`
+    against `/tmp/cool-tunnel/entrypoint-complete` — covers the
+    full composer + migrate + render serial chain on a 1-vCPU VPS.
+  - `php artisan migrate:status --no-interaction` post-wait —
+    parses the output for any `Pending` row and `die`s with the
+    full status table if one is found. Catches the case the
+    original `migrate` was guarding against (entrypoint hit a real
+    error and `|| true` swallowed it) without spawning a second
+    concurrent migrate.
+  - The redundant `db:seed --force` runs unchanged.
+
+### Note
+
+Operators stuck mid-deploy on v0.0.25 (cache table created, install
+exited at step 8) can recover without bumping to v0.0.26: the
+entrypoint's migrate almost always completes successfully despite
+install.sh's earlier crash. Verify with
+`docker compose exec -T panel php artisan migrate:status` — if all
+rows show `Ran`, just continue from step 9 manually
+(caddyfile/singbox render → caddy restart → wait for cert → create
+admin user). v0.0.26 is the durable fix so the next operator
+doesn't hit the race.
+
+The Lima smoke tests didn't catch this either, for the same reason
+they missed the previous three deploy hotfixes: they were seeded
+on volumes carried over from earlier loops, so the entrypoint's
+migrate path was a no-op (all migrations already recorded), and
+the race window was effectively zero. Future smoke tests need to
+start from `down -v` to exercise the first-boot codepath.
+
+---
+
 ## [0.0.25] — 2026-05-05 — deployment hotfix #3
 
 **Real-world bug #4 from the v0.0.22 deployment arc.** With the
