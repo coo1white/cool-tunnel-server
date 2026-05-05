@@ -164,13 +164,16 @@ docker compose logs -f --tail=20 sing-box
 docker compose restart
 
 # Pull a new release of the server code
-git fetch --tags && git checkout v0.0.14
+git fetch --tags && git checkout v0.0.20
 docker compose build && docker compose up -d
 
 # Take a backup (db + Caddy ACME state)
 ./scripts/backup.sh
 
-# Pre-launch readiness gate (10-point checklist)
+# Restore a backup onto a fresh box (companion to backup.sh)
+./scripts/restore.sh backups/cool-tunnel-2026-05-05T10-00-00Z.tar.gz
+
+# Pre-launch readiness gate (11-point checklist)
 ./scripts/late-night-comeback.sh
 ```
 

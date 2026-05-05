@@ -137,6 +137,54 @@ The server ships with:
   endpoint) and missing `CT_CLASH_SECRET_SEED` (clash-API
   rendering) — fail-loud with a remediation hint rather than
   silently falling back to a deterministic default.
+- **`DB::afterCommit` semantics on every `ProxyAccount` save +
+  delete** (v0.0.15). A rolled-back transaction never leaves a
+  Redis ghost-revocation flag or a phantom queued reload — the
+  announce + dispatch fire only after the outermost transaction
+  commits. Verified by `tests/Feature/ProxyAccountAfterCommitTest`.
+- **Atomic config write fsyncs the parent directory after rename**
+  (`core/ct-server-core/src/singbox/mod.rs`, v0.0.15). Power loss
+  between rename and the next implicit sync no longer reverts
+  the directory entry — sing-box never loads a stale
+  config.json on next boot.
+- **Caddyfile-injection guard at the binding site** (v0.0.16).
+  `template::caddyfile_validate` rejects any
+  operator-controlled value containing `\n`/`\r`/`{`/`}`/`"`
+  before render — closes the class of attack where a hostile
+  DOMAIN breaks out of `{{ .Domain }}:8443 { … }` and injects
+  a Caddy admin endpoint.
+- **`composer install --no-scripts` on every panel boot**
+  (v0.0.16). Transitive Composer packages cannot execute
+  arbitrary code via `post-install-cmd` / `post-autoload-dump`
+  hooks during `vendor/` bootstrap.
+- **`cap_drop: [ALL]` + `security_opt: no-new-privileges` on
+  every container** (v0.0.17). caddy + sing-box add back
+  `NET_BIND_SERVICE` for privileged ports; nothing else needs
+  any capability. RCE in any container can no longer wield raw
+  capabilities even if the exploited binary ran as root.
+- **Browser-side hardening on `/admin`** via
+  `App\Http\Middleware\SecurityHeaders` (v0.0.18) — emits
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Permissions-Policy` (deny camera/microphone/geolocation/
+  payment/usb), `Cache-Control: no-store, must-revalidate`, and
+  two-year HSTS on every panel response.
+- **Scheduled-task failure logging** (v0.0.18). Every entry in
+  `routes/console.php` (`traffic:rollup`, `quota:enforce`,
+  `singbox:render`) registers `->onFailure(...)` that emits
+  `Log::critical('schedule.failed', …)`. Pre-fix, scheduler
+  failures were silently swallowed — a `quota:enforce` crash
+  would let over-quota users keep tunneling forever with no
+  operator signal.
+
+## Test coverage
+
+- **`core/ct-server-core` Rust unit tests**: 64 passing across
+  workspace as of v0.0.20.
+- **`panel/tests/`**: 13 PHPUnit cases as of v0.0.20:
+  4 in `CoverSiteInvariantTest`, 5 in `UserCanAccessPanelTest`,
+  4 in `ProxyAccountAfterCommitTest`. CI runs `vendor/bin/phpunit`
+  on every PR.
 
 ## Audit-ability
 
