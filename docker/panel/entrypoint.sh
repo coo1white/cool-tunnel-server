@@ -7,6 +7,24 @@ cd /var/www/html
 # Make sure composer can write the home dir.
 export COMPOSER_HOME=/tmp/composer
 mkdir -p "$COMPOSER_HOME" storage/framework/{cache,sessions,views} storage/logs bootstrap/cache
+
+# Hand storage/ + bootstrap/cache/ to www-data. The entrypoint runs
+# as root (so we can write into bind-mounted volumes whose host
+# ownership we don't control), but PHP-FPM workers run as www-data
+# per docker/panel/zz-pool.conf (set in this script just below). If
+# we don't transfer ownership here the FPM workers can't write
+# Blade-compiled view cache into storage/framework/views/, every
+# view-rendering route 500s with `file_put_contents(... .php):
+# Failed to open stream: Permission denied`, and the operator gets
+# a generic Symfony 500 page on /admin/login with no useful log
+# (PHP error_log is empty in the alpine FPM image; LOG_CHANNEL=
+# stderr writes to FPM stderr but the framework catches the
+# ErrorException internally before it reaches that path). Pre-fix
+# only chmod 0775 ran here, which left ownership at root:root —
+# www-data hits the "others" bucket with mode r-x, no write. First
+# real-world Debian 13 deploy with a clean panel_storage volume
+# caught this. (v0.0.28 deployment hotfix.)
+chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || true
 chmod -R 0775 storage bootstrap/cache 2>/dev/null || true
 
 # ct-server-core daemon's unix-socket lives under /run/cool-tunnel.
