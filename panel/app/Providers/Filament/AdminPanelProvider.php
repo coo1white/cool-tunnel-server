@@ -29,7 +29,10 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->login()
+            // Custom Login subclass adds a per-(email|ip) rate limit
+            // before delegating to Filament's stock authenticate().
+            // (H1 in 2026-05-05 audit.)
+            ->login(\App\Filament\Pages\Auth\Login::class)
             ->profile()
             ->darkMode()
             ->brandName('Cool Tunnel Server')
