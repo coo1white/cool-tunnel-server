@@ -22,6 +22,77 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.27] — 2026-05-05 — deployment hotfix #5 (entrypoint must seed)
+
+**Real-world bug #6 from the v0.0.22 deployment arc.** With v0.0.26's
+sentinel + `migrate:status` verify in place, the user's recovery
+flow surfaced the next failure mode: the renderer crashed against
+a freshly-migrated-but-unseeded DB.
+
+```
+$ docker compose exec -T panel ct-server-core --json caddyfile render
+error: no rows returned by a query that expected to return at least one row
+$ docker compose exec -T panel ct-server-core --json singbox render
+error: no rows returned by a query that expected to return at least one row
+```
+
+### Root cause: migrations create the schema, seeders create the row
+
+`db.rs::server_config()` does `SELECT … FROM server_configs WHERE
+id = 1` via sqlx's `fetch_one`, which returns
+`RowNotFound` (Display: "no rows returned by a query that expected
+to return at least one row") when the row is missing. The
+`server_configs` table is created by the migrations the entrypoint
+ran successfully — but its singleton id=1 row is created by the
+seeder, which **only runs from install.sh** (line 200, after the
+migrate verify step).
+
+Pre-v0.0.26, install.sh's race-prone `migrate` ran every boot AND
+the seeder ran right after, so on re-deploys the renderer
+incidentally always saw a populated row. Once v0.0.26 wired
+install.sh to wait for the entrypoint sentinel before running its
+own checks, the entrypoint became the de facto bring-up path —
+which lacked the seed step entirely. First-boot from a clean
+`db_data` volume left server_configs empty long enough for the
+entrypoint's own `caddyfile:render` / `singbox:render` artisan
+commands (and any operator running ct-server-core directly) to
+fail with `RowNotFound`.
+
+### Fixed
+
+- **`docker/panel/entrypoint.sh` runs `php artisan db:seed --force
+  --no-interaction` after migrate, before any render command.** Both
+  paths are idempotent — `ServerConfig::current()` is a
+  `firstOrCreate(['id' => 1], [...])` call,
+  `FakeWebsite::create` is gated by a `count() === 0` check —
+  so re-running the seeder on every container restart is a no-op
+  when the singleton row already exists. install.sh's redundant
+  `db:seed` (line 200, after migrate-status verify) stays as a
+  belt-and-braces guard for the case the entrypoint's seeder is
+  swallowed by the existing `|| true`.
+
+### Note
+
+Operators stuck at v0.0.26 mid-deploy can recover without a
+volume nuke:
+
+```bash
+docker compose exec -T panel php artisan db:seed --force --no-interaction
+docker compose exec -T panel ct-server-core --json caddyfile render
+docker compose exec -T panel ct-server-core --json singbox render
+docker compose restart caddy
+```
+
+Then watch the Caddy log for `"certificate obtained successfully"`
+and create the admin via `make:filament-user`.
+
+The Lima smoke tests missed this for the same reason as
+v0.0.23–v0.0.26: smoke runs reused volumes from earlier loops, so
+server_configs was always seeded from a previous run and the
+fresh-volume codepath (entrypoint must seed) was never exercised.
+
+---
+
 ## [0.0.26] — 2026-05-05 — deployment hotfix #4 (migrate-race fix)
 
 **Real-world bug #5 from the v0.0.22 deployment arc.** With v0.0.25
