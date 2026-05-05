@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # late-night-comeback.sh — pre-launch readiness gate.
 #
-# Ten checks. Pass ≥ 80% (eight) to ship. Structural checks 1–4
+# Eleven checks. Pass ≥ 82% (nine) to ship. Structural checks 1–4
 # (DNS / ports / ACME / UFW) cap the final score at 7 if any of
-# them is NG, regardless of the other six — they are non-negotiable.
+# them is NG, regardless of the others — they are non-negotiable.
 #
 # Exit 0 on pass, 1 on fail. Suitable for cron / CI.
 
@@ -184,6 +184,51 @@ check_probe() {
     fi
 }
 
+# ---- 11. Cover-site invariant (v0.0.14) -------------------------
+# A censor probe sweeping for proxy endpoints should see byte-for-
+# byte identical responses on a known-bogus subscription path and
+# a random unknown path. We verify three properties from inside
+# the panel container (the only place all the cover paths are
+# reachable in the loopback-only architecture):
+#   (a) HTTP status 200 on both
+#   (b) Same ETag on both (i.e. same body bytes)
+#   (c) No `Server:` header in the wire response from the public
+#       Caddy redirect on :80.
+# A NG here means a v0.0.13/v0.0.14 anti-fingerprint regression
+# slipped past CI; do NOT ship.
+check_cover_invariant() {
+    if ! docker compose exec -T panel sh -c 'command -v curl' >/dev/null 2>&1; then
+        record 11 ng "Cover-site check skipped — curl missing in panel container"
+        return
+    fi
+    local etag_sub etag_rand status_sub status_rand
+    etag_sub=$(docker compose exec -T panel sh -c \
+        'curl -sI -m 5 http://127.0.0.1:9000/api/v1/subscription/lnc-bogus | grep -i "^etag:" | tr -d "\r\n" | sed -E "s/^.*etag:\s*//i"' \
+        2>/dev/null)
+    etag_rand=$(docker compose exec -T panel sh -c \
+        'curl -sI -m 5 http://127.0.0.1:9000/lnc-cover-probe | grep -i "^etag:" | tr -d "\r\n" | sed -E "s/^.*etag:\s*//i"' \
+        2>/dev/null)
+    status_sub=$(docker compose exec -T panel sh -c \
+        'curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:9000/api/v1/subscription/lnc-bogus' \
+        2>/dev/null)
+    status_rand=$(docker compose exec -T panel sh -c \
+        'curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:9000/lnc-cover-probe' \
+        2>/dev/null)
+
+    local server_hdr=""
+    if [[ -n "$DOMAIN" ]]; then
+        server_hdr=$(curl -sI -m 5 "http://${DOMAIN}/" 2>/dev/null | grep -i "^server:" || true)
+    fi
+
+    if [[ "$status_sub" == "200" && "$status_rand" == "200" \
+       && -n "$etag_sub" && "$etag_sub" == "$etag_rand" \
+       && -z "$server_hdr" ]]; then
+        record 11 ok "Cover-site invariant holds (200/200, ETags match, no Server header)"
+    else
+        record 11 ng "Cover-site distinguisher detected: sub=${status_sub} rand=${status_rand} etag_match=$([[ "$etag_sub" == "$etag_rand" ]] && echo y || echo n) server='${server_hdr:-<none>}'"
+    fi
+}
+
 # ---- run ----------------------------------------------------------
 echo "Late-Night Comeback — readiness check"
 echo "(Domain: ${DOMAIN:-<unset>})"
@@ -203,6 +248,7 @@ echo
 echo "Functional:"
 check_proxy_connect
 check_probe
+check_cover_invariant
 echo
 
 # Score logic.
@@ -210,13 +256,15 @@ score=$total_pass
 if (( structural_fails > 0 )); then
     if (( score > 7 )); then score=7; fi
 fi
-pct=$((score * 10))
-echo "Score: ${score}/10 (${pct}%)"
+# Now out of 11 checks, not 10. PASS threshold scales accordingly:
+# 9/11 ≈ 82 %, matching the prior 8/10 ≈ 80 % bar.
+pct=$((score * 100 / 11))
+echo "Score: ${score}/11 (${pct}%)"
 if (( structural_fails > 0 )); then
     echo "Structural fail(s): $structural_fails — score capped at 7."
 fi
 
-if (( score >= 8 )); then
+if (( score >= 9 )); then
     echo "Result: PASS — ready to ship."
     exit 0
 else
