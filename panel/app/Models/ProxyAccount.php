@@ -4,9 +4,8 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Jobs\ReloadSingBoxJob;
 use App\Services\RedisRevocationBus;
-use App\Services\SingBoxConfigGenerator;
-use App\Services\SingBoxReloader;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -21,10 +20,18 @@ use Illuminate\Support\Facades\Crypt;
 //   1. Redis pub/sub → ct-server-core daemon picks it up within ~1ms,
 //      runs through the Coalescer (≤2 reloads per 100ms window
 //      regardless of burst size), and reloads. This is the ≤100ms
-//      hot path operators feel.
+//      hot path operators feel — fired SYNCHRONOUSLY from booted()
+//      because the announce is already fire-and-forget at the
+//      Redis-pub level.
 //
-//   2. Synchronous PHP-side render+reload as a backstop. Both layers
-//      dedupe by SHA-256, so a duplicate reload is a no-op.
+//   2. ASYNCHRONOUS PHP-side render+reload as a backstop, dispatched
+//      to the database-backed queue (see App\Jobs\ReloadSingBoxJob).
+//      Pre-2026-05-05 this fired synchronously inside saved()/
+//      deleted(); a hung ct-server-core stalled the whole Filament
+//      request, and a bulk-delete fanned out N synchronous reloads.
+//      Both layers dedupe by SHA-256, so racing reloads (e.g. queue
+//      worker firing while another save is mid-flight) reduce to a
+//      no-op-after-first.
 //
 // password_cleartext_encrypted holds the cleartext sealed with
 // Laravel's Crypt — sing-box's `naive` inbound checks the password
@@ -117,6 +124,17 @@ class ProxyAccount extends Model
 
     protected static function booted(): void
     {
+        // Hot path: announce on Redis pub/sub synchronously. The
+        // daemon picks this up in ~1ms; the announce itself is
+        // fire-and-forget against the Redis socket, so it does not
+        // stall the Filament request even when N saves fire from a
+        // bulk-action.
+        //
+        // Cold path: dispatch ReloadSingBoxJob to the database queue
+        // for the panel-side config render + clash-API reload
+        // backstop. Pre-2026-05-05 the cold path ran synchronously
+        // and a hung ct-server-core blocked the whole save for up
+        // to 60s.
         static::saved(function (self $account): void {
             $bus    = app(RedisRevocationBus::class);
             $status = $account->isActive() ? 'active'
@@ -124,11 +142,7 @@ class ProxyAccount extends Model
             $bus->setAccountStatus($account->username, $status);
             $bus->announceAccountChanged($account->username, "saved:{$status}");
 
-            $generator = app(SingBoxConfigGenerator::class);
-            $hash      = $generator->renderToFile();
-            if ($hash !== null) {
-                app(SingBoxReloader::class)->reload();
-            }
+            ReloadSingBoxJob::dispatch();
         });
 
         static::deleted(function (self $account): void {
@@ -136,11 +150,7 @@ class ProxyAccount extends Model
             $bus->clearAccountStatus($account->username);
             $bus->announceAccountChanged($account->username, 'deleted');
 
-            $generator = app(SingBoxConfigGenerator::class);
-            $hash      = $generator->renderToFile();
-            if ($hash !== null) {
-                app(SingBoxReloader::class)->reload();
-            }
+            ReloadSingBoxJob::dispatch();
         });
     }
 }
