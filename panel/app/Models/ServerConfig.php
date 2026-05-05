@@ -8,6 +8,7 @@ use App\Services\CaddyfileGenerator;
 use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
 use App\Services\SingBoxReloader;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 // Singleton — exactly one row, id=1. The seeder creates it on first
@@ -15,6 +16,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class ServerConfig extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'domain', 'acme_email', 'acme_directory',
         'anti_tracking_hide_ip', 'anti_tracking_hide_via',

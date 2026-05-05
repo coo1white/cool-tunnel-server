@@ -78,6 +78,14 @@ sqlx-check: ## verify core/.sqlx/ matches the live schema (CI lint)
 		     echo "    .sqlx/ is stale — run: make sqlx-prepare && git add core/.sqlx"; \
 		     exit 1; }
 
+.PHONY: php-test
+php-test: ## phpunit on the panel test suite (requires composer install in panel/)
+	@if [ ! -f panel/vendor/autoload.php ]; then \
+	    echo "panel/vendor/ missing — run \`cd panel && composer install\` first" >&2; \
+	    exit 1; \
+	fi
+	cd panel && vendor/bin/phpunit
+
 .PHONY: php-syntax
 php-syntax: ## php -l on every panel/**/*.php
 	@cd panel && set -e ; \
