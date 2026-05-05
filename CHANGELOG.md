@@ -22,6 +22,125 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.28] — 2026-05-05 — deployment hotfix #6 (panel access via SSH tunnel)
+
+**Real-world bugs #7-#10 from the v0.0.22 deployment arc.** With
+v0.0.27's seed fix in place, the user logged into the VPS, opened
+the documented SSH-local-port-forward
+(`ssh -L 9000:127.0.0.1:9000 host`), pointed the browser at
+`http://localhost:9000/admin` — and hit a cascade of four
+panel-access bugs that v0.0.13–v0.0.27 never exercised because
+prior smoke tests touched the panel via the Lima image's looser
+defaults.
+
+### Root causes (four interlocking bugs)
+
+1. **`docker/panel/nginx.conf`** told PHP-FPM the request was over
+   HTTPS via `fastcgi_param HTTPS on;`. Symfony's
+   `Request::isSecure()` returned true → Laravel auto-rewrote
+   `redirect()->guest(route('filament.admin.auth.login'))` to
+   `https://localhost:9000/admin/login`. The browser tried to TLS-
+   handshake the plain-HTTP listener and failed with
+   `ERR_SSL_PROTOCOL_ERROR`.
+
+2. **`panel/app/Providers/AppServiceProvider::boot()`** force-set
+   `URL::forceScheme('https')` unconditionally in production —
+   even when the request itself was plain HTTP via SSH tunnel.
+   Same redirect-to-https symptom even after fix #1.
+
+3. **`panel/config/session.php`** defaults
+   `'secure' => env('SESSION_SECURE_COOKIE', true)` — the session
+   cookie was stamped with the `Secure` flag. Even after fixing
+   the redirect, the browser refused to send the cookie back over
+   plain HTTP, breaking login silently (POST to
+   `/admin/login` would create a new unauthenticated session
+   every time).
+
+4. **`docker/panel/entrypoint.sh`** ran `chmod -R 0775 storage
+   bootstrap/cache` but no `chown`. The directories ended up
+   owned by `root:root` (the entrypoint runs as root); FPM
+   workers run as `www-data`. Mode 0775 with `root:root` puts
+   `www-data` in the "others" bucket → `r-x` → no write. Every
+   view-rendering route 500'd with
+   `file_put_contents(.../storage/framework/views/...): Failed
+   to open stream: Permission denied`. The error was invisible
+   in `docker compose logs panel` (PHP `error_log` is empty in
+   the alpine FPM image; LOG_CHANNEL=stderr writes to FPM
+   stderr but the framework caught the ErrorException
+   internally before it reached that path) so debugging required
+   patching the panel's exception handler at runtime to dump the
+   chain into the response body.
+
+### Fixed
+
+- **`docker/panel/nginx.conf`** — removed `fastcgi_param HTTPS on;`.
+  Once the deferred R1-1/R1-2 SNI router lands and the panel sits
+  behind a real TLS-terminating proxy, that proxy should forward
+  `X-Forwarded-Proto: https` and TrustProxies (already configured
+  in `bootstrap/app.php` for 127.0.0.1 + 172.16/12) will pick it
+  up. No need to spoof HTTPS at this layer.
+
+- **`panel/app/Providers/AppServiceProvider::boot()`** — gates
+  `URL::forceScheme('https')` on `request()->isSecure()` instead
+  of unconditionally in production. Plain-HTTP SSH-tunnel requests
+  no longer get rewritten to https; future TLS-terminated requests
+  (real HTTPS or X-Forwarded-Proto: https from a trusted proxy)
+  still get correct https URL generation.
+
+- **`.env.example`** documents `SESSION_SECURE_COOKIE=false` for
+  the SSH-tunnel access path with a comment explaining the flip
+  to `true` once the SNI router lands.
+
+- **`docker/panel/entrypoint.sh`** runs `chown -R www-data:www-data
+  storage bootstrap/cache` BEFORE chmod. Now FPM workers can write
+  Blade-compiled views, session files, and bootstrap caches.
+  Header comment documents the trap so future drop-ins keep it.
+
+### Recovery for operators stuck on v0.0.27
+
+```bash
+cd /opt/cool-tunnel-server
+
+# 1. nginx HTTPS hint
+docker compose exec -T panel sed -i '/fastcgi_param HTTPS on;/d' /etc/nginx/nginx.conf
+docker compose exec -T panel nginx -s reload
+
+# 2. AppServiceProvider forceScheme
+sed -i "s|URL::forceScheme('https');|// URL::forceScheme('https'); // see v0.0.28|" panel/app/Providers/AppServiceProvider.php
+
+# 3. SESSION_SECURE_COOKIE
+echo "SESSION_SECURE_COOKIE=false" >> .env
+
+# 4. Storage permissions
+docker compose exec -T panel sh -c 'chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache && chmod -R 0775 /var/www/html/storage /var/www/html/bootstrap/cache'
+
+# 5. Clear cache + restart
+docker compose exec -T panel rm -f /var/www/html/bootstrap/cache/config.php
+docker compose restart panel
+
+# 6. Smoke check
+sleep 25
+curl -s -o /dev/null -w "/up: %{http_code}\n/admin/login: %{http_code}\n" \
+  http://127.0.0.1:9000/up http://127.0.0.1:9000/admin/login
+```
+
+Both should be `200`. Then SSH-tunnel from your laptop and visit
+`http://127.0.0.1:9000/admin` (use `127.0.0.1`, not `localhost` —
+Chrome HSTS-caches `localhost` and forces HTTPS upgrade).
+
+### Smoke-test gap (sixth time in a row)
+
+All six v0.0.23–v0.0.28 deploy hotfixes were missed by the Lima
+Debian-12/13 smoke tests for the same reason: smoke runs reused
+volumes from earlier loops, so the entrypoint's first-boot
+codepath was never exercised against a clean state. The next
+test pass MUST start from `docker compose down -v` and then
+walk the install-and-login flow end-to-end. The deferred R1-1/
+R1-2 SNI router will need a parallel "panel reachable via real
+HTTPS" smoke too.
+
+---
+
 ## [0.0.27] — 2026-05-05 — deployment hotfix #5 (entrypoint must seed)
 
 **Real-world bug #6 from the v0.0.22 deployment arc.** With v0.0.26's
