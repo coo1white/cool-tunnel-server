@@ -22,6 +22,118 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.13] — 2026-05-05
+
+**High-severity audit hotfixes + low-memory tuning.** Rolls up the
+three H-rated findings (rate-limiting gap, single-tier authz, clash-API
+blast radius), three M-rated findings, the queue refactor that uncouples
+panel saves from the reload subprocess, plus a perf pass that fits the
+stack into the documented 1 vCPU / 1 GB minimum spec without OOM.
+
+End-to-end verified on a Debian 13 (trixie) Lima VM: Docker official
+apt repo install, `docker compose up -d`, full migration run, sing-box
+clash-API reachability test from `panel` (HTTP 401, ✓) and from `caddy`
+(timeout, ✓ — caddy is no longer on the management network).
+
+### Added
+
+- **Custom Filament login page** (`panel/app/Filament/Pages/Auth/Login.php`)
+  that calls `$this->rateLimit(5)` before delegating to the framework's
+  `authenticate()`. (H1.)
+- **`login` and `subscription` named rate limiters** in
+  `AppServiceProvider::configureRateLimiters()`. (H1.)
+- **`users.role` (`varchar(32)` default `admin`) and `users.is_active`
+  (`boolean` default `true`)** columns + matching migration
+  (`2026_05_05_000001_add_role_and_active_to_users`). (H2.)
+- **`App\Jobs\ReloadSingBoxJob`** — queued, idempotent, `tries=3`,
+  `90s` per-try cap. Backstops the inline Redis pub/sub announce.
+  (R-panel-1.)
+- **`ct-clash` internal-only docker network** (172.30.0.0/24) carrying
+  clash-API HTTP between `panel` and `sing-box`. Sing-box pinned to
+  `ipv4_address: 172.30.0.10` with the `ct-singbox-mgmt` alias. Caddy
+  is **not** a member. (H3.)
+- **`clash_listen()` in `core/ct-server-core/src/singbox/mod.rs`**:
+  reads `CT_CLASH_LISTEN` env, defaults `127.0.0.1:9090` (fail-closed).
+  Substituted into `config.json.tpl` as `{{ .ClashListen }}`. (H3.)
+- **`release-small` cargo profile** (`core/Cargo.toml`): no LTO,
+  `codegen-units = 16`, `opt-level = "s"`. Halves peak compile-time
+  RAM (~1.5-2 GB → ~0.6-0.9 GB) at ~5-15 % runtime cost. Selected via
+  `CT_CORE_BUILD_PROFILE=release-small` in `.env`; threaded through
+  `install.sh` to `docker compose build --build-arg CARGO_PROFILE=…`.
+- **`PHP_FPM_PM_MODE` / `_MAX_CHILDREN` / `_IDLE_TIMEOUT` /
+  `_MAX_REQUESTS` env tunables** (defaults `ondemand` / `4` / `60s`
+  / `500`) in `docker/panel/entrypoint.sh`.
+- **Low-memory MariaDB tuning** in `docker-compose.yml`'s `db.command:`
+  block: `innodb-buffer-pool-size=64M`, `performance-schema=OFF`,
+  `max-connections=20`, `skip-name-resolve`, etc.
+- **§ "Before first boot — low-memory VPS prep"** in
+  `docs/installation-debian.md`: 2 GB swapfile recipe + `vm.swappiness=10`,
+  `release-small` selection, runtime tuning knob table, OOM-watch
+  guidance, steady-state expectations table.
+
+### Changed
+
+- **`User::canAccessPanel(Panel $panel)`** now gates on (panel id matches
+  `admin`) AND (`is_active === true`) AND (`role === ROLE_ADMIN`). Pre-fix
+  this returned `true` unconditionally — any seeded row had full ProxyAccount
+  / ServerConfig / FakeWebsite authority. (H2.)
+- **`User::$fillable`** trimmed to `['name', 'email']`. `password`, `role`,
+  `is_active` removed — set via `setPasswordAttribute` / explicit
+  `forceFill` / console seeders only. Defense-in-depth against
+  privilege-bearing fields landing in `User::create($request->all())`.
+- **`ProxyAccount::booted()`** keeps the Redis revocation pub/sub
+  announce inline (~1 ms fire-and-forget) but moves
+  `SingBoxConfigGenerator::renderToFile()` + `SingBoxReloader::reload()`
+  to `ReloadSingBoxJob::dispatch()`. Pre-fix a hung `ct-server-core`
+  blocked the Filament request for up to 60 s; bulk-delete fanned out
+  N synchronous reloads. (R-panel-1.)
+- **`docker/core/Dockerfile`** detects Docker's `TARGETARCH` and maps
+  to the matching musl rustc triple (`x86_64-unknown-linux-musl`,
+  `aarch64-unknown-linux-musl`, `armv7-unknown-linux-musleabihf`).
+  Project shipped x86_64-only before — broke arm64 hosts.
+- **`docker/panel/opcache.ini`** sized for a 1 GB box: shared opcache
+  `128 → 64 MB`, JIT buffer `64 → 32 MB`, `max_accelerated_files`
+  `10000 → 5000`, `revalidate_freq` `2 → 60 s`.
+- **`docker/panel/entrypoint.sh` FPM pool** now `pm = ondemand` with
+  `max_children = 4` by default (was `pm = dynamic, max_children = 16`).
+  Drops the panel's worst-case from ~480-800 MiB to ~120-200 MiB on
+  small boxes; tunable up via env on bigger ones.
+- **Throttle middleware on `/api/v1/subscription/{token}`** (60/min
+  per IP via the new `subscription` named limiter). (H1.)
+
+### Fixed
+
+- **Saturating subtraction on uplink/downlink deltas**
+  (`core/ct-server-core/src/metrics.rs`). Plain subtraction panicked in
+  debug and silently wrapped in release if either side approached
+  `i64::MIN/MAX`. The hot path is gated by an early-return today
+  (sing-box doesn't emit Prometheus-shaped per-user metrics yet — see
+  module docstring) so this is hardening for the eventual re-enable
+  rather than a live correctness fix. (M-rust-2.)
+- **`config('app.previous_keys')` trims each segment**
+  (`panel/config/app.php`). `array_filter(explode(',', $env))` kept
+  whitespace and `\n` — a stray space in `.env` produced a malformed
+  key and silent decryption failures, and accounts mysteriously dropped
+  out of the rendered manifest after a key rotation. (M-panel-1.)
+
+### Security
+
+- **`SubscriptionController::signingKey()` refuses an empty `APP_KEY`**.
+  `.env.example` ships `APP_KEY=` blank; an operator who forgets
+  `php artisan key:generate` would otherwise hash with
+  `hash_hmac('sha256', $idStr, '')` — deterministic, so every forged
+  token verifies. Hard-fail with `RuntimeException` and a clear
+  remediation hint. (M-panel-2.)
+- **Six unused dependencies removed** from `core/ct-server-core/Cargo.toml`
+  (`hyper`, `hyper-util`, `hyperlocal`, `http-body-util`, `bytes`,
+  `hmac`). Matching `From`-impl removals in `err.rs`. The unix-domain
+  admin path that needed them was retired long ago; `reqwest` is the
+  only HTTP client the binary actually exercises. Shrinks the
+  dependency tree, lowers peak compile RAM, and eliminates the
+  audit-flagged "unused but pinned" carry-over.
+
+---
+
 ## [0.0.11] — 2026-05-03
 
 **Compile-time SQL safety.** Every `sqlx::query()` call in the
