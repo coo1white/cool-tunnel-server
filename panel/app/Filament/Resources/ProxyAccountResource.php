@@ -118,9 +118,37 @@ class ProxyAccountResource extends Resource
                         $pw = PasswordGenerator::make();
                         $record->setCleartextPassword($pw['cleartext']);
                         $record->save();
+
+                        $subUrl = $record->subscriptionUrl();
+                        $body   = $pw['cleartext'];
+                        if ($subUrl !== null) {
+                            $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
+                        }
+
                         Notification::make()
                             ->title('New password — copy now, shown once')
-                            ->body($pw['cleartext'])
+                            ->body($body)
+                            ->success()
+                            ->persistent()
+                            ->send();
+                    }),
+                Tables\Actions\Action::make('show_subscription_url')
+                    ->label('Subscription URL')
+                    ->icon('heroicon-o-link')
+                    ->color('info')
+                    ->action(function (ProxyAccount $record) {
+                        $url = $record->subscriptionUrl();
+                        if ($url === null) {
+                            Notification::make()
+                                ->title('Cannot generate URL')
+                                ->body('APP_KEY is not configured. Run php artisan key:generate and restart the panel.')
+                                ->danger()
+                                ->send();
+                            return;
+                        }
+                        Notification::make()
+                            ->title('Subscription URL — import in the app')
+                            ->body($url)
                             ->success()
                             ->persistent()
                             ->send();

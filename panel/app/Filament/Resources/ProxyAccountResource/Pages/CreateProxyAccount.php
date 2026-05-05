@@ -30,9 +30,15 @@ class CreateProxyAccount extends CreateRecord
         $this->record->setCleartextPassword($pw['cleartext']);
         $this->record->save();
 
+        $subUrl = $this->record->subscriptionUrl();
+        $body   = "Username: {$this->record->username}\nPassword: {$pw['cleartext']}";
+        if ($subUrl !== null) {
+            $body .= "\n\nSubscription URL (import in the app — shown once):\n{$subUrl}";
+        }
+
         Notification::make()
             ->title('New password — copy now, shown once')
-            ->body("Username: {$this->record->username}\nPassword: {$pw['cleartext']}")
+            ->body($body)
             ->success()
             ->persistent()
             ->send();

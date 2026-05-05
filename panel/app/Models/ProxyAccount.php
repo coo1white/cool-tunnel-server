@@ -87,6 +87,38 @@ class ProxyAccount extends Model
         return $this->hasMany(TrafficLog::class);
     }
 
+    /**
+     * Generate a subscription token for this account.
+     *
+     * Token format: base64url("<account_id>.<hmac_sha256(account_id, APP_KEY)>")
+     * Mirrors the verification in SubscriptionController::resolve() in reverse.
+     * Returns empty string when APP_KEY is unset.
+     */
+    public function subscriptionToken(): string
+    {
+        $key = (string) config('app.key');
+        if ($key === '') {
+            return '';
+        }
+        $idStr = (string) $this->id;
+        $sig   = hash_hmac('sha256', $idStr, $key);
+        return rtrim(strtr(base64_encode($idStr . '.' . $sig), '+/', '-_'), '=');
+    }
+
+    /**
+     * Full HTTPS subscription URL for this account.
+     * Returns null when APP_KEY is unset or the domain is not yet configured.
+     */
+    public function subscriptionUrl(): ?string
+    {
+        $token = $this->subscriptionToken();
+        if ($token === '') {
+            return null;
+        }
+        $domain = ServerConfig::current()->domain;
+        return "https://{$domain}/api/v1/subscription/{$token}";
+    }
+
     /** Whether the account is currently considered active by sing-box. */
     public function isActive(): bool
     {
