@@ -21,6 +21,30 @@
 #
 #         db / redis MariaDB + Redis.
 
+# v0.0.17 hardening defaults — applied to every long-running service
+# via YAML anchor merge (`<<: *svc-hardening`). Three properties:
+#   - cap_drop ALL: containers start with NO Linux capabilities.
+#     Each service that genuinely needs a capability adds it back
+#     explicitly via `cap_add` (caddy + sing-box need
+#     NET_BIND_SERVICE for :80 / :443; nothing else needs anything).
+#   - security_opt no-new-privileges: blocks setuid escalation
+#     even if a binary inside the container has the bit set.
+#   - logging json-file with 10 MB × 3 file rotation: prevents
+#     unbounded `docker logs` growth on a chatty container from
+#     pushing the host into disk-full. Without this the docker
+#     daemon's default is "no rotation" which has bitten operators
+#     repeatedly across the ecosystem.
+x-svc-hardening: &svc-hardening
+  cap_drop:
+    - ALL
+  security_opt:
+    - "no-new-privileges:true"
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   # The Rust core builder. Not a long-running service — its image is
   # used as a build dep by `panel`. `docker compose build` brings it
@@ -72,6 +96,7 @@ services:
         condition: service_healthy
 
   caddy:
+    <<: *svc-hardening
     build:
       context: ./docker/caddy
     image: cool-tunnel-server-caddy:latest
@@ -99,6 +124,7 @@ services:
       - ct-net
 
   sing-box:
+    <<: *svc-hardening
     build:
       context: ./docker/sing-box
     image: cool-tunnel-server-singbox:latest
@@ -151,6 +177,7 @@ services:
     # service's `ports:` block for ":9090" and fails CI if found.
 
   panel:
+    <<: *svc-hardening
     build:
       # Context is docker/panel/ so the Dockerfile's
       # `COPY opcache.ini …` etc. resolve to docker/panel/opcache.ini.
@@ -252,6 +279,7 @@ services:
       - ct-clash
 
   db:
+    <<: *svc-hardening
     image: mariadb:11
     container_name: ct-db
     restart: unless-stopped
@@ -290,6 +318,7 @@ services:
       - ct-data
 
   redis:
+    <<: *svc-hardening
     image: redis:7-alpine
     container_name: ct-redis
     restart: unless-stopped
