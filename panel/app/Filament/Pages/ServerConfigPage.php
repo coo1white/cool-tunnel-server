@@ -37,7 +37,24 @@ class ServerConfigPage extends Page implements HasForms
             ->schema([
                 Section::make('Identity')
                     ->schema([
-                        TextInput::make('domain')->required(),
+                        // Defense-in-depth: validate `domain` at the form
+                        // layer in addition to the v0.0.16 render-layer
+                        // `template::caddyfile_validate` guard. The render
+                        // layer rejects metasyntactic chars (\n / { / } /
+                        // ") with a clear error so the bad config never
+                        // reaches Caddy — but a typo'd domain still
+                        // persists in the DB and causes every render
+                        // attempt to fail until the operator notices.
+                        // The form regex below catches the typo at save
+                        // time. RFC 1123 label / FQDN shape, max 253
+                        // chars per RFC. (v0.0.21 — defense-in-depth.)
+                        TextInput::make('domain')
+                            ->required()
+                            ->maxLength(253)
+                            ->regex('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i')
+                            ->validationMessages([
+                                'regex' => 'Must be a valid FQDN (e.g. proxy.example.com) — no spaces, no `{` `}` `"`, no newlines.',
+                            ]),
                         TextInput::make('acme_email')->required()->email(),
                         TextInput::make('acme_directory')->required()->url(),
                     ])->columns(3),
