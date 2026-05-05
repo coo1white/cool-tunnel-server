@@ -144,6 +144,9 @@ mod tests {
         // signature: None must NOT appear in the JSON — clients
         // canonicalise by setting signature to None before
         // re-serialising, so the field's absence is the contract.
-        assert!(!s.contains("signature"), "signature should be omitted when None: {s}");
+        assert!(
+            !s.contains("signature"),
+            "signature should be omitted when None: {s}"
+        );
     }
 }

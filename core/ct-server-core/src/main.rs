@@ -179,7 +179,11 @@ enum CaddyfileOp {
         #[arg(long)]
         dry_run: bool,
         /// Override template path.
-        #[arg(long, env = "CADDYFILE_TEMPLATE", default_value = "/srv/caddy/Caddyfile.tpl")]
+        #[arg(
+            long,
+            env = "CADDYFILE_TEMPLATE",
+            default_value = "/srv/caddy/Caddyfile.tpl"
+        )]
         template: String,
         /// Override output path.
         #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
@@ -274,9 +278,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 dry_run,
                 template,
                 output,
-            } => {
-                caddy::render(&cli.database_url, &template, &output, dry_run, cli.json).await
-            }
+            } => caddy::render(&cli.database_url, &template, &output, dry_run, cli.json).await,
         },
         Cmd::Server { op } => {
             // CLI Server.{Reload,Config} are operator-facing — they
