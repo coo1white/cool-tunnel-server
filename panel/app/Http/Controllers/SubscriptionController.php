@@ -8,6 +8,8 @@ use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 
 // Emits a SubscriptionManifestV1 (per ct-protocol::subscription) for
 // the proxy account whose token matches the URL. Signed with HMAC-
@@ -36,11 +38,56 @@ use Illuminate\Http\Response;
 
 class SubscriptionController extends Controller
 {
+    /**
+     * Anti-enumeration rate limit. 60 requests per minute per IP,
+     * matching the cap previously expressed by the `subscription`
+     * named limiter in AppServiceProvider. We do the check *inside*
+     * the controller (rather than via Laravel's `throttle:` middleware)
+     * because middleware-driven throttling returns HTTP 429 on hit —
+     * which is distinguishable from the 200 cover-site response that
+     * the catch-all FakeSiteController serves for any other unmatched
+     * URL. A 429 is a strong signal "the subscription endpoint exists
+     * here", which defeats the cover-site invariant the rest of this
+     * controller goes to lengths to maintain.
+     *
+     * 60 requests / minute is generous: a legitimate client fetches
+     * its manifest at most a few times per day. The cap exists to
+     * bound online enumeration of `account_id` (the numeric prefix
+     * inside the HMAC-bearing token), not to throttle real users.
+     */
+    private const RATE_LIMIT_PER_MINUTE = 60;
+    private const RATE_LIMIT_DECAY_SEC  = 60;
+
     public function show(Request $request, string $token): Response
     {
-        // Resolve the token: it's an HMAC-SHA-256 of the proxy_account
-        // id + a panel-wide secret, presented base64url-encoded.
-        $account = $this->resolve($token);
+        // Single anti-enumeration choke point: ANY failure mode —
+        // unknown token, expired account, rate-limit hit, signing-
+        // key misconfigured, transient exception in the resolver —
+        // returns the same cover-site bytes as a vanilla unknown-
+        // path probe. (M-panel-2 + the H1 throttle's anti-enum
+        // refinement, both 2026-05-05 audit hotfixes.)
+        $rlKey = 'subscription:' . (string) $request->ip();
+        if (RateLimiter::tooManyAttempts($rlKey, self::RATE_LIMIT_PER_MINUTE)) {
+            return (new FakeSiteController())->show($request);
+        }
+        RateLimiter::hit($rlKey, self::RATE_LIMIT_DECAY_SEC);
+
+        try {
+            $account = $this->resolve($token);
+        } catch (\Throwable $e) {
+            // signingKey() throws on empty APP_KEY (M-panel-2). Any
+            // other exception in the resolver path also bubbles
+            // here — log it loudly so the operator notices in
+            // panel logs, but DO NOT leak the failure shape to the
+            // probe: the wire response is identical to the cover-
+            // site catch-all.
+            Log::critical('subscription.resolve.failed', [
+                'err'  => $e->getMessage(),
+                'type' => get_class($e),
+            ]);
+            return (new FakeSiteController())->show($request);
+        }
+
         if (! $account || ! $account->isActive()) {
             // Forward to the cover-site catch-all so an invalid /
             // expired subscription URL returns the same bytes (body
