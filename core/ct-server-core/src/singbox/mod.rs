@@ -377,6 +377,23 @@ async fn atomic_write(path: &str, body: &str) -> Result<()> {
         f.sync_all().await?;
     }
     fs::rename(&tmp, path).await?;
+
+    // fsync the PARENT DIRECTORY after the rename. POSIX rename is
+    // atomic with respect to a concurrent reader, but the directory
+    // entry update may sit in the page cache for a long time. After
+    // a power loss between the rename and the next implicit sync,
+    // the directory entry can revert — the rename appears "to have
+    // happened" to a process running, but the on-disk metadata
+    // points at the old inode (or, on some filesystems, no inode at
+    // all, leaving the file vanished). For sing-box that means a
+    // revoked credential silently re-activates after an unclean
+    // reboot. Costs ~1 fdatasync per render — negligible compared
+    // to the file write itself, and only happens on actual config
+    // changes (the SHA-256 dedupe at the caller short-circuits
+    // unchanged renders before reaching this function).
+    let dirfile = fs::File::open(dir).await?;
+    dirfile.sync_all().await?;
+
     Ok(())
 }
 
