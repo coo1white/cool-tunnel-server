@@ -113,4 +113,17 @@ php artisan view:cache    --no-interaction || true
 php artisan caddyfile:render --no-interaction || true
 php artisan singbox:render   --no-interaction || true
 
+# Sentinel for install.sh — signals first-boot setup (composer +
+# migrate + cache + render) is finished and it's safe to query
+# state without racing the entrypoint. v0.0.26 race-fix: install.sh
+# previously ran its own `migrate` immediately after `vendor/
+# autoload.php` appeared, which raced this entrypoint's migrate
+# above and crashed with "Table 'cache' already exists" when the
+# install-side process saw migration #1 mid-transaction (cache
+# table created, migrations row not yet inserted). /tmp is tmpfs
+# in this container, so the sentinel auto-clears on restart and
+# the next first-boot run waits cleanly.
+mkdir -p /tmp/cool-tunnel
+: >/tmp/cool-tunnel/entrypoint-complete
+
 exec "$@"

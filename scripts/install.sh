@@ -176,27 +176,38 @@ compose up -d panel
 #   1. composer install   (30-90s on a 1-vCPU VPS, fresh box)
 #   2. php artisan key:generate
 #   3. wait for db
-#   4. php artisan migrate
-# If we shell in too early, vendor/autoload.php doesn't exist and
-# every artisan call fails with "Failed to open stream". Wait for
-# vendor/ to actually land before any explicit shell-in.
-# 5 minutes total budget — enough headroom for tiny VPS + cold
-# Composer cache, but bounded so we don't hang the install path
-# if composer is genuinely failing.
+#   4. php artisan migrate (--force, swallows errors with `|| true`)
+#   5. {filament,config,route,view}:cache + caddyfile/singbox render
+#   6. touch /tmp/cool-tunnel/entrypoint-complete (sentinel)
+#   7. exec supervisord (PHP-FPM, nginx, ct-server-core daemon)
+#
+# Wait for the sentinel rather than `vendor/autoload.php`. The
+# autoload file lands ~5s into composer install, but the entrypoint
+# keeps doing concurrency-unsafe work (migrate, render) for another
+# ~30-60s after that. If install.sh runs its own `migrate` against
+# `vendor/autoload.php` it races the entrypoint's migrate and
+# crashes with "Table 'cache' already exists" mid-transaction
+# (v0.0.26 race-fix — first real-world Debian 13 deploy hit this).
 warn "panel entrypoint is running 'composer install' on first boot;"
 warn "this takes ~30-90s on a small VPS. Watch progress with:"
 warn "    docker compose logs -f --tail=80 panel"
 # shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
-wait_for "panel vendor/autoload.php" 60 5 \
-    bash -c 'docker compose exec -T panel test -f /var/www/html/vendor/autoload.php'
+wait_for "panel entrypoint setup complete (sentinel)" 90 5 \
+    bash -c 'docker compose exec -T panel test -f /tmp/cool-tunnel/entrypoint-complete'
 
-# The entrypoint will run migrate as part of its first-boot flow,
-# but we re-run here explicitly so the install path observes a
-# concrete success/failure (the entrypoint swallows migration
-# errors with `|| true` to avoid wedging container start).
-compose exec -T panel php artisan migrate --force --no-interaction \
-    || die "migrations failed — see panel logs" \
-           "docker compose logs --tail=80 panel"
+# Verify the entrypoint's migrate actually applied cleanly. The
+# entrypoint runs `migrate --force --no-interaction || true` to
+# avoid wedging container start on a transient DB hiccup; we
+# inspect `migrate:status` here so the install path observes a
+# concrete success/failure signal. Pending entries mean either the
+# entrypoint hit an error (swallowed by `|| true`) or someone
+# added a migration after the sentinel touched.
+status_out="$(compose exec -T panel php artisan migrate:status --no-interaction 2>&1 || true)"
+if printf '%s\n' "$status_out" | grep -qiE '\<Pending\>'; then
+    printf '%s\n' "$status_out" | tail -40
+    die "panel has pending migrations — entrypoint migrate failed (|| true swallowed it)" \
+        "docker compose logs --tail=80 panel"
+fi
 compose exec -T panel php artisan db:seed --force --no-interaction || true
 ok "migrations applied + default seed in place"
 
