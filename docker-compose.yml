@@ -245,6 +245,23 @@ services:
     image: mariadb:11
     container_name: ct-db
     restart: unless-stopped
+    # MariaDB low-mem tuning (2026-05-05 low-mem-server pass).
+    # Stock mariadb:11 reserves ~130 MiB on this box at idle —
+    # mostly performance_schema (~80 MiB) plus the default 128 MB
+    # InnoDB buffer pool. The flags below drop idle resident to
+    # ~50-60 MiB while keeping query throughput ample for the
+    # panel's read-mostly workload (proxy_accounts is in the
+    # thousands, traffic_logs partitions by day). Tune higher on
+    # boxes with more RAM via env (`DB_INNODB_BUFFER_POOL` etc.).
+    command:
+      - --innodb-buffer-pool-size=64M
+      - --innodb-log-file-size=16M
+      - --innodb-log-buffer-size=4M
+      - --max-connections=20
+      - --thread-cache-size=4
+      - --table-open-cache=128
+      - --performance-schema=OFF
+      - --skip-name-resolve
     environment:
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MARIADB_DATABASE:      ${DB_DATABASE}

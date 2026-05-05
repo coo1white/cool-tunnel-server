@@ -59,10 +59,11 @@ from_impl! {
     std::num::ParseIntError,
     serde_json::Error,
     sqlx::Error,
-    hyper::Error,
-    hyper::http::Error,
-    hyper::http::uri::InvalidUri,
-    hyper_util::client::legacy::Error,
+    // hyper / hyper-util / hyperlocal / http-body-util were the
+    // old unix-domain admin path's stack. Dropped from Cargo.toml in
+    // the 2026-05-05 low-mem-server pass — reqwest is now the only
+    // HTTP client the binary exercises. Adding them back means
+    // re-listing them in Cargo.toml AND restoring the From impls.
     reqwest::Error,
     redis::RedisError,
 }

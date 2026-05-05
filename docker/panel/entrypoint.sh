@@ -15,21 +15,50 @@ mkdir -p /run/cool-tunnel && chmod 0770 /run/cool-tunnel || true
 
 # php-fpm pool config: listen on a TCP port so nginx in the same
 # container can talk to it without a unix socket race.
-cat >/usr/local/etc/php-fpm.d/zz-pool.conf <<'POOL'
+#
+# Tunables (each can be overridden via container env / .env):
+#   PHP_FPM_PM_MODE         dynamic | ondemand | static  (default: ondemand)
+#   PHP_FPM_MAX_CHILDREN    upper bound on concurrent FPM workers (default: 4)
+#   PHP_FPM_IDLE_TIMEOUT    seconds an idle worker survives before exit (default: 60s)
+#   PHP_FPM_MAX_REQUESTS    requests per worker before respawn (default: 500)
+#
+# Defaults are tuned for a 1 vCPU / 1 GB VPS — pre-2026-05-05 the
+# pool was `pm = dynamic` with `max_children = 16`, which on a tiny
+# server was a 480-800 MiB worst-case (each FPM worker resident is
+# ~30-50 MiB after Laravel + Filament are loaded). `ondemand` only
+# spawns when a request arrives and lets workers exit on idle, so
+# the steady-state cost drops to roughly one warm worker. Operators
+# on bigger boxes raise the cap via env without re-rolling the image.
+PM_MODE="${PHP_FPM_PM_MODE:-ondemand}"
+PM_MAX_CHILDREN="${PHP_FPM_MAX_CHILDREN:-4}"
+PM_IDLE_TIMEOUT="${PHP_FPM_IDLE_TIMEOUT:-60s}"
+PM_MAX_REQUESTS="${PHP_FPM_MAX_REQUESTS:-500}"
+
+cat >/usr/local/etc/php-fpm.d/zz-pool.conf <<POOL
 [www]
 user = www-data
 group = www-data
 listen = 127.0.0.1:9001
 listen.allowed_clients = 127.0.0.1
-pm = dynamic
-pm.max_children = 16
-pm.start_servers = 4
-pm.min_spare_servers = 2
-pm.max_spare_servers = 6
+pm = ${PM_MODE}
+pm.max_children = ${PM_MAX_CHILDREN}
+pm.process_idle_timeout = ${PM_IDLE_TIMEOUT}
+pm.max_requests = ${PM_MAX_REQUESTS}
 clear_env = no
 catch_workers_output = yes
 decorate_workers_output = no
 POOL
+
+# `dynamic` requires the start/min/max-spare trio; emit them only
+# when the operator opted into that mode (otherwise php-fpm refuses
+# to start with "pm.start_servers required" or similar).
+if [ "${PM_MODE}" = "dynamic" ]; then
+    cat >>/usr/local/etc/php-fpm.d/zz-pool.conf <<POOL
+pm.start_servers = ${PHP_FPM_START_SERVERS:-2}
+pm.min_spare_servers = ${PHP_FPM_MIN_SPARE:-1}
+pm.max_spare_servers = ${PHP_FPM_MAX_SPARE:-3}
+POOL
+fi
 
 # First-boot: pull dependencies if vendor/ is missing.
 if [ ! -d vendor ]; then

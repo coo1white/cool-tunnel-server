@@ -22,19 +22,15 @@ tokio = { version = "1.38", features = ["full"] }
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "macros", "chrono"] }
-# `hyper` / `hyper-util` / `hyperlocal` / `http-body-util` were the
-# old unix-domain admin path's stack. Dropped from active use when
-# sing-box's clash API moved to `external_controller` (TCP) on the
-# docker-internal `ct-singbox:9090` listener — see admin.rs head
-# comment. The crates remain pinned here (rather than removed) to
-# keep the Cargo.lock stable under `cargo build --locked` without a
-# separate lockfile-bump commit; reqwest is the only HTTP client
-# the binary actually exercises today.
-hyper           = { version = "1.4", features = ["client", "http1"] }
-hyper-util      = { version = "0.1", features = ["client-legacy", "tokio"] }
-hyperlocal      = "0.9"
-http-body-util  = "0.1"
-bytes           = "1.6"
+# Pre-2026-05-05 this block also pinned `hyper`, `hyper-util`,
+# `hyperlocal`, `http-body-util`, `bytes`, and `hmac`. None of those
+# are used anywhere in the binary anymore (the unix-domain admin
+# path was retired when sing-box's clash API moved to TCP); keeping
+# them dragged ~30 transitive crates into every release build,
+# raised peak compile-time RAM, and made install.sh OOM on a 1 GB
+# VPS without swap. Removed in the low-mem-server pass — see
+# err.rs for the matching From-impl deletions. Restoring any of
+# them is a deliberate two-place edit (Cargo.toml + err.rs).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # Redis revocation bridge — long-lived pub/sub from the daemon.
@@ -53,7 +49,6 @@ tracing    = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2       = "0.10"
 hex        = "0.4"
-hmac       = "0.12"
 
 [dev-dependencies]
 tempfile = "3.10"
