@@ -100,8 +100,16 @@ pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Resul
         .await?;
 
         let (prev_up, prev_down) = prev.unwrap_or((0, 0));
-        let delta_up = (s.uplink - prev_up).max(0);
-        let delta_down = (s.downlink - prev_down).max(0);
+        // saturating_sub: a sing-box restart resets the counter, so
+        // the new "current" can be lower than the stored "previous".
+        // Plain `s.uplink - prev_up` panics in debug and silently
+        // wraps in release if either side approaches i64::MIN/MAX
+        // (e.g. a 64-bit total returned near the extremes by a
+        // future upstream that switches counter encoding). The
+        // saturating form returns 0 in that corner instead of
+        // wrapping to a huge positive delta.
+        let delta_up = s.uplink.saturating_sub(prev_up).max(0);
+        let delta_down = s.downlink.saturating_sub(prev_down).max(0);
 
         db::upsert_traffic(&pool, id, day, s.uplink, s.downlink, s.connections).await?;
         if delta_up + delta_down > 0 {
