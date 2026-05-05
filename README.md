@@ -38,13 +38,26 @@ who's connected.
 ## Quick start
 
 ```bash
-# 1. SSH into your fresh Debian VPS as root. Install Docker, git,
-#    and the small CLI tools install.sh's pre-flight checks for.
-#    `apache2-utils` is where Debian ships `htpasswd` — there's no
-#    standalone htpasswd package.
+# 1. SSH into your fresh Debian VPS as root. Install Docker via
+#    Docker's OFFICIAL apt repo (Debian's stock `docker.io` does
+#    NOT ship Compose v2 in main, and mixing `docker.io` with the
+#    Docker-official `docker-compose-plugin` breaks dpkg with a
+#    file-conflict on `docker-buildx`). The official repo is the
+#    documented path — see `docs/installation-debian.md` § 5 for
+#    the long-form rationale.
+#
+#    `apache2-utils` is where Debian ships `htpasswd` — there's
+#    no standalone htpasswd package.
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg \
+    -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    | tee /etc/apt/sources.list.d/docker.list >/dev/null
 apt update && apt install -y \
     git curl jq dnsutils apache2-utils \
-    docker.io docker-compose-plugin
+    docker-ce docker-ce-cli containerd.io \
+    docker-buildx-plugin docker-compose-plugin
 
 # 2. Clone this repo.
 git clone https://github.com/coo1white/cool-tunnel-server.git
@@ -59,6 +72,19 @@ nano .env                 # change `proxy.example.com` to your domain;
 # helpful "↳ try:" hints if anything fails.
 ./scripts/install.sh
 ```
+
+> **Already have Docker installed (e.g. RackNerd / Vultr / Hetzner
+> images that pre-configure it)?** Skip the apt-key + apt-source
+> block above and just run the second `apt update && apt install`
+> line — it's idempotent. If a previous run mixed `docker.io` with
+> Docker's official repo and left dpkg complaining about
+> `docker-buildx` file conflicts, recover with:
+> ```bash
+> apt --fix-broken install -y || true
+> apt remove --purge -y docker.io docker-buildx 2>/dev/null || true
+> apt install -y docker-ce docker-ce-cli containerd.io \
+>                docker-buildx-plugin docker-compose-plugin
+> ```
 
 When `install.sh` finishes, your panel is at `https://<your-domain>/admin`.
 First boot takes 1–3 minutes (Docker images build, Let's Encrypt
