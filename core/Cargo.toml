@@ -51,3 +51,33 @@ lto           = "fat"
 codegen-units = 1
 strip         = "symbols"
 panic         = "abort"
+
+# release-small: lower peak compile-time RAM (~1.5–2 GB drops to
+# ~600–900 MB) at the cost of a slightly larger and slightly slower
+# binary. Use this on a 1 vCPU / 1 GB VPS where install.sh would
+# otherwise OOM during `cargo build --release`.
+#
+# How it differs from `release`:
+#   - lto = "off"        no global link-time merge; this is the
+#                        single biggest peak-RAM saving — fat LTO
+#                        loads every crate's bitcode at once.
+#   - codegen-units = 16 lets rustc parallelise across CPUs without
+#                        each unit being its own monolith. On a 1
+#                        vCPU box this still serialises in practice;
+#                        the win is per-unit RAM staying small.
+#   - opt-level = "s"    optimise for size, not speed. Worth ~5-15%
+#                        runtime; the binary is request/response so
+#                        the latency budget is dominated by network
+#                        and DB, not CPU.
+#
+# Build with:
+#   docker compose build --build-arg CARGO_PROFILE=release-small core-builder
+# or set in .env:
+#   CT_CORE_BUILD_PROFILE=release-small
+[profile.release-small]
+inherits      = "release"
+opt-level     = "s"
+lto           = "off"
+codegen-units = 16
+strip         = "symbols"
+panic         = "abort"

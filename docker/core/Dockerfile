@@ -24,7 +24,8 @@ RUN apk add --no-cache \
 # rustc target triple. BuildKit auto-populates TARGETARCH from
 # `--platform` or the daemon's native arch — the project shipped
 # x86_64-only before, which broke arm64 hosts (Lima on Apple
-# Silicon, AWS Graviton, RPi-class Debian).
+# Silicon, AWS Graviton, RPi-class Debian). See the
+# 2026-05-05-VM-smoke-test note in CHANGELOG for context.
 ARG TARGETARCH
 RUN case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/armv7l/arm/')}" in \
         amd64) RUST_TARGET=x86_64-unknown-linux-musl ;; \
@@ -88,11 +89,19 @@ ENV CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS="-C target-feature=+cr
 # /ct-server-core: not found". We accept slightly slower
 # rebuilds (no incremental cargo target reuse) for a build that
 # is actually correct end-to-end.
+# Cargo profile: defaults to `release` (full LTO, codegen-units=1 —
+# lowest binary size, highest peak compile RAM). Set to
+# `release-small` for the low-mem-VPS install path: same musl-static
+# linking, ~50% lower peak RAM, ~5-15% slower runtime. The two
+# profiles live in core/Cargo.toml.
+ARG CARGO_PROFILE=release
+ENV CT_CARGO_PROFILE=${CARGO_PROFILE}
+
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     RUST_TARGET=$(cat /tmp/rust-target) && \
-    cargo build --release --bin ct-server-core --target "${RUST_TARGET}" && \
-    install -Dm755 "target/${RUST_TARGET}/release/ct-server-core" /ct-server-core && \
+    cargo build --profile "${CT_CARGO_PROFILE}" --bin ct-server-core --target "${RUST_TARGET}" && \
+    install -Dm755 "target/${RUST_TARGET}/${CT_CARGO_PROFILE}/ct-server-core" /ct-server-core && \
     (strip /ct-server-core || true) && \
     test -x /ct-server-core
 

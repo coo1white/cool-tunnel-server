@@ -101,8 +101,27 @@ fi
 # ---------- Build images -------------------------------------------
 
 step "Build ct-server-core (Rust, musl-static)"
-compose --profile build-only build core-builder
-ok "ct-server-core built"
+# CT_CORE_BUILD_PROFILE chooses the cargo release profile:
+#
+#   release        full LTO + codegen-units=1 — smallest, fastest
+#                  binary, but peaks at ~1.5-2 GB compile-time RAM.
+#                  Use this on a box with ≥2 GB RAM (or with a
+#                  configured swapfile — see installation-debian.md
+#                  "low-memory VPS prep").
+#   release-small  no LTO, codegen-units=16, opt-level="s". Same
+#                  musl-static linking; ~5-15 % runtime cost,
+#                  ~1-2 min build instead of ~6-8 min, peaks at
+#                  ~0.6-0.9 GB. The recommended default for a
+#                  1 vCPU / 1 GB VPS.
+#
+# If the operator hasn't set the var, default to `release`. The
+# .env.example ships it set explicitly so an operator who copies
+# the template gets the visible knob.
+core_profile="${CT_CORE_BUILD_PROFILE:-release}"
+ok "core build profile: ${core_profile}"
+compose --profile build-only build core-builder \
+    --build-arg "CARGO_PROFILE=${core_profile}"
+ok "ct-server-core built (profile=${core_profile})"
 
 step "Build caddy image (stock Caddy 2 — ACME provider only, no plugins)"
 compose build caddy
