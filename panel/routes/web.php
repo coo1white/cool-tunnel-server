@@ -8,8 +8,11 @@ use Illuminate\Support\Facades\Route;
 
 // API: subscription manifest for cross-platform clients. The token
 // is HMAC-protected so unauthenticated requests can't enumerate
-// accounts.
-Route::get('/api/v1/subscription/{token}', [SubscriptionController::class, 'show'])
+// accounts. Throttled via the `subscription` named limiter
+// (60/min/IP — see AppServiceProvider::configureRateLimiters)
+// to bound online token enumeration. (H1 in 2026-05-05 audit.)
+Route::middleware('throttle:subscription')
+    ->get('/api/v1/subscription/{token}', [SubscriptionController::class, 'show'])
     ->where('token', '[A-Za-z0-9_-]+')
     ->name('api.subscription');
 
