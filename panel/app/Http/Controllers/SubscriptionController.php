@@ -116,6 +116,19 @@ class SubscriptionController extends Controller
 
     private function signingKey(): string
     {
-        return (string) config('app.key');
+        $key = (string) config('app.key');
+        // Refuse to sign / verify with an empty key. .env.example
+        // ships APP_KEY blank; an operator who forgets
+        // `php artisan key:generate` would otherwise hash with
+        // hash_hmac('sha256', $idStr, '') — deterministic, so every
+        // token verifies trivially. Hard-fail rather than silently
+        // accept any token. (M-panel-2 in 2026-05-05 audit.)
+        if ($key === '') {
+            throw new \RuntimeException(
+                'APP_KEY is unset; subscription tokens cannot be issued or verified. '
+                . 'Run `php artisan key:generate` and restart the panel.'
+            );
+        }
+        return $key;
     }
 }
