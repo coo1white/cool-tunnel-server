@@ -36,12 +36,31 @@ use Illuminate\Queue\SerializesModels;
 //      them is a no-op-after-first.
 //
 // Queue connection / worker:
-//   The default queue connection is `database` (config/queue.php
-//   line 6); the `jobs` table migrated at 0001_01_01_000002.
-//   docker/panel/supervisord.conf already runs
+//   The shipped `.env.example` ships `QUEUE_CONNECTION=redis`, so
+//   in production this job lands on the Redis-backed connection
+//   (config/queue.php → 'redis'). The `database` connection is
+//   the framework default if no env override is set, and the
+//   migrations include the `jobs` table (0001_01_01_000002) so a
+//   bare-metal dev who doesn't set QUEUE_CONNECTION still gets a
+//   working queue. docker/panel/supervisord.conf already runs
 //   `php artisan queue:work --sleep=1 --tries=3 --max-time=3600`
 //   under the [program:queue] block — no docker-compose change
 //   needed to land this refactor.
+//
+// Idempotency under collision:
+//   This job is *not* `ShouldBeUnique` (or `ShouldBeUniqueUntilProcessing`).
+//   A naive ShouldBeUnique with a non-trivial uniqueFor would
+//   create a TOCTOU race: a save landing between the lock-acquire
+//   on dispatch and the DB-read at run-time would have its
+//   dispatch silently dropped while not yet visible to the running
+//   handler — that account would never make it into config.json.
+//   Instead, idempotency is enforced one layer down at
+//   SingBoxConfigGenerator::renderToFile: it computes the SHA-256
+//   of the rendered output, compares against the last persisted
+//   hash, and short-circuits the disk write + clash-API reload
+//   when they match. Two queued workers running back-to-back with
+//   the same DB state cost one extra subprocess invocation and
+//   one extra hash comparison — bounded, correct, race-free.
 //
 // Failure semantics:
 //   tries=3 with fixed 5s backoff. A persistent failure ends up in
@@ -101,15 +120,5 @@ class ReloadSingBoxJob implements ShouldQueue
         if ($hash !== null) {
             $reloader->reload();
         }
-    }
-
-    /**
-     * Stable job key — Laravel uses this when grouping retry/fail
-     * metrics. Returning a constant means the dashboard shows one
-     * line for "sing-box reload" rather than one per fire.
-     */
-    public function uniqueId(): string
-    {
-        return 'sing-box-reload';
     }
 }
