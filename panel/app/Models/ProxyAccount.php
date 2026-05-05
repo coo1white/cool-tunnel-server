@@ -73,12 +73,12 @@ class ProxyAccount extends Model
     protected function casts(): array
     {
         return [
-            'enabled'       => 'boolean',
-            'quota_bytes'   => 'integer',
-            'used_bytes'    => 'integer',
-            'expires_at'    => 'datetime',
-            'last_seen_at'  => 'datetime',
-            'metadata'      => 'array',
+            'enabled' => 'boolean',
+            'quota_bytes' => 'integer',
+            'used_bytes' => 'integer',
+            'expires_at' => 'datetime',
+            'last_seen_at' => 'datetime',
+            'metadata' => 'array',
         ];
     }
 
@@ -100,9 +100,10 @@ class ProxyAccount extends Model
         if ($key === '') {
             return '';
         }
-        $idStr = (string) $this->id;
-        $sig   = hash_hmac('sha256', $idStr, $key);
-        return rtrim(strtr(base64_encode($idStr . '.' . $sig), '+/', '-_'), '=');
+        $idStr = (string) $this->getKey();
+        $sig = hash_hmac('sha256', $idStr, $key);
+
+        return rtrim(strtr(base64_encode($idStr.'.'.$sig), '+/', '-_'), '=');
     }
 
     /**
@@ -115,16 +116,27 @@ class ProxyAccount extends Model
         if ($token === '') {
             return null;
         }
-        $domain = ServerConfig::current()->domain;
+        $domain = (string) ServerConfig::current()->getAttribute('domain');
+        if ($domain === '') {
+            return null;
+        }
+
         return "https://{$domain}/api/v1/subscription/{$token}";
     }
 
     /** Whether the account is currently considered active by sing-box. */
     public function isActive(): bool
     {
-        if (! $this->enabled)                                              return false;
-        if ($this->expires_at && $this->expires_at->isPast())              return false;
-        if ($this->quota_bytes && $this->used_bytes >= $this->quota_bytes) return false;
+        if (! $this->enabled) {
+            return false;
+        }
+        if ($this->expires_at && $this->expires_at->isPast()) {
+            return false;
+        }
+        if ($this->quota_bytes && $this->used_bytes >= $this->quota_bytes) {
+            return false;
+        }
+
         return true;
     }
 
@@ -134,8 +146,8 @@ class ProxyAccount extends Model
      */
     public function setCleartextPassword(string $cleartext): void
     {
-        $this->password_hash                   = password_hash($cleartext, PASSWORD_BCRYPT, ['cost' => 12]);
-        $this->password_cleartext_encrypted    = Crypt::encryptString($cleartext);
+        $this->password_hash = password_hash($cleartext, PASSWORD_BCRYPT, ['cost' => 12]);
+        $this->password_cleartext_encrypted = Crypt::encryptString($cleartext);
     }
 
     /**
@@ -190,7 +202,7 @@ class ProxyAccount extends Model
         // the queue worker. Only the trigger boundary moved.
         static::saved(function (self $account): void {
             $username = $account->username;
-            $status   = $account->isActive() ? 'active'
+            $status = $account->isActive() ? 'active'
                       : ($account->expires_at && $account->expires_at->isPast() ? 'expired' : 'revoked');
 
             DB::afterCommit(function () use ($username, $status): void {
