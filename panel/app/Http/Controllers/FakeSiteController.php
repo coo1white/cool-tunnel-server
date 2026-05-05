@@ -32,8 +32,28 @@ class FakeSiteController extends Controller
             'path' => trim($request->path(), '/'),
         ])->render();
 
+        // Deterministic ETag — the rendered HTML for a given active
+        // FakeWebsite row is byte-stable across requests, so the
+        // ETag derived from sha256(body) is stable too. A static-
+        // looking site with `Cache-Control: public, max-age=3600`
+        // but NO validator headers (ETag / Last-Modified) is
+        // unusual; nginx/apache both emit ETag by default for
+        // static files. Adding it here removes a probe-side
+        // distinguisher between "real static site" and "cover
+        // site rendered by a Laravel app". Conditional-GET
+        // (If-None-Match) is honoured so legitimate clients
+        // benefit from 304s. (v0.0.14 anti-censorship hardening.)
+        $etag = '"' . substr(hash('sha256', $body), 0, 16) . '"';
+
+        if ($request->header('If-None-Match') === $etag) {
+            return response('', 304)
+                ->header('Cache-Control', 'public, max-age=3600')
+                ->header('ETag', $etag);
+        }
+
         return response($body, 200)
             ->header('Cache-Control', 'public, max-age=3600')
-            ->header('Content-Type', 'text/html; charset=utf-8');
+            ->header('Content-Type', 'text/html; charset=utf-8')
+            ->header('ETag', $etag);
     }
 }
