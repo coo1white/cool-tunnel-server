@@ -25,19 +25,25 @@ compose --profile build-only build core-builder
 step "Rebuild sing-box + panel"
 compose build sing-box panel
 
-step "Run migrations (idempotent)"
+# IMPORTANT — order: bring new image up BEFORE running migrations.
+# Pre-v0.0.15 update.sh ran `php artisan migrate` against the
+# OLD panel container while the new code lived only in the
+# bind-mounted source tree. New migrations applied via the OLD
+# PHP runtime — the OLD code then briefly executed against the
+# new schema (or vice versa, depending on the migration shape),
+# producing a window where queue workers and the scheduler could
+# read columns that didn't exist yet, or write to columns whose
+# constraints had just changed. Today's migrations happen to be
+# additive-with-defaults (safe in either order), but the order
+# here is fragile by accident; pin it.
+step "Bring new panel image up (entrypoint runs migrate + render)"
+compose up -d panel sing-box
+
+step "Verify migrations applied (idempotent re-run)"
 compose exec -T panel php artisan migrate --force --no-interaction
 
 step "Re-render sing-box config"
 compose exec -T panel ct-server-core --json singbox render
-
-step "Component check (post-build, pre-swap)"
-compose exec -T panel ct-server-core component check --manifests /srv/manifests \
-    || die "component check reported NG — aborting swap. Old images still running." \
-           "see docker compose logs panel sing-box"
-
-step "Bringing new images up"
-compose up -d panel sing-box
 
 step "Component check (post-swap)"
 compose exec -T panel ct-server-core component check --manifests /srv/manifests \
