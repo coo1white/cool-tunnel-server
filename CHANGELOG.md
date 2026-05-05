@@ -22,6 +22,45 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.16] — 2026-05-05
+
+**Loop-2 self-check pass: 1 HIGH (Caddyfile injection) + 2 MEDIUM
+(FakeWebsite race, Composer scripts).** Continued the loop hunt
+established in v0.0.14/15. This round's lens: business-logic and
+service-layer correctness — Filament Resources, the Caddy/sing-box
+generators, model events, scheduled tasks, supply-chain hygiene.
+
+### Fixed
+
+- **HIGH — `core/caddy`: refuse to render Caddyfile with
+  metasyntactic operator input.** `caddy::render` previously
+  substituted operator-controlled `domain`, `acme_email`, and
+  `acme_directory` raw into the Caddyfile template. Caddy's
+  grammar treats `{` `}` as block delimiters, `"` as quoted-
+  string opener, and `\n` as a directive terminator — a hostile
+  DOMAIN like `example.com\n}\nadmin localhost:2019\n{` would
+  break out of `{{ .Domain }}:8443 { … }` and inject a Caddy
+  admin endpoint onto the public surface. Adds
+  `template::caddyfile_validate` (deny-list of those chars) and
+  validates every binding before render. Matches the project's
+  posture of "refuse rather than sanitise" — Caddyfile has no
+  general escape syntax for these.
+- **MEDIUM — `panel/fake-website`: serialise activation via DB
+  transaction + lockForUpdate.** Two admins concurrently
+  activating different rows could leave both `is_active=true`,
+  producing nondeterministic cover-site shape. Wrap the
+  deactivation of all-others in `DB::transaction` with
+  `lockForUpdate` to serialise.
+- **MEDIUM — `docker/panel`: composer install `--no-scripts` on
+  first boot.** Pre-fix, every transitive Composer package's
+  declared scripts ran as the panel user during `vendor/`
+  bootstrap. Now `--no-scripts` is passed and the single
+  project-known post-install script (`php artisan
+  package:discover --ansi`) is invoked explicitly. Bounds the
+  supply-chain footgun.
+
+---
+
 ## [0.0.15] — 2026-05-05
 
 **Loop-1 self-check pass: 2 CRITICAL correctness bugs + 4 HIGH
