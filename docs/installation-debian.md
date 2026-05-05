@@ -378,6 +378,141 @@ sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
 
 ---
 
+## ⚠️ Before first boot — low-memory VPS prep (1 vCPU / 1 GB)
+
+The minimum spec — **1 vCPU, 1 GB RAM** — is enough to *run* the
+stack (idle ≈ 240 MiB, moderate load ≈ 400-500 MiB) but tight for
+the *initial build* of `ct-server-core` (the Rust core peaks at
+~1.5-2 GB during `cargo build --release` with full LTO). Without
+the prep below, `install.sh` will OOM-kill the compiler partway
+through and you'll see one of:
+
+- `signal: 9, SIGKILL: kill` from cargo
+- `error: linking with cc failed` after a long pause
+- the compose build process simply vanishing
+
+If your VPS has **≥ 2 GB RAM**, skip this section and go straight
+to step 7. Everything below is a no-op overhead on a bigger box.
+
+### a. Add a 2 GB swapfile
+
+Cloud images often ship without swap. The build briefly needs more
+RAM than the box has; swap is the safety net.
+
+```bash
+# Skip if `swapon --show` already lists ≥2 GB.
+swapon --show
+
+# Create a 2 GB swapfile (faster than dd, works on ext4 / xfs).
+fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=progress
+chmod 0600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+
+# Persist across reboot.
+grep -q '^/swapfile ' /etc/fstab \
+  || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+# Be conservative about reaching for swap. 10 = "only when there's
+# real memory pressure". Default vm.swappiness=60 starts swapping
+# too eagerly for a single-purpose box.
+sysctl -w vm.swappiness=10
+grep -q '^vm.swappiness' /etc/sysctl.d/99-cool-tunnel.conf \
+  || echo 'vm.swappiness=10' >> /etc/sysctl.d/99-cool-tunnel.conf
+
+swapon --show
+free -h
+```
+
+### b. Pick the low-memory build profile
+
+`core/Cargo.toml` ships two release profiles:
+
+| Profile | Peak compile RAM | Build time | Runtime cost |
+| --- | --- | --- | --- |
+| `release` (default) | ~1.5-2 GB | ~6-8 min | baseline |
+| `release-small` | ~0.6-0.9 GB | ~1-2 min | ~5-15 % slower CPU paths |
+
+The runtime cost is invisible in practice — the panel is request /
+response over a network and DB, not CPU-bound. Switch in `.env`:
+
+```bash
+# Edit .env and append (or change the existing line):
+echo 'CT_CORE_BUILD_PROFILE=release-small' >> .env
+```
+
+`install.sh` reads `CT_CORE_BUILD_PROFILE` and passes it through to
+`docker compose build` as `--build-arg CARGO_PROFILE=…`. Do this
+**before** step 7.
+
+### c. Confirm the runtime tuning knobs (already low-mem-friendly by default)
+
+The shipped defaults are already sized for a 1 GB box. The values
+below are what `.env.example` ships; only change them if you have
+more RAM and want bigger caps:
+
+| Knob | Default | Effect | Raise to |
+| --- | --- | --- | --- |
+| `PHP_FPM_PM_MODE` | `ondemand` | workers spawn on request, exit on idle | `dynamic` for warm pool on ≥2 GB |
+| `PHP_FPM_MAX_CHILDREN` | `4` | upper bound on concurrent FPM workers (~30-50 MiB each) | 8-16 on ≥2 GB |
+| `PHP_FPM_IDLE_TIMEOUT` | `60s` | seconds an idle worker survives before exit | leave |
+| `PHP_FPM_MAX_REQUESTS` | `500` | requests per worker before respawn (memory hygiene) | leave |
+
+The MariaDB tuning lives in `docker-compose.yml` (`db.command:`
+flags: `innodb-buffer-pool-size=64M`, `performance-schema=OFF`,
+`max-connections=20`, etc.). Operators with ≥2 GB RAM can override
+in a `docker-compose.override.yml`:
+
+```yaml
+# docker-compose.override.yml — committed only on bigger boxes.
+services:
+  db:
+    command:
+      - --innodb-buffer-pool-size=256M
+      - --max-connections=50
+      - --performance-schema=ON
+```
+
+### d. Watch for OOM during build (sanity)
+
+In a second SSH session while `install.sh` is running, tail
+`dmesg` for `Out of memory` events. None should appear with the
+swap + `release-small` combo above:
+
+```bash
+dmesg -wT | grep -E 'Out of memory|invoked oom-killer|Killed process'
+```
+
+If you do see one, the build was killed before completion. Either
+your swapfile didn't activate (`swapon --show` should list it) or
+your `.env` didn't pick up `CT_CORE_BUILD_PROFILE=release-small`
+(check with `docker compose --profile build-only config | grep
+CARGO_PROFILE`).
+
+### e. Steady-state expectation
+
+After install completes, `docker stats --no-stream` should show
+something like:
+
+```
+ct-db        ~ 95-100 MiB    (mariadb, performance_schema OFF)
+ct-panel     ~100-110 MiB    (nginx + php-fpm master + ct-server-core daemon
+                             + queue:work; FPM workers spawn on request)
+ct-singbox   ~ 10-15 MiB
+ct-caddy     ~ 15-20 MiB
+ct-redis     ~  9-12 MiB
+                    ─────
+TOTAL        ~ 230-260 MiB  → ~760 MiB free on a 1 GB box
+```
+
+Under moderate load (10-20 active proxy users + admin browsing in
+a tab) the panel container climbs toward 200-300 MiB as FPM
+workers spawn; total stack peaks around 400-500 MiB. The
+`R-panel-1` queue refactor caps growth from bulk-delete admin
+actions at ~600 MiB.
+
+---
+
 ## 7. First boot
 
 ```bash
