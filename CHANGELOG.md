@@ -22,6 +22,64 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.18] — 2026-05-05
+
+**Loop-4 self-check pass: 1 HIGH-class test gap closed + browser-
+side hardening + scheduler observability + DX.** This round's
+lens: test-coverage gaps for the v0.0.13–v0.0.17 fixes, browser-
+side security headers, and the deferred items from loop 3.
+
+### Added
+
+- **Test coverage for `template::caddyfile_validate`** (the v0.0.16
+  Caddyfile-injection guard had zero tests — single highest-risk
+  untested path per the loop-4 audit). Four new unit tests in
+  `core/ct-server-core/src/template.rs`: clean values pass, every
+  rejected metasyntax char independently fails, the realistic
+  injection payload `example.com\n}\nadmin localhost:2019\n{` is
+  rejected, error message names the offending field. Test count:
+  51 → 55 in ct-server-core.
+- **`panel/app/Http/Middleware/SecurityHeaders`** — emits six
+  browser-side headers on every `/admin` response: `X-Frame-
+  Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Permissions-Policy` (deny camera/microphone/geolocation/payment/
+  usb), `Cache-Control: no-store, must-revalidate`,
+  `Strict-Transport-Security: max-age=63072000; includeSubDomains`.
+  Filament 3 ships with none of these by default. Wired into
+  `AdminPanelProvider`'s middleware stack.
+- **`make fmt` / `make lint` / `make test` aliases** — delegate
+  to `rust-fmt` / `rust-clippy` / `rust-test`. Muscle-memory DX
+  win for cargo-project operators.
+
+### Fixed
+
+- **`panel/routes/console.php`: `->onFailure(...)` on every
+  scheduled task.** Pre-fix, a Throwable inside `traffic:rollup`,
+  `quota:enforce`, or `singbox:render` was swallowed silently by
+  Laravel's scheduler. The insidious case: `quota:enforce` dies
+  → over-quota users keep tunneling forever with no operator
+  signal. Now every failure logs `schedule.failed` at
+  `Log::critical` with cmd + err + exception type.
+
+### Deferred to a future loop
+
+- **DoH reachability check** — synthetic component-check arm that
+  verifies `cfg.doh_resolver` actually resolves a query. Needs a
+  new `ComponentKindV1::DohEndpoint` variant in `ct-protocol`
+  and a `verify_via_https` arm in `components.rs`. Real value
+  for operators in censored regions where 1.1.1.1 may be blocked,
+  but a non-trivial design.
+- **PHPUnit feature tests** for SubscriptionController cover-site
+  fallback, exception handler scope, and ProxyAccount
+  DB::afterCommit. Needs `panel/phpunit.xml` + `panel/tests/TestCase.php`
+  scaffold. Current `panel/tests/` is empty — every panel-side
+  fix in five releases is unverified by automated test. Worth a
+  dedicated round to land properly with sqlite test DB +
+  factories.
+
+---
+
 ## [0.0.17] — 2026-05-05
 
 **Loop-3 self-check pass: 1 HIGH (arm64 panel build) + 3 MEDIUM
