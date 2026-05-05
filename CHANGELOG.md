@@ -22,6 +22,45 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.22] — 2026-05-05 — **2026 Milestone Closing**
+
+**Surgical-strike closer.** Two final-anchor features and the
+canonical retrospective for the v0.0.13 → v0.0.22 self-audit
+programme. After this release, no further self-check loops are
+required — the spine is firm.
+
+### Added
+
+- **DoH endpoint reachability check** for operators in censored
+  regions. New `ComponentKindV1::DohEndpoint` variant in
+  `ct-protocol`; new `verify_via_doh` arm in
+  `ct-server-core/src/components.rs` that reads the live
+  `ServerConfig.doh_resolver` (panel-editable, not the .env
+  default) and dispatches an RFC 8484 binary DoH query for
+  `example.com IN A`. Asserts HTTP 200 + ANCOUNT > 0 — catches
+  captive portals, transparent DNS poisoners, and outright
+  blocks of upstream resolvers like 1.1.1.1. Manifest at
+  `manifests/doh-resolver.upstream.json`.
+  Operator path: change resolver in panel → re-run `component
+  check` → iterate until OK.
+- **`mem_limit` + `pids_limit` per service** in
+  `docker-compose.yml` (1 GB VPS determinism). caddy 64M/32,
+  sing-box 128M/64, panel 320M/256, db 192M/128, redis 64M/32.
+  Total hard cap 768 MiB; ~256 MiB reserved for host kernel +
+  Docker daemon on a 1024 MiB box. Sized from the empirical
+  measurements of all 9 prior releases — deterministic OOM-kill
+  on overflow rather than host-wide thrash.
+- **`docs/architectural-decisions-2026.md`** — 389-line
+  retrospective covering the eight self-check loops, the seven
+  load-bearing invariants that emerged, the defense-to-offense
+  posture pivot, major architectural decisions + trade-offs, and
+  the deferred-work roadmap. The canonical reference for any
+  future contributor reasoning about the v0.0.13–v0.0.22 arc.
+
+This is the **2026 Milestone Closing**. Tag.
+
+---
+
 ## [0.0.21] — 2026-05-05
 
 **Loop-7: diminishing-returns marker.** Audit angles previous
