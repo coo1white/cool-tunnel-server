@@ -22,6 +22,42 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.23] — 2026-05-05 — deployment hotfix
+
+**Real-world deployment broke on the first try.** A user pulling
+v0.0.22 onto a fresh Debian 13 RackNerd VPS hit a dpkg
+file-conflict error the moment they ran the README's quickstart
+`apt install` line. The README's shortcut mixed Debian's stock
+`docker.io` with Docker's official `docker-compose-plugin` —
+fine on a vanilla Debian box, deployment-breaker on any image
+where Docker's official repo is pre-configured (which RackNerd /
+Hetzner Cloud / Vultr / many other budget VPS images do).
+
+The exact failure:
+
+```
+trying to overwrite '/usr/libexec/docker/cli-plugins/docker-buildx',
+which is also in package docker-buildx-plugin
+dpkg: error processing archive .../docker-buildx_0.13.1+ds1-3_amd64.deb
+```
+
+### Fixed
+
+- **README quickstart now uses Docker's official apt repo
+  end-to-end** (matches the long-form recipe already in
+  `docs/installation-debian.md` § 5). Adds an inline callout for
+  operators who hit the half-broken dpkg state from running an
+  older copy of the README — `apt --fix-broken install` +
+  remove `docker.io` + reinstall the `docker-ce` family.
+
+### Note
+
+This is a hotfix. The "2026 Milestone Closing" tag stays at
+v0.0.22 — the spine is unchanged; only the install
+documentation was wrong.
+
+---
+
 ## [0.0.22] — 2026-05-05 — **2026 Milestone Closing**
 
 **Surgical-strike closer.** Two final-anchor features and the
