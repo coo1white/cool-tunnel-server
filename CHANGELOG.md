@@ -22,6 +22,50 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.24] — 2026-05-05 — deployment hotfix #2
+
+**Real-world bug #3 from v0.0.22 deployment.** A user pulling
+v0.0.23 onto a fresh Debian 13 RackNerd VPS got past the Docker
+install (v0.0.23 fix) but the install script then stuck at
+"MariaDB healthcheck never came up after 60s." `docker compose
+logs db` showed:
+
+```
+ct-db | error: failed switching to 'mysql': operation not permitted
+```
+
+repeated every minute, forever.
+
+### Fixed
+
+- **`cap_drop: [ALL]` (v0.0.17 hardening) was too aggressive for
+  three services** that legitimately need a small capability
+  set: db, redis, panel. Each runs an entrypoint that drops root
+  → service-user via `gosu` / `su-exec` / PHP-FPM's pool
+  config — `setuid()` requires `CAP_SETUID` even when *demoting*
+  privileges. Without it the entrypoint fails with "operation
+  not permitted" and the container crash-loops without ever
+  initialising. Restored the minimum cap set
+  (`CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER`) on those three
+  services. caddy and sing-box are unchanged
+  (`NET_BIND_SERVICE` only) — they don't switch users.
+- All other v0.0.17 hardening properties stay intact:
+  `security_opt: no-new-privileges`, json-file log rotation,
+  per-service `mem_limit` and `pids_limit`. The "spine" is
+  unchanged.
+
+### Note
+
+The v0.0.17 cap_drop change was tested only in the Lima Debian-13
+VM smoke tests, which used pre-existing volumes carried over
+from earlier loops — MariaDB had already initialised, so the
+first-boot user-switch path that needed `CAP_SETUID` was never
+exercised. First real-world deploy with a clean volume caught
+it instantly. Future smoke tests need to start from a freshly-
+created volume to exercise the init-time codepath.
+
+---
+
 ## [0.0.23] — 2026-05-05 — deployment hotfix
 
 **Real-world deployment broke on the first try.** A user pulling
