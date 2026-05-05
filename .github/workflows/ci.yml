@@ -99,6 +99,26 @@ jobs:
         working-directory: panel
         run: composer validate composer.json --strict --no-check-publish
 
+      # Run the panel's PHPUnit suite (v0.0.19 added the scaffold;
+      # v0.0.20 wires it into CI). `--no-scripts` matches the
+      # supply-chain hardening pattern from v0.0.16's entrypoint.sh
+      # — a transitive composer package's post-install hook can't
+      # execute as the runner UID and reach the test secrets / build
+      # cache.
+      - name: composer install (panel test deps)
+        working-directory: panel
+        run: |
+          composer install \
+              --no-interaction \
+              --prefer-dist \
+              --optimize-autoloader \
+              --no-scripts
+          php artisan package:discover --ansi
+
+      - name: phpunit (panel)
+        working-directory: panel
+        run: vendor/bin/phpunit --colors=never
+
   shell:
     name: shell (shellcheck)
     runs-on: ubuntu-24.04
@@ -158,15 +178,35 @@ jobs:
           set -euo pipefail
           rendered=$(mktemp)
           # Substitute every Go-template binding with a plausible
-          # sample value. UsersJson must be a valid JSON object
+          # sample value. UsersJson must be a valid JSON array
           # (sing-box parses it as the `users` array's structure
-          # — empty `{}` won't pass schema, so we use a one-user
+          # — empty `[]` may be rejected, so we use a one-user
           # sample that lints clean).
+          #
+          # Bindings added since this CI step's last sweep:
+          #   {{ .DohServer }}  + {{ .DohPath }}  — sing-box 1.12+
+          #     replaced the single dns.servers[].address field
+          #     with separate type / server / path. Renderer
+          #     splits DohResolver at split_doh_url(); both
+          #     components need substitution here.
+          #   {{ .ClashListen }} — v0.0.13 H3 anti-fingerprint fix.
+          #     The renderer fills it from CT_CLASH_LISTEN; for
+          #     CI a plausible value matching the docker-compose
+          #     default is fine.
+          # Adding the new bindings is a v0.0.20 fix — pre-fix the
+          # rendered config kept the literal `{{ .ClashListen }}`
+          # string as the external_controller value, which sing-box
+          # validation parsed as a string (passed) but did NOT
+          # exercise the binding's actual format constraints. Now
+          # CI tests against the real shape ct-server-core renders.
           sed -e 's|{{ \.Domain }}|test.example.com|g' \
               -e 's|{{ \.CertPath }}|/tmp/cert.pem|g' \
               -e 's|{{ \.KeyPath }}|/tmp/key.pem|g' \
               -e 's|{{ \.DohResolver }}|https://1.1.1.1/dns-query|g' \
+              -e 's|{{ \.DohServer }}|1.1.1.1|g' \
+              -e 's|{{ \.DohPath }}|/dns-query|g' \
               -e 's|{{ \.ClashSecret }}|test-clash-secret|g' \
+              -e 's|{{ \.ClashListen }}|172.30.0.10:9090|g' \
               -e 's|{{ \.UsersJson }}|[{"username":"sample","password":"x"}]|g' \
               sing-box/config.json.tpl > "$rendered"
 
