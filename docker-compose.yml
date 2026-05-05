@@ -137,7 +137,12 @@ services:
       # core/ct-server-core/src/singbox/mod.rs::clash_listen() from
       # CT_CLASH_LISTEN, which the panel passes to the renderer.
       ct-clash:
-        ipv4_address: 172.30.0.10
+        # Default 172.30.0.10. Override via CT_CLASH_SINGBOX_IP in
+        # .env when the default subnet collides with an existing
+        # docker network on the host (corporate VPN bridge,
+        # Tailscale subnet route, k8s flannel, etc.). The address
+        # MUST be inside CT_CLASH_SUBNET — see .env.example.
+        ipv4_address: ${CT_CLASH_SINGBOX_IP:-172.30.0.10}
         aliases:
           - ct-singbox-mgmt
     # No 9090 in `ports:` — the clash API is reachable only on the
@@ -199,7 +204,12 @@ services:
       # network plan tunes both this and the `ipv4_address` on the
       # sing-box service together. Read by
       # core/ct-server-core/src/singbox/mod.rs::clash_listen().
-      CT_CLASH_LISTEN:        172.30.0.10:9090
+      # Defaults to 172.30.0.10:9090. Override via
+      # CT_CLASH_SINGBOX_IP in .env if the default subnet
+      # collides with an existing docker network on the host.
+      # The IP must match the `ipv4_address` set under
+      # services.sing-box.networks.ct-clash above.
+      CT_CLASH_LISTEN:        ${CT_CLASH_SINGBOX_IP:-172.30.0.10}:9090
       # Where the daemon's own JSON-over-unix-socket lives.
       CT_CORE_SOCKET:         /run/cool-tunnel/core.sock
       CT_MANIFESTS_DIR:       /srv/manifests
@@ -331,4 +341,7 @@ networks:
     internal: true
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        # Default 172.30.0.0/24. Override via CT_CLASH_SUBNET in
+        # .env when colliding with an existing docker network.
+        # See .env.example "Network — clash management plane".
+        - subnet: ${CT_CLASH_SUBNET:-172.30.0.0/24}
