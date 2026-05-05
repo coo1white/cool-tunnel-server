@@ -57,9 +57,15 @@ return Application::configure(basePath: dirname(__DIR__))
         // operator SSH-tunnelled into the panel needs the actual
         // 5xx + stack trace to debug.
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            // Exact-or-prefix-with-trailing-slash match. A naive
+            // `str_starts_with($path, 'admin')` would also match
+            // future routes like `administrator/`, `admins/list`,
+            // `admin-export/...` — silently losing the cover-site
+            // protection on those paths. (v0.0.15 hardening of the
+            // v0.0.14 exception handler.)
             $path = $request->path();
-            $isAdminLike = str_starts_with($path, 'admin')
-                        || str_starts_with($path, 'livewire')
+            $isAdminLike = $path === 'admin'    || str_starts_with($path, 'admin/')
+                        || $path === 'livewire' || str_starts_with($path, 'livewire/')
                         || $path === 'up';
             if ($isAdminLike) {
                 return null; // delegate to the default renderer
