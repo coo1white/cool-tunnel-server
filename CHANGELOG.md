@@ -22,6 +22,55 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.19] — 2026-05-05
+
+**Loop-5: panel test scaffold + automated coverage of the cover-site
+invariant + H2 auth gate.** Pre-fix the panel had ZERO PHPUnit tests
+through v0.0.13–v0.0.18 (every fix landed unverified by automated
+test). Loops 1–4 surfaced the gap; this loop closes the largest
+risk it implied.
+
+### Added
+
+- **`panel/phpunit.xml`** — PHPUnit 11 config (SQLite in-memory test
+  DB, sync queue, array cache, fixed APP_KEY, fail-on-warning +
+  fail-on-risky).
+- **`panel/tests/TestCase.php`** — base test case extending Laravel
+  11's `BaseTestCase`.
+- **`panel/database/factories/{User,ProxyAccount,FakeWebsite,
+  ServerConfig}Factory.php`** — Eloquent factories with default
+  values + states (`viewer`, `inactive`, `expired`, `disabled`,
+  `active`) covering the v0.0.13/v0.0.16 model invariants.
+- **`panel/tests/Feature/CoverSiteInvariantTest`** — four cases
+  asserting byte-equal Content-Type + ETag + body between every
+  failure response (unknown token, expired account, rate-limit
+  hit, uncaught route exception) and a baseline cover-site hit.
+  A regression in any of the four paths fails CI.
+- **`panel/tests/Unit/UserCanAccessPanelTest`** — five cases
+  exercising the H2 three-way gate (panel id, `is_active`,
+  `role`) plus a defense-in-depth assertion that `password` /
+  `role` / `is_active` stay out of `$fillable`.
+- **`make php-test`** target — runs the panel test suite.
+  Required `cd panel && composer install` first; emits a clear
+  hint to that effect if `vendor/` is absent.
+- **`HasFactory` on `App\Models\ServerConfig`** so the new
+  factory resolves (the other three models already had it).
+
+### Deferred to future loops
+
+- Wiring `make php-test` into `make ci` and the `audit.yml` /
+  `ci.yml` GitHub Actions workflows. Today the tests exist on
+  disk but only run on demand. Plumbing them into CI requires a
+  composer-install + sqlite step in the runner; not hard, but
+  out of scope for v0.0.19's "land the test infrastructure"
+  goal.
+- `ProxyAccountAfterCommitTest` — verifying that a transaction
+  rollback drops the Redis announce + queue dispatch (v0.0.15
+  C1 fix). Doable but needs a transaction + rollback fixture
+  pattern that's worth its own pass.
+
+---
+
 ## [0.0.18] — 2026-05-05
 
 **Loop-4 self-check pass: 1 HIGH-class test gap closed + browser-
