@@ -33,6 +33,19 @@ help: ## list available targets
 .PHONY: ci
 ci: rust-fmt-check rust-clippy rust-test php-syntax shellcheck manifests-jq ## full local CI gate
 
+# Convenience aliases — `make fmt`, `make lint`, `make test` are
+# the muscle-memory commands every Rust project ships. The full
+# names are kept (some operators script against them) but typing
+# `make fmt` should Just Work. (v0.0.18.)
+.PHONY: fmt
+fmt: rust-fmt ## alias of rust-fmt
+
+.PHONY: lint
+lint: rust-clippy ## alias of rust-clippy
+
+.PHONY: test
+test: rust-test ## alias of rust-test
+
 .PHONY: rust-fmt
 rust-fmt: ## cargo fmt --all
 	cd core && cargo fmt --all
