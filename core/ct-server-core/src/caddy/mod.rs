@@ -45,6 +45,24 @@ pub async fn render(
         ))
     })?;
 
+    // Validate every operator-controlled binding before substituting
+    // it into the Caddyfile. Caddyfile grammar treats `{` `}` as
+    // block delimiters, `"` as quoted-string opener, and `\n` as a
+    // directive terminator — a hostile DOMAIN like
+    //
+    //   example.com\n}\nadmin localhost:2019\n{
+    //
+    // would otherwise break out of the `{{ .Domain }}:8443 { … }`
+    // site block in caddy/Caddyfile.tpl and inject a fully-functional
+    // Caddy admin endpoint onto the public surface. Unlike the
+    // sing-box JSON template (R2-4 in 2026-05-04 audit), Caddyfile
+    // has no general escape mechanism for these inside an unquoted
+    // directive argument — refuse to render rather than attempt to
+    // sanitise. (v0.0.16 hardening — Caddyfile-injection class.)
+    template::caddyfile_validate("Domain", &cfg.domain).map_err(Error::msg)?;
+    template::caddyfile_validate("AcmeEmail", &cfg.acme_email).map_err(Error::msg)?;
+    template::caddyfile_validate("AcmeDirectory", &cfg.acme_directory).map_err(Error::msg)?;
+
     let bindings = template::Bindings::new()
         .set("Domain", &cfg.domain)
         .set("AcmeEmail", &cfg.acme_email)

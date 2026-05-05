@@ -195,6 +195,53 @@ pub fn json_escape(s: &str) -> String {
     out
 }
 
+/// Validate that `value` is safe to interpolate verbatim into a
+/// **Caddyfile** directive. Returns `Err(_)` if the value contains a
+/// character that would let an operator-controlled binding break out
+/// of its directive context: newlines (`\n`/`\r`) terminate a
+/// directive, `{`/`}` open or close a site block, `"` opens a quoted
+/// string. A hostile DOMAIN like
+///
+///   `example.com\n}\nadmin localhost:2019\n{`
+///
+/// would otherwise inject a fully-functional Caddy admin endpoint
+/// onto the public surface.
+///
+/// We REFUSE TO RENDER rather than try to escape. Caddy's grammar has
+/// no general escape mechanism for these inside an unquoted directive
+/// argument, so any "smart" escape we tried would either change the
+/// argument's meaning (breaking the legitimate use case) or pass-
+/// through (defeating the check). The companion v0.0.13 sing-box fix
+/// (`json_escape`) was safe because JSON strings DO have a defined
+/// escape grammar. Caddyfile does not — the only correct response to
+/// a metasyntactic value is to fail loudly with a clear error so the
+/// operator sees it before the bad config reaches Caddy.
+///
+/// Used by `caddy::render` at the binding site.
+/// (v0.0.16 hardening — closes the Caddyfile-injection class
+/// surfaced in the loop-2 self-check.)
+///
+/// # Errors
+/// Returns a description of the offending field and the first
+/// metasyntactic character encountered.
+pub fn caddyfile_validate(field: &str, value: &str) -> Result<(), String> {
+    for c in value.chars() {
+        match c {
+            '\n' | '\r' | '{' | '}' | '"' => {
+                return Err(format!(
+                    "binding `{field}` contains Caddyfile-metasyntax \
+                     character `{}` (codepoint U+{:04X}); refusing to \
+                     render an injectable Caddyfile",
+                    c.escape_debug(),
+                    c as u32,
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn find_two(bytes: &[u8], from: usize, a: u8, b: u8) -> Option<usize> {
     let mut i = from;
     while i + 1 < bytes.len() {
