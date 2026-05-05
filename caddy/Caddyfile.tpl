@@ -62,6 +62,14 @@
 # (e.g. an operator pasting `http://proxy.example.com` into a
 # browser) to https://, so we never serve a default Caddy page.
 :80 {
+    # Strip the `Server: Caddy` response header. Stock Caddy emits
+    # it on every response — a probe issuing `curl -I http://<host>`
+    # gets the 308 redirect AND a clear "this box runs Caddy"
+    # signal. For an anti-censorship deployment, every detail that
+    # narrows the host's identity is a step closer to a blacklist;
+    # we have no operational reason to advertise the server engine.
+    # (v0.0.14 anti-censorship hardening.)
+    header -Server
     redir https://{host}{uri} 308
 }
 
@@ -85,6 +93,11 @@
     tls {{ .AcmeEmail }} {
         protocols tls1.3
     }
+    # Strip the `Server: Caddy` response header for symmetry with
+    # the :80 block. Even though :8443 is unreachable from outside
+    # the container network, defence-in-depth: nothing here exposes
+    # the engine identity. (v0.0.14 anti-censorship hardening.)
+    header -Server
     # If something probes :8443 (only reachable from inside the
     # container network — the port is not host-mapped), close the
     # connection cleanly with 444. The previous `respond "managed"
