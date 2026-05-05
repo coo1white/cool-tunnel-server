@@ -101,6 +101,22 @@ for i in $(seq 1 30); do
 done
 
 php artisan migrate --force --no-interaction || true
+
+# Seed the singleton ServerConfig row + the three cover-site templates.
+# Both paths are idempotent (ServerConfig::current() is firstOrCreate
+# on id=1, FakeWebsite::create runs only when count()===0), so this is
+# safe to run on every boot — and required to run BEFORE the renderer
+# below. Without this seed pass on first boot, the renderer crashes
+# with "no rows returned by a query that expected to return at least
+# one row" because server_configs.id=1 doesn't exist yet, leaving
+# Caddyfile empty and Caddy unable to fetch a TLS cert. install.sh
+# also runs db:seed (after the migrate-status check) but that path
+# would fail-open if the renderer needs the seed before install.sh
+# gets a chance — duplicating it here closes the gap. (v0.0.27 hotfix
+# — first real-world Debian 13 deploy on a clean db_data volume hit
+# this once the v0.0.26 race fix unblocked the renderer.)
+php artisan db:seed --force --no-interaction || true
+
 php artisan filament:cache-components --no-interaction || true
 php artisan config:cache  --no-interaction || true
 php artisan route:cache   --no-interaction || true
