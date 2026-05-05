@@ -20,6 +20,12 @@ who's connected.
 
 - A small **Linux VPS** — Debian 11/12/13 recommended. 1 vCPU, 1 GB
   RAM is enough for a few users. Any cloud provider works.
+  > **On a 1 GB box?** Add a 2 GB swapfile and set
+  > `CT_CORE_BUILD_PROFILE=release-small` in `.env` before running
+  > `install.sh` — the Rust core's release build peaks at ~1.5–2 GB
+  > RAM and will OOM-kill the compiler otherwise. Full recipe in
+  > [`docs/installation-debian.md`](./docs/installation-debian.md)
+  > § "Before first boot — low-memory VPS prep".
 - A **domain name** you control (e.g. `proxy.example.com`). A
   subdomain is fine. Point its `A` record at the VPS public IP.
 - **Ports open** at the cloud-provider firewall: `22` (SSH),
@@ -119,15 +125,31 @@ normal HTTPS website as possible:
   `https://your-domain.com/` without authentication sees a normal-
   looking website (blog / portfolio / consultancy — pick one in the
   panel). Probes can't tell it's a proxy.
+- **Cover-site invariant on every public route** (v0.0.14). A probe
+  hitting `/api/v1/subscription/<garbage>` gets the same status,
+  same `Content-Type`, same body, same `ETag` as a probe hitting
+  `/random-cover-path`. Rate-limited requests, expired tokens,
+  unset `APP_KEY`, and uncaught panel exceptions all fall through
+  to the cover site too — there is no failure mode that returns a
+  4xx/5xx that would identify the host as a proxy. Verified
+  end-to-end on every release.
+- **No engine-fingerprint headers**. `Server: Caddy` stripped on
+  Caddy's `:80` redirect; `X-Powered-By` disabled via PHP
+  `expose_php = Off`; nginx `server_tokens off`. None of the wire
+  responses say "Caddy", "PHP", "nginx", or "Cool Tunnel".
 - **No per-connection logs**. Sing-box logs at `warn` level only, so
   there's no "alice connected from 1.2.3.4 at 12:34" trail on disk.
+  Subscription HMAC tokens are masked in the panel's nginx access
+  log so they don't persist on disk.
 - **DNS over HTTPS** for the proxy's own DNS lookups. Your ISP
   can't see what you're resolving.
-- **No identifying HTTP headers**. The subscription endpoint and the
-  cover site both return responses indistinguishable from a generic
-  static site.
+- **Three-network docker isolation**. The `ct-data` and `ct-clash`
+  internal-only docker networks isolate the database and
+  management plane respectively — a compromised Caddy can't reach
+  the clash-API; a compromised database can't phone home.
 
-You can toggle these in **Server config** in the panel.
+You can toggle the panel-side anti-tracking flags in **Server
+config** in the panel.
 
 ---
 
@@ -142,7 +164,7 @@ docker compose logs -f --tail=20 sing-box
 docker compose restart
 
 # Pull a new release of the server code
-git fetch --tags && git checkout v0.0.10
+git fetch --tags && git checkout v0.0.14
 docker compose build && docker compose up -d
 
 # Take a backup (db + Caddy ACME state)
@@ -180,7 +202,9 @@ For the full file-by-file map, see [`STRUCTURE.md`](./STRUCTURE.md).
 | Symptom | Most likely cause | Fix |
 | --- | --- | --- |
 | Panel won't load — `connection refused` | Cert hasn't been issued yet | `docker compose logs caddy` — wait until you see "certificate obtained" |
-| Panel loads but **save does nothing** | You're on v0.0.4–v0.0.9 (broken save flow) | Upgrade to v0.0.10 or later |
+| Panel loads but **save does nothing** | You're on v0.0.4–v0.0.9 (broken save flow) | Upgrade to v0.0.14 or later |
+| `cargo build` killed during install on a 1 GB box | OOM during Rust compile (peaks ~1.5–2 GB) | Add a 2 GB swapfile **and** set `CT_CORE_BUILD_PROFILE=release-small` in `.env` — see [`docs/installation-debian.md`](./docs/installation-debian.md) § low-memory prep |
+| `docker compose up` fails: `Pool overlaps with other one on this address space` | Your docker daemon already has a network on `172.30.0.0/24` | Override `CT_CLASH_SUBNET` and `CT_CLASH_SINGBOX_IP` in `.env` to a free /24 (v0.0.14+) |
 | Client connects but no traffic | Account quota hit, or expires_at is past | Check the account in the panel |
 | `dial tcp ...:80: connection refused` during ACME | Port 80 closed | Open it at the cloud provider firewall |
 | Domain doesn't resolve | DNS hasn't propagated | `dig +short A your-domain.com` should return your VPS IP |

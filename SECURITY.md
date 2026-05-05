@@ -55,13 +55,14 @@ high, **90 days** for medium / low.
 | Category | Examples |
 | --- | --- |
 | **Auth bypass** | Sneaking past basic_auth on the naive inbound; bypassing the panel admin login |
-| **Privilege escalation** | A proxy user reaching the Filament admin or DB |
-| **Credential disclosure** | Cleartext password leak via tracing, logs, error responses |
+| **Privilege escalation** | A proxy user reaching the Filament admin or DB; a `viewer`-role admin bypassing `User::canAccessPanel()` |
+| **Credential disclosure** | Cleartext password leak via tracing, logs, error responses; subscription HMAC tokens persisted in any log file |
 | **Memory safety** | Anything reachable from untrusted input that triggers UB in Rust (we `forbid(unsafe_code)`) |
-| **Cryptographic weakness** | Wrong AEAD nonce reuse, weak HMAC verification, broken cert pinning |
+| **Cryptographic weakness** | Wrong AEAD nonce reuse, weak HMAC verification, broken cert pinning, deterministic clash-API bearer derivation |
 | **Supply-chain integrity** | A pinned manifest's verifier passing on a tampered binary |
 | **Denial-of-service** | An unauthed CONNECT or panel request that takes down sing-box / panel / db |
 | **Information leak via probe** | An unauthed probe that fingerprints us as a proxy despite probe-resistance settings |
+| **Cover-site invariant violation** | Any wire-level shape that distinguishes a Cool Tunnel Server from a static-website host of the same hosting class — distinct status, response time, body length, headers (`Server`, `X-Powered-By`), missing/present validators (`ETag`, `Last-Modified`) on `/api/v1/subscription/<garbage>` vs `/random-path`, 429 vs 200 on rate-limit hit, or exception traces under any failure mode. (v0.0.14 lifted this to a hard release-blocking property.) |
 
 ## What's out of scope
 
@@ -89,16 +90,53 @@ The server ships with:
   clippy::expect_used, clippy::panic, clippy::todo,
   clippy::unimplemented)` workspace-wide.
 - `declare(strict_types=1);` on every panel PHP file.
-- `password_hash` and `password_cleartext_encrypted` removed from
-  `$fillable` so mass-assignment can't poison them.
+- `password_hash`, `password_cleartext_encrypted`, `password`,
+  `role`, and `is_active` removed from `$fillable` so
+  mass-assignment can't poison them. Privileged fields are set via
+  explicit setters or seeders, never `Model::create($request->all())`.
 - Constant-time HMAC verification (`hash_equals` in PHP, byte-wise
   comparison via `aes-gcm` 0.10's tag check in Rust).
-- TLS 1.2 minimum on the proxy listener.
+- **TLS 1.3 only** on the proxy listener (`min_version =
+  max_version = "1.3"` in the rendered sing-box config). No
+  legacy-protocol fallback surface.
 - DNS-over-HTTPS for the proxy's outbound resolution.
-- No cleartext request URLs or response bodies in any access log
-  by default.
-- A separate internal-only docker network for `db` + `redis` so
-  a compromised database can't initiate outbound traffic.
+- **Cover-site invariant on every public route** (v0.0.14): any
+  unknown URL, rate-limited request, expired token, empty
+  `APP_KEY`, or uncaught panel exception renders byte-identical
+  to `FakeSiteController` (status 200, `Content-Type: text/html`,
+  deterministic `sha256`-derived ETag). The custom Laravel
+  exception handler in `bootstrap/app.php` enforces this for
+  uncaught throwables; the in-controller anti-enumeration limiter
+  in `SubscriptionController` enforces it for rate-limit hits.
+- **Subscription HMAC tokens masked in all panel logs** (v0.0.14).
+  The panel's nginx access log rewrites
+  `/api/v1/subscription/<token>` to
+  `/api/v1/subscription/<masked>` before write. Caddy ships with
+  no access log directive at all.
+- **No engine-fingerprint headers** in cover-site responses
+  (v0.0.14): `Server: Caddy` stripped via `header -Server` in the
+  Caddyfile, `X-Powered-By` disabled via `expose_php = Off` in
+  the panel's PHP hardening drop-in, nginx `server_tokens off`.
+- **Login rate limiter binds across three dimensions**
+  (v0.0.13 + v0.0.14): per-(email|ip), per-ip, and per-email —
+  defeating both single-email IP-rotation and single-IP
+  email-rotation brute-force shapes.
+- **Three internal-only docker networks** isolate the management
+  surface from the proxy data plane (v0.0.13 introduced
+  `ct-clash`): `ct-data` (db + redis), `ct-clash` (panel ↔
+  sing-box clash-API — caddy is deliberately NOT a member), and
+  `ct-net` (the public-facing leg). A compromised caddy cannot
+  reach the management plane; a compromised db cannot phone home.
+  The `ct-clash` subnet is operator-tunable via `CT_CLASH_SUBNET`
+  / `CT_CLASH_SINGBOX_IP` for collision recovery (v0.0.14).
+- **Per-install random clash-API bearer**: derived from
+  `sha256("ct-clash-secret-v1:" || CT_CLASH_SECRET_SEED)`; install
+  generates the seed from `/dev/urandom` on first boot. Rotating
+  the seed invalidates any captured bearer.
+- **Refuse-to-boot guards** on missing `APP_KEY` (subscription
+  endpoint) and missing `CT_CLASH_SECRET_SEED` (clash-API
+  rendering) — fail-loud with a remediation hint rather than
+  silently falling back to a deterministic default.
 
 ## Audit-ability
 
