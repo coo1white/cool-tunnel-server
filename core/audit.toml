@@ -1,0 +1,43 @@
+# cargo-audit configuration.
+#
+# Read by `cargo audit` (CI cycle 31, see AUDIT.md). Companion to
+# `deny.toml`'s [advisories].ignore — that one is for `cargo deny`
+# (cycle 32). Both lists must be kept in sync; an entry on one
+# without a matching entry on the other will produce CI green/red
+# inconsistency that confuses operators.
+#
+# Each ignore entry MUST carry a comment explaining (a) why the
+# project is not exposed to the advisory, (b) what we're waiting
+# for upstream, (c) when to revisit.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 — Marvin Attack: timing-sidechannel key
+    # recovery in `rsa` 0.9.x. Reaches us as a TRANSITIVE
+    # dependency of `sqlx-mysql 0.8.x`, used only for MySQL's
+    # `caching_sha2_password` authentication plugin.
+    #
+    # Why we're not exposed:
+    #   - The project ships MariaDB 11 (per docker-compose.yml),
+    #     which uses `mysql_native_password` by default and never
+    #     invokes the `rsa` codepath.
+    #   - The MariaDB connection between panel and core is on the
+    #     internal-only `ct-data` docker network; no untrusted
+    #     attacker can position themselves to extract precise
+    #     timing measurements against the auth handshake.
+    #
+    # Why no fix is shipped:
+    #   - The `rsa` crate maintainers have stated upstream that no
+    #     0.9 patch is forthcoming; the fix lives in the rewrite
+    #     for the next major version.
+    #   - sqlx tracks the rewrite and will drop `rsa` once an
+    #     alternative lands.
+    #
+    # When to revisit:
+    #   - Every quarterly audit cycle (calendar reminder).
+    #   - On any sqlx release that drops or replaces `rsa`.
+    #   - If MariaDB changes default to a sha2-style auth plugin.
+    #
+    # Mirrored in core/deny.toml [advisories].ignore.
+    "RUSTSEC-2023-0071",
+]

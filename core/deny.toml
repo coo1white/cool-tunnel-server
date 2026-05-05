@@ -19,10 +19,39 @@ all-features = false
 
 [advisories]
 # yanked crates fail the audit; everything else is whatever cargo-audit
-# decides. We don't keep an `ignore` list yet — if you add one,
-# document why next to the advisory ID.
+# decides. Each entry on the ignore list MUST carry a comment
+# explaining (a) why the project is not exposed to the advisory,
+# (b) what we're waiting for upstream, (c) when to revisit.
 yanked = "deny"
-ignore = []
+ignore = [
+    # RUSTSEC-2023-0071 — Marvin Attack: timing-sidechannel key
+    # recovery in `rsa` 0.9.x. Reaches us as a TRANSITIVE
+    # dependency of `sqlx-mysql 0.8.x`, where it's pulled in only
+    # to support MySQL's `caching_sha2_password` authentication
+    # plugin (the MySQL 8+ default).
+    #
+    # Why we're not exposed:
+    #   - The project ships MariaDB 11 (per docker-compose.yml's
+    #     `image: mariadb:11`), which uses `mysql_native_password`
+    #     by default and never invokes the `rsa` codepath.
+    #   - The MariaDB connection between panel and core is on the
+    #     internal-only `ct-data` docker network; no untrusted
+    #     attacker can position themselves to extract precise
+    #     timing measurements against the auth handshake.
+    #
+    # Why no fix is shipped:
+    #   - The `rsa` crate maintainers have stated upstream that no
+    #     0.9 patch is forthcoming; the fix lives in the rewrite
+    #     for the next major version.
+    #   - sqlx is tracking the rewrite and will drop the rsa dep
+    #     once an alternative lands (per their issue tracker).
+    #
+    # When to revisit:
+    #   - Every quarterly audit cycle (set a calendar reminder).
+    #   - On any sqlx release that drops or replaces `rsa`.
+    #   - If MariaDB defaults change to a sha2-style auth plugin.
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
 # Allow the standard permissive set + GPL-3 (sing-box's licence — but
