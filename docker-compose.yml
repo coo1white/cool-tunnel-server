@@ -209,6 +209,23 @@ services:
     image: cool-tunnel-server-panel:latest
     container_name: ct-panel
     restart: unless-stopped
+    # cap_drop ALL (from x-svc-hardening) is too aggressive for
+    # this container — supervisord starts as root and PHP-FPM
+    # forks worker processes that setuid() to the `www-data`
+    # account configured in the FPM pool. setuid() needs
+    # CAP_SETUID (Linux is strict about user-switching even when
+    # demoting from root); without it the worker boot fails with
+    # "operation not permitted". Also need CAP_CHOWN +
+    # CAP_FOWNER + CAP_DAC_OVERRIDE for the entrypoint's
+    # `chmod -R 0775 storage bootstrap/cache` against the bind-
+    # mounted ./panel directory. (v0.0.24 hotfix — first real-
+    # deploy on Debian 13 caught this.)
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
     # 1 GB-VPS sizing (v0.0.22). The panel is the largest service —
     # PHP-FPM master + 4 ondemand workers (v0.0.17) at ~30-50 MiB
     # each, plus nginx, supervisord, the queue worker, the
@@ -318,6 +335,21 @@ services:
     image: mariadb:11
     container_name: ct-db
     restart: unless-stopped
+    # cap_drop ALL (from x-svc-hardening) blocks the MariaDB
+    # entrypoint's `gosu mysql ...` setuid call with "operation
+    # not permitted", crash-looping forever before the DB ever
+    # initialises. Add back the minimum capability set the
+    # entrypoint actually needs: SETUID + SETGID for the
+    # root → mysql user switch, CHOWN + FOWNER + DAC_OVERRIDE
+    # for the `chown -R mysql /var/lib/mysql` mysql_install_db
+    # pre-flight. Caught on the first real Debian 13 deploy
+    # (v0.0.24 hotfix).
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
     # 1 GB-VPS sizing (v0.0.22). v0.0.17's `command:` block already
     # tuned MariaDB's internal buffers (innodb-buffer-pool-size=64M,
     # performance-schema=OFF, max-connections=20). Resident under
@@ -370,6 +402,17 @@ services:
     image: redis:7-alpine
     container_name: ct-redis
     restart: unless-stopped
+    # Same v0.0.17 cap_drop ALL regression as db / panel: the
+    # redis:7-alpine entrypoint runs `su-exec redis ...` to drop
+    # privileges, which needs CAP_SETUID + CAP_SETGID. CHOWN +
+    # FOWNER + DAC_OVERRIDE cover the chown of /data on first
+    # boot. (v0.0.24 hotfix.)
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
     # 1 GB-VPS sizing (v0.0.22). Redis here is the cache + pub/sub
     # bus + queue backend. Measured idle 9 MiB, peak under
     # bulk-revocation fan-out ~25 MiB. 64 MiB is generous; the OOM-
