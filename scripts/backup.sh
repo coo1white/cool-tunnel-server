@@ -21,13 +21,22 @@ out="backups/cool-tunnel-${ts}.tar.gz"
 mkdir -p backups tmp
 
 step "Dump MariaDB (consistent snapshot)"
-compose exec -T db mariadb-dump \
+# Pre-v0.0.17 the password was passed via -p"${DB_ROOT_PASSWORD}"
+# on the docker exec command line. The whole command — including
+# the literal password — surfaces in `ps -ef` on the host (and on
+# the container) for the duration of the dump. On a multi-tenant
+# host or one with operator monitoring tooling, that's a real
+# leakage path. Switch to MYSQL_PWD via env: the docker exec
+# `--env` flag passes the password through environment, never
+# touches argv. mariadb-dump auto-reads MYSQL_PWD when no -p is
+# given. (v0.0.17 supply-chain hygiene.)
+compose exec -T -e MYSQL_PWD="${DB_ROOT_PASSWORD}" db \
+    mariadb-dump \
         --single-transaction \
         --quick \
         --routines \
         --triggers \
         -u root \
-        -p"${DB_ROOT_PASSWORD}" \
         "${DB_DATABASE:-cooltunnel}" \
     > tmp/db.sql
 ok "db.sql written"
