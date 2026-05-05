@@ -22,6 +22,101 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.14] — 2026-05-05
+
+**Self-check pass + anti-censorship cover-site hardening.** Two-stage
+bug hunt over the v0.0.13 patches surfaced four real bugs (one HIGH,
+two MEDIUM, one LOW); a follow-up sweep with the project's actual
+threat model (anti-censorship, not just "service down") added six
+P0-class hardening items focused on preserving the cover-site invariant
+under every observable failure path.
+
+End-to-end verified on a Debian 13 (trixie) Lima VM with
+`CT_CLASH_SUBNET=10.99.99.0/24` to exercise the new env-tunable network
+path: 65 burst hits past the rate-limit cap all returned HTTP 200 with
+identical body, byte-equal ETag, byte-equal Content-Type — censor
+indistinguishable from a vanilla unknown-path probe.
+
+### Added
+
+- **`bootstrap/app.php` exception render override** — for any uncaught
+  `Throwable` on a public route (everything except `/admin`, `/livewire`,
+  `/up`), Laravel now renders FakeSiteController instead of a 5xx HTML
+  error page or stack-trace dump. Operator still sees the original
+  exception via `Log::critical`.
+- **Per-email login rate limit dimension** in `AppServiceProvider`:
+  `Limit::perMinute(20)->by('email:'.strtolower($email))`. Defeats
+  IP-rotation brute-force against a single email; the per-(email|ip)
+  and per-ip dimensions both reset under botnet rotation.
+- **Deterministic ETag on cover-site responses** in
+  `FakeSiteController` — `sha256(rendered body)` prefix-16. Conditional
+  GET (`If-None-Match`) returns 304. Removes the "static-looking site
+  with no validators" probe distinguisher.
+- **`CT_CLASH_SUBNET` + `CT_CLASH_SINGBOX_IP` env tunables** in
+  `.env.example` and `docker-compose.yml`. v0.0.13 hardcoded
+  `172.30.0.0/24`; operators with a colliding network (corporate VPN
+  bridge, k8s flannel, Tailscale subnet route) couldn't bring the
+  stack up. Override both together; `CT_CLASH_LISTEN` is now derived
+  from `CT_CLASH_SINGBOX_IP` so a single edit propagates everywhere.
+
+### Changed
+
+- **`SubscriptionController::show`** — anti-enumeration rate limit
+  enforced *inside* the controller via `RateLimiter::tooManyAttempts/hit`
+  rather than via `throttle:subscription` middleware. Middleware
+  returns HTTP 429 on hit, distinguishable from the 200 cover-site;
+  in-controller falls through to FakeSiteController on rate-limit hit
+  for byte-level parity. The `resolve()` call is now wrapped in a
+  `Throwable` catch so any resolver exception (e.g. M-panel-2's
+  empty-`APP_KEY` `RuntimeException`) also falls through to
+  FakeSiteController.
+- **`caddy/Caddyfile.tpl`** — `header -Server` added to both `:80` and
+  `:8443` blocks. Stock Caddy emits `Server: Caddy` on every response;
+  a censor's `curl -I` previously identified the engine instantly.
+  Verified absent from the 308 HTTPS-redirect response.
+- **`docker/panel/nginx.conf`** — `map $request $request_logged`
+  rewrites `/api/v1/subscription/<token>` to
+  `/api/v1/subscription/<masked>` before the access log line is
+  written. Pattern matches all HTTP methods, not just GET. Tokens no
+  longer persist in `docker logs ct-panel`, in the json-file driver
+  on disk, or in operator log-shipping pipelines.
+- **`Makefile` `set-version`** — now refreshes `core/Cargo.lock` via
+  `cargo update --workspace --offline` so the workspace member version
+  entries match `Cargo.toml`. Fails loudly with a remediation hint if
+  cargo errors; the prior silent-on-error swallowed three distinct
+  failure modes behind a "lockfile still stale" trap.
+- **`AppServiceProvider::configureRateLimiters`** — removed the
+  unused `RateLimiter::for('subscription')` registration; the limit
+  is now expressed as constants inside `SubscriptionController`.
+
+### Fixed
+
+- **`ReloadSingBoxJob::uniqueId()` was dead code** — the class did
+  not implement `Illuminate\Contracts\Queue\ShouldBeUnique`, so
+  Laravel never consulted `uniqueId()` and the docstring's claim of
+  queue-layer dedupe was misleading. Removed the method; updated the
+  docstring to honestly attribute idempotency to
+  `SingBoxConfigGenerator::renderToFile`'s SHA-256 short-circuit.
+- **`ReloadSingBoxJob` queue-connection comment** — said `database`,
+  but the shipped `.env.example` is `QUEUE_CONNECTION=redis`. Updated
+  to reflect the production reality.
+
+### Security
+
+- **Cover-site invariant now holds across every observed failure
+  path** — the byte-on-the-wire response to
+  `/api/v1/subscription/<bad-token>`, `/random-path`, a rate-limited
+  request, an empty-APP_KEY request, and any uncaught exception is
+  identical: status 200, `Content-Type: text/html; charset=utf-8`,
+  same ETag, same body. A censor sweeping for proxy endpoints
+  cannot distinguish a Cool Tunnel Server from a static-website
+  host of the same hosting class purely from response shape.
+- **`Server: Caddy` no longer leaked** on the public `:80` redirect.
+- **Subscription HMAC tokens no longer logged in plaintext** by the
+  panel's nginx access log.
+
+---
+
 ## [0.0.13] — 2026-05-05
 
 **High-severity audit hotfixes + low-memory tuning.** Rolls up the
