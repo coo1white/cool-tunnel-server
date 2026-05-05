@@ -7,7 +7,8 @@
 // expected version + hash, verify before trusting, refuse to use a
 // component that fails its check.
 
-use crate::Result;
+use crate::{db, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ct_protocol::{ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1};
 use std::path::Path;
 use tokio::fs;
@@ -68,18 +69,25 @@ pub async fn list(manifests_dir: &str) -> Result<Vec<ComponentManifestV1>> {
     Ok(out)
 }
 
-pub async fn check_all(manifests_dir: &str) -> Result<Vec<ComponentStatusV1>> {
+pub async fn check_all(
+    manifests_dir: &str,
+    database_url: &Option<String>,
+) -> Result<Vec<ComponentStatusV1>> {
     let manifests = list(manifests_dir).await?;
     let mut out = Vec::with_capacity(manifests.len());
     for m in manifests {
-        out.push(check_one(&m).await);
+        out.push(check_one(&m, database_url).await);
     }
     Ok(out)
 }
 
-pub async fn check_one(m: &ComponentManifestV1) -> ComponentStatusV1 {
+pub async fn check_one(
+    m: &ComponentManifestV1,
+    database_url: &Option<String>,
+) -> ComponentStatusV1 {
     let (state, message, installed) = match m.kind {
         ComponentKindV1::Binary | ComponentKindV1::ContainerImage => verify_via_command(m).await,
+        ComponentKindV1::DohEndpoint => verify_via_doh(database_url).await,
         ComponentKindV1::RustCrate | ComponentKindV1::PhpPackage => {
             // For workspace crates / Composer packages we trust the
             // lockfile to enforce versions. Mark OK with the pin
@@ -195,8 +203,170 @@ fn first_line(s: &str) -> Option<&str> {
     s.lines().next().map(str::trim)
 }
 
-pub async fn print_check(manifests_dir: &str, json: bool) -> Result<()> {
-    let statuses = check_all(manifests_dir).await?;
+/// Live-reachability check for the operator's chosen DoH resolver.
+///
+/// Reads `ServerConfig.doh_resolver` from the panel's MariaDB (the
+/// authoritative live value — operators change it via the Filament
+/// "Server config" page in censored regions where 1.1.1.1 is
+/// blocked, and the change must be tested against the new URL, not
+/// against whatever was in `.env` at install time). Dispatches an
+/// RFC 8484 binary DoH query for `example.com IN A` and asserts the
+/// response carries at least one answer.
+///
+/// Why a real DNS query, not just an HTTPS reachability ping:
+///   - A captive portal that returns 200 OK at the URL would pass a
+///     reachability ping while silently breaking actual DNS lookups.
+///   - A transparent DNS poisoner could serve a 200 OK with an
+///     empty DNS message body. Checking ANCOUNT > 0 catches that.
+///   - `example.com` always has A records (IANA test domain), so a
+///     zero answer count is a strong signal something is between
+///     us and the real resolver.
+///
+/// 5s wall-clock cap — DoH lookups are typically <100ms when the
+/// resolver is reachable. A censored-blackhole probe would otherwise
+/// stall the whole `component check` pass.
+async fn verify_via_doh(
+    database_url: &Option<String>,
+) -> (ComponentStateV1, String, Option<String>) {
+    // RFC 8484 wire-format query for "example.com IN A".
+    // 29 bytes total: 12-byte header + 13-byte QNAME + 4-byte
+    // QTYPE/QCLASS. Standard query, RD=1 (request recursion).
+    const PROBE: &[u8] = &[
+        0x00, 0x01, // ID
+        0x01, 0x00, // flags: standard query, RD=1
+        0x00, 0x01, // QDCOUNT=1
+        0x00, 0x00, // ANCOUNT=0
+        0x00, 0x00, // NSCOUNT=0
+        0x00, 0x00, // ARCOUNT=0
+        // QNAME: "example.com" + null terminator
+        0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00,
+        // QTYPE = A (1), QCLASS = IN (1)
+        0x00, 0x01, 0x00, 0x01,
+    ];
+
+    let pool = match db::connect(database_url).await {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                ComponentStateV1::Unknown,
+                format!("could not read ServerConfig from DB: {e}"),
+                None,
+            );
+        }
+    };
+    let cfg = match db::server_config(&pool).await {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                ComponentStateV1::Unknown,
+                format!("ServerConfig row missing: {e}"),
+                None,
+            );
+        }
+    };
+    let doh_url = cfg.doh_resolver;
+    if doh_url.is_empty() {
+        return (
+            ComponentStateV1::Missing,
+            "ServerConfig.doh_resolver is empty".into(),
+            None,
+        );
+    }
+
+    let b64 = URL_SAFE_NO_PAD.encode(PROBE);
+    let url = if doh_url.contains('?') {
+        format!("{doh_url}&dns={b64}")
+    } else {
+        format!("{doh_url}?dns={b64}")
+    };
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                ComponentStateV1::Unknown,
+                format!("could not build HTTP client: {e}"),
+                Some(doh_url),
+            );
+        }
+    };
+
+    let resp = match client
+        .get(&url)
+        .header("Accept", "application/dns-message")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                ComponentStateV1::VerifyFailed,
+                format!("DoH request failed: {e}"),
+                Some(doh_url),
+            );
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        return (
+            ComponentStateV1::VerifyFailed,
+            format!("DoH HTTP {status} (resolver may be censored or misconfigured)"),
+            Some(doh_url),
+        );
+    }
+
+    let body = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                ComponentStateV1::VerifyFailed,
+                format!("DoH body read failed: {e}"),
+                Some(doh_url),
+            );
+        }
+    };
+
+    if body.len() < 12 {
+        return (
+            ComponentStateV1::VerifyFailed,
+            format!("DoH response too small ({} bytes)", body.len()),
+            Some(doh_url),
+        );
+    }
+
+    // Header bytes 6-7 are ANCOUNT (number of answer records). A
+    // valid response to "example.com IN A" should carry ≥1; zero
+    // suggests captive portal / DNS poisoner / NXDOMAIN-on-everything
+    // intercept. NXDOMAIN on example.com itself is impossible
+    // upstream — IANA-managed, never returns NXDOMAIN.
+    let ancount = u16::from_be_bytes([body[6], body[7]]);
+    if ancount == 0 {
+        return (
+            ComponentStateV1::VerifyFailed,
+            "DoH returned 0 answer records (possible censorship intercept — \
+             try a different resolver via the panel)"
+                .into(),
+            Some(doh_url),
+        );
+    }
+
+    (
+        ComponentStateV1::Ok,
+        format!("DoH reachable, {ancount} answer record(s)"),
+        Some(doh_url),
+    )
+}
+
+pub async fn print_check(
+    manifests_dir: &str,
+    database_url: &Option<String>,
+    json: bool,
+) -> Result<()> {
+    let statuses = check_all(manifests_dir, database_url).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&statuses)?);
     } else {
