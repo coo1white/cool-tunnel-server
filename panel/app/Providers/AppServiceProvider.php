@@ -43,32 +43,28 @@ class AppServiceProvider extends ServiceProvider
     }
 
     /**
-     * H1 (2026-05-05 audit) — pre-fix, neither the Filament login
-     * Livewire form nor the public subscription endpoint were rate-
-     * limited at the framework layer. Brute-forcing an admin
-     * password or enumerating subscription tokens was bounded only
-     * by network bandwidth.
+     * H1 (2026-05-05 audit) — pre-fix, the Filament login Livewire
+     * form was not rate-limited at the framework layer; brute-
+     * forcing an admin password was bounded only by network
+     * bandwidth.
      *
-     * Two named limiters live here:
+     * The `login` named limiter lives here:
      *
-     *   `login`         — keyed on (email|ip), 5/min per identity
-     *                     plus 20/min per IP overall. Consumed by
-     *                     App\Filament\Pages\Auth\Login::authenticate
-     *                     (the custom subclass registered in
-     *                     AdminPanelProvider).
+     *   `login`  — keyed on (email|ip), 5/min per identity plus
+     *              20/min per IP overall. Consumed by
+     *              App\Filament\Pages\Auth\Login::authenticate
+     *              (the custom subclass registered in
+     *              AdminPanelProvider).
      *
-     *   `subscription`  — keyed on IP, 60/min. The subscription URL
-     *                     carries an HMAC token that's already
-     *                     forgery-resistant; the throttle blocks
-     *                     online enumeration of `account_id` (numeric
-     *                     prefix) by capping requests-per-second.
-     *                     Used as throttle:subscription middleware
-     *                     in routes/web.php.
-     *
-     * The limits are deliberately tight: an operator typing their
-     * password wrong 5 times in a minute can wait one minute. A
-     * legitimate client will fetch its subscription manifest at
-     * most a few times per day — 60/min is generous headroom.
+     * The subscription endpoint's rate limit is *not* registered
+     * here — it's enforced inside SubscriptionController via the
+     * lower-level RateLimiter::tooManyAttempts/hit API. We avoided
+     * `throttle:subscription` middleware because a 429 response
+     * leaks the endpoint's existence to a probe (vs. the cover-
+     * site 200 returned by FakeSiteController for any unknown
+     * path). The controller falls through to FakeSiteController
+     * on rate-limit hit, preserving byte-level parity with the
+     * cover-site catch-all. (v0.0.14 anti-enum refinement.)
      */
     private function configureRateLimiters(): void
     {
@@ -77,13 +73,22 @@ class AppServiceProvider extends ServiceProvider
             $ip    = (string) $request->ip();
 
             return [
+                // Per (email|ip): catches a single attacker hammering
+                // one email from one source.
                 Limit::perMinute(5)->by(strtolower($email).'|'.$ip),
+                // Per IP: catches a single attacker rotating emails.
                 Limit::perMinute(20)->by($ip),
+                // Per email: catches a botnet rotating IPs against a
+                // single email. Without this third dimension, an
+                // attacker controlling N source IPs effectively raises
+                // the cap to 5×N/min on any one email — defeating
+                // both keys above. Kept generous (20/min) so a typo-
+                // prone real admin retrying from a few devices isn't
+                // locked out, while a distributed brute-force is
+                // still capped at 1200/hr against any single email.
+                // (v0.0.14 hardening of H1.)
+                Limit::perMinute(20)->by('email:'.strtolower($email)),
             ];
-        });
-
-        RateLimiter::for('subscription', function (Request $request) {
-            return Limit::perMinute(60)->by((string) $request->ip());
         });
     }
 }
