@@ -136,6 +136,20 @@ php artisan migrate --force --no-interaction || true
 php artisan db:seed --force --no-interaction || true
 
 php artisan filament:cache-components --no-interaction || true
+
+# Publish Filament's CSS/JS assets to public/css/filament/ + public/js/
+# filament/. Filament 3 ships these inside the package; the panel's
+# Blade layout references them at /css/filament/filament/app.css and
+# friends, which nginx serves out of public/. Without this step the
+# files don't exist on first boot and the panel renders as a wall of
+# unstyled HTML (Filament's HTML loads, browser falls back to default
+# styles, dashboard is technically functional but visually broken).
+# `filament:assets` is idempotent — copies the package's published
+# files over each boot, no-op when already current. (v0.0.29 hotfix
+# — first real-world Debian 13 deploy hit this once the v0.0.28
+# fixes unblocked the login flow.)
+php artisan filament:assets --no-interaction || true
+
 php artisan config:cache  --no-interaction || true
 php artisan route:cache   --no-interaction || true
 php artisan view:cache    --no-interaction || true
