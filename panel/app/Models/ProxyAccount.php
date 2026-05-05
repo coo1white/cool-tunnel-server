@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 
 // One row per proxy user.
 //
@@ -124,33 +125,61 @@ class ProxyAccount extends Model
 
     protected static function booted(): void
     {
-        // Hot path: announce on Redis pub/sub synchronously. The
-        // daemon picks this up in ~1ms; the announce itself is
-        // fire-and-forget against the Redis socket, so it does not
-        // stall the Filament request even when N saves fire from a
-        // bulk-action.
+        // Both paths defer to DB::afterCommit so the announce + reload
+        // dispatch only fire if the surrounding DB transaction
+        // actually commits. Pre-v0.0.15 the announce ran inline in the
+        // model event, which fires AFTER the row's INSERT/UPDATE but
+        // BEFORE the transaction commits — a rollback later in the
+        // same transaction would still leave a Redis "revoked" flag
+        // and a queued ReloadSingBoxJob for a row that never landed.
+        // The daemon would re-render config.json from a DB snapshot
+        // missing that row (correct), but `account:status:<user>` in
+        // Redis would persist as "revoked" (incorrect ghost state),
+        // and the queue worker would dispatch to the clash API for
+        // a non-existent change (wasted work).
         //
-        // Cold path: dispatch ReloadSingBoxJob to the database queue
-        // for the panel-side config render + clash-API reload
-        // backstop. Pre-2026-05-05 the cold path ran synchronously
-        // and a hung ct-server-core blocked the whole save for up
-        // to 60s.
+        // DB::afterCommit semantics:
+        //   - inside a transaction: callback queued, fired after the
+        //     OUTERMOST transaction commits. If any nested transaction
+        //     rolls back, the callback never runs.
+        //   - outside a transaction: callback runs immediately. The
+        //     pre-v0.0.15 inline behaviour for non-transactional
+        //     saves is preserved.
+        //
+        // We snapshot $username and $status at saved-time so the
+        // callback closure doesn't dereference a stale or
+        // post-rollback Eloquent instance — the values are frozen
+        // at the moment the row's intended state was decided, and
+        // the broadcast announces that frozen state when (and only
+        // if) the row actually persists.
+        //
+        // Hot path (Redis pub/sub) is still ~1ms fire-and-forget;
+        // cold path (ReloadSingBoxJob) still runs out-of-band on
+        // the queue worker. Only the trigger boundary moved.
         static::saved(function (self $account): void {
-            $bus    = app(RedisRevocationBus::class);
-            $status = $account->isActive() ? 'active'
-                    : ($account->expires_at && $account->expires_at->isPast() ? 'expired' : 'revoked');
-            $bus->setAccountStatus($account->username, $status);
-            $bus->announceAccountChanged($account->username, "saved:{$status}");
+            $username = $account->username;
+            $status   = $account->isActive() ? 'active'
+                      : ($account->expires_at && $account->expires_at->isPast() ? 'expired' : 'revoked');
 
-            ReloadSingBoxJob::dispatch();
+            DB::afterCommit(function () use ($username, $status): void {
+                $bus = app(RedisRevocationBus::class);
+                $bus->setAccountStatus($username, $status);
+                $bus->announceAccountChanged($username, "saved:{$status}");
+
+                ReloadSingBoxJob::dispatch();
+            });
         });
 
         static::deleted(function (self $account): void {
-            $bus = app(RedisRevocationBus::class);
-            $bus->clearAccountStatus($account->username);
-            $bus->announceAccountChanged($account->username, 'deleted');
+            $username = $account->username;
 
-            ReloadSingBoxJob::dispatch();
+            DB::afterCommit(function () use ($username): void {
+                $bus = app(RedisRevocationBus::class);
+                $bus->clearAccountStatus($username);
+                $bus->announceAccountChanged($username, 'deleted');
+
+                ReloadSingBoxJob::dispatch();
+            });
         });
     }
 }
