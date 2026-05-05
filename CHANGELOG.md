@@ -22,6 +22,65 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.29] — 2026-05-06 — deployment hotfix #7 (publish Filament assets)
+
+**Real-world bug #11 from the v0.0.22 deployment arc.** With v0.0.28
+unblocking the SSH-tunnel login flow, the user signed in
+successfully — and landed on a **functional but unstyled** Filament
+dashboard. All the HTML rendered, the data was correct ("Welcome
+alice", active accounts: 0, traffic today: 0 B), but every
+component was a wall of plain text with browser-default styling.
+The "Show password" eye icon rendered as a giant SVG dominating
+the screen.
+
+### Root cause
+
+Filament 3 ships its CSS + JS as package assets that need
+publishing to `public/css/filament/` and `public/js/filament/`
+via `php artisan filament:assets`. The panel's Blade layout
+references them at hardcoded paths
+(`/css/filament/filament/app.css?v=3.3.50.0` etc.), which nginx
+serves out of `public/`. Without the publish step, the assets
+don't exist on first boot — the HTML loads with `<link>` tags
+pointing at 404s, browser falls back to default styles, every
+panel page is technically functional but visually broken.
+
+The pre-fix entrypoint ran `filament:cache-components` (which
+caches Filament's component metadata for faster boot) but NOT
+`filament:assets` (which copies the package's published static
+files into `public/`). The two commands sound similar but do
+completely different things.
+
+### Fixed
+
+- **`docker/panel/entrypoint.sh`** runs `php artisan filament:assets
+  --no-interaction || true` after `filament:cache-components` and
+  before `config:cache`. Idempotent — copies the package's
+  published files over each boot, no-op when already current.
+  Header comment documents the trap so the next operator
+  inspecting the entrypoint knows why this step exists.
+
+### Recovery for operators stuck on v0.0.28
+
+```bash
+docker compose exec panel php artisan filament:assets
+docker compose exec -T panel sh -c 'chown -R www-data:www-data /var/www/html/public && chmod -R 0755 /var/www/html/public'
+```
+
+Then hard-refresh the browser (`⌘+Shift+R` on Chrome / `⌘+Option+R`
+on Safari) to bypass the cached "no-CSS" render.
+
+### Smoke-test gap (seventh time in a row)
+
+All seven `v0.0.23–v0.0.29` deploy hotfixes were missed by the
+Lima smoke runs. The pattern is now well-established:
+post-`down -v` first-boot exercises codepaths that no smoke run
+ever reaches. The fix has been deferred for too long; **the next
+test pass MUST include a `down -v` + first-boot + login + create-
+proxy-account + connect-client end-to-end check**.
+
+---
+
 ## [0.0.28] — 2026-05-05 — deployment hotfix #6 (panel access via SSH tunnel)
 
 **Real-world bugs #7-#10 from the v0.0.22 deployment arc.** With
