@@ -61,9 +61,28 @@ POOL
 fi
 
 # First-boot: pull dependencies if vendor/ is missing.
+#
+# Supply-chain hardening (v0.0.16): pass --no-scripts to composer.
+# Without it, every transitive package's post-install /
+# post-autoload-dump hook would execute as the panel user with
+# full filesystem + DB access on every fresh container start. The
+# project's own composer.json registers two known scripts via
+# post-autoload-dump (`Illuminate\\Foundation\\ComposerScripts::
+# postAutoloadDump` + `php artisan package:discover --ansi`); we
+# explicitly invoke `package:discover` after install rather than
+# letting any hook run blanket. ComposerScripts::postAutoloadDump
+# is a Laravel-internal helper that matters only when the
+# autoloader is generated WITHOUT --optimize-autoloader; we pass
+# --optimize-autoloader so it isn't needed.
 if [ ! -d vendor ]; then
     echo "[entrypoint] vendor/ missing — running composer install"
-    composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+    composer install \
+        --no-dev \
+        --no-interaction \
+        --prefer-dist \
+        --optimize-autoloader \
+        --no-scripts
+    php artisan package:discover --ansi
 fi
 
 # Generate APP_KEY if it isn't set.
