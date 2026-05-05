@@ -22,6 +22,115 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.15] — 2026-05-05
+
+**Loop-1 self-check pass: 2 CRITICAL correctness bugs + 4 HIGH
+hardening + 1 supply-chain advisory waived.** Continued the
+self-audit programme that produced v0.0.14; this round's hunt
+focused on **runtime correctness under stress** (concurrency,
+power-loss, supervisor restart semantics, upgrade ordering) and
+**supply-chain audit hygiene**. Both CRITICAL findings are real
+correctness bugs, not just hardening — the project would silently
+diverge state under specific production conditions.
+
+### Fixed
+
+- **CRITICAL — Redis announce + queue dispatch deferred to
+  `DB::afterCommit`** (`panel/app/Models/ProxyAccount.php`).
+  Pre-fix, `setAccountStatus`, `announceAccountChanged`, and
+  `ReloadSingBoxJob::dispatch` ran inline in `static::saved` /
+  `static::deleted`, which fire AFTER the row's INSERT/UPDATE
+  but BEFORE the surrounding transaction commits. A rollback
+  later in the same transaction left a Redis ghost flag for a
+  row that never persisted, plus a queued reload for a phantom
+  change. Both callbacks now snapshot the relevant fields at
+  save-time and defer the side effects to `DB::afterCommit`,
+  which only fires if the outermost transaction commits. Outside
+  a transaction the callback runs immediately — pre-fix
+  behaviour preserved.
+- **CRITICAL — `atomic_write` fsyncs the parent directory after
+  rename** (`core/ct-server-core/src/singbox/mod.rs`). POSIX
+  rename is atomic for concurrent readers, but the directory
+  entry update can sit in the page cache for arbitrarily long.
+  Power loss between the rename and the next implicit sync
+  reverts the directory entry — sing-box reloads the OLD
+  config.json on next boot, silently re-activating revoked
+  credentials. Standard fix: open + fsync the parent dir after
+  rename. One additional `fdatasync` per render — only triggers
+  on actual changes (the SHA-256 dedupe at the caller short-
+  circuits unchanged renders).
+- **HIGH — `supervisord.conf` `startretries=10` + `startsecs=5`
+  on every program** (`docker/panel/supervisord.conf`). Pre-fix
+  only `ct-core-daemon` declared retries; the other four
+  (php-fpm, nginx, queue, scheduler) inherited supervisord's
+  default `startretries=3, startsecs=1`. Three rapid crashes
+  (transient Redis blip during `queue:work` boot, first-boot
+  timing window before `/run/cool-tunnel` is writable) put the
+  program in FATAL — supervisord gives up forever. The most
+  common silent regression: `queue:work` FATAL → ReloadSingBoxJob
+  backstop dies. Saves still fire the Redis fast-path so the
+  user-visible reload happens, but the cold-path consistency
+  layer is silently broken until the operator notices via
+  `supervisorctl status`.
+- **HIGH — `bootstrap/app.php` exception handler tightens
+  prefix match** to exact-or-prefix-with-trailing-slash. The
+  v0.0.14 `str_starts_with($path, 'admin')` would also match
+  future routes like `administrator/`, `admins/list`,
+  `admin-export/` — silently losing cover-site protection on
+  any path that happens to start with the literal `admin`. Same
+  shape applied to `livewire`. Forward-looking; no current
+  route exposes it.
+- **HIGH — `update.sh` brings the new panel image up BEFORE
+  running migrations** (`scripts/update.sh`). Pre-fix the
+  sequence was `compose build` → `compose exec panel migrate`
+  (against the OLD running container) → `compose up -d panel`
+  (finally swap in the new image). Migrations applied via the
+  OLD PHP runtime; the OLD interpreter then briefly executed
+  against the new schema. Today's migrations happen to be
+  additive-with-defaults so the order is safe in practice, but
+  the order was fragile by accident. Pinned.
+- **HIGH — `backup.sh` quiesces Caddy before tarring
+  `caddy_data`**. A cert renewal landing mid-tar could capture
+  a half-written `*.crt` or `*.key` in the archive — backup
+  silently corrupted, restore would fail to load on the new box.
+  Caddy is `compose stop`-ed, the tar runs against the now-
+  static volume, then Caddy is restarted (only if it was
+  running). The 1-2 minute :80 downtime is acceptable for
+  backup; :443 proxy traffic is unaffected.
+
+### Added
+
+- **`scripts/restore.sh`** — companion to `backup.sh`. Pre-fix
+  the project shipped a one-way backup with no documented
+  restore path. The new script reverses the tarball: untar,
+  restore `.env` + manifests + templates, bring up db + redis,
+  mariadb-import the dump, restore the `caddy_data` volume,
+  bring up panel + sing-box + caddy, run a component check.
+  Refuses to overwrite a running stack; idempotent on partial
+  re-invocation.
+- **`scripts/late-night-comeback.sh` cover-site invariant
+  check** (the new check #11, raising the gate from /10 to /11).
+  Verifies `/api/v1/subscription/<bogus>` and
+  `/lnc-cover-probe` both return HTTP 200 with byte-identical
+  ETags, AND that the public Caddy redirect on :80 emits no
+  `Server:` header. A v0.0.14 anti-fingerprint regression now
+  fails the readiness gate before the box takes real users.
+
+### Security
+
+- **`RUSTSEC-2023-0071` (Marvin Attack on `rsa` 0.9 via
+  `sqlx-mysql`) waived**, with documented rationale. We ship
+  MariaDB 11 which never invokes the `rsa` codepath
+  (`mysql_native_password`, not `caching_sha2_password`); the
+  MariaDB connection is on the internal-only `ct-data` docker
+  network, blocking any timing-sidechannel pre-condition. No
+  upstream fix forthcoming for the rsa 0.9 line. Waiver mirrored
+  across `core/audit.toml`, `core/deny.toml`, and the
+  `cargo-audit` step in `.github/workflows/audit.yml` so all
+  three audit pathways agree.
+
+---
+
 ## [0.0.14] — 2026-05-05
 
 **Self-check pass + anti-censorship cover-site hardening.** Two-stage
