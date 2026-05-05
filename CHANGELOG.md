@@ -22,6 +22,47 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.21] — 2026-05-05
+
+**Loop-7: diminishing-returns marker.** Audit angles previous
+loops hadn't touched (Filament Resource action paths, ct-protocol
+crate, TODO/FIXME residue, Rust idioms, seeders, wire size limits,
+quota concurrency, install.sh under cap_drop). Eight areas swept;
+seven returned "no bug found". One LOW finding shipped here:
+
+### Fixed
+
+- **Defense-in-depth FQDN regex on `ServerConfigPage::domain`
+  input.** The v0.0.16 render-layer guard blocks metasyntactic
+  values from reaching Caddy, but a typo'd domain still persists
+  in the DB and breaks every subsequent render until the operator
+  notices. Form regex (RFC 1123 label shape, max 253 chars)
+  rejects the typo at save time.
+
+### Audit areas confirmed clean (no fix needed)
+
+- Filament Resource actions: `regenerate_password` correctly uses
+  `setCleartextPassword()` and shows cleartext via persistent
+  notification only; FakeWebsite payload stays inside `{{ }}`-
+  escaped Blade; `TrafficLogResource` confirmed read-only.
+- `ct-protocol`: `subscription.rs` carries `version: u32` and
+  HMAC-SHA-256; `components.rs` verify-command path runs only
+  manifests from the `:ro` mount under `/srv/manifests`; trust
+  boundary is the repo, not a runtime input.
+- Zero `TODO`/`FIXME`/`HACK`/`XXX` matches across the entire
+  codebase.
+- Zero `unwrap`/`expect`/`panic` in non-test Rust code; zero
+  `unsafe` blocks (workspace-wide `forbid(unsafe_code)` holds).
+- All 4 `tokio::spawn` sites have explicit error handling /
+  retry-with-backoff / runtime-test scopes.
+- `quota.rs` uses `SELECT ... FOR UPDATE` inside a transaction;
+  no double-decrement risk.
+- `DatabaseSeeder` does not seed a default-admin password; seeds
+  three FakeWebsite rows so the cover-site invariant holds on
+  fresh install.
+
+---
+
 ## [0.0.20] — 2026-05-05
 
 **Loop-6: closes the deferred items + a CI gap discovered along
