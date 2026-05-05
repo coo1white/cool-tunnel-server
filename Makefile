@@ -176,7 +176,7 @@ components: ## ct-server-core component check (OK/NG)
 # ---------- Release plumbing -------------------------------------
 
 .PHONY: set-version
-set-version: ## bump the version in Cargo.toml + manifests; pass V=X.Y.Z
+set-version: ## bump the version in Cargo.toml + manifests + lockfile; pass V=X.Y.Z
 	@if [ -z "$(V)" ]; then echo 'usage: make set-version V=0.0.7'; exit 1; fi
 	@sed -i.bak 's/^version       = ".*"/version       = "$(V)"/' core/Cargo.toml
 	@sed -i.bak -E 's/"version": "[0-9]+\.[0-9]+\.[0-9]+"/"version": "$(V)"/' \
@@ -184,7 +184,34 @@ set-version: ## bump the version in Cargo.toml + manifests; pass V=X.Y.Z
 		manifests/ct-protocol.upstream.json \
 		manifests/panel.upstream.json
 	@find . -name '*.bak' -delete
-	@echo "    bumped to $(V) in: core/Cargo.toml, manifests/{ct-server-core,ct-protocol,panel}.upstream.json"
+	@# Refresh core/Cargo.lock so the workspace member version
+	@# entries (`name = "ct-server-core" / "ct-protocol", version = "..."`)
+	@# track Cargo.toml. Without this, the next `cargo build --locked`
+	@# (the LTSC release-check job uses --locked) fails with "the
+	@# lock file ... needs to be updated", leaving the operator with
+	@# a stale lockfile inside what they thought was a clean version
+	@# bump. `cargo update --workspace --offline` only touches the
+	@# in-tree workspace entries — no crates.io fetch, no transitive
+	@# bumps. If the registry cache is cold, fall back to an online
+	@# update; on hard failure (air-gapped CI, cargo borked), exit
+	@# loudly so the operator notices BEFORE they tag the release —
+	@# silent failure here is exactly the trap this whole step
+	@# exists to prevent. (v0.0.14 hardening.)
+	@cd core && \
+	    cargo update --workspace --offline >/dev/null 2>&1 \
+	    || cargo update --workspace        >/dev/null 2>&1 \
+	    || { \
+	        echo ""; \
+	        echo "  ✗ make set-version: could not refresh Cargo.lock" >&2; \
+	        echo "    workspace versions in core/Cargo.toml were bumped, but" >&2; \
+	        echo "    cargo update failed (offline AND online). Run:" >&2; \
+	        echo "        cd core && cargo check" >&2; \
+	        echo "    manually before tagging the release, or revert the bump:" >&2; \
+	        echo "        git checkout -- core/Cargo.toml manifests/*.upstream.json" >&2; \
+	        echo ""; \
+	        exit 1; \
+	    }
+	@echo "    bumped to $(V) in: core/Cargo.toml, core/Cargo.lock, manifests/{ct-server-core,ct-protocol,panel}.upstream.json"
 
 .PHONY: pin-images
 pin-images: ## resolve current docker base-image tags to digests; updates Dockerfiles in place
