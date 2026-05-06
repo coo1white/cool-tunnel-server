@@ -102,11 +102,11 @@ jobs:
         with:
           toolchain: 1.86
       - name: Install cargo-deny
-        # Pin to the last cargo-deny that supports rustc 1.86 (the toolchain
-        # this job installs above). Bare `cargo install --locked cargo-deny`
-        # pulls the latest (0.19+) which requires rustc 1.88+ and fails the
-        # install step. Bump in lock-step with the toolchain field.
-        run: cargo install --locked cargo-deny --version "^0.18"
+        # Pin to exactly the last cargo-deny that supports rustc 1.86 (the
+        # toolchain this job installs above). `^0.18` is too loose: cargo
+        # picks the latest in the 0.18.x line (0.18.9), which already
+        # requires rustc 1.88+. Bump in lock-step with the toolchain field.
+        run: cargo install --locked cargo-deny --version "=0.18.3"
       - name: Check
         # deny.toml lives at core/deny.toml.
         run: cargo deny check
@@ -259,23 +259,49 @@ jobs:
               # v0.0.5 → v0.0.6: caddyfile_safe_username calling-site
               # legacy is allowed (renaming is a v0.1 thing)
           )
+          # Build the scan list with `find` rather than relying on grep's
+          # `--exclude` / `--exclude-dir` / `--include`. The latter combo
+          # quietly fails on this runner — `--exclude=CHANGELOG.md` was
+          # ignored when paired with `--include='*.md'`, and matches in
+          # excluded files leaked through. `find` has explicit, well-defined
+          # `-not -name` / `-not -path` semantics that work the same on
+          # macOS and Ubuntu.
+          #
+          # Excluded by intent:
+          #   - History/changelog files where past pivots are deliberately
+          #     mentioned (CHANGELOG.md, NOTICE, AUDIT.md,
+          #     THIRD_PARTY_LICENSES.md).
+          #   - Upstream-component manifests + their README, where the
+          #     `note:` field documents protocol/feature relationships
+          #     (e.g. "wire protocol identical to forwardproxy@naive",
+          #     "we use Caddy for ACME because sing-box's built-in ACME
+          #     is less robust"). These notes describe *why* we made the
+          #     pivots; flagging them defeats the purpose of the manifest.
+          #   - docs/installation-debian.md historical-context paragraph
+          #     about ACME state living in singbox_data (corrected in
+          #     v0.0.4; the doc explains the correction).
+          #   - .git, target, .github (build/CI scaffolding).
+          mapfile -t scan_files < <(find . -type f \
+              \( -name '*.md' -o -name '*.rs' -o -name '*.php' \
+                 -o -name '*.tpl' -o -name '*.json' -o -name '*.yml' \
+                 -o -name '*.sh' -o -name '*.blade.php' \
+                 -o -name 'Dockerfile*' \) \
+              -not -path './.git/*' \
+              -not -path './target/*' \
+              -not -path './.github/*' \
+              -not -path '*/vendor/*' \
+              -not -path '*/node_modules/*' \
+              -not -name 'CHANGELOG.md' \
+              -not -name 'NOTICE' \
+              -not -name 'AUDIT.md' \
+              -not -name 'THIRD_PARTY_LICENSES.md' \
+              -not -name 'sing-box.upstream.json' \
+              -not -name 'caddy.upstream.json' \
+              -not -path './manifests/README.md' \
+              -not -path './docs/installation-debian.md')
           fail=0
           for pat in "${stale_patterns[@]}"; do
-              # Exclude history-of-the-project files where mentions
-              # are deliberate.
-              if grep -rEn "$pat" \
-                   --exclude-dir=.git --exclude-dir=target \
-                   --exclude=CHANGELOG.md \
-                   --exclude=NOTICE \
-                   --exclude=THIRD_PARTY_LICENSES.md \
-                   --exclude=AUDIT.md \
-                   --exclude-dir=.github \
-                   --exclude=sing-box.upstream.json \
-                   --include='*.md' --include='*.rs' --include='*.php' \
-                   --include='*.tpl' --include='*.json' --include='*.yml' \
-                   --include='*.sh' --include='*.blade.php' \
-                   --include='Dockerfile*' \
-                   . 2>/dev/null; then
+              if grep -EHn "$pat" "${scan_files[@]}" 2>/dev/null; then
                   echo "::error::stale reference matching /$pat/"
                   fail=1
               fi
