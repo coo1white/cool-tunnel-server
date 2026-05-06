@@ -32,8 +32,7 @@ Schema is `ComponentManifestV1` in `ct-protocol::components`.
     "version": "1.10.7",
     "upstream": "https://github.com/SagerNet/sing-box",
     "verify": {
-        "command": ["docker", "exec", "ct-singbox", "sing-box", "version"],
-        "expect_stdout_contains": "sing-box version 1.",
+        "command": ["bash", "-c", "exec 3<>/dev/tcp/sing-box/443"],
         "expect_zero_exit": true
     },
     "note": "GPL-3.0 …"
@@ -43,11 +42,25 @@ Schema is `ComponentManifestV1` in `ct-protocol::components`.
 `kind` is one of `binary`, `rust-crate`, `container-image`,
 `php-package`. The verifier behaviour differs by kind:
 
-- `binary` / `container-image` — runs `verify.command` (which can
-  itself be `docker exec <container> <cmd>`), checks exit + stdout.
+- `binary` / `container-image` — runs `verify.command` from inside
+  the panel container (the panel has no `docker` CLI, so the probe
+  cannot itself shell out to other containers — talk to them over
+  the docker network instead, e.g. a TCP open against
+  `/dev/tcp/<service>/<port>` or an HTTP request against the
+  service's listener). Optionally checks `expect_stdout_contains`
+  and the exit code.
 - `rust-crate` / `php-package` — trusts the lockfile. The verifier
   marks OK without exec'ing anything; if you want stricter, add a
   custom `verify` block.
+
+A liveness probe that has no version string to assert should be
+**silent on success** (no `expect_stdout_contains`, no echo).
+Empty stdout makes `first_line(stdout) → None`, which the matcher
+in `core/ct-server-core/src/components.rs::check_one` accepts as
+OK. A non-empty first line that does not contain the pinned
+`version` flips the result to `VersionMismatch` — the soft
+version match is intended for verifiers that print a real
+`<tool> version <semver>` line, not for liveness probes.
 
 ## Running the check
 
@@ -60,12 +73,21 @@ ct-server-core component check --manifests /srv/manifests
 ```
  OK  ct-protocol          pinned=0.0.1          installed=0.0.1
  OK  ct-server-core       pinned=0.0.1          installed=0.0.1
- OK  mariadb              pinned=11             installed=11.4.2
+ OK  mariadb              pinned=11             installed=—
  OK  naiveproxy           pinned=v147.…         installed=— (client-side)
- OK  panel                pinned=0.0.1          installed=Laravel 11
- OK  redis                pinned=7-alpine       installed=redis-cli 7.2
- OK  sing-box             pinned=1.10.7         installed=sing-box version 1.10.7
+ OK  panel                pinned=0.0.1          installed=—
+ OK  redis                pinned=7-alpine       installed=—
+ OK  sing-box             pinned=1.10.7         installed=—
 ```
+
+The `—` rows are silent liveness probes (post-v0.0.35): they
+report OK on TCP / HTTP / artisan-boot success without printing a
+version line. Image-tag pinning in `docker-compose.yml` and the
+manifest-drift CI guard are the version-of-record for those
+components; the verifier confirms the listener is alive, not
+which build is behind it. `ct-protocol` and `ct-server-core` keep
+real `installed=` strings because their verifiers print a
+`<tool> version <semver>` line by design.
 
 Or: panel → **Components** → big OK/NG table, **Re-check** button.
 

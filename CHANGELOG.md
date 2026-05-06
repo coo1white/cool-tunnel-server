@@ -22,6 +22,93 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.36] — 2026-05-06 — fix proxy-account create 500 + components.md truth-up
+
+The Filament admin's **create proxy account** flow has been
+returning HTTP 500 since the column was added — every fresh
+deploy on v0.0.31..v0.0.35 hits it on the first user-management
+action operators are guided towards in `GETTING_STARTED.md`.
+
+Same release also retires two stale paragraphs in
+`docs/components.md` that v0.0.34 / v0.0.35 left behind.
+
+Drift-detection restoration (the matcher-side question raised
+during the v0.0.35 forensic) is intentionally **out of scope**
+for this release; tracked for a separate cycle.
+
+### Root cause (panel CRUD)
+
+`proxy_accounts.password_hash` is `NOT NULL` with no default
+(see `2026_05_03_000001_create_proxy_accounts_table.php`). The
+column is deliberately outside `ProxyAccount::$fillable` so a
+stray `Model::create($request->all())` cannot poison the
+credential — only `setCleartextPassword()` is allowed to write
+it.
+
+`CreateProxyAccount` did not override `handleRecordCreation()`,
+so Filament's default ran `new ProxyAccount($data); $record->save()`
+with the form payload (no `password_hash`). The first INSERT
+hit the NOT NULL constraint and surfaced as a 500. The page's
+`afterCreate()` hook generated and saved the password — but
+only after that first save had already failed.
+
+### Fixed
+
+- **Override `handleRecordCreation()` in `CreateProxyAccount`.**
+  Generate the cleartext, call `setCleartextPassword()` on the
+  unsaved model, then `save()`. The constraint is satisfied on
+  the first INSERT and `afterCreate()` is now a pure
+  notification step. Side benefit: removes a duplicate
+  `static::saved()` event and the redundant
+  `ReloadSingBoxJob::dispatch()` it was firing.
+  (panel/app/Filament/Resources/ProxyAccountResource/Pages/CreateProxyAccount.php)
+- The privilege-bearing column rule is preserved unchanged:
+  `password_hash` and `password_cleartext_encrypted` stay
+  outside `$fillable`; `setCleartextPassword()` remains the
+  only writer.
+
+### Changed (docs)
+
+- **`docs/components.md` — verifier shape.** Dropped the
+  `docker exec <container> <cmd>` example from the
+  `binary` / `container-image` bullet (false since v0.0.34 —
+  the panel container has no `docker` CLI). Replaced with a
+  one-paragraph note on the silent-on-success liveness-probe
+  pattern and how it interacts with the soft version matcher.
+- **`docs/components.md` — example output.** Truthed up the
+  `installed=` column for the four silenced components
+  (mariadb, panel, redis, sing-box) to show `—`, matching what
+  operators actually see post-v0.0.35. `ct-protocol` and
+  `ct-server-core` keep real version strings because their
+  verifiers still print one.
+
+### Out of scope
+
+- **Drift detection.** The forensic on v0.0.35 surfaced that the
+  six silenced manifests have made the soft version matcher
+  unreachable for those components — `m.version` is recorded but
+  no longer enforced. The right fix (an opt-in
+  `expect_no_version_line` field on `VerifyV1`, or a
+  banner-read shim per probe) needs a `ct-protocol` edit + crate
+  bump and is deferred to a dedicated release.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+docker compose exec panel php artisan optimize:clear
+```
+
+No image rebuild required — the panel mounts the resource code
+read-only from the working tree, and the manifests / docs are
+not consumed at runtime by any service. Visit
+`/admin/proxy-accounts/create`, fill in a username, click
+**Create** → expect the one-time-password notification with the
+subscription URL.
+
+---
+
 ## [0.0.35] — 2026-05-06 — silent component-check probes (drop verify-stage version match)
 
 After v0.0.34's manifest rewrite, the Components page went from
