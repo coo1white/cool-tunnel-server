@@ -321,38 +321,25 @@ services:
       # and no auth; loopback bind keeps it SSH-gated.
       - "127.0.0.1:9000:9000"
     environment:
+      # The panel service receives every key from .env via the
+      # `env_file: - .env` directive below — that's the canonical
+      # delivery for credentials (DB_USERNAME, DB_PASSWORD,
+      # REDIS_PASSWORD, CT_CLASH_SECRET_SEED, etc.) and any other
+      # operator-tunable values. The `environment:` keys below are
+      # only those that need to be different from .env or that
+      # don't live in .env at all (container-internal hostnames,
+      # render paths, derived URLs). Pre-v0.0.46 this block also
+      # duplicated DB_USERNAME / DB_PASSWORD / REDIS_PASSWORD with
+      # explanatory comments; v0.0.46 removed those — env_file
+      # already injects them, and duplicate identical values are
+      # a no-op.
       DB_HOST: db
       DB_PORT: 3306
-      # Bare DB_USERNAME / DB_PASSWORD for the Cycle 2 / 3 drift-
-      # detection probe (v0.0.41). Laravel itself reads these from
-      # .env via phpdotenv at PHP boot — phpdotenv does NOT export
-      # to the shell environment of arbitrary processes, so a
-      # `bash -c 'mariadb -u $DB_USERNAME ...'` probe spawned by
-      # the matcher would see them as empty without these explicit
-      # compose entries. manifests/mariadb.upstream.json::verify uses
-      # `MYSQL_PWD=$DB_PASSWORD` (env-var auth) so the password
-      # never reaches argv, mirroring scripts/backup.sh:33's v0.0.17
-      # hygiene. DB_DATABASE is intentionally NOT duplicated here —
-      # SELECT VERSION() is a system function that doesn't need a
-      # database context, and excluding the schema name from the
-      # probe's env footprint trims one more value from `ps`-window
-      # exposure.
-      DB_USERNAME: "${DB_USERNAME}"
-      DB_PASSWORD: "${DB_PASSWORD}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
       # ct-server-core daemon subscribes here for the
       # cool_tunnel:revocations channel.
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
-      # Bare REDIS_PASSWORD for the Cycle 2 / 2 drift-detection probe
-      # (v0.0.40). manifests/redis.upstream.json::verify runs
-      # `REDISCLI_AUTH=$REDIS_PASSWORD redis-cli -h $REDIS_HOST ...`
-      # — env-var auth keeps the password out of argv (would otherwise
-      # surface in `ps -ef` for the probe's lifetime, mirroring the
-      # v0.0.17 mariadb-dump MYSQL_PWD discipline in scripts/backup.sh).
-      # Laravel itself does not consume this — it parses REDIS_URL —
-      # so duplicating the value here is purely for the probe.
-      REDIS_PASSWORD: "${REDIS_PASSWORD}"
       # Where the SingBoxConfigGenerator writes the rendered file.
       SINGBOX_CONFIG_PATH:    /etc/sing-box/config.json
       SINGBOX_CONFIG_TEMPLATE: /srv/sing-box/config.json.tpl
