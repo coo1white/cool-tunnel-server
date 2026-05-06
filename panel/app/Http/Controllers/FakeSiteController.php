@@ -43,7 +43,7 @@ class FakeSiteController extends Controller
         // site rendered by a Laravel app". Conditional-GET
         // (If-None-Match) is honoured so legitimate clients
         // benefit from 304s. (v0.0.14 anti-censorship hardening.)
-        $etag = '"' . substr(hash('sha256', $body), 0, 16) . '"';
+        $etag = '"'.substr(hash('sha256', $body), 0, 16).'"';
 
         if ($request->header('If-None-Match') === $etag) {
             return response('', 304)

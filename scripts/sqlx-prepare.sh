@@ -77,10 +77,10 @@ ok "schema is current"
 # ---------- Run sqlx prepare --------------------------------------
 
 # DATABASE_URL the macros will use. Reconstructed from .env so
-# secrets stay there. `db` (compose-resolved hostname) for the
-# containerised path; 127.0.0.1 for the host path with port-forward.
+# secrets stay there. 127.0.0.1 + port-forward is the only path
+# this script ever takes (the containerised path was scaffolded in
+# v0.0.7 but never wired up — removed to clear SC2034).
 HOST_DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@127.0.0.1:3306/${DB_DATABASE}"
-CONTAINER_DATABASE_URL="mysql://${DB_USERNAME}:${DB_PASSWORD}@db:3306/${DB_DATABASE}"
 
 run_in_container() {
     # Build the project's own sqlx-prepare image (a stage of

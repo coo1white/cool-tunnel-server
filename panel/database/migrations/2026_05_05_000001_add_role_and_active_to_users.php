@@ -18,7 +18,8 @@ use Illuminate\Support\Facades\Schema;
 // same way; demote a user by `UPDATE users SET role='viewer'` (no
 // admin UI for role management in v0.0.1 — operators edit by hand).
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {

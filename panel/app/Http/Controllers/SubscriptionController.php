@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use Illuminate\Http\Request;
@@ -56,7 +57,8 @@ class SubscriptionController extends Controller
      * inside the HMAC-bearing token), not to throttle real users.
      */
     private const RATE_LIMIT_PER_MINUTE = 60;
-    private const RATE_LIMIT_DECAY_SEC  = 60;
+
+    private const RATE_LIMIT_DECAY_SEC = 60;
 
     public function show(Request $request, string $token): Response
     {
@@ -66,9 +68,9 @@ class SubscriptionController extends Controller
         // returns the same cover-site bytes as a vanilla unknown-
         // path probe. (M-panel-2 + the H1 throttle's anti-enum
         // refinement, both 2026-05-05 audit hotfixes.)
-        $rlKey = 'subscription:' . (string) $request->ip();
+        $rlKey = 'subscription:'.(string) $request->ip();
         if (RateLimiter::tooManyAttempts($rlKey, self::RATE_LIMIT_PER_MINUTE)) {
-            return (new FakeSiteController())->show($request);
+            return (new FakeSiteController)->show($request);
         }
         RateLimiter::hit($rlKey, self::RATE_LIMIT_DECAY_SEC);
 
@@ -82,10 +84,11 @@ class SubscriptionController extends Controller
             // probe: the wire response is identical to the cover-
             // site catch-all.
             Log::critical('subscription.resolve.failed', [
-                'err'  => $e->getMessage(),
+                'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);
-            return (new FakeSiteController())->show($request);
+
+            return (new FakeSiteController)->show($request);
         }
 
         if (! $account || ! $account->isActive()) {
@@ -95,37 +98,37 @@ class SubscriptionController extends Controller
             // Returning a short empty body — even with text/html —
             // would distinguish a bogus /subscription/<token> from a
             // regular cover-site path purely by Content-Length.
-            return (new FakeSiteController())->show($request);
+            return (new FakeSiteController)->show($request);
         }
 
         $cfg = ServerConfig::current();
 
         $body = [
-            'version'      => 1,
-            'server'       => $cfg->domain,
-            'profiles'     => [[
-                'host'     => $cfg->domain,
-                'port'     => 443,
+            'version' => 1,
+            'server' => $cfg->domain,
+            'profiles' => [[
+                'host' => $cfg->domain,
+                'port' => 443,
                 'username' => $account->username,
                 'password' => $account->getCleartextPassword() ?? '',
-                'label'    => "{$cfg->domain} ({$account->username})",
+                'label' => "{$cfg->domain} ({$account->username})",
             ]],
             'capabilities' => [
                 'anti_tracking' => array_values(array_filter([
-                    $cfg->anti_tracking_hide_ip          ? 'hide_ip'          : null,
-                    $cfg->anti_tracking_hide_via         ? 'hide_via'         : null,
+                    $cfg->anti_tracking_hide_ip ? 'hide_ip' : null,
+                    $cfg->anti_tracking_hide_via ? 'hide_via' : null,
                     $cfg->anti_tracking_probe_resistance ? 'probe_resistance' : null,
-                    $cfg->anti_tracking_doh_resolver     ? 'doh_resolver'     : null,
+                    $cfg->anti_tracking_doh_resolver ? 'doh_resolver' : null,
                 ])),
                 // HTTP/3 always advertised as false — see class
                 // docstring. NaiveProxy does not do QUIC.
-                'http3'          => false,
-                'fake_site_slug' => optional(\App\Models\FakeWebsite::active())->slug,
+                'http3' => false,
+                'fake_site_slug' => optional(FakeWebsite::active())->slug,
             ],
-            'issued_at'    => time(),
-            'expires_at'   => time() + 60 * 60 * 24 * 30,
-            'note'         => null,
-            'signature'    => null, // placeholder; signed below
+            'issued_at' => time(),
+            'expires_at' => time() + 60 * 60 * 24 * 30,
+            'note' => null,
+            'signature' => null, // placeholder; signed below
         ];
 
         // Compute HMAC over the canonical body with `signature`
@@ -158,6 +161,7 @@ class SubscriptionController extends Controller
         if (! hash_equals($expected, $sig)) {
             return null;
         }
+
         return ProxyAccount::find((int) $idStr);
     }
 
@@ -173,9 +177,10 @@ class SubscriptionController extends Controller
         if ($key === '') {
             throw new \RuntimeException(
                 'APP_KEY is unset; subscription tokens cannot be issued or verified. '
-                . 'Run `php artisan key:generate` and restart the panel.'
+                .'Run `php artisan key:generate` and restart the panel.'
             );
         }
+
         return $key;
     }
 }

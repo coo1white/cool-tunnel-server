@@ -29,11 +29,11 @@ class ServerConfig extends Model
     protected function casts(): array
     {
         return [
-            'anti_tracking_hide_ip'           => 'boolean',
-            'anti_tracking_hide_via'          => 'boolean',
-            'anti_tracking_probe_resistance'  => 'boolean',
-            'http3_enabled'                   => 'boolean',
-            'last_rendered_at'                => 'datetime',
+            'anti_tracking_hide_ip' => 'boolean',
+            'anti_tracking_hide_via' => 'boolean',
+            'anti_tracking_probe_resistance' => 'boolean',
+            'http3_enabled' => 'boolean',
+            'last_rendered_at' => 'datetime',
         ];
     }
 
@@ -42,8 +42,8 @@ class ServerConfig extends Model
         // firstOrCreate keeps the singleton invariant under concurrent
         // first-boot seeding.
         return static::firstOrCreate(['id' => 1], [
-            'domain'         => env('DOMAIN', 'proxy.example.com'),
-            'acme_email'     => env('ACME_EMAIL', 'admin@example.com'),
+            'domain' => env('DOMAIN', 'proxy.example.com'),
+            'acme_email' => env('ACME_EMAIL', 'admin@example.com'),
             'acme_directory' => env('ACME_DIRECTORY',
                 'https://acme-v02.api.letsencrypt.org/directory'),
         ]);

@@ -10,7 +10,8 @@ use Illuminate\Support\Facades\Schema;
 // per basic_auth line in the Caddyfile, so we only ever store the
 // hash — cleartext is shown to the admin once at creation.
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('proxy_accounts', function (Blueprint $table) {

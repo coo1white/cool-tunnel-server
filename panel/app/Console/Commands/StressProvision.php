@@ -40,6 +40,7 @@ class StressProvision extends Command
         $username = (string) $this->option('username');
         if (! preg_match('/^[A-Za-z0-9._-]{1,64}$/', $username)) {
             $this->error('username must be ASCII alnum + . _ - (1-64 chars)');
+
             return self::FAILURE;
         }
 
@@ -60,7 +61,7 @@ class StressProvision extends Command
         // typically write to stdout from console commands but
         // some events do.
         $this->line(json_encode([
-            'id'       => $account->id,
+            'id' => $account->id,
             'password' => $cleartext,
         ], JSON_UNESCAPED_SLASHES));
 

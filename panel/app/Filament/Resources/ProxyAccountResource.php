@@ -25,9 +25,13 @@ use Illuminate\Database\Eloquent\Builder;
 class ProxyAccountResource extends Resource
 {
     protected static ?string $model = ProxyAccount::class;
+
     protected static ?string $navigationIcon = 'heroicon-o-user-group';
+
     protected static ?string $navigationLabel = 'Proxy accounts';
+
     protected static ?string $navigationGroup = 'Users';
+
     protected static ?int $navigationSort = 10;
 
     public static function form(Form $form): Form
@@ -118,9 +122,38 @@ class ProxyAccountResource extends Resource
                         $pw = PasswordGenerator::make();
                         $record->setCleartextPassword($pw['cleartext']);
                         $record->save();
+
+                        $subUrl = $record->subscriptionUrl();
+                        $body = $pw['cleartext'];
+                        if ($subUrl !== null) {
+                            $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
+                        }
+
                         Notification::make()
                             ->title('New password — copy now, shown once')
-                            ->body($pw['cleartext'])
+                            ->body($body)
+                            ->success()
+                            ->persistent()
+                            ->send();
+                    }),
+                Tables\Actions\Action::make('show_subscription_url')
+                    ->label('Subscription URL')
+                    ->icon('heroicon-o-link')
+                    ->color('info')
+                    ->action(function (ProxyAccount $record) {
+                        $url = $record->subscriptionUrl();
+                        if ($url === null) {
+                            Notification::make()
+                                ->title('Cannot generate URL')
+                                ->body('APP_KEY is not configured. Run php artisan key:generate and restart the panel.')
+                                ->danger()
+                                ->send();
+
+                            return;
+                        }
+                        Notification::make()
+                            ->title('Subscription URL — import in the app')
+                            ->body($url)
                             ->success()
                             ->persistent()
                             ->send();
@@ -141,18 +174,21 @@ class ProxyAccountResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'  => Pages\ListProxyAccounts::route('/'),
+            'index' => Pages\ListProxyAccounts::route('/'),
             'create' => Pages\CreateProxyAccount::route('/create'),
-            'edit'   => Pages\EditProxyAccount::route('/{record}/edit'),
+            'edit' => Pages\EditProxyAccount::route('/{record}/edit'),
         ];
     }
 
     private static function humanBytes(?int $bytes): string
     {
-        if (! $bytes) return '0 B';
+        if (! $bytes) {
+            return '0 B';
+        }
         $units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
         $i = (int) floor(log($bytes, 1024));
         $i = max(0, min($i, count($units) - 1));
+
         return round($bytes / (1024 ** $i), 2).' '.$units[$i];
     }
 }

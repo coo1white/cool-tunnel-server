@@ -8,6 +8,7 @@ use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Route;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -42,7 +43,7 @@ class CoverSiteInvariantTest extends TestCase
 
     private function coverSite()
     {
-        return $this->get('/cover-baseline-' . bin2hex(random_bytes(4)));
+        return $this->get('/cover-baseline-'.bin2hex(random_bytes(4)));
     }
 
     #[Test]
@@ -51,7 +52,7 @@ class CoverSiteInvariantTest extends TestCase
         $this->seedActiveCover();
 
         $cover = $this->coverSite();
-        $sub   = $this->get('/api/v1/subscription/this-token-does-not-exist');
+        $sub = $this->get('/api/v1/subscription/this-token-does-not-exist');
 
         $cover->assertOk();
         $sub->assertOk();
@@ -78,10 +79,10 @@ class CoverSiteInvariantTest extends TestCase
         $this->seedActiveCover();
 
         $expired = ProxyAccount::factory()->expired()->create();
-        $token   = $this->mintTokenFor($expired->id);
+        $token = $this->mintTokenFor($expired->id);
 
         $cover = $this->coverSite();
-        $sub   = $this->get("/api/v1/subscription/{$token}");
+        $sub = $this->get("/api/v1/subscription/{$token}");
 
         $sub->assertOk();
         $this->assertSame($cover->getContent(), $sub->getContent());
@@ -100,11 +101,11 @@ class CoverSiteInvariantTest extends TestCase
         // SubscriptionController. Every subsequent request must
         // still return cover-site bytes — no 429.
         for ($i = 0; $i < 60; $i++) {
-            $this->get('/api/v1/subscription/burn-' . $i);
+            $this->get('/api/v1/subscription/burn-'.$i);
         }
 
-        $cover    = $this->coverSite();
-        $limited  = $this->get('/api/v1/subscription/now-rate-limited');
+        $cover = $this->coverSite();
+        $limited = $this->get('/api/v1/subscription/now-rate-limited');
 
         $limited->assertStatus(200);
         $this->assertNotSame(
@@ -122,12 +123,12 @@ class CoverSiteInvariantTest extends TestCase
 
         // Force a non-/admin route to throw. Easiest path: stub a
         // route that always raises, register it dynamically.
-        \Illuminate\Support\Facades\Route::get('/forced-failure-test', function () {
+        Route::get('/forced-failure-test', function () {
             throw new \RuntimeException('forced for test');
         });
 
-        $cover    = $this->coverSite();
-        $thrown   = $this->get('/forced-failure-test');
+        $cover = $this->coverSite();
+        $thrown = $this->get('/forced-failure-test');
 
         $thrown->assertStatus(200);
         $this->assertSame(
@@ -144,10 +145,11 @@ class CoverSiteInvariantTest extends TestCase
      */
     private function mintTokenFor(int $accountId): string
     {
-        $key       = (string) config('app.key');
-        $hmac      = hash_hmac('sha256', (string) $accountId, $key);
-        $payload   = $accountId . '.' . $hmac;
-        $b64       = base64_encode($payload);
+        $key = (string) config('app.key');
+        $hmac = hash_hmac('sha256', (string) $accountId, $key);
+        $payload = $accountId.'.'.$hmac;
+        $b64 = base64_encode($payload);
+
         // base64url
         return rtrim(strtr($b64, '+/', '-_'), '=');
     }

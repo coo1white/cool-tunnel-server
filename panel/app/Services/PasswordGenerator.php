@@ -19,9 +19,10 @@ final class PasswordGenerator
         for ($i = 0; $i < $length; $i++) {
             $cleartext .= $alphabet[random_int(0, strlen($alphabet) - 1)];
         }
+
         return [
             'cleartext' => $cleartext,
-            'hash'      => password_hash($cleartext, PASSWORD_BCRYPT, ['cost' => 12]),
+            'hash' => password_hash($cleartext, PASSWORD_BCRYPT, ['cost' => 12]),
         ];
     }
 }

@@ -17,10 +17,10 @@ class TrafficLog extends Model
     protected function casts(): array
     {
         return [
-            'day'             => 'date',
-            'uplink_bytes'    => 'integer',
-            'downlink_bytes'  => 'integer',
-            'connections'     => 'integer',
+            'day' => 'date',
+            'uplink_bytes' => 'integer',
+            'downlink_bytes' => 'integer',
+            'connections' => 'integer',
         ];
     }
 
