@@ -63,8 +63,8 @@ global
     maxconn 4096
     # No `tune.ssl.*` or `ca-base` — we do NOT terminate TLS here.
 
-    # Cycle 2 / 5 drift-detection probe (v0.0.43) — UNIX stats
-    # socket, read-only-stats privilege level, group-readable. The
+    # Cycle 2 / 5 drift-detection probe (v0.0.43, mode-fix v0.0.52)
+    # — UNIX stats socket, read-only-stats privilege level. The
     # socket file lands in /var/run/haproxy inside this container,
     # which docker-compose.yml mounts as a shared `haproxy_admin`
     # volume so the panel container can reach it RO. The probe in
@@ -74,10 +74,23 @@ global
     # Re-check. `level user` is the minimum privilege that allows
     # `show *` commands; it does NOT permit `disable server` /
     # `set server` / `add backend` etc., so a buggy probe cannot
-    # mutate runtime state. UNIX-domain by design — no TCP
-    # listener, no docker-network reach beyond the volume's mount
-    # points (haproxy + panel only).
-    stats socket /var/run/haproxy/admin.sock mode 660 level user
+    # mutate runtime state.
+    #
+    # mode 666 (NOT 660) — v0.0.52 raised this from group-readable
+    # to world-readable. The panel container has multiple processes
+    # under different users (supervisord/ct-server-core daemon as
+    # root; php-fpm workers as www-data; nginx workers as nginx),
+    # and the Filament Components page invokes the probe via
+    # PHP-FPM (www-data), NOT root. With mode 660 owned by
+    # haproxy:haproxy, www-data couldn't connect — the CLI probe
+    # via `docker compose exec` (which defaults to root) showed
+    # OK while the panel UI showed NG. The "world" that can read
+    # this socket is bounded by the docker volume's mount points
+    # (haproxy + panel only); mode 666 within that boundary is the
+    # right blast-radius given level-user gives no mutation power.
+    # Pre-v0.0.52 this was 660 — overcautious for the actual
+    # threat model.
+    stats socket /var/run/haproxy/admin.sock mode 666 level user
 
 defaults
     mode tcp
