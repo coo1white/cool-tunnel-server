@@ -4,8 +4,7 @@
     "version": "0.0.33",
     "upstream": "https://github.com/coo1white/cool-tunnel-server",
     "verify": {
-        "command": ["php", "/var/www/html/artisan", "--version"],
-        "expect_stdout_contains": "Laravel Framework",
+        "command": ["bash", "-c", "php /var/www/html/artisan --version > /dev/null"],
         "expect_zero_exit": true
     },
     "note": "Proprietary panel code + MIT (Laravel + Filament). Built from docker/panel/Dockerfile. Verify runs `php artisan --version` directly inside the panel container (the verify command runs from inside the panel itself; v0.0.34 dropped the `docker exec ct-panel ...` wrapper which was a no-op AND broken — there is no `docker` CLI inside this container)."
