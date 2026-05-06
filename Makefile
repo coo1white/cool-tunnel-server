@@ -197,13 +197,20 @@ components: ## ct-server-core component check (OK/NG)
 # ---------- Release plumbing -------------------------------------
 
 .PHONY: set-version
-set-version: ## bump the version in Cargo.toml + manifests + lockfile; pass V=X.Y.Z
+set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel config; pass V=X.Y.Z
 	@if [ -z "$(V)" ]; then echo 'usage: make set-version V=0.0.7'; exit 1; fi
 	@sed -i.bak 's/^version       = ".*"/version       = "$(V)"/' core/Cargo.toml
 	@sed -i.bak -E 's/"version": "[0-9]+\.[0-9]+\.[0-9]+"/"version": "$(V)"/' \
 		manifests/ct-server-core.upstream.json \
 		manifests/ct-protocol.upstream.json \
 		manifests/panel.upstream.json
+	@# panel/config/cool-tunnel.php::version is the runtime source of
+	@# truth for the `ct:version` artisan command (Cycle 2 panel
+	@# probe, v0.0.39). It MUST equal manifests/panel.upstream.json's
+	@# version, otherwise the matcher's soft version check trips
+	@# VersionMismatch on every component check after the bump.
+	@sed -i.bak -E "s/'version' => '[0-9]+\.[0-9]+\.[0-9]+'/'version' => '$(V)'/" \
+		panel/config/cool-tunnel.php
 	@find . -name '*.bak' -delete
 	@# Refresh core/Cargo.lock so the workspace member version
 	@# entries (`name = "ct-server-core" / "ct-protocol", version = "..."`)
