@@ -22,8 +22,16 @@ git pull --ff-only \
 step "Rebuild ct-server-core (Rust)"
 compose --profile build-only build core-builder
 
-step "Rebuild sing-box + panel"
-compose build sing-box panel
+step "Rebuild sing-box + panel + haproxy"
+# v0.0.44 added haproxy to this list. The haproxy 2.9 → 3.0 hardening
+# upgrade lands as a Dockerfile FROM bump (2.9-alpine → 3.0-alpine);
+# without an explicit `compose build haproxy` here, the operator's
+# `make update` would leave the haproxy container running the prior
+# image while the Dockerfile change sits unbuilt — the v0.0.43
+# drift-detection probe would then trip VersionMismatch indefinitely.
+# Adding haproxy to the build set keeps the existing rebuild-then-
+# swap discipline intact for any future haproxy-side change too.
+compose build sing-box panel haproxy
 
 # IMPORTANT — order: bring new image up BEFORE running migrations.
 # Pre-v0.0.15 update.sh ran `php artisan migrate` against the

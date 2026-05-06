@@ -22,6 +22,126 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.44] — 2026-05-06 — HAProxy 2.9 → 3.0 hardening: retire EOL line, demonstrate Cycle 2's payoff
+
+The first post-Cycle-2 release. v0.0.43's drift-detection probe
+surfaced that the deployed HAProxy 2.9 daemon was reporting
+`Status: End of life - please upgrade to branch 3.0.`. v0.0.44 is
+exactly the coordinated hardening release Cycle 2 was designed to
+make safe: bump `Dockerfile::FROM` and `manifests/<>::version`
+in lockstep, rely on the v0.0.43 probe to surface any
+post-upgrade drift, ship.
+
+Operator-confirmed via `docker run --rm haproxy:3.0-alpine
+haproxy -v` that today's `haproxy:3.0-alpine` resolves to
+`3.0.21-6e57320bb` — the new pin. The status line now reads
+`long-term supported branch - will stop receiving fixes around
+Q2 2029`.
+
+### Changed
+
+- **`docker/haproxy/Dockerfile::FROM`** — `haproxy:2.9-alpine` →
+  `haproxy:3.0-alpine`. Comment block reframed: 3.0 is now the
+  active LTS line, scheduled for fixes through ~Q2 2029. Cross-
+  reference to v0.0.43's drift probe surfacing the EOL flag.
+- **`manifests/haproxy.upstream.json::version`** — `"2.9.15"` →
+  `"3.0.21"`. Note retired the v0.0.43 EOL caveat. Three-way
+  lockstep pinning of the `haproxy:3.0-alpine` floating tag is
+  queued for v0.0.45.
+- **`scripts/update.sh`** — added `haproxy` to the
+  `compose build sing-box panel` step. Without this, the
+  operator's `make update` would have left the haproxy container
+  running the prior 2.9 image while the Dockerfile change sat
+  unbuilt — the v0.0.43 drift probe would have tripped
+  `VersionMismatch` indefinitely. Adding haproxy to the build
+  set keeps the existing rebuild-then-swap discipline intact for
+  any future haproxy-side change too. (Closes a footgun that
+  Cycle 2 didn't surface because no Cycle 2 release touched the
+  haproxy Dockerfile.)
+
+### How this is the Cycle 2 payoff
+
+Pre-Cycle-2: the haproxy probe was a TCP-open check that said
+`Ok` regardless of the deployed daemon's version. An EOL
+condition would have been silently invisible — operators would
+discover it only by reading external upstream-status pages, or
+by getting hit with an unpatched CVE.
+
+Post-Cycle-2 (v0.0.43 onwards): the probe queries
+`show info` over the stats socket and asserts the version line
+contains the manifest pin. The EOL string itself is in the
+`Status:` line of `haproxy -v`, surfaced by the operator's
+manual `docker compose exec haproxy haproxy -v` — and the drift
+probe is what made that manual check feel safe to act on (no
+more guessing whether a 3.0 image would break the cfg.tpl).
+
+The whole sequencing — *first* establish drift detection
+(Cycle 2), *then* upgrade out of EOL (v0.0.44) — is the
+operator-discipline thesis Cycle 2 was designed to enable.
+
+### Compatibility
+
+- **No cfg.tpl change required.** Every directive used
+  (`mode tcp`, `tcp-request inspect-delay`,
+  `req_ssl_hello_type`, `req_ssl_sni`, `use_backend`,
+  `default_backend`, `stats socket … level user`,
+  `option dontlognull`) is stable across HAProxy 2.9 → 3.0.
+  The rendered `haproxy.cfg` is byte-identical pre-/post-upgrade.
+- **Pre-v0.0.44 deployments** — operators who pull v0.0.44 but
+  don't rebuild haproxy (e.g. older `make update` flow) will
+  see `VerifyFailed` on the haproxy row (the probe sees
+  `2.9.15` but the manifest pins `3.0.21`). `make update` with
+  the v0.0.44 update.sh fix rebuilds haproxy and the row flips
+  to `Ok`. This **is** drift detection working — the same
+  operator-visible payoff v0.0.43 was designed for.
+- **Post-v0.0.44 manifests** — `manifests/haproxy.upstream.json`
+  is the only file whose pin will need bumping when 3.0.X+1
+  ships. v0.0.45's three-way lockstep work will turn that into
+  a single `make set-component-version COMPONENT=haproxy V=3.0.X+1`
+  invocation.
+- **HEALTHCHECK** in `docker/haproxy/Dockerfile` is unchanged
+  (`nc -z 127.0.0.1 443`). Alpine's busybox `nc` is stable
+  across image generations.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. The haproxy row reports
+`installed=Version: 3.0.21-... — verified`. The
+`docker compose exec haproxy haproxy -v` status line now reads
+`long-term supported branch - will stop receiving fixes around
+Q2 2029`.
+
+To prove the upgrade actually landed:
+
+```sh
+docker compose exec haproxy haproxy -v
+# Expect: HAProxy version 3.0.21-6e57320bb 2026/04/30 - https://haproxy.org/
+#         Status: long-term supported branch - will stop receiving fixes around Q2 2029.
+```
+
+### Out of scope (queued)
+
+- **v0.0.45** — Three-way (compose ↔ Dockerfile ↔ manifest)
+  lockstep pinning for redis, mariadb, sing-box, haproxy. Will
+  extend `make set-component-version` with component-aware sed
+  patterns so a single invocation is the sole source of truth
+  for upstream upgrades.
+- **v0.0.46** — Cleanup of v0.0.40 / v0.0.41 redundant compose
+  env duplications (`REDIS_PASSWORD`, `DB_USERNAME`,
+  `DB_PASSWORD`).
+- **`panel/.gitignore` truth-up** — still pending.
+- **`docs/components.md` 8 → 11 component table** — still
+  pending.
+
+---
+
 ## [0.0.43] — 2026-05-06 — Cycle 2 (5 / 5, **Cycle 2 closes**): restore real drift detection for haproxy via UNIX stats socket
 
 The final Cycle 2 release. Drift detection is now live for every
