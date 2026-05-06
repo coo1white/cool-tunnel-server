@@ -22,6 +22,152 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.40] — 2026-05-06 — Cycle 2 (2 / 5): restore real drift detection for redis via `redis-cli INFO Server`
+
+Continuing the per-component drift-detection restoration agreed in
+the v0.0.37 forensic. v0.0.39 closed the panel; v0.0.40 closes
+redis. The probe goes from a TCP-open liveness check (which only
+told us *something* was listening on `redis:6379`) to a semantic
+identity check that asserts the running server's `redis_version`
+field matches what the manifest pins. Drift between the deployed
+patch version and the operator's version-of-record is now visible
+on the Components page within ~100 ms of a `Re-check`.
+
+### Added
+
+- **`docker/panel/Dockerfile`** — multi-stage `COPY --from=redis:7-alpine`
+  brings `/usr/local/bin/redis-cli` into the panel image (~2 MiB). The
+  CLI is required by the new probe and didn't ship in the panel
+  image (`apk add` had `mariadb-client` but no Redis client). Same
+  multi-stage idiom the file already uses for `ct-server-core`.
+- **`docker-compose.yml::panel.environment`** — exposes
+  `REDIS_PASSWORD: "${REDIS_PASSWORD}"` to the panel container.
+  Laravel itself parses the password out of `REDIS_URL`; the bare
+  env var is purely for the probe, which uses
+  `REDISCLI_AUTH=$REDIS_PASSWORD` so the password never reaches
+  argv (would otherwise surface in `ps -ef` for the probe's
+  lifetime — same supply-chain hygiene as
+  `MYSQL_PWD=$DB_ROOT_PASSWORD` in `scripts/backup.sh:33`).
+- **`Makefile::set-component-version`** — new "Rule Maker" macro.
+  Companion to `set-version`, scoped to **third-party** component
+  manifests (caddy, haproxy, mariadb, redis, sing-box). Usage:
+  ```
+  make set-component-version COMPONENT=redis V=7.4.8
+  ```
+  Bumps `manifests/<slug>.upstream.json::version` and re-validates
+  the result with `jq` to catch a sed-regex bug that would have
+  produced invalid JSON. Fails loudly on unknown component or
+  missing args. Reusable for the remaining 3 Cycle 2 releases
+  (mariadb, sing-box, haproxy) and any future caddy upgrade.
+
+### Changed
+
+- **`manifests/redis.upstream.json`** — probe rewritten from the
+  v0.0.37 silenced TCP-open form to:
+  ```
+  bash -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" INFO Server | grep -i ^redis_version:'
+  ```
+  Output: `redis_version:7.4.8`. The matcher's
+  `installed.contains(&m.version)` asserts the pinned `version`
+  field is in that line. Dropped `expect_no_version_line: true`.
+  Bumped pinned `version` from the docker-tag-shaped string
+  `"7-alpine"` to the exact patch `"7.4.8"` (operator-confirmed via
+  `docker compose exec redis redis-server --version` against the
+  live VPS deployment). `note` expanded with the
+  v0.0.34 → v0.0.35 → v0.0.37 → v0.0.40 evolution and the auth
+  rationale.
+
+### How drift detection now works for redis
+
+Probe runs in panel container → `redis-cli INFO Server | grep ^redis_version:` →
+`first_line(stdout)` is `redis_version:X.Y.Z` →
+`installed.contains(&m.version)` resolves against pinned `"7.4.8"`.
+
+Failure modes are exhaustive:
+
+| Failure | Probe exit | Matcher state |
+|---|---|---|
+| Wrong `REDIS_PASSWORD` (NOAUTH) | non-zero | `VerifyFailed` |
+| redis container down (connection refused) | non-zero | `VerifyFailed` |
+| `redis-cli` missing from panel image | 127 (command not found) | `VerifyFailed` |
+| Probe hangs (network partition) | matcher's 15 s timeout | `VerifyFailed` |
+| Deployed redis is 7.4.9, manifest pins 7.4.8 | exit 0, stdout mismatches pin | `VersionMismatch` |
+| Healthy + matched | exit 0, stdout matches pin | `Ok` (`installed=redis_version:7.4.8`) |
+
+No silent failures — every failure mode flips the row to a non-OK
+state on the Filament Components page.
+
+### Compatibility
+
+- **Pre-v0.0.40 deployments** — operators who pull v0.0.40 but
+  don't rebuild the panel image will see `VerifyFailed` for the
+  redis row (probe runs `redis-cli` which doesn't exist yet in
+  the old panel container). Recovery is the standard
+  `make update`, which rebuilds the panel image and the row flips
+  to `Ok`. This is intended — same "deployed code older than
+  manifest" surfacing as v0.0.39 did for the panel itself.
+- **`redis:7-alpine` floating tag in compose** — left as-is per
+  the v0.0.40 scope agreement. The Dockerfile's
+  `COPY --from=redis:7-alpine` rides the same tag, so the
+  bundled CLI tracks whatever Redis 7.x patch Docker Hub serves
+  at panel build time. Drift potential between the CLI minor and
+  the server minor is accepted (Redis 7.x line is forward-
+  compatible at the `INFO` command surface). Pinning compose to
+  `redis:7.4.8-alpine` is a follow-on discipline call out of
+  scope for this release.
+- **Other silenced manifests** — caddy, haproxy, mariadb, sing-box
+  keep `expect_no_version_line: true` from v0.0.37. Cycle 2 / 3, 4, 5
+  restore drift detection on each in turn.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. The redis row now reports
+`installed=redis_version:7.4.8 — verified` instead of v0.0.37's
+`installed=— verified (liveness)`.
+
+### Validation one-liner
+
+To run the same probe manually and confirm the chain end-to-end
+(redis-cli installed, env vars wired, auth works, server alive,
+grep matches):
+
+```sh
+docker compose exec panel bash -c \
+    'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" INFO Server | grep -i ^redis_version:'
+# Expect: redis_version:7.4.8
+```
+
+To prove drift detection actually fires: temporarily bump the
+manifest pin with `make set-component-version COMPONENT=redis
+V=9.9.9`, re-run `component check`, the redis row flips to
+`VersionMismatch`. Restore with `make set-component-version
+COMPONENT=redis V=7.4.8`.
+
+### Out of scope (Cycle 2, releases 3 / 5..5 / 5)
+
+- mariadb probe (`SELECT VERSION()` via dedicated `health` user) —
+  needs auth provisioning; release 3 / 5
+- sing-box probe (clash-API `/version`) — needs admin port exposure
+  decision; release 4 / 5
+- haproxy probe (stats socket `show info`) — needs socket mount in
+  compose; release 5 / 5
+- caddy stays informational-only (HTTP HEAD reachability) — no
+  drift detection; not slated
+- Pinning `redis:7-alpine` → `redis:7.4.8-alpine` in
+  `docker-compose.yml` for three-way (compose ↔ Dockerfile ↔
+  manifest) lockstep — separate discipline release
+- `panel/.gitignore` truth-up for the phpunit/Laravel cache files
+  noted in v0.0.39 — still pending
+
+---
+
 ## [0.0.39] — 2026-05-06 — Cycle 2 (1 / 5): restore real drift detection for the panel via `ct:version`
 
 The Cycle 1 release (v0.0.37) gave manifests a vocabulary
