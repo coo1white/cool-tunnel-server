@@ -4,9 +4,8 @@
     "version": "naive-server-plugin",
     "upstream": "https://github.com/klzgrad/naiveproxy",
     "verify": {
-        "command": ["caddy", "list-modules"],
-        "expect_stdout_contains": "http.handlers.forward_proxy",
+        "command": ["grep", "-q", "\"type\": \"naive\"", "/etc/sing-box/config.json"],
         "expect_zero_exit": true
     },
-    "note": "Apache-2.0. NaiveProxy is the anti-tracking architecture this server speaks. The server side is a Caddy plugin compiled in via xcaddy at image build time (see docker/caddy/Dockerfile); the client side is the naive binary bundled in the cool-tunnel client family. Both halves live under the klzgrad/naiveproxy project umbrella. The OK/NG check confirms the plugin is loaded into the running Caddy."
+    "note": "Apache-2.0. NaiveProxy is the anti-tracking architecture this server speaks. The server side is now sing-box's `naive` inbound (since the v0.0.2 pivot — the legacy Caddy `forwardproxy` plugin path is no longer part of this image); the client side is the naive binary bundled in the cool-tunnel client family. Both halves live under the klzgrad/naiveproxy project umbrella. The verify probe greps the rendered /etc/sing-box/config.json (mounted into the panel container via the singbox_etc volume) for a `\"type\": \"naive\"` inbound, confirming the proxy backend is configured. (v0.0.34 — the prior `caddy list-modules` verify referred to the legacy architecture and ran inside the panel container which has no `caddy` CLI.)"
 }

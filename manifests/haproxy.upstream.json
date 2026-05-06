@@ -4,8 +4,8 @@
     "version": "v2.9-alpine",
     "upstream": "https://github.com/haproxy/haproxy",
     "verify": {
-        "command": ["docker", "exec", "ct-haproxy", "haproxy", "-v"],
-        "expect_stdout_contains": "HAProxy version 2.9",
+        "command": ["bash", "-c", "exec 3<>/dev/tcp/haproxy/443 && echo connected"],
+        "expect_stdout_contains": "connected",
         "expect_zero_exit": true
     },
     "note": "GPL-2.0+. Stock haproxy:2.9-alpine used as a TCP/SNI router on :443 (R1-1 / R1-2 in 2026-05-04 audit; landed in v0.0.33). Sniffs the SNI from each TLS ClientHello WITHOUT decrypting and TCP-forwards raw bytes to either caddy:8444 (panel subdomain) or sing-box:443 (proxy domain — NaiveProxy). No TLS termination here, so the on-the-wire fingerprint stays whatever the backend negotiates with the client (anti-tracking probe-resistance preserved). 2.9 is the latest LTS line — operator-friendly choice for a self-hosted deployment that may not get patched aggressively."
