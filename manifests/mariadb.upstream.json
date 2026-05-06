@@ -5,7 +5,8 @@
     "upstream": "https://hub.docker.com/_/mariadb",
     "verify": {
         "command": ["bash", "-c", "exec 3<>/dev/tcp/db/3306"],
-        "expect_zero_exit": true
+        "expect_zero_exit": true,
+        "expect_no_version_line": true
     },
     "note": "GPL-2.0. Stores proxy_accounts, traffic_logs, fake_websites, server_configs, and the Filament users table."
 }
