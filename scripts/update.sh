@@ -19,6 +19,43 @@ git pull --ff-only \
     || die "git pull failed (uncommitted changes?)" \
            "stash or commit your local edits first"
 
+# v0.0.54 — auto-heal legacy .env files. Pre-v0.0.33 .env files (and
+# operator-managed copies that predate v0.0.33's R1-1/R1-2 SNI router
+# introduction) may be missing PANEL_DOMAIN entirely, and may set
+# APP_URL=https://${DOMAIN}/admin (apex hostname). Both forms cause
+# Livewire 3's origin-check middleware to return 419 PAGE EXPIRED on
+# every Filament form submit because the browser's Origin header
+# (panel.<base>) doesn't match the configured app URL host (apex).
+#
+# Fixed idempotently — both checks are no-ops on already-canonical
+# .env files. Mirrors install.sh's first-bootstrap PANEL_DOMAIN logic
+# for the upgrade path that never re-runs install.sh, and additionally
+# corrects the legacy APP_URL=${DOMAIN} → ${PANEL_DOMAIN} substitution
+# install.sh never handled.
+step "Auto-migrate legacy .env (v0.0.54 — PANEL_DOMAIN + APP_URL hostname)"
+LEGACY_DOMAIN=$(grep -E '^DOMAIN=' .env | head -n1 | cut -d= -f2- | tr -d '"')
+if ! grep -qE '^PANEL_DOMAIN=' .env; then
+    if [ -n "${LEGACY_DOMAIN:-}" ]; then
+        derived="panel.${LEGACY_DOMAIN}"
+        printf '\n# v0.0.54 auto-migration — PANEL_DOMAIN added (was missing in pre-v0.0.33 .env)\nPANEL_DOMAIN=%s\n' "$derived" >> .env
+        ok "added PANEL_DOMAIN=${derived} to .env"
+    else
+        warn "DOMAIN missing in .env — cannot auto-derive PANEL_DOMAIN; manual fix required"
+    fi
+else
+    ok "PANEL_DOMAIN already present in .env"
+fi
+if grep -qE '^APP_URL=https?://\$\{DOMAIN\}' .env; then
+    # shellcheck disable=SC2016
+    # ^ literal ${PANEL_DOMAIN} on purpose — phpdotenv expands it at PHP
+    # boot, not bash here.
+    sed -i.bak -E 's|^(APP_URL=https?://)\$\{DOMAIN\}|\1${PANEL_DOMAIN}|' .env
+    rm -f .env.bak
+    ok "APP_URL legacy form (\${DOMAIN}) corrected to \${PANEL_DOMAIN}"
+else
+    ok "APP_URL already canonical"
+fi
+
 step "Rebuild ct-server-core (Rust)"
 compose --profile build-only build core-builder
 

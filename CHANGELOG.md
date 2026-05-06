@@ -22,6 +22,142 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.54] — 2026-05-06 — Auto-migrate legacy `.env` files in `make update` (PANEL_DOMAIN backfill + APP_URL `${DOMAIN}` → `${PANEL_DOMAIN}` correction)
+
+The third v0.0.33-vintage architectural-drift bug surfaced this
+sprint, after v0.0.51 (haproxy state) and v0.0.53 (subscription
+URL): operator's `.env` predates v0.0.33's R1-1/R1-2 SNI router,
+so it has `APP_URL=https://${DOMAIN}/admin` (apex hostname) and
+no `PANEL_DOMAIN=` line. Both forms cause Livewire 3's
+origin-check middleware to silently 419 every Filament form
+submit — the browser's `Origin` header (`panel.<base>`) doesn't
+match the configured app URL host (apex), Livewire returns 419
+PAGE EXPIRED without throwing a logged exception. The user-
+facing symptom is "edit any record → click Save → page expired"
+on every attempt.
+
+`install.sh` already had backfill logic for the missing
+`PANEL_DOMAIN` (line 85-95, added in v0.0.33), but install.sh
+runs only on first-time bootstrap, NOT on `make update`. Any
+operator who bootstrapped pre-v0.0.33 and has been doing
+`make update` since never gets migrated. v0.0.54 closes that
+gap.
+
+### Fixed
+
+- **`scripts/update.sh`** — added an "Auto-migrate legacy .env"
+  step right after `git pull`, before any rebuild. Runs on every
+  `make update` invocation; idempotent (no-op when `.env` is
+  already canonical). Two checks:
+  1. **Backfill `PANEL_DOMAIN`** if missing — derives
+     `panel.<DOMAIN>` from the existing `DOMAIN=` line and
+     appends `PANEL_DOMAIN=panel.<DOMAIN>` with a v0.0.54
+     migration-marker comment. Mirrors `install.sh:85-95` so
+     upgrade-path operators get the same treatment as
+     fresh-bootstrap operators.
+  2. **Correct legacy `APP_URL`** — if `.env` has
+     `APP_URL=https://${DOMAIN}/...` (apex form), `sed` it to
+     `APP_URL=https://${PANEL_DOMAIN}/...`. Anchored regex
+     leaves correct values, manually-fixed values
+     (`https://panel.${DOMAIN}/...`), and any third-form
+     overrides untouched.
+
+### Why this complements v0.0.53 specifically
+
+v0.0.53 fixed the `subscriptionUrl()` PHP method that hardcoded
+the apex domain for the panel HTTP endpoint. It was the
+panel-side half of the SNI-split discipline. v0.0.54 fixes the
+operator-config-side half — the `.env` values that Laravel reads
+to decide its own self-URL. Together they close the panel-vs-
+apex confusion across both code-side and config-side layers.
+
+The audit candidate I noted in v0.0.53's "Out of scope" section
+is being paid off explicitly here.
+
+### What v0.0.54 deliberately does NOT do
+
+Per the agreed scope (Level 1 + 2 of the long-term-fix design
+discussion):
+
+- **No `.env.example` change.** Already canonical (`APP_URL=https://${PANEL_DOMAIN}/admin`,
+  `PANEL_DOMAIN=panel.proxy.example.com`). The v0.0.33 update
+  to `.env.example` was correct; only existing operator-managed
+  `.env` files were left out of the migration. v0.0.54 is the
+  upgrade-path complement to that correct shipping default.
+- **No new "single source of truth" abstraction (Level 4).**
+  The four places that hardcode `panel.<base>` (APP_URL,
+  ProxyAccount::subscriptionUrl, haproxy.cfg.tpl,
+  ct-server-core's haproxy renderer) stay as-is. A future Cycle
+  3-style consolidation pass that introduces a
+  `panel/config/cool-tunnel.php::panel_domain` helper and
+  routes all four through it is a bigger refactor; deferred.
+- **No CI guard for the bug class (Level 5).** Without the
+  Level-4 SoT to validate against, a CI guard has no canonical
+  shape to match. Defer until Level 4 lands.
+
+### Compatibility
+
+- **Operators on v0.0.33..v0.0.53 with legacy .env** —
+  `make update` after pulling v0.0.54 auto-heals on first run,
+  zero manual intervention. Subsequent runs see canonical state
+  and skip both checks. The migration adds a marker comment
+  (`# v0.0.54 auto-migration — ...`) above the appended
+  PANEL_DOMAIN line so operators know which line came from the
+  script vs. their own edits.
+- **Operators with manually-fixed `.env`** (e.g. user who ran
+  `sed` to set `APP_URL=https://panel.${DOMAIN}/admin` directly
+  rather than the canonical `${PANEL_DOMAIN}`) — the auto-heal
+  leaves the manual fix untouched (regex anchors to bare
+  `${DOMAIN}` only). Both forms produce the same resolved URL
+  at PHP boot time.
+- **Fresh deploys** — install.sh's first-bootstrap PANEL_DOMAIN
+  logic runs first; .env is canonical from the start; v0.0.54's
+  update.sh check is a clean no-op on every subsequent
+  `make update`.
+- **No code change in panel/, no manifest change, no Dockerfile
+  change.** Pure script-level automation.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+```
+
+The `make update` run will print:
+
+```
+==> 2. Auto-migrate legacy .env (v0.0.54 — PANEL_DOMAIN + APP_URL hostname)
+    ✓ added PANEL_DOMAIN=panel.<your-domain> to .env       # if was missing
+    ✓ APP_URL legacy form (${DOMAIN}) corrected to ${PANEL_DOMAIN}   # if was legacy
+```
+
+(Or `✓ PANEL_DOMAIN already present in .env` and `✓ APP_URL already canonical` if the operator manually fixed earlier — like our user did between v0.0.53 and v0.0.54.)
+
+After the rebuild + restart completes, fresh-tab Filament
+form submits should succeed without 419.
+
+### Lesson — sixth in the sprint, same root pattern as v0.0.51 / v0.0.53
+
+| Hotfix | Mismatch caught |
+|---|---|
+| v0.0.47 → v0.0.48 | dev-side `git status` ≠ VPS-side |
+| v0.0.49 → v0.0.50 | dev-side `cargo build` ≠ VPS-side (MSRV) |
+| v0.0.43 → v0.0.51 | dev-side cfg.tpl edit ≠ VPS-side haproxy state |
+| v0.0.51 → v0.0.52 | CLI invocation (root) ≠ panel UI invocation (www-data) |
+| v0.0.33 → v0.0.53 | architectural change (SNI split) ≠ panel-side code |
+| **v0.0.33 → v0.0.54** | **architectural change (SNI split) ≠ operator-managed config (.env)** |
+
+v0.0.53 + v0.0.54 are paired — code-side and config-side halves
+of the same architectural debt. **The pattern: when an
+architectural change introduces a new distinction, audit ALL
+consumers including operator-managed config files**, not just
+in-tree code. install.sh already handled the config side at
+first-bootstrap; the gap was the upgrade path.
+
+---
+
 ## [0.0.53] — 2026-05-06 — Fix: subscription-URL generator points at the apex domain instead of the panel subdomain (silent since the v0.0.33 SNI router split)
 
 The macOS client's "Import from subscription URL" flow returned
