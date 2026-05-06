@@ -22,6 +22,99 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.34] — 2026-05-06 — component-check verify commands run inside the panel
+
+The Components page on the new public admin panel (v0.0.33) showed
+**7 / 11 NG** with the diagnostic
+`could not exec docker: No such file or directory (os error 2)`
+on caddy, haproxy, mariadb, panel, redis, sing-box, plus
+`could not exec caddy: ...` on naiveproxy.
+
+### Root cause
+
+Each component manifest's `verify.command` array shelled out to
+`docker exec ct-X Y` (or `caddy list-modules` for naiveproxy).
+The component check itself runs *inside* the panel container —
+which has no `docker` CLI and no `caddy` binary. Every command
+failed at `execvp` with ENOENT before the actual liveness check
+even ran. The four "OK" components (`ct-protocol`,
+`ct-server-core`, `doh-resolver`, `naiveproxy-client`) only
+worked because their verify commands didn't depend on host /
+sibling-container binaries.
+
+This was a pre-existing bug from the v0.0.20-ish era when the
+component check was first wired up assuming a host-side run
+context; the move to "panel container runs the check via
+`compose exec -T panel ct-server-core component check`" never
+landed an updated manifest set. v0.0.33 inherited the same
+broken pattern when `manifests/haproxy.upstream.json` was added
+with another `docker exec` verify, taking the count from 6 NG
+to 7.
+
+### Changed
+
+Rewrote every `verify.command` to use only tools that *are*
+present inside the panel container — `bash`, `curl`, `php`,
+`grep`, plus `ct-server-core` itself. The probes are network-
+based (TCP / HTTP) where the panel can reach a sibling
+service via the docker-compose service-name DNS:
+
+| Component   | Old verify                                                 | New verify                                                                                   |
+|-------------|------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| caddy       | `docker exec ct-caddy caddy version`                       | `curl -sIo /dev/null -w '%{http_code}' http://caddy:80/` → expect `308` (Caddy's redirect)   |
+| haproxy     | `docker exec ct-haproxy haproxy -v`                        | `bash -c 'exec 3<>/dev/tcp/haproxy/443 && echo connected'` → expect `connected`              |
+| mariadb     | `docker exec ct-db mariadb --version`                      | `bash -c 'exec 3<>/dev/tcp/db/3306 && echo connected'` → expect `connected`                  |
+| naiveproxy  | `caddy list-modules` (legacy v0.0.1 pre-pivot architecture) | `grep -q '"type": "naive"' /etc/sing-box/config.json` (the file is mounted into the panel)    |
+| panel       | `docker exec ct-panel php artisan --version`               | `php /var/www/html/artisan --version` (drop the no-op self-exec wrapper)                     |
+| redis       | `docker exec ct-redis redis-cli --version`                 | `bash -c 'exec 3<>/dev/tcp/redis/6379 && echo connected'` → expect `connected`               |
+| sing-box    | `docker exec ct-singbox sing-box version`                  | `bash -c 'exec 3<>/dev/tcp/sing-box/443 && echo connected'` → expect `connected`             |
+
+Bash's `/dev/tcp/host/port` builtin is available on the panel
+image (Alpine + `apk add bash`) and needs no extra package.
+The `connected` token is plain ASCII so the
+`expect_stdout_contains` check is reliable across locales.
+
+### Notes on what each probe does *not* check
+
+- TCP-port probes (haproxy / mariadb / redis / sing-box)
+  confirm the listener is alive but don't surface the
+  *installed version*. The "Installed" column will show `—`
+  for these. Versions are still pinned in the manifest and
+  enforced at image-build time by the docker tag (`mariadb:11`,
+  `redis:7-alpine`, etc.); the smell-test in
+  `.github/workflows/audit.yml` cross-checks the compose file
+  against the manifest pins on every PR.
+- The naiveproxy probe greps the rendered config for the
+  inbound type. It doesn't connect to sing-box's listener
+  because that's already what the sing-box probe asserts; an
+  extra TCP connect would be redundant noise.
+- The caddy probe expects an HTTP 308 because the `:80` site
+  block in `caddy/Caddyfile.tpl` redirects every request to
+  HTTPS. If a future Caddy edit changes that, this probe
+  needs to update too.
+
+### Operator recovery
+
+Pure JSON change — the panel source is bind-mounted via
+`./panel:/var/www/html`, but the manifests are mounted
+read-only via `./manifests:/srv/manifests:ro`. A `git pull`
+on the host immediately exposes the new manifests inside the
+running panel:
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+# Re-check from the panel:
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+# Or via the Components page in the panel — the Re-check button
+# bypasses the 30 s cache.
+```
+
+No image rebuild, no container restart, no compose down
+needed.
+
+---
+
 ## [0.0.33] — 2026-05-06 — public admin panel via haproxy SNI router (R1-1 / R1-2)
 
 Closes the deferred audit items **R1-1** and **R1-2** from the
