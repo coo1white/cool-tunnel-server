@@ -109,7 +109,14 @@ jobs:
         run: cargo install --locked cargo-deny --version "=0.18.3"
       - name: Check
         # deny.toml lives at core/deny.toml.
-        run: cargo deny check
+        # Run only the bans/licenses/sources subchecks. The `advisories`
+        # subcheck is covered by the separate `cargo audit` job (above).
+        # cargo-deny 0.18.3 — the latest that supports our pinned rustc
+        # 1.86 — predates CVSS 4.0 in the RustSec advisory DB and errors
+        # parsing entries like RUSTSEC-2026-0073 (libcrux-poly1305). The
+        # next cargo-deny that handles CVSS 4.0 requires rustc 1.88+, so
+        # the upgrade is gated on a toolchain bump (separate concern).
+        run: cargo deny check bans licenses sources
 
   # ---------- Cycle 33: composer audit (Packagist advisories) -----
 
