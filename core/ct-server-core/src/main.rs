@@ -179,6 +179,15 @@ enum AdminOp {
     /// `CT_CLASH_SECRET_SEED` from the environment; errors loudly
     /// if unset (probe falls through to `VerifyFailed`).
     ClashSecret,
+    /// Print the resolved panel hostname to stdout. The Cycle 3
+    /// `SoT` (v0.0.55) anchor — single source of truth for
+    /// `panel.<base>` derivation, mirrored byte-for-byte by
+    /// `panel/config/cool-tunnel.php::panel_domain`. Used by
+    /// `scripts/verify_sot.sh` to assert PHP/Rust parity.
+    /// Resolution: `PANEL_DOMAIN` env > `panel.<DOMAIN>` env >
+    /// fail-fast. Whitespace in either is trimmed; both empty
+    /// errors loudly rather than producing `panel.` with no base.
+    PanelDomain,
 }
 
 #[derive(Subcommand, Debug)]
@@ -315,26 +324,23 @@ fn main() -> ExitCode {
     }
 }
 
-/// Resolve the panel subdomain. Prefers the explicit CLI / env value
-/// (`--panel-domain` / `PANEL_DOMAIN`) — operator-set in `.env` per
-/// the v0.0.33 install path. Falls back to `panel.${DOMAIN}` derived
-/// from the `server_configs` row, so an older deployment that hasn't
-/// rotated its `.env` to add `PANEL_DOMAIN` still gets a usable
-/// default at render time. Returns an error if neither is set
-/// (should not happen post-install, but the operator-friendly
-/// message is better than a silent fall-through).
-async fn resolve_panel_domain(cli_value: &str, database_url: &Option<String>) -> Result<String> {
-    if !cli_value.is_empty() {
-        return Ok(cli_value.to_owned());
+/// Resolve the panel subdomain. Cycle 3 / v0.0.55 made
+/// [`util::domain::panel_domain`] the canonical source; this
+/// wrapper preserves the CLI-flag override path
+/// (`--panel-domain` accepts an ad-hoc per-invocation value used
+/// by some debug paths). The DB-fallback the pre-Cycle-3 version
+/// did has been retired — env is the single source of truth, and
+/// the panel renderer is no longer responsible for reconciling
+/// post-install ServerConfig.domain edits with the panel hostname
+/// (operators who change ServerConfig.domain via the UI now have
+/// to also rotate their `.env`'s `PANEL_DOMAIN`; the v0.0.54
+/// auto-heal in update.sh + the Filament UI making both fields
+/// editable side-by-side cover this discipline).
+fn resolve_panel_domain(cli_value: &str, _database_url: &Option<String>) -> Result<String> {
+    if !cli_value.trim().is_empty() {
+        return Ok(cli_value.trim().to_owned());
     }
-    let pool = db::connect(database_url).await?;
-    let cfg = db::server_config(&pool).await?;
-    if cfg.domain.is_empty() {
-        return Err(Error::msg(
-            "PANEL_DOMAIN not set and ServerConfig.domain is empty — cannot derive default",
-        ));
-    }
-    Ok(format!("panel.{}", cfg.domain))
+    util::domain::panel_domain()
 }
 
 async fn dispatch(cli: Cli) -> Result<()> {
@@ -358,8 +364,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 template,
                 output,
             } => {
-                let panel_domain =
-                    resolve_panel_domain(&cli.panel_domain, &cli.database_url).await?;
+                let panel_domain = resolve_panel_domain(&cli.panel_domain, &cli.database_url)?;
                 caddy::render(
                     &cli.database_url,
                     &panel_domain,
@@ -377,8 +382,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 template,
                 output,
             } => {
-                let panel_domain =
-                    resolve_panel_domain(&cli.panel_domain, &cli.database_url).await?;
+                let panel_domain = resolve_panel_domain(&cli.panel_domain, &cli.database_url)?;
                 haproxy::render(
                     &cli.database_url,
                     &panel_domain,
@@ -484,6 +488,11 @@ async fn dispatch(cli: Cli) -> Result<()> {
             AdminOp::ClashSecret => {
                 let secret = singbox::clash_secret()?;
                 println!("{secret}");
+                Ok(())
+            }
+            AdminOp::PanelDomain => {
+                let pd = util::domain::panel_domain()?;
+                println!("{pd}");
                 Ok(())
             }
         },
