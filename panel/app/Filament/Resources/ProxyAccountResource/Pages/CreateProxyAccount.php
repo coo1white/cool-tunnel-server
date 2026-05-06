@@ -9,32 +9,45 @@ use App\Models\ProxyAccount;
 use App\Services\PasswordGenerator;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Database\Eloquent\Model;
 
 class CreateProxyAccount extends CreateRecord
 {
     protected static string $resource = ProxyAccountResource::class;
 
+    private ?string $generatedCleartext = null;
+
     /**
-     * Generate a fresh proxy password right after the record exists,
-     * via the dedicated `setCleartextPassword()` setter. We do NOT
-     * inject password_hash / password_cleartext_encrypted into the
-     * form data — those columns are deliberately outside $fillable on
-     * the model so that no other code path can poison them.
-     *
-     * The cleartext is shown in a one-time-only success notification;
-     * it is never persisted in plaintext (the bcrypt hash + a Laravel-
-     * Crypt-encrypted copy are what land in the DB).
+     * Set the cleartext password BEFORE the first INSERT — `password_hash`
+     * is NOT NULL in the schema and is deliberately outside $fillable,
+     * so the default `Model::create($data)` path would fail the NOT NULL
+     * constraint. We hand-build the model, seed both password columns
+     * via the dedicated setter, and save once.
+     */
+    protected function handleRecordCreation(array $data): Model
+    {
+        $pw = PasswordGenerator::make();
+        $this->generatedCleartext = $pw['cleartext'];
+
+        /** @var ProxyAccount $record */
+        $record = new (static::getModel())($data);
+        $record->setCleartextPassword($pw['cleartext']);
+        $record->save();
+
+        return $record;
+    }
+
+    /**
+     * Show the cleartext once. Never persisted in plaintext — the bcrypt
+     * hash + a Laravel-Crypt-encrypted copy are what land in the DB.
      */
     protected function afterCreate(): void
     {
         /** @var ProxyAccount $record */
         $record = $this->record;
-        $pw = PasswordGenerator::make();
-        $record->setCleartextPassword($pw['cleartext']);
-        $record->save();
 
         $subUrl = $record->subscriptionUrl();
-        $body = "Username: {$record->username}\nPassword: {$pw['cleartext']}";
+        $body = "Username: {$record->username}\nPassword: {$this->generatedCleartext}";
         if ($subUrl !== null) {
             $body .= "\n\nSubscription URL (import in the app — shown once):\n{$subUrl}";
         }
