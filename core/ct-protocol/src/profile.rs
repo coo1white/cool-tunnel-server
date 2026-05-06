@@ -56,6 +56,13 @@ impl std::error::Error for ProfileParseError {}
 
 impl ProfileV1 {
     /// Parse a `naive+https://user:pass@host:port` URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProfileParseError`] when the input doesn't have the
+    /// `naive+https://` (or legacy `naive+http://`) prefix, when
+    /// authority parsing fails (missing `:` or `@`), or when the
+    /// port isn't a valid `u16`.
     pub fn parse(s: &str) -> Result<Self, ProfileParseError> {
         let s = s.trim();
         let rest = s
@@ -115,6 +122,7 @@ impl ProfileV1 {
     }
 
     /// Round-trip back to the canonical URL form. Lossless.
+    #[must_use]
     pub fn to_url(&self) -> String {
         // Note: we don't URL-encode the password here because
         // basic_auth already restricts what we accept on the server

@@ -64,10 +64,10 @@ pub enum ComponentKindV1 {
     /// External DoH-over-HTTPS endpoint reachability check.
     /// The verifier reads the LIVE `ServerConfig.doh_resolver` URL
     /// (panel-editable, not the manifest's value) and dispatches an
-    /// RFC 8484 binary DoH query for `example.com IN A`. A
+    /// RFC 8484 binary `DoH` query for `example.com IN A`. A
     /// non-zero ANCOUNT in the response means the resolver
     /// answered a real query — covers the v0.0.22 survival case
-    /// for operators in censored regions where Cloudflare DoH
+    /// for operators in censored regions where Cloudflare `DoH`
     /// (or any other transit-blocked endpoint) is silently dropped
     /// by the local network. Without this check, sing-box's DNS
     /// path looks healthy ("connection open") but every name
@@ -131,6 +131,7 @@ pub enum ComponentStateV1 {
 
 impl ComponentStateV1 {
     /// Two-letter human label for compact UIs (panel "OK"/"NG").
+    #[must_use]
     pub fn ok_or_ng(&self) -> &'static str {
         match self {
             Self::Ok => "OK",

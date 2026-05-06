@@ -19,7 +19,7 @@ pub enum WireRequestV1 {
     RenderCaddyfile,
     /// POST the rendered Caddyfile to Caddy's admin API.
     ReloadCaddy,
-    /// Pull metrics + roll deltas into traffic_logs.
+    /// Pull metrics + roll deltas into `traffic_logs`.
     CollectTraffic,
     /// Disable accounts past quota / expiry; re-render + reload if
     /// any changes.
