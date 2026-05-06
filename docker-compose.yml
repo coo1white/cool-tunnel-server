@@ -73,6 +73,16 @@ services:
       # cool-tunnel-server-core:latest, which then has no
       # ct-server-core binary at /usr/local/bin/.
       target: runtime
+      # Wire CT_CORE_BUILD_PROFILE through to the Dockerfile's
+      # CARGO_PROFILE ARG (default `release`, override to
+      # `release-small` for low-RAM / faster-build VPS installs —
+      # see core/Cargo.toml profile definitions and .env.example).
+      # Pre-v0.0.38 the env var existed but was never read by any
+      # build path, so flipping it in .env had no effect; operators
+      # had to pass `--build-arg` by hand on every rebuild. This
+      # block makes `make update` honour the .env value end-to-end.
+      args:
+        CARGO_PROFILE: ${CT_CORE_BUILD_PROFILE:-release}
     image: cool-tunnel-server-core:latest
     profiles: ["build-only"]      # never started by `compose up`
 

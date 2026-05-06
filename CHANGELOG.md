@@ -22,6 +22,88 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.38] — 2026-05-06 — wire `CT_CORE_BUILD_PROFILE` through `docker-compose.yml` so the `.env` knob actually works
+
+`CT_CORE_BUILD_PROFILE` has lived in `.env.example` since the
+release-small profile was added, with the documented intent that
+operators on low-RAM VPSes flip it to `release-small` to halve the
+ct-server-core build time and roughly third the peak RAM. In
+practice the env var was never read by any build path —
+`scripts/update.sh:25` calls `compose --profile build-only build
+core-builder` without `--build-arg`, and the `core-builder` service
+in `docker-compose.yml` had no `build.args` block. So the flag
+silently no-op'd on every `make update`, and the only way to
+actually use `release-small` was to pass `--build-arg
+CARGO_PROFILE=release-small` by hand on every rebuild.
+
+v0.0.38 wires the env var through end-to-end. Set it once in `.env`,
+run `make update` — the build picks it up.
+
+### Fixed
+
+- **`docker-compose.yml::core-builder`** — added a `build.args`
+  block mapping `CARGO_PROFILE: ${CT_CORE_BUILD_PROFILE:-release}`.
+  The `:-release` default preserves the pre-v0.0.38 behaviour for
+  operators who never set the env var; an explicit
+  `CT_CORE_BUILD_PROFILE=release-small` in `.env` now flows through
+  to the Dockerfile's `ARG CARGO_PROFILE` and onwards to
+  `cargo build --profile`. `sqlx-prepare` is unaffected — its
+  Dockerfile stage doesn't reference `CARGO_PROFILE`.
+
+### Changed
+
+- **`.env.example`** — replaced the `--build-arg` workaround
+  example with the new operator path (set the var, run `make
+  update`). Added the build-time win to the description (release-
+  small ≈ 50 % faster compile, in addition to the existing peak-
+  RAM win) since that's the more visible benefit on a VPS that
+  isn't actively OOM-killing.
+
+### Compatibility
+
+- **No code change.** `core/Cargo.toml`, `ct-protocol`, and
+  `ct-server-core` are byte-identical to v0.0.37. The change is
+  purely a build-orchestration fix.
+- **Default behaviour preserved.** Operators who never set
+  `CT_CORE_BUILD_PROFILE` (the documented expected case for boxes
+  with spare RAM) continue to get the `release` profile via the
+  `:-release` shell-style default in the compose interpolation.
+- **Forward-compat with future profiles.** Adding a third profile
+  (e.g. `release-fast` for CI hosts) requires only a `core/Cargo.toml`
+  edit; no further compose plumbing.
+
+### Operator recovery
+
+Same path as every prior tactical release:
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+# Optional: enable the faster build for next time
+sed -i 's/^CT_CORE_BUILD_PROFILE=release$/CT_CORE_BUILD_PROFILE=release-small/' .env
+make update
+```
+
+To verify the value BuildKit will use without committing to a build:
+
+```sh
+docker compose --profile build-only config core-builder | grep -A2 args:
+```
+
+Expect the resolved `CARGO_PROFILE` to match what's in `.env`.
+
+### Out of scope
+
+The structural Cycle-2-style fixes outlined in the v0.0.37 build-
+infra discussion (cargo-chef layer split, `target/` cache mount
+covering iterative dep reuse) are still deferred. Those would take
+a clean rebuild on `release-small` from ~4 minutes to ~30 seconds;
+v0.0.38 only halves the ~8-minute `release` baseline. A dedicated
+build-infra release with its own forensic + clean-room test plan
+remains the right place for that work.
+
+---
+
 ## [0.0.37] — 2026-05-06 — `VerifySpecV1.expect_no_version_line` opts manifests out of the soft version matcher (Cycle 1)
 
 The v0.0.35 forensic surfaced that the six silenced-probe manifests
