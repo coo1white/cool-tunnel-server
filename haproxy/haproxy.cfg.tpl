@@ -1,0 +1,98 @@
+# Cool Tunnel Server — HAProxy SNI router.
+#
+# What this HAProxy does:
+#
+#   - Owns :443 on the public interface.
+#   - Sniffs the SNI server_name from each incoming TLS ClientHello
+#     WITHOUT decrypting the connection (TCP mode, ssl-passthrough).
+#   - Forwards the raw TLS bytes to one of two backends based on SNI:
+#
+#         SNI = {{ .PanelDomain }}   →  caddy:8444   (admin panel,
+#                                                    Caddy reverse-
+#                                                    proxies to the
+#                                                    panel container's
+#                                                    nginx on :9000)
+#         SNI = {{ .Domain }}        →  sing-box:443 (NaiveProxy)
+#         (anything else)            →  sing-box:443 (default; matches
+#                                                    NaiveProxy probe-
+#                                                    resistance — an
+#                                                    unrecognised SNI
+#                                                    is forwarded to
+#                                                    the proxy and
+#                                                    rejected with the
+#                                                    same shape as a
+#                                                    failed proxy auth)
+#
+# Why TCP mode (not HTTP):
+#
+#   Each backend terminates its own TLS:
+#     - sing-box terminates TLS for {{ .Domain }} using the cert
+#       Caddy obtained for the apex via HTTP-01.
+#     - Caddy terminates TLS for {{ .PanelDomain }} using its own
+#       auto-HTTPS-managed cert for the panel subdomain.
+#
+#   HAProxy sees only the encrypted bytes; the cipher / JA3 / JA4
+#   fingerprint observed on the wire is whatever the backend
+#   negotiates with the client. Anti-tracking probe-resistance is
+#   preserved end-to-end.
+#
+# Why a 5-second inspect-delay:
+#
+#   `tcp-request inspect-delay 5s` lets HAProxy buffer the first
+#   ClientHello packet so `req_ssl_sni` can extract the SNI before
+#   routing. 5 s is well above any realistic TLS handshake gap and
+#   gives no signal to a probe that this isn't a real backend (a
+#   too-tight delay would race the slowest legitimate clients).
+#
+# Why no `default_backend` falls to the panel:
+#
+#   The panel's Filament login is a brute-force surface. Routing
+#   unknown SNI to the panel would let any probe with no SNI
+#   (`openssl s_client -connect host:443` with no `-servername`)
+#   land on the login page. Routing the default to sing-box
+#   instead means an unauthorised probe gets the same "you got
+#   the proxy auth wrong" rejection a real NaiveProxy client gets
+#   on bad creds — nothing distinguishes the unknown-probe from
+#   a brute-force-failure.
+#
+# (R1-1 / R1-2 in 2026-05-04 audit; landed in v0.0.33.)
+
+global
+    log stdout format raw daemon
+    daemon
+    maxconn 4096
+    # No `tune.ssl.*` or `ca-base` — we do NOT terminate TLS here.
+
+defaults
+    mode tcp
+    timeout connect 5s
+    timeout client 1m
+    timeout server 1m
+    log global
+    # Anti-fingerprinting: do not log per-connection SNI / source IP /
+    # backend choice. Forensic risk on seizure outweighs the operator
+    # debugging convenience. Caddy + sing-box still log their own
+    # connection state at warn-or-higher; HAProxy is layer 4 and an
+    # operator who needs per-connection routing detail can re-enable
+    # `option tcplog` on a temporary debug rebuild.
+    option dontlognull
+
+frontend tls_sni_router
+    bind :443
+    mode tcp
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req_ssl_hello_type 1 }
+
+    # Route by SNI. The `-i` flag is case-insensitive — DNS is case-
+    # insensitive and a probe that lowercases the SNI must match the
+    # same backend a normal browser sees.
+    use_backend panel_caddy if { req_ssl_sni -i {{ .PanelDomain }} }
+    default_backend naive_singbox
+
+backend panel_caddy
+    mode tcp
+    server caddy_panel caddy:8444 check inter 10s rise 2 fall 3
+
+backend naive_singbox
+    mode tcp
+    server singbox sing-box:443 check inter 10s rise 2 fall 3

@@ -14,6 +14,7 @@ mod daemon;
 mod db;
 mod domain;
 mod err;
+mod haproxy;
 mod laravel_crypt;
 mod metrics;
 mod probe;
@@ -78,6 +79,14 @@ struct Cli {
     #[arg(long, env = "SINGBOX_CLASH_SECRET", default_value = "", global = true)]
     admin_secret: String,
 
+    /// Panel subdomain. Used by the Caddyfile and haproxy.cfg
+    /// renderers to (a) attach Caddy auto-HTTPS for the panel cert
+    /// and (b) point the haproxy SNI rule at it. Defaults to
+    /// `panel.${DOMAIN}` when unset; install.sh writes the chosen
+    /// value into .env at first boot. (R1-1 / R1-2, v0.0.33.)
+    #[arg(long, env = "PANEL_DOMAIN", default_value = "", global = true)]
+    panel_domain: String,
+
     /// Print machine-readable JSON instead of human-readable lines.
     #[arg(long, global = true)]
     json: bool,
@@ -97,6 +106,11 @@ enum Cmd {
     Caddyfile {
         #[command(subcommand)]
         op: CaddyfileOp,
+    },
+    /// HAProxy SNI-router config generation (R1-1 / R1-2, v0.0.33).
+    Haproxy {
+        #[command(subcommand)]
+        op: HaproxyOp,
     },
     /// Talk to sing-box's clash API.
     Server {
@@ -192,6 +206,29 @@ enum CaddyfileOp {
 }
 
 #[derive(Subcommand, Debug)]
+enum HaproxyOp {
+    /// Render template → /usr/local/etc/haproxy/haproxy.cfg (atomic).
+    Render {
+        #[arg(long)]
+        dry_run: bool,
+        /// Override template path.
+        #[arg(
+            long,
+            env = "HAPROXY_CONFIG_TEMPLATE",
+            default_value = "/srv/haproxy/haproxy.cfg.tpl"
+        )]
+        template: String,
+        /// Override output path.
+        #[arg(
+            long,
+            env = "HAPROXY_CONFIG_PATH",
+            default_value = "/usr/local/etc/haproxy/haproxy.cfg"
+        )]
+        output: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum ServerOp {
     /// Hot-reload via the clash API.
     Reload,
@@ -258,6 +295,28 @@ fn main() -> ExitCode {
     }
 }
 
+/// Resolve the panel subdomain. Prefers the explicit CLI / env value
+/// (`--panel-domain` / `PANEL_DOMAIN`) — operator-set in `.env` per
+/// the v0.0.33 install path. Falls back to `panel.${DOMAIN}` derived
+/// from the `server_configs` row, so an older deployment that hasn't
+/// rotated its `.env` to add `PANEL_DOMAIN` still gets a usable
+/// default at render time. Returns an error if neither is set
+/// (should not happen post-install, but the operator-friendly
+/// message is better than a silent fall-through).
+async fn resolve_panel_domain(cli_value: &str, database_url: &Option<String>) -> Result<String> {
+    if !cli_value.is_empty() {
+        return Ok(cli_value.to_owned());
+    }
+    let pool = db::connect(database_url).await?;
+    let cfg = db::server_config(&pool).await?;
+    if cfg.domain.is_empty() {
+        return Err(Error::msg(
+            "PANEL_DOMAIN not set and ServerConfig.domain is empty — cannot derive default",
+        ));
+    }
+    Ok(format!("panel.{}", cfg.domain))
+}
+
 async fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Singbox { op } => match op {
@@ -278,7 +337,38 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 dry_run,
                 template,
                 output,
-            } => caddy::render(&cli.database_url, &template, &output, dry_run, cli.json).await,
+            } => {
+                let panel_domain =
+                    resolve_panel_domain(&cli.panel_domain, &cli.database_url).await?;
+                caddy::render(
+                    &cli.database_url,
+                    &panel_domain,
+                    &template,
+                    &output,
+                    dry_run,
+                    cli.json,
+                )
+                .await
+            }
+        },
+        Cmd::Haproxy { op } => match op {
+            HaproxyOp::Render {
+                dry_run,
+                template,
+                output,
+            } => {
+                let panel_domain =
+                    resolve_panel_domain(&cli.panel_domain, &cli.database_url).await?;
+                haproxy::render(
+                    &cli.database_url,
+                    &panel_domain,
+                    &template,
+                    &output,
+                    dry_run,
+                    cli.json,
+                )
+                .await
+            }
         },
         Cmd::Server { op } => {
             // CLI Server.{Reload,Config} are operator-facing — they

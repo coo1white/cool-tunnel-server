@@ -76,6 +76,36 @@ fi
 require_env DB_PASSWORD            "openssl rand -base64 32 # paste into .env DB_PASSWORD="
 require_env REDIS_PASSWORD  "openssl rand -base64 32 # paste into .env REDIS_PASSWORD="
 
+# v0.0.33 R1-1 / R1-2 — PANEL_DOMAIN gates the new SNI router. If
+# it's empty (e.g. operator forgot to run `cp .env.example .env`
+# after the v0.0.32 → v0.0.33 upgrade), default it to panel.${DOMAIN}
+# rather than failing — the operator's intent is recoverable and a
+# hard-fail here would block an in-place upgrade. Append to .env so
+# subsequent steps and runtime renders see the value.
+if [[ -z "${PANEL_DOMAIN:-}" ]]; then
+    if [[ -n "${DOMAIN:-}" ]]; then
+        derived="panel.${DOMAIN}"
+        warn "PANEL_DOMAIN not set in .env — defaulting to ${derived}"
+        warn "(R1-1 / R1-2 added a public admin panel at this name in v0.0.33)"
+        if grep -qE '^PANEL_DOMAIN=' .env; then
+            sed -i "s|^PANEL_DOMAIN=.*|PANEL_DOMAIN=${derived}|" .env
+        else
+            printf '\nPANEL_DOMAIN=%s\n' "${derived}" >> .env
+        fi
+        export PANEL_DOMAIN="${derived}"
+    else
+        die "PANEL_DOMAIN and DOMAIN are both unset — cannot derive default" \
+            "edit .env: set DOMAIN= and PANEL_DOMAIN="
+    fi
+fi
+if [[ "${PANEL_DOMAIN}" == "panel.proxy.example.com" ]]; then
+    warn "PANEL_DOMAIN is still set to the placeholder 'panel.proxy.example.com'"
+    warn "ACME will fail unless this points at a DNS A record on this VPS"
+    if ! prompt_yn "Continue anyway (e.g. for local docker-only testing)?" n; then
+        die "aborted on placeholder PANEL_DOMAIN" "edit .env"
+    fi
+fi
+
 # Cross-validate CT_CLASH_SUBNET vs CT_CLASH_SINGBOX_IP. Both have
 # defaults that match each other (172.30.0.0/24 + 172.30.0.10), so
 # operators who don't touch them are fine. Operators who override
@@ -312,9 +342,9 @@ fi
 compose exec -T panel php artisan db:seed --force --no-interaction || true
 ok "migrations applied + default seed in place"
 
-# ---------- Render the initial Caddyfile + sing-box config --------
+# ---------- Render the initial Caddyfile + sing-box + haproxy ------
 
-step "Render initial Caddyfile + sing-box config from DB"
+step "Render initial Caddyfile + sing-box + haproxy configs from DB"
 # Render each config; track failures so the post-step `ok`
 # doesn't lie when a render actually failed (papercut spotted in
 # the v0.0.11 audit — operator saw "✗ FAILED" + "✓ rendered" on
@@ -322,41 +352,57 @@ step "Render initial Caddyfile + sing-box config from DB"
 # succeeded).
 caddy_render_ok=true
 singbox_render_ok=true
+haproxy_render_ok=true
 compose exec -T panel ct-server-core --json caddyfile render \
     || { warn "Caddyfile render failed — Caddy will start with no domain configured"; caddy_render_ok=false; }
 compose exec -T panel ct-server-core --json singbox render \
     || { warn "sing-box render failed — first proxy account creation will retry"; singbox_render_ok=false; }
+compose exec -T panel ct-server-core --json haproxy render \
+    || { warn "haproxy render failed — :443 SNI router will start with no rules"; haproxy_render_ok=false; }
 [[ "$caddy_render_ok"   == true ]] && ok "Caddyfile rendered to /etc/caddy/Caddyfile (caddy_etc volume)"
 [[ "$singbox_render_ok" == true ]] && ok "config.json rendered to /etc/sing-box/config.json (singbox_etc volume)"
+[[ "$haproxy_render_ok" == true ]] && ok "haproxy.cfg rendered to /usr/local/etc/haproxy/haproxy.cfg (haproxy_etc volume)"
 
-# ---------- Start Caddy first; wait for the cert to land ----------
+# ---------- Start Caddy first; wait for both certs to land --------
 
-step "Start Caddy (ACME-only mode — port 80 only, manages cert for ${DOMAIN:-?})"
+step "Start Caddy (ACME — :80 challenges; manages certs for ${DOMAIN:-?} and ${PANEL_DOMAIN:-?})"
 compose up -d caddy
 ok "caddy running on :80"
-warn "Caddy will fetch the TLS cert from Let's Encrypt now; this"
-warn "usually takes 10-60 s. Tail logs with:"
+warn "Caddy will fetch the TLS certs from Let's Encrypt now; both"
+warn "domains usually obtain in 10-60 s. Tail logs with:"
 warn "    docker compose logs -f --tail=80 caddy"
 
-# Wait for cert files to appear in the shared caddy_data volume.
-# Path is /data/caddy/certificates/<ca>/<domain>/<domain>.crt — see
-# core/ct-server-core/src/singbox/mod.rs::cert_paths() for derivation.
+# Wait for both cert files to appear in the shared caddy_data
+# volume. Path is /data/caddy/certificates/<ca>/<domain>/<domain>.crt
+# — see core/ct-server-core/src/singbox/mod.rs::cert_paths() for
+# derivation.
 ca_folder="acme-v02.api.letsencrypt.org-directory"
 case "${ACME_DIRECTORY:-}" in
     *staging*) ca_folder="acme-staging-v02.api.letsencrypt.org-directory" ;;
 esac
-cert_path="/data/caddy/certificates/${ca_folder}/${DOMAIN:-proxy.example.com}/${DOMAIN:-proxy.example.com}.crt"
+apex_cert_path="/data/caddy/certificates/${ca_folder}/${DOMAIN:-proxy.example.com}/${DOMAIN:-proxy.example.com}.crt"
+panel_cert_path="/data/caddy/certificates/${ca_folder}/${PANEL_DOMAIN:-panel.proxy.example.com}/${PANEL_DOMAIN:-panel.proxy.example.com}.crt"
 
-step "Wait for Caddy to obtain the TLS certificate (up to 90 s)"
+step "Wait for Caddy to obtain both TLS certificates (up to 90 s)"
 # shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
-wait_for "Caddy cert at ${cert_path}" 45 2 \
-    bash -c "docker compose exec -T caddy test -f \"$cert_path\""
+wait_for "Caddy cert (apex) at ${apex_cert_path}" 45 2 \
+    bash -c "docker compose exec -T caddy test -f \"$apex_cert_path\""
+# shellcheck disable=SC2016
+wait_for "Caddy cert (panel) at ${panel_cert_path}" 45 2 \
+    bash -c "docker compose exec -T caddy test -f \"$panel_cert_path\""
 
-# ---------- Start sing-box (now that the cert exists) -------------
+# ---------- Start sing-box + haproxy (now that the certs exist) ---
 
-step "Start sing-box (reads cert from caddy_data volume)"
+step "Start sing-box (reads apex cert from caddy_data volume)"
 compose up -d sing-box
-ok "sing-box running on :443 (TCP only — NaiveProxy is HTTP/2-only)"
+ok "sing-box running on internal :443 (TCP only — NaiveProxy is HTTP/2-only)"
+ok "  no host port mapping; haproxy fronts :443 and forwards by SNI"
+
+step "Start haproxy (SNI router on :443; routes to sing-box or caddy:8444)"
+compose up -d haproxy
+ok "haproxy running on :443 (TCP/SSL-passthrough — no TLS decryption here)"
+ok "  SNI=${DOMAIN:-?} → sing-box (NaiveProxy)"
+ok "  SNI=${PANEL_DOMAIN:-?} → caddy:8444 → panel"
 
 # ---------- Create first Filament admin ----------------------------
 
@@ -388,17 +434,19 @@ cat <<EOF
 
 ${CT_BOLD}${CT_GREEN}Cool Tunnel Server is up.${CT_RESET}
 
-  Panel         https://${DOMAIN}/admin
-  Subscription  https://${DOMAIN}/api/v1/subscription/<token>
+  Panel         https://${PANEL_DOMAIN}/admin
+  Subscription  https://${PANEL_DOMAIN}/api/v1/subscription/<token>
                   (issued from the panel)
+  Proxy         naive+https://<user>:<pass>@${DOMAIN}:443
+                  (NaiveProxy clients connect here)
 
 What to do next:
 
   1. Watch ACME finish:
-       ${CT_BOLD}docker compose logs -f --tail=80 sing-box${CT_RESET}
+       ${CT_BOLD}docker compose logs -f --tail=80 caddy${CT_RESET}
 
   2. Create your first proxy account:
-       open https://${DOMAIN}/admin -> ProxyAccounts -> New
+       open https://${PANEL_DOMAIN}/admin -> ProxyAccounts -> New
        (cleartext password is shown ONCE - copy it then)
 
   3. Point the macOS client at:
