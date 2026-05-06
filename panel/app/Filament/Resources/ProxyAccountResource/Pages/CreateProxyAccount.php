@@ -34,8 +34,7 @@ class CreateProxyAccount extends CreateRecord
         $record->save();
 
         $subUrl = $record->subscriptionUrl();
-        $username = (string) $record->getAttribute('username');
-        $body = "Username: {$username}\nPassword: {$pw['cleartext']}";
+        $body = "Username: {$record->username}\nPassword: {$pw['cleartext']}";
         if ($subUrl !== null) {
             $body .= "\n\nSubscription URL (import in the app — shown once):\n{$subUrl}";
         }
