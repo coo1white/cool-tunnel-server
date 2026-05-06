@@ -440,7 +440,7 @@ services:
 
   db:
     <<: *svc-hardening
-    image: mariadb:11
+    image: mariadb:11.8.6
     container_name: ct-db
     restart: unless-stopped
     # cap_drop ALL (from x-svc-hardening) blocks the MariaDB
@@ -507,7 +507,7 @@ services:
 
   redis:
     <<: *svc-hardening
-    image: redis:7-alpine
+    image: redis:7.4.8-alpine
     container_name: ct-redis
     restart: unless-stopped
     # Same v0.0.17 cap_drop ALL regression as db / panel: the

@@ -31,7 +31,7 @@
 # directive in haproxy.cfg.tpl (TCP mode, SNI ACLs, stats socket,
 # tcp-request inspect-delay) is stable across 2.9 → 3.0.
 
-FROM haproxy:3.0-alpine
+FROM haproxy:3.0.21-alpine
 
 # HAProxy reads /usr/local/etc/haproxy/haproxy.cfg on boot. The compose
 # file mounts the panel-rendered file (from the rendered
