@@ -22,6 +22,155 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.56] — 2026-05-07 — [Cycle 3][SoT] verify-sot UX follow-up: graceful skip on docker-only hosts + new `make verify-sot-vps`
+
+A two-script UX patch on top of v0.0.55's SoT contract. The Cycle 3
+guard (`make verify-sot`) shells out to `php` and `cargo` directly
+on the host. On a dev box that's fine; on a docker-only VPS host
+(no apt-installed PHP, no rustup) the same `make ci` invocation
+crashed with exit 127 (command not found) and no pointer at the
+docker-aware alternative. v0.0.56 closes the gap from both sides.
+
+### The fall-through path before v0.0.56
+
+```
+$ make ci
+…
+./scripts/verify_sot.sh
+./scripts/verify_sot.sh: line 38: php: command not found
+./scripts/verify_sot.sh: line 60: cargo: command not found
+…
+make: *** [Makefile:53: verify-sot] Error 127
+```
+
+Operator's first reaction: "is the SoT broken?" — but the contract
+itself was confirmed working by the two-command check on the VPS:
+
+```
+$ docker compose exec panel ct-server-core admin panel-domain
+panel.cookie.coolwhite.space
+$ docker compose exec panel php artisan tinker --execute='echo config("cool-tunnel.panel_domain");'
+panel.cookie.coolwhite.space
+```
+
+The script's output was the bug, not the contract.
+
+### Added
+
+- **`scripts/verify_sot_vps.sh`** — docker-based variant. Runs the
+  same five fixtures as the dev-side script (`verify_sot.sh`), but
+  invokes both implementations via `docker compose exec` against
+  the running panel container, so it needs no host toolchains
+  beyond docker itself. Pre-flight `docker compose exec -T panel
+  true` probes that the stack is up; bails with an actionable
+  message ("Bring the stack up first: `docker compose up -d`") if
+  not. Identical fail-mode reconciliation (PHP empty + Rust
+  non-zero exit = same fail signal on fixture 5) so the dev-side
+  and VPS-side surfaces probe the exact same contract.
+- **`make verify-sot-vps`** — surface for the new script. NOT in
+  `make ci` — it requires a running stack, which CI doesn't have.
+  Operator-only; for confirming that a deployed release honours
+  the v0.0.55 SoT contract.
+
+### Changed
+
+- **`scripts/verify_sot.sh`** — added a graceful-skip preamble.
+  When `php` or `cargo` is missing from the host PATH, prints a
+  clear `⚠ skipped — host missing: php cargo` line, points at
+  `make verify-sot-vps`, and exits 0. That keeps `make ci` passing
+  on docker-only hosts (where the contract is genuinely covered by
+  the VPS-side surface) without silently masking real SoT failures
+  on dev hosts (where the surface still runs).
+- **`make verify-sot` help text** — clarifies the skip semantics so
+  `make help` itself documents the dev-vs-VPS split.
+
+### Why the dev-side gate gracefully skips instead of failing
+
+Two valid mental models:
+
+1. **Strict** — `make ci` should require the SoT contract to be
+   exercised; if the host can't, fail loud.
+2. **Graceful** — `make ci` is the dev-side correctness gate, and
+   the SoT contract has a separate operator surface
+   (`verify-sot-vps`); when the dev surface can't run, defer to
+   the operator surface and don't block.
+
+v0.0.56 picks #2. Reasoning: the SoT contract is a *cross-language
+parity* property that holds for any environment with both
+implementations available; on a docker-only host *both
+implementations live inside the panel container*, so the operator
+surface is the canonical probe there. Forcing `make ci` to fail
+without cargo/PHP would penalize operators for not installing
+toolchains they don't otherwise need. The skip message points at
+the right tool; nothing is hidden.
+
+If the team later wants strict-mode on top, an env-var toggle
+(`CT_VERIFY_SOT_STRICT=1`) is a one-line follow-up.
+
+### Compatibility
+
+- **No operator-side action required.** No env, schema, or render
+  changes. Existing deployments are unaffected.
+- **`make ci` on dev hosts** — unchanged. Both PHP and cargo are
+  expected to be installed on dev hosts; the skip path is only
+  taken when missing.
+- **`make verify-sot` on docker-only hosts** — previously failed
+  with exit 127; now prints a skip line and exits 0. Operators who
+  ran `make ci` and got a confusing "command not found" error
+  should re-run after pulling v0.0.56.
+- **`make verify-sot-vps` is new** — needs a running stack
+  (`docker compose up -d`). Bails out cleanly with an actionable
+  pointer when the panel container isn't up.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update                # standard update path
+make verify-sot-vps        # confirm the v0.0.55 SoT contract
+```
+
+The expected output:
+
+```
+=== verify-sot-vps — Cycle 3 SoT cross-language verification (VPS) ===
+  ✓ explicit PANEL_DOMAIN takes priority
+  ✓ empty PANEL_DOMAIN falls back to panel.<DOMAIN>
+  ✓ empty DOMAIN with explicit PANEL_DOMAIN
+  ✓ whitespace PANEL_DOMAIN trimmed → fallback
+  ✓ both empty fails fast
+
+=== summary: 5 passed, 0 failed ===
+```
+
+If you previously hit `exit 127` on `make ci` from
+`make verify-sot`, that's the script that this release fixes —
+re-run `make ci` after the pull and the SoT step will skip with a
+clean message instead of crashing.
+
+### Lesson — `make ci` parity between dev and VPS hosts
+
+The first six sprint-lessons (catalogued through v0.0.55's #7
+meta-pattern) all centred on **content drift** — same logic
+diverging across files, environments, or invocations. v0.0.56 is
+adjacent but distinct: **tooling drift** between dev and VPS.
+
+| # | Mismatch caught |
+|---|---|
+| 1-7 | content drift (codified in v0.0.55) |
+| **8** | **dev-host tooling assumed by `make ci` but absent on operator hosts; gates must skip-with-pointer rather than crash on missing dev tooling** |
+
+The fix shape: **graceful skip + operator surface.** Any future
+`make ci` step that requires a dev toolchain unavailable on
+operator hosts should follow the same pattern — detect the
+missing tool, point at the operator-side variant, exit 0. Loud
+failure here was solving for a property (SoT parity) that *was*
+covered by the operator surface; the script just didn't know about
+it.
+
+---
+
 ## [0.0.55] — 2026-05-06 — [Cycle 3][SoT] Panel-hostname single source of truth (PHP ↔ Rust parity, CI guard, fail-fast on empty env)
 
 The architectural-debt liquidation cycle. Across the v0.0.43 → v0.0.54

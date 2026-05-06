@@ -48,9 +48,24 @@ ci: rust-fmt-check rust-clippy rust-test php-syntax shellcheck manifests-jq veri
 # dependencies installed (vendor/autoload.php) and a working cargo
 # toolchain — both are already required by the surrounding ci
 # steps.
+#
+# v0.0.56 — verify_sot.sh now gracefully skips (with a pointer to
+# verify-sot-vps below) when php/cargo are missing on the host.
+# That lets `make ci` pass on docker-only VPS hosts without
+# silently masking the SoT contract.
 .PHONY: verify-sot
-verify-sot: ## cross-language SoT parity check (Cycle 3 / v0.0.55)
+verify-sot: ## cross-language SoT parity check (Cycle 3 / v0.0.55; skips when host lacks php/cargo — see verify-sot-vps)
 	./scripts/verify_sot.sh
+
+# v0.0.56 — VPS-side counterpart to verify-sot. Exercises the same
+# five fixtures via `docker compose exec` against the running panel
+# container, so it works on docker-only hosts where PHP and cargo
+# aren't installed. NOT wired into `make ci` — it requires a
+# running stack, which CI doesn't have. Operator surface for
+# confirming a deployed release honours the v0.0.55 SoT contract.
+.PHONY: verify-sot-vps
+verify-sot-vps: ## VPS-side SoT parity check via docker compose exec (v0.0.56)
+	./scripts/verify_sot_vps.sh
 
 # Convenience aliases — `make fmt`, `make lint`, `make test` are
 # the muscle-memory commands every Rust project ships. The full
