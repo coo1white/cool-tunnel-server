@@ -22,6 +22,119 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.53] — 2026-05-06 — Fix: subscription-URL generator points at the apex domain instead of the panel subdomain (silent since the v0.0.33 SNI router split)
+
+The macOS client's "Import from subscription URL" flow returned
+HTTP 400 on every import attempt. Root cause: the URL generated
+by the panel's `Subscription URL` action targeted the apex
+(proxy) domain, but the panel itself lives at `panel.<apex>`
+post-v0.0.33's haproxy SNI router. A request to
+`https://<apex>/api/v1/subscription/<token>` hits sing-box
+(NaiveProxy), which has no HTTP API and rejects the request.
+
+This bug has been silent since v0.0.33. Pre-v0.0.33 the panel
+WAS on the apex (no SNI split), so `subscriptionUrl()` was
+correct when written in v0.0.7. v0.0.33's R1-1/R1-2 design
+introduced the apex (proxy) / panel subdomain split — `apex →
+sing-box`, `panel.<apex> → caddy → panel` — but the URL
+generator wasn't updated to match. The v0.0.43 drift-detection
+infrastructure couldn't catch it because the subscription
+endpoint isn't a component-check probe target; it's user-flow
+infrastructure.
+
+### Fixed
+
+- **`panel/app/Models/ProxyAccount.php::subscriptionUrl()`** —
+  URL template changed from `https://{$domain}/api/v1/subscription/{$token}`
+  to `https://panel.{$domain}/api/v1/subscription/{$token}`. The
+  `panel.` prefix matches haproxy.cfg.tpl's hardcoded
+  `use_backend panel_caddy if { req_ssl_sni -i panel.<base> }`
+  rule — both sides of the SNI router agreement now use the
+  same hardcoded prefix.
+
+### Audit confirmed clean elsewhere
+
+Other `ServerConfig::domain` usages were audited for the same
+panel-vs-apex confusion; all are correct as-is:
+
+| Site | Usage | Verdict |
+|---|---|---|
+| `ServerConfig.php:45` | first-boot seed for the apex domain | correct (apex is what's seeded) |
+| `SubscriptionController.php:108-114` | manifest's `server` / `profiles[].host` / `profiles[].label` fields | correct (NaiveProxy server endpoint IS the apex; the macOS client connects to it as a proxy, not as the panel HTTP API) |
+| **`ProxyAccount.php:150`** | **subscription URL → panel HTTP endpoint** | **fixed in this release** |
+
+Only the URL generator was broken. The others correctly use the
+apex because they're describing the *proxy* endpoint, not the
+*panel* endpoint.
+
+### Why this is the fifth-of-its-kind in the sprint
+
+The pattern across the sprint's hotfixes:
+
+| Hotfix | Mismatch |
+|---|---|
+| v0.0.47 → v0.0.48 | dev-side `git status` ≠ VPS-side |
+| v0.0.49 → v0.0.50 | dev-side `cargo build` ≠ VPS-side (MSRV) |
+| v0.0.43 → v0.0.51 | dev-side cfg.tpl edit ≠ VPS-side haproxy state |
+| v0.0.51 → v0.0.52 | CLI invocation (root) ≠ panel UI invocation (www-data) |
+| **v0.0.33 → v0.0.53** | **architectural change (SNI split) ≠ all panel-side code that referenced "the domain" before the split** |
+
+The v0.0.53 lesson is the most general: **when an architectural
+change introduces a new distinction (apex vs. panel-subdomain),
+audit every existing reference to the now-ambiguous concept
+("domain") in the same release.** v0.0.33 split the meaning of
+"domain" into two; only some references were updated to match.
+The unstaged ones became silent bugs that surfaced when an
+operator first exercised the affected code path.
+
+This bug specifically: the macOS client's "Import from
+subscription URL" was the affected user flow; nobody had used it
+on a v0.0.33+ deployment until now.
+
+### Compatibility
+
+- **No code change in ct-server-core, no manifest change, no
+  Dockerfile change.** Pure panel-side PHP edit.
+- **Existing subscription URLs** that operators have copied/sent
+  to clients are now invalid (they all point at the apex). The
+  fix is to re-copy the URL via the panel's "Subscription URL"
+  action — the new copy uses `panel.<domain>` and works. No DB
+  migration needed; the underlying token is unchanged, only the
+  hostname segment of the URL changes.
+- **No make update needed for runtime** — the panel mounts the
+  application source RO from the working tree, so a `git pull`
+  + Filament cache clear is sufficient (`make update` does the
+  cache clear as part of the panel boot, but a panel container
+  restart suffices for an out-of-band fix).
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+```
+
+Then in the panel UI:
+
+1. **Proxy Accounts** → click an account row's **Subscription URL** action
+2. Verify the URL in the notification starts with `https://panel.<domain>/`
+3. Copy that URL into the macOS client's "Import from subscription URL"
+4. Import should now succeed and return the manifest JSON
+
+### Out of scope (audit candidate for a future release)
+
+A repo-wide audit for *other* spots where an architectural
+distinction (introduced by a past release) wasn't propagated to
+all consumers. Pattern-shape: grep for any value that gained two
+meanings between v0.0.X and v0.0.X+1 — `ServerConfig.domain`
+(this one), `CT_CLASH_LISTEN` (apex vs. ct-clash management
+network), the `naiveproxy` slug ambiguity (server-side plugin
+vs. client binary), etc. Probably worth an explicit forensic
+sweep one day; not blocking.
+
+---
+
 ## [0.0.52] — 2026-05-06 — Hotfix: HAProxy stats-socket mode 660 → 666 (panel UI runs probe as www-data, not root)
 
 The fourth hotfix-after-release in this sprint. v0.0.51's CLI
