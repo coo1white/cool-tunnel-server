@@ -5,10 +5,17 @@
 # Composer / Laravel
 panel/vendor/
 panel/node_modules/
+# PHPUnit 11 test-result cache. Created on every `make test` /
+# `phpunit` run, scoped to a single working tree. (v0.0.47.)
+panel/.phpunit.cache/
 panel/storage/app/*
 !panel/storage/app/.gitkeep
 panel/storage/framework/cache/data/*
 !panel/storage/framework/cache/data/.gitkeep
+# Laravel's compiled-facade cache writes facade-<sha>.php directly
+# into storage/framework/cache/ (bare-level, not under data/). The
+# data/* glob above doesn't catch those. (v0.0.47.)
+panel/storage/framework/cache/*.php
 panel/storage/framework/sessions/*
 !panel/storage/framework/sessions/.gitkeep
 panel/storage/framework/views/*

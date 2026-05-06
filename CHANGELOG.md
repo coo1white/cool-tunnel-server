@@ -22,6 +22,119 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.47] — 2026-05-06 — Final cleanup: `.gitignore` truth-up + `docs/components.md` post-Cycle-2 sync — **Cycle 2 manual closes**
+
+The pristine-state release. Two minor cleanups bundled together
+to close the Cycle 2 manual: silence the working-tree noise that
+crept in during the v0.0.39 dev loop, and synchronise
+`docs/components.md` against the post-Cycle-2 reality (verifier
+shapes, component list, example output, "updating a component"
+workflow).
+
+### Fixed
+
+- **`.gitignore`** — added two patterns to silence files that
+  appeared as untracked across every working tree since v0.0.39
+  dev:
+  - `panel/.phpunit.cache/` — PHPUnit 11 test-result cache,
+    created on every `make test` / `phpunit` run
+  - `panel/storage/framework/cache/*.php` — Laravel's compiled-
+    facade cache, written directly into `cache/` (the existing
+    `cache/data/*` glob doesn't catch bare-level files)
+
+### Changed
+
+- **`docs/components.md`** — full post-Cycle-2 truth-up:
+  - **Headline**: "The eight components today" →
+    "The eleven components today"
+  - **Component table**: added the 3 missing rows
+    (`doh-resolver`, `haproxy`, `naiveproxy-client`); rewrote
+    the "Verifier" column for every container-image component
+    to reflect the post-Cycle-2 probe shapes (panel:
+    `php artisan ct:version`, redis: `redis-cli INFO Server`,
+    mariadb: `SELECT VERSION()`, sing-box: clash-API `/version`,
+    haproxy: UNIX stats socket `show info`); column header
+    bumped to "Verifier (post-Cycle-2)" so future readers know
+    when the shape was set.
+  - **Example schema** (lines 28-40): replaced the v0.0.34-era
+    silenced-TCP-open sing-box probe with the actual current
+    v0.0.42 clash-API probe, including the `set -eo pipefail`
+    discipline. Reflects what an operator browsing the repo
+    today actually sees in `manifests/sing-box.upstream.json`.
+  - **Verifier-behaviour bullets**: rewrote the
+    `binary` / `container-image` paragraph to describe the
+    `installed.contains(&m.version)` matcher discipline that
+    Cycle 2 relies on, instead of the pre-Cycle-2 "TCP open is
+    fine" guidance. Added the missing `doh-endpoint` kind.
+    Replaced the "silent on success" paragraph (now dead advice
+    — no in-tree manifest uses `expect_no_version_line: true`)
+    with a brief note that the field still exists in
+    `ct-protocol` for external manifests (future sidecars,
+    third-party plugins).
+  - **Example output** (lines 73-81): rewrote to show the
+    11-component post-Cycle-2 reality, with real `installed=`
+    strings for every container-image probe (panel
+    `Cool Tunnel Panel 0.0.39`, redis `redis_version:7.4.8`,
+    mariadb `11.8.6-MariaDB-ubu2404`, sing-box `1.13.11`,
+    haproxy `Version: 3.0.21-6e57320bb`). The `installed=—`
+    rows are now only caddy (informational-only) and
+    `naiveproxy-client` (binary-presence test).
+  - **"Updating a component"** workflow: replaced the manual-
+    edit step list with the v0.0.45 `make set-component-version`
+    macro for third-party components and `make set-version` for
+    in-tree components. Documents what each macro covers and
+    cross-references the lockstep guarantee.
+
+### Compatibility
+
+- **No code change.** Only `.gitignore` and `docs/components.md`
+  modified. No probe behaviour change, no Rust change, no PHP
+  change, no compose change.
+- **Pre-v0.0.47 working trees** that already have
+  `panel/.phpunit.cache/` / `panel/storage/framework/cache/*.php`
+  on disk — `git rm --cached -r panel/.phpunit.cache panel/storage/framework/cache/*.php`
+  followed by a commit would clean any historical staging, but
+  since these were never committed in the first place, the new
+  ignore patterns just stop them from showing up in `git status`.
+  The files themselves stay on disk (they're still needed at
+  runtime).
+
+### Cycle 2 manual closed
+
+v0.0.36 → v0.0.47 (12 patch releases over 1 day) closes the
+Cycle 2 arc:
+
+| Phase | Releases | Theme |
+|---|---|---|
+| Pre-cycle | v0.0.36 | Panel CRUD fix (proxy account create unblocked) |
+| Forensic foundation | v0.0.37 | `expect_no_version_line` opt-in vocabulary |
+| Build infra | v0.0.38 | `CT_CORE_BUILD_PROFILE` wired through compose |
+| Drift restoration | v0.0.39..v0.0.43 | Make drift visible — 5 components × 5 releases |
+| Hardening | v0.0.44 | Demonstrate Cycle 2's payoff (HAProxy 2.9 → 3.0) |
+| Stabilisation | v0.0.45..v0.0.46 | Make drift structurally impossible (lockstep + DRY) |
+| **Pristine state** | **v0.0.47** | **Final cleanup — Cycle 2 manual closes** |
+
+The shift from "visible drift" to "structurally impossible
+drift" is complete. Every component has a probe; every probe
+has a manifest pin; every pin has a single-command bump path;
+every bump path has a JSON-validation guard. The matcher's
+permissive `None => Ok` corner case is no longer load-bearing.
+The redundant compose env duplications are gone. The `.gitignore`
+is clean. The doc matches reality.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+git status   # should be clean — no more untracked phpunit/cache files
+```
+
+No `make update` needed for this release — `.gitignore` and
+`docs/components.md` are inert at runtime.
+
+---
+
 ## [0.0.46] — 2026-05-06 — Compose env DRY: strip the v0.0.40 / v0.0.41 / v0.0.42 redundant duplications
 
 The bookend to the Cycle 2 stabilisation phase. v0.0.45 made
