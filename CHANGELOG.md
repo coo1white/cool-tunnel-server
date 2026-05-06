@@ -22,6 +22,107 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.48] — 2026-05-06 — Second-pass pristine: address v0.0.47's incomplete coverage of panel-runtime side effects
+
+v0.0.47 declared "pristine state" based on dev-side `git status`
+on macOS. The VPS pull surfaced three residual issues that v0.0.47
+missed because dev-side testing didn't actually boot the panel
+container — the entrypoint's chmod and `filament:assets` only fire
+on a real boot. Owning the gap and closing it.
+
+### Issues v0.0.47 left on the VPS
+
+1. **`panel/bootstrap/cache/.gitkeep` modified** — the panel
+   entrypoint runs `chmod -R 0775 storage bootstrap/cache`
+   ([entrypoint.sh:28](docker/panel/entrypoint.sh:28)). All eight
+   `.gitkeep` files were stored at `100644` in git's index, so a
+   chmod that sets the exec bit makes git see the worktree as
+   `100755` and surfaces a mode-only diff. Only
+   `bootstrap/cache/.gitkeep` actually shows because it sits on
+   the bind-mounted `./panel:/var/www/html` path; the
+   `storage/*/.gitkeep` files are inside the `panel_storage`
+   docker volume and the chmod there doesn't reach the host's
+   git checkout.
+2. **`panel/public/css/` untracked** — `php artisan
+   filament:assets --no-interaction` ([entrypoint.sh:151](docker/panel/entrypoint.sh:151))
+   publishes Filament's compiled CSS into this directory.
+3. **`panel/public/js/` untracked** — same publish step, JS half.
+
+### Fixed
+
+- **`.gitignore`** — added `panel/public/css/`, `panel/public/js/`,
+  and `panel/public/vendor/` (preventive — some upstream package
+  publishers default to `public/vendor/<pkg>/`). The committed
+  contents of `panel/public/` are verified to be only
+  `favicon.svg` and `index.php`; everything else under `public/`
+  is runtime-published and should never be tracked.
+- **`panel/bootstrap/cache/.gitkeep` index mode** — bumped from
+  `100644` to `100755` via `git update-index --chmod=+x`. The
+  file's content is empty (it's a directory placeholder), so the
+  mode-only change is innocuous. After this commit, the entrypoint's
+  `chmod -R 0775` produces a worktree mode (`0775` = exec bit set)
+  that git treats as `100755` and matches the index → no diff.
+  Robust across all worktree states:
+  - Operator with v0.0.47 worktree (file at `0644`) pulls v0.0.48 →
+    `git checkout` updates the file's mode to `0755` → no diff.
+  - Fresh checkout on macOS (no entrypoint) → file lands at
+    `0755` from the new index mode → no diff.
+  - Operator on VPS post-entrypoint (file at `0775`) → already
+    matches `100755` → no diff.
+
+### Why dev didn't catch this
+
+Dev-side validation in v0.0.47 ran `git status` on macOS without
+booting the panel container. The two surfaces that produce the
+noise (entrypoint chmod, `filament:assets`) only fire when the
+container actually starts. macOS dev had a clean `git status`
+because nothing was changing the bind-mounted files.
+
+Going forward: any "pristine state" claim should be backed by
+operator-side `git status` on a freshly-built-and-booted panel
+container, not just dev-side observation.
+
+### Compatibility
+
+- **No code change.** Only `.gitignore` and one tracked file's
+  mode bumped. No probe behaviour change, no Rust change, no
+  PHP change, no compose change.
+- **Fresh-checkout operators** see no diff after pull — git
+  applies the new index mode on `git checkout`.
+- **VPS operators with the post-entrypoint chmod state** see no
+  diff after pull — the worktree's exec-bit-set mode now matches
+  the index's `100755`.
+- **Operators with `core.fileMode = false`** see no diff regardless
+  — they were never affected by this issue in the first place.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+git status
+# Expect: clean — no more `MM panel/bootstrap/cache/.gitkeep`,
+#         no more untracked panel/public/css|js
+```
+
+If `git status` still shows residue, run `git diff` on the
+specific file — anything still surfacing is a NEW issue not
+covered by v0.0.47 or v0.0.48 and is worth flagging.
+
+### Cycle 2 manual: actually closed this time
+
+v0.0.47 declared closure prematurely. v0.0.48 backfills the
+declaration with verifiable post-VPS-pull pristine state. Apologies
+for the false-summit moment in v0.0.47. The arc now is:
+
+| Phase | Releases |
+|---|---|
+| Cycle 2 work | v0.0.36 → v0.0.46 |
+| First-pass cleanup | v0.0.47 (incomplete coverage) |
+| **Second-pass cleanup** | **v0.0.48 (this release)** |
+
+---
+
 ## [0.0.47] — 2026-05-06 — Final cleanup: `.gitignore` truth-up + `docs/components.md` post-Cycle-2 sync — **Cycle 2 manual closes**
 
 The pristine-state release. Two minor cleanups bundled together
