@@ -1,7 +1,10 @@
 [toolchain]
 # 1.85 was the first stable with edition2024, which clap_lex 1.1
-# requires. Some sqlx transitives (icu_*) further require 1.86, so
-# we pin to 1.86. Bumping higher is fine; lower fails at build.
-channel = "1.86"
+# requires. Some sqlx transitives (icu_*) further require 1.86. The
+# v0.0.49 cargo-chef install (chef stage in docker/core/Dockerfile)
+# resolves cargo-platform 0.3.2 transitively under --locked, which
+# requires 1.88 — that's the binding floor today. Bumping higher is
+# fine; lower fails at build. (v0.0.50.)
+channel = "1.88"
 profile = "minimal"
 components = ["clippy", "rustfmt"]

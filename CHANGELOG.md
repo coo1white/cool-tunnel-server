@@ -22,6 +22,89 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.50] — 2026-05-06 — Hotfix: Rust toolchain 1.86 → 1.88 to unblock v0.0.49's cargo-chef install
+
+v0.0.49's `cargo install cargo-chef --version "~0.1" --locked`
+step in the new `chef` stage failed on operator `make update`:
+
+```
+error: rustc 1.86.0 is not supported by the following package:
+    cargo-platform@0.3.2 requires rustc 1.88
+```
+
+Root cause: `--locked` uses the lockfile **shipped with the
+cargo-chef crate**, not the project's lockfile. cargo-chef v0.1.77
+(latest) ships a Cargo.lock pinning `cargo-platform 0.3.2`, which
+declares `rust-version = "1.88"`. Our Rust toolchain pinned 1.86 →
+fail. I should have verified cargo-chef's transitive MSRV against
+the project's pin before shipping v0.0.49. Owning that and
+unblocking immediately.
+
+### Fixed
+
+- **`core/rust-toolchain.toml::channel`** — `1.86` → `1.88`. The
+  comment block now records cargo-chef's transitive MSRV as the
+  binding floor; sqlx-icu_*'s 1.86 floor is still satisfied
+  (newer Rust accepts older MSRV).
+- **`core/Cargo.toml::workspace.package.rust-version`** — `1.86`
+  → `1.88`. Mirrors the toolchain pin so a future
+  `cargo build --offline` / pre-cargo-chef build path correctly
+  reports the floor.
+- **`docker/core/Dockerfile`** — both `FROM rust:1.86-alpine`
+  lines (chef stage line 25, sqlx-prepare stage line 207) bumped
+  to `FROM rust:1.88-alpine`. The chef-stage comment expanded to
+  record the cargo-chef MSRV trail.
+
+### Compatibility
+
+- **No code change.** `ct-protocol` and `ct-server-core` source
+  is byte-identical to v0.0.49. The only diff is which rustc
+  compiles them.
+- **78 / 78 tests pass on Rust 1.88** (verified locally).
+- **Clippy delta is zero** — same 91-warning baseline as on 1.86.
+  Rust 1.88 didn't introduce new lints that catch our code.
+- **Operators get a fresh toolchain pull** — `rust:1.88-alpine`
+  is a different Docker Hub layer from `rust:1.86-alpine`, so
+  the first `make update` after pulling v0.0.50 will re-pull the
+  base image (~150 MiB). One-time cost.
+- **No project Cargo.lock change** — the workspace's
+  `[workspace.package.rust-version]` is metadata only; cargo
+  doesn't bump Cargo.lock for `rust-version` field changes.
+
+### Why I bumped to 1.88 specifically and not higher
+
+1.88 is the minimum that satisfies cargo-platform 0.3.2's MSRV.
+A higher bump (1.91, 1.95, etc.) would buy margin against future
+MSRV creep but is also a larger change. Hotfix discipline:
+smallest change that unblocks. If a future tool/dep requires
+≥1.89, we'll bump again then.
+
+### Lesson recorded for future tooling installs
+
+When adding a `cargo install <tool> --locked` to the build, the
+tool's transitive deps under its OWN published lockfile are what
+gets compiled — not the resolver's MSRV-aware best-effort. Before
+shipping a new tooling install: check the tool's
+`Cargo.lock` (in its published crate) for transitive MSRV
+constraints, or run `cargo install <tool> --locked` once on the
+target toolchain locally as a smoke test. v0.0.49 didn't do
+either.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+```
+
+The first `make update` after v0.0.50 re-pulls `rust:1.88-alpine`
+(~150 MiB) and re-runs the entire chef stage (`apk add` + cargo-chef
+install). Expect ~5-7 min for the first build. Subsequent builds
+hit the v0.0.49 caching strategy and drop to ~15-30 s as designed.
+
+---
+
 ## [0.0.49] — 2026-05-06 — Build-infra Cycle 1: cargo-chef + `target/` cache mount cuts incremental rebuilds from ~3-6 min to ~15-30 s
 
 The first post-Cycle-2 release, themed around build-infrastructure

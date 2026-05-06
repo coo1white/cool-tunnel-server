@@ -23,9 +23,12 @@ members = [
 version       = "0.0.35"
 edition       = "2021"
 # 1.85 introduced edition2024 (needed by clap_lex 1.1); some sqlx
-# transitives (icu_*) further require 1.86. The Docker build image
-# must match — see docker/core/Dockerfile.
-rust-version  = "1.86"
+# transitives (icu_*) further require 1.86; v0.0.49's cargo-chef
+# install pulls cargo-platform 0.3.2 under --locked, which requires
+# 1.88 — that's the binding floor. Must match
+# core/rust-toolchain.toml::channel and the FROM lines in
+# docker/core/Dockerfile.
+rust-version  = "1.88"
 # Proprietary; the LICENSE file at the repo root is authoritative.
 # We use license-file (not license) so we don't assert an SPDX id
 # that misrepresents the terms.
