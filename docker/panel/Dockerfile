@@ -22,6 +22,7 @@ RUN apk add --no-cache \
         curl \
         git \
         jq \
+        socat \
         unzip \
         xz \
         icu-dev \
