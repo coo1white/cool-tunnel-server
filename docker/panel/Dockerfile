@@ -60,7 +60,7 @@ RUN apk add --no-cache \
 # ~2 MiB on disk vs. ~5 MiB for `apk add redis` (which would also
 # pull redis-server, useless in this container). Same idiom the file
 # already uses for ct-server-core (line ~110-130 below).
-COPY --from=redis:7-alpine /usr/local/bin/redis-cli /usr/local/bin/redis-cli
+COPY --from=redis:7.4.8-alpine /usr/local/bin/redis-cli /usr/local/bin/redis-cli
 
 # Bundle the upstream naive client binary so the anti-tracking probe
 # (core/ct-server-core/src/probe.rs) can speak NaiveProxy's HTTP/2-
