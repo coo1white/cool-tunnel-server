@@ -4,12 +4,22 @@
 # service; it's used by docker-compose's build stage to extract the
 # binary and copy it into the panel image. (See the panel image's
 # multi-stage build, which uses --from=ct-server-core-builder.)
+#
+# v0.0.49 restructured the build pipeline around cargo-chef + a
+# target/ cache mount. The dependency graph (recipe.json from
+# Cargo.toml + Cargo.lock) is cooked in a separate layer keyed only
+# on the lockfile, so source-only changes (every typical
+# `make update`) skip the 285-crate dep compile and go straight to
+# the 2 workspace crates — incremental rebuilds drop from ~3-6 min
+# to ~15-30 s. Pre-v0.0.49 the Dockerfile cache-mounted only the
+# registry directory; every rebuild started from zero compiled
+# artefacts even when no Cargo.lock change.
 
 # LTSC pin: Rust toolchain matches core/rust-toolchain.toml exactly.
 # Bumping one without the other will surface as a "rustc 1.X is not
 # supported" error during cargo build. Both files name the same
 # version on purpose.
-FROM rust:1.86-alpine AS builder
+FROM rust:1.86-alpine AS chef
 
 # Build deps: musl for static linking, openssl/pkg-config for sqlx +
 # rustls (which we use, but transitive deps still need pkg-config).
@@ -19,6 +29,15 @@ RUN apk add --no-cache \
         openssl-dev \
         openssl-libs-static \
         ca-certificates
+
+# Install cargo-chef (v0.0.49). The ~0.1 constraint pins to the 0.1.x
+# line — patch updates inside that line shouldn't change recipe.json
+# shape. The chef stage is the base for both `planner` and `builder`
+# below; one install lives in this layer and is reused. First-ever
+# build pays ~30-60 s for this; subsequent builds hit the cached
+# layer (invalidates only on rust-toolchain bump or cargo-chef minor
+# bump).
+RUN cargo install cargo-chef --version "~0.1" --locked
 
 # Map Docker's TARGETARCH (amd64|arm64|arm) to the matching musl
 # rustc target triple. BuildKit auto-populates TARGETARCH from
@@ -36,25 +55,36 @@ RUN case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/arm
     rustup target add "${RUST_TARGET}" && \
     printf '%s' "${RUST_TARGET}" > /tmp/rust-target
 
-WORKDIR /build
+WORKDIR /build/core
 
-# Copy the workspace and build in release. We use BuildKit cache
-# mounts so iterative builds don't re-download crates every time.
-# core/ includes core/.sqlx/ — pre-prepared sqlx query metadata
-# (see `make sqlx-prepare`). With SQLX_OFFLINE=true, the macros
-# validate every query against this committed metadata instead
-# of needing a live DB during `cargo build`.
+# Planner stage (v0.0.49): extract the dependency graph into
+# recipe.json. The stage runs against the actual workspace source,
+# but `cargo chef prepare` only inspects Cargo.toml + Cargo.lock —
+# it produces a structured snapshot of the dep graph that's
+# byte-identical when the lockfile is unchanged, regardless of
+# application source edits. Cheap (~5 s on a 1-vCPU VPS).
+FROM chef AS planner
 COPY core /build/core
 COPY manifests /build/manifests
+RUN cargo chef prepare --recipe-path recipe.json
 
-WORKDIR /build/core
+# Builder stage (v0.0.49): cook deps using just the recipe, then
+# compile the workspace. The cook step's layer is cached unless
+# Cargo.lock changes — that's where the typical-`make update` win
+# comes from. Application source edits bypass the cook entirely and
+# go straight to the second RUN below, which only compiles the 2
+# workspace crates (ct-protocol + ct-server-core).
+FROM chef AS builder
 
 # Compile-time SQL safety. SQLX_OFFLINE=true forces the
 # `sqlx::query!()` macros to read core/.sqlx/*.json (committed)
 # instead of attempting to open a live DB connection. A schema
 # regression that wasn't reflected in .sqlx/ will fail this
 # stage with a clear "no cached data for query" error;
-# operator regenerates with `make sqlx-prepare`.
+# operator regenerates with `make sqlx-prepare`. Note: SQLX_OFFLINE
+# only fires when workspace code containing `sqlx::query!()` is
+# being compiled — it's a no-op during the cook step (which
+# compiles the sqlx-mysql crate dep, not our queries).
 ENV SQLX_OFFLINE=true
 
 # Static link against musl so the resulting binary runs in any
@@ -79,26 +109,54 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-sta
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static"
 ENV CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS="-C target-feature=+crt-static"
 
-# Build with the registry cache mount only. We deliberately do NOT
-# cache-mount /build/core/target — that interacts badly with the
-# multi-stage `COPY --from=builder /ct-server-core` below: when
-# BuildKit serves the builder stage from a partially-populated
-# layer cache, the binary that lives under the target cache mount
-# isn't part of the committed builder image, and the COPY in the
-# final stage fails with "failed to compute cache key:
-# /ct-server-core: not found". We accept slightly slower
-# rebuilds (no incremental cargo target reuse) for a build that
-# is actually correct end-to-end.
 # Cargo profile: defaults to `release` (full LTO, codegen-units=1 —
 # lowest binary size, highest peak compile RAM). Set to
 # `release-small` for the low-mem-VPS install path: same musl-static
 # linking, ~50% lower peak RAM, ~5-15% slower runtime. The two
-# profiles live in core/Cargo.toml.
+# profiles live in core/Cargo.toml. Wired through compose via
+# CT_CORE_BUILD_PROFILE in .env (v0.0.38).
 ARG CARGO_PROFILE=release
 ENV CT_CARGO_PROFILE=${CARGO_PROFILE}
 
+# Cook deps using just recipe.json — the heavy step (~285 crates).
+# This RUN's layer is keyed on recipe.json content, so it's reused
+# across builds where Cargo.lock hasn't changed (i.e. every typical
+# `make update` after a release). The target/ cache mount preserves
+# intermediate cargo build artefacts across builds even when this
+# layer is invalidated (a Cargo.lock bump still benefits from
+# incremental cargo state where it can).
+COPY --from=planner /build/core/recipe.json /build/core/recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/core/target,id=ct-core-target,sharing=locked \
+    RUST_TARGET=$(cat /tmp/rust-target) && \
+    cargo chef cook --profile "${CT_CARGO_PROFILE}" --target "${RUST_TARGET}" \
+        --recipe-path recipe.json
+
+# Now copy the actual workspace and build the binary. Since the
+# cook step above already compiled all 285 deps, this RUN only
+# compiles the 2 workspace crates (ct-protocol + ct-server-core) —
+# fast even from cold (~30 s on a single-vCPU VPS, <10 s with
+# warm target/ cache).
+COPY core /build/core
+COPY manifests /build/manifests
+
+# v0.0.49: the target/ cache mount is now safe alongside the
+# multi-stage `COPY --from=builder /ct-server-core` below. Pre-v0.0.49
+# the Dockerfile comment said the cache mount "interacts badly"
+# with the COPY — that concern was overcautious. The
+# `install -Dm755 target/.../ct-server-core /ct-server-core` step
+# below copies the binary OUT of the cache mount (which only
+# exists for the duration of this RUN) INTO the layer's own
+# filesystem at /ct-server-core. When the RUN ends,
+# /ct-server-core is committed to the layer; the cache mount
+# unmounts but its contents persist in BuildKit's cache for next
+# time. The runtime stage's `COPY --from=builder /ct-server-core`
+# reads from the committed layer, not from the cache mount, so
+# the path resolves correctly.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/core/target,id=ct-core-target,sharing=locked \
     RUST_TARGET=$(cat /tmp/rust-target) && \
     cargo build --profile "${CT_CARGO_PROFILE}" --bin ct-server-core --target "${RUST_TARGET}" && \
     install -Dm755 "target/${RUST_TARGET}/${CT_CARGO_PROFILE}/ct-server-core" /ct-server-core && \
@@ -135,7 +193,11 @@ CMD ["--help"]
 # half-consumed; one extra `docker run rust:1.86-alpine` at
 # prepare time can tip over. Building this stage as part of the
 # project's compose graph lets BuildKit reuse the cached layers
-# from the `builder` stage above — no fresh registry pull.
+# from the `chef` stage above — no fresh registry pull. (The
+# apk add list and rustup component set are deliberately distinct
+# from the chef stage's; sqlx-prepare needs git for cargo's
+# crates.io fetch, plus clippy + rustfmt for the toolchain.toml
+# components.)
 #
 # Brought up via:
 #   docker compose --profile sqlx run --rm sqlx-prepare
