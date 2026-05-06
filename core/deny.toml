@@ -72,6 +72,13 @@ allow = [
     "OpenSSL",      # rare; some old crates still
     "CC0-1.0",
     "0BSD",
+    # webpki-roots (Mozilla's CA root cert bundle, transitively pulled in
+    # by rustls). CDLA-Permissive-2.0 is the Linux Foundation's permissive
+    # data licence — Mozilla relicensed the CA bundle to it because the
+    # bundle is data, not code. Permissive: no copyleft, no patent
+    # restrictions, no notice obligation beyond keeping the licence text
+    # with redistributed data.
+    "CDLA-Permissive-2.0",
 ]
 # Anything not on `allow` is denied by default.
 confidence-threshold = 0.93   # cargo-deny's default; bump if false-positives.
