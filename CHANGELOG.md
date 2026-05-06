@@ -22,6 +22,70 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.30] — 2026-05-06 — larastan v3 + phpstan v2 upgrade
+
+PR #2 installed larastan + phpstan on top of v0.0.29 to clear the
+level-5 baseline, but every CI run failed at PHPStan boot with a
+fatal class-load mismatch: Larastan v2.11.2's
+`ViewStringType::accepts()` returned `TrinaryLogic`, while its
+required PHPStan 1.12.x had switched to `AcceptsResult`. Larastan
+2.x is end-of-life — fix is to move to v3 (paired with PHPStan v2).
+The upgrade pulled in a stricter default rule set that surfaced
+two real issues in panel code; both cleared. CI's PHPStan job
+went green for the first time on this branch.
+
+Tooling-only bump — no migration, no behaviour change for
+operators. The release exists to record the static-analysis floor
+that future PRs in this repo can rely on.
+
+### Added
+
+- **`panel/config/cool-tunnel.php`** holds first-boot defaults for
+  the `ServerConfig` singleton (`DOMAIN`, `ACME_EMAIL`,
+  `ACME_DIRECTORY`). Read via `config()`, so values stay
+  resolvable when Laravel's config cache is warm — `env()`
+  returns `null` outside `config/` once cached.
+
+### Changed
+
+- **`larastan/larastan` constraint** raised from `^2.9` (resolved
+  v2.11.2) to `^3.0` (resolved v3.9.6).
+- **`phpstan/phpstan` constraint** raised from `^1.11` (resolved
+  1.12.33) to `^2.1` (resolved 2.1.54). `iamcal/sql-parser`
+  carried along as a transitive dep (v0.5 → v0.7).
+- **`ServerConfig::current()`** reads the three singleton seed
+  defaults via `config('cool-tunnel.…')` rather than calling
+  `env()` directly. Same on-disk behaviour; correct under config
+  cache.
+
+### Fixed
+
+- **PHPStan no longer fatals at boot** on the Larastan extension's
+  `accepts()` signature. The level-5 phpstan job is green.
+- **`larastan.noEnvCallsOutsideOfConfig`** at three sites in
+  `ServerConfig::current` — cleared by the move to `config()`.
+- **`nullsafe.neverNull` in `FakeSiteController::show`** is a
+  Larastan type-narrowing false positive (`$site` is genuinely
+  null when `FakeWebsite` has no rows). Suppressed via a single
+  targeted `@phpstan-ignore-next-line` with an explanatory note
+  pointing back to that empty-table case.
+
+### Out of scope (deferred)
+
+The audit workflow reports four other failures that were red on
+`main` before this change and remain so. Each is its own
+cleanup PR:
+
+- `rust (clippy)` — `ct-protocol` lints (`doc_markdown`,
+  `must_use_candidate`, `missing_errors_doc`).
+- `templates` — sing-box config syntax check expects PEM data.
+- `dependency review` — needs Dependency Graph + GitHub Advanced
+  Security enabled at the repo settings level.
+- `anti-tracking config smell-test` — `clash_api.external_controller`
+  template assertion drifted from `0.0.0.0:9090`.
+
+---
+
 ## [0.0.29] — 2026-05-06 — deployment hotfix #7 (publish Filament assets)
 
 **Real-world bug #11 from the v0.0.22 deployment arc.** With v0.0.28
