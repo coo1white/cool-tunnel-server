@@ -22,6 +22,145 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.51] — 2026-05-06 — Hotfix: HAProxy stats-socket bind-perm + update.sh haproxy render/reload gap
+
+The third hotfix-after-release in this sprint, all three sharing
+the same root: dev-side validation didn't simulate the operator's
+actual upgrade path on the operator's actual deployment topology.
+v0.0.43 added the haproxy stats socket + new docker volume + new
+cfg.tpl directive; over the v0.0.43 → v0.0.50 sprint THREE separate
+gaps quietly compounded, all visible only when an operator first
+exercised the haproxy probe end-to-end.
+
+### Three gaps this release closes
+
+1. **Volume ownership.** v0.0.43's new `haproxy_admin` named
+   volume was created `root:root mode 0755`. The upstream
+   `haproxy:alpine` image runs HAProxy as the `haproxy` user
+   (USER directive), and the project's `cap_drop: ALL` posture
+   means no `DAC_OVERRIDE` to bypass the filesystem check. Result:
+   when haproxy parses the new `stats socket` directive, the
+   `bind()` syscall fails with EACCES — `[ALERT] cannot bind
+   UNIX socket (Permission denied)`. HAProxy exits, the container
+   restart-policy brings it back, infinite crash loop.
+2. **Stale rendered cfg.** The panel's haproxy-render is fired by
+   Eloquent `ServerConfig::booted()` event (mutation-triggered),
+   not by panel boot or `make update`. v0.0.43's cfg.tpl change
+   to add the stats-socket directive was therefore dormant for
+   any operator who hadn't edited ServerConfig between releases —
+   the running haproxy.cfg in the volume kept its pre-v0.0.43
+   shape (no stats socket directive at all).
+3. **`update.sh` missed haproxy in two places.** v0.0.44 added
+   haproxy to the `compose build` list but left it out of the
+   `compose up -d` list, so the rebuilt image stayed cached
+   while the running container persisted unchanged. And there
+   was no haproxy render+reload step parallel to the existing
+   sing-box render+reload step.
+
+All three failure modes are visible in retrospect through the
+v0.0.43 drift probe (`VerifyFailed: non-zero exit (Some(1))`),
+which is exactly what Cycle 2 was designed to do. The probe
+correctly surfaced the broken state; the issue was the path TO
+the broken state had three compounding contributors.
+
+### Fixed
+
+- **`docker/haproxy/Dockerfile`** — added `USER root && RUN
+  mkdir -p /var/run/haproxy && chown haproxy:haproxy
+  /var/run/haproxy && USER haproxy` so the image's
+  `/var/run/haproxy/` directory has the right ownership at
+  build time. Docker's named-volume initialisation (image
+  directory contents copied to the volume on FIRST mount)
+  propagates this ownership to fresh `haproxy_admin` volumes,
+  so new deploys from v0.0.51 forward have the right state
+  without operator intervention.
+- **`scripts/update.sh`** — three fixes:
+  - **Defensive chown** of the existing `haproxy_admin` volume
+    via a throwaway `--user root` haproxy container. Idempotent;
+    no-op when ownership is already correct. Closes the
+    upgrade-path gap for operators on v0.0.43..v0.0.50 with
+    existing root-owned volumes (Docker's named-volume
+    initialisation does NOT overwrite an existing volume).
+  - **`compose up -d` extended to include `haproxy`** — rebuilt
+    image now actually replaces the running container, parallel
+    to the v0.0.44 fix that added haproxy to `compose build`.
+  - **New haproxy render + SIGHUP step** — mirrors the existing
+    sing-box render + reload pattern. Forces a fresh
+    `haproxy.cfg` write to the `haproxy_admin` volume on every
+    `make update`, then re-execs HAProxy via SIGHUP (master-
+    worker mode; connection-preserving graceful reload).
+
+### Compatibility
+
+- **Operators upgrading from v0.0.43..v0.0.50 with an existing
+  haproxy_admin volume** — `make update` after pulling v0.0.51
+  applies the defensive chown automatically before bringing
+  haproxy up. The script's chown step is idempotent; no manual
+  intervention required.
+- **Operators on a paused-update flow (still on pre-v0.0.43)**
+  — same `make update` path. The defensive chown silently skips
+  (volume doesn't exist yet), the haproxy_admin volume is created
+  fresh from the new Dockerfile (correct ownership), the new
+  cfg renders cleanly, the SIGHUP brings it live.
+- **Fresh deploys (first-ever v0.0.51 install)** — Dockerfile's
+  pre-creation handles volume ownership at first-mount time. No
+  upgrade-path concerns.
+- **HAProxy SIGHUP semantics in v3.0** — master-worker mode
+  (default `-W -db` from the haproxy:alpine entrypoint) reloads
+  on SIGHUP via re-exec. Existing connections drain on the old
+  worker (per `timeout client/server`); new connections accept
+  on the new worker. If the new cfg is invalid, master keeps
+  the old worker running and logs an alert — fail-safe by
+  design.
+
+### Lesson recorded — across the v0.0.43..v0.0.50 sprint
+
+| Hotfix | Root |
+|---|---|
+| v0.0.47 → v0.0.48 | dev-side `git status` clean ≠ VPS-side clean (entrypoint chmod side effects on bind-mounts) |
+| v0.0.49 → v0.0.50 | dev-side cargo build clean ≠ VPS-side cargo build clean (cargo-chef transitive MSRV under `--locked`) |
+| v0.0.43 → **v0.0.51** | dev-side cfg.tpl edit lands clean ≠ VPS-side haproxy actually picks it up (volume initialisation, render trigger, update.sh symmetry — three compounding) |
+
+All three share the lesson: **for releases whose value
+proposition is "operator-observable behaviour change" — clean
+working tree, faster build, drift detection working — validation
+has to run on the operator's environment, end-to-end, not just on
+dev's.** The next time I touch a docker-volume permission, a
+cfg.tpl render trigger, or anything that mutates state on a
+specific deployment topology, the validation plan needs an
+operator-side smoke test before "ship it".
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected output: 11/11 OK with the haproxy row showing
+`installed=Version: 3.0.21-...`. The `make update` itself will
+log:
+
+```
+==> N. Ensure haproxy_admin volume ownership ...
+    ✓ haproxy_admin ownership verified
+==> N+1. Bring new panel image up ...
+    [+] up 6/6  (haproxy started)
+==> N+2. Re-render haproxy config ...
+==> N+3. Reload haproxy (SIGHUP — graceful re-exec)
+==> N+4. Component check (post-swap) ...
+    11/11 OK
+```
+
+If the haproxy row is still NG after a clean `make update` with
+v0.0.51, the next thing to inspect is `docker compose logs
+--tail=100 haproxy` — any `[ALERT]` line points at the actual
+remaining issue and is worth surfacing.
+
+---
+
 ## [0.0.50] — 2026-05-06 — Hotfix: Rust toolchain 1.86 → 1.88 to unblock v0.0.49's cargo-chef install
 
 v0.0.49's `cargo install cargo-chef --version "~0.1" --locked`

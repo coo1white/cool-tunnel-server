@@ -44,8 +44,43 @@ compose build sing-box panel haproxy
 # constraints had just changed. Today's migrations happen to be
 # additive-with-defaults (safe in either order), but the order
 # here is fragile by accident; pin it.
+# v0.0.51 — defensive chown of the haproxy_admin volume's root.
+# Pre-v0.0.51 the volume was created with root:root ownership,
+# which caused HAProxy (running as the haproxy user post-privilege-
+# drop) to fail with "cannot bind UNIX socket (Permission denied)"
+# on the v0.0.43 stats-socket directive. v0.0.51's haproxy
+# Dockerfile pre-creates the directory with the right ownership for
+# fresh volumes, but Docker's named-volume initialisation does NOT
+# overwrite an existing volume's contents — so upgrade paths from
+# v0.0.43..v0.0.50 still need the chown applied to the existing
+# volume. Idempotent: a no-op when ownership is already correct.
+# Quiet-skipped when the volume doesn't exist yet (first-ever
+# deploy — Dockerfile handles that case).
+step "Ensure haproxy_admin volume ownership (one-time fix for pre-v0.0.51 deploys)"
+HAPROXY_VOL=$(docker volume ls --format '{{.Name}}' | grep -E '_haproxy_admin$' | head -n1)
+if [ -n "${HAPROXY_VOL:-}" ]; then
+    if docker run --rm --user root --entrypoint chown \
+            -v "${HAPROXY_VOL}":/v \
+            haproxy:3.0.21-alpine \
+            -R haproxy:haproxy /v 2>/dev/null; then
+        ok "haproxy_admin ownership verified"
+    else
+        ok "haproxy_admin chown skipped (volume may be empty or already correct)"
+    fi
+else
+    ok "haproxy_admin volume not yet created (fresh deploy)"
+fi
+
 step "Bring new panel image up (entrypoint runs migrate + render)"
-compose up -d panel sing-box
+# v0.0.51 added haproxy to this list. v0.0.44 added haproxy to the
+# `compose build` list above but missed it here; without
+# `compose up -d haproxy` the rebuilt image just sits cached while
+# the running container persists with whatever state it had before
+# — including the old haproxy.cfg without the v0.0.43 stats-socket
+# directive. The drift probe then trips VerifyFailed on every
+# component check, and the operator has to manually `docker compose
+# up -d haproxy` to recover.
+compose up -d panel sing-box haproxy
 
 step "Verify migrations applied (idempotent re-run)"
 compose exec -T panel php artisan migrate --force --no-interaction
@@ -53,10 +88,30 @@ compose exec -T panel php artisan migrate --force --no-interaction
 step "Re-render sing-box config"
 compose exec -T panel ct-server-core --json singbox render
 
+step "Re-render haproxy config (v0.0.51)"
+# Mirrors the sing-box render step above. Pre-v0.0.51 the haproxy
+# render only fired when ServerConfig was mutated (Eloquent
+# booted/updated event in app/Models/ServerConfig.php), which
+# meant the v0.0.43 cfg.tpl change to add the stats-socket
+# directive sat dormant for any operator who didn't happen to edit
+# ServerConfig between releases. Forcing the render here closes
+# that gap.
+compose exec -T panel ct-server-core haproxy render
+
+step "Reload haproxy (SIGHUP — graceful re-exec)"
+# HAProxy in master-worker mode (default haproxy:alpine entrypoint
+# uses `-W -db`) reloads on SIGHUP: master spawns a new worker
+# with the new cfg, drains the old worker's existing connections
+# (timeout: see backend `timeout client/server`), then exits the
+# old worker. Connection-preserving, no downtime. If the new cfg
+# is invalid, the master keeps the old worker running and logs an
+# alert — fail-safe.
+compose kill -s HUP haproxy
+
 step "Component check (post-swap)"
 compose exec -T panel ct-server-core component check --manifests /srv/manifests \
     || die "post-swap check NG — investigate logs" \
-           "docker compose logs --tail=100 panel sing-box"
+           "docker compose logs --tail=100 panel sing-box haproxy"
 
 step "Reload sing-box via clash API"
 compose exec -T panel ct-server-core server reload
