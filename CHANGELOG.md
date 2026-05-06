@@ -22,6 +22,120 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.37] — 2026-05-06 — `VerifySpecV1.expect_no_version_line` opts manifests out of the soft version matcher (Cycle 1)
+
+The v0.0.35 forensic surfaced that the six silenced-probe manifests
+(caddy, haproxy, mariadb, panel, redis, sing-box) had made the soft
+version matcher in `core/ct-server-core/src/components.rs` unreachable
+for those components — `m.version` was recorded but no longer
+enforced. They were occupying the matcher's permissive `None => Ok`
+corner case by accident of empty stdout.
+
+v0.0.37 adds an additive optional field to `VerifySpecV1` so a
+manifest can **declare** that drift detection is intentionally off
+for that probe, instead of opting out structurally by silencing
+stdout. The matcher's drift-detection semantics for the remaining
+components stay intact and become reliable rather than accidental.
+
+This is **Cycle 1** of the drift-detection-restoration plan. Cycle 2
+(per-component banner-read upgrades that emit a real version line so
+drift detection can actually fire on those components) is deferred
+and will ship one component per release to manage risk.
+
+### Added
+
+- **`VerifySpecV1.expect_no_version_line: bool`** — new optional
+  field on the wire-format struct in `ct-protocol`. Defaults to
+  `false` via `#[serde(default)]`, which preserves the pre-v0.0.37
+  behaviour bit-for-bit for every existing manifest. The six
+  silenced-probe manifests opt in to `true`. Field set is additive
+  within `ComponentManifestV1` — stays inside V1 per the policy in
+  [`VERSIONING.md`](./VERSIONING.md).
+- **`classify_verify` (private)** — extracted post-execution
+  classifier in `ct-server-core::components`, so the OK /
+  VersionMismatch / VerifyFailed decision is unit-testable without
+  spawning a process. Six new tests cover the legacy paths (Ok /
+  VersionMismatch / silent-stdout-Ok), the v0.0.37 liveness branch
+  (skips the version match even with stdout that would otherwise
+  flip to VersionMismatch), the silent-stdout liveness branch, and
+  the defence-in-depth interaction with `expect_stdout_contains`.
+
+### Changed
+
+- **Matcher logic** at `ct-server-core::components::classify_verify`
+  — when `spec.expect_no_version_line` is `true`, the soft version
+  matcher is skipped and the result is `Ok` with the
+  `"verified (liveness)"` diagnostic string. The
+  `expect_stdout_contains` gate still runs first (independent
+  responsibility — needle-match is about WHAT the probe printed,
+  liveness opt-in is about whether to drift-check it).
+- **Six manifests opt in** — `manifests/caddy.upstream.json`,
+  `manifests/haproxy.upstream.json`,
+  `manifests/mariadb.upstream.json`,
+  `manifests/panel.upstream.json`,
+  `manifests/redis.upstream.json`,
+  `manifests/sing-box.upstream.json` add
+  `"expect_no_version_line": true` to their `verify` block. No
+  probe-command changes — the probes stay silent on success. The
+  field is the *declaration* that drift detection is intentionally
+  off, not the mechanism.
+- **Workspace `version` bumped** from `0.0.33` to `0.0.34` in
+  `core/Cargo.toml`. The Rust crate version is the only signal an
+  external `ct-protocol` reader (or `cargo tree` audit) has that
+  the wire format gained a field; the bump is a discipline signal,
+  since the workspace is `publish = false` and there is no
+  crates.io coordination cost.
+
+### Client-side compatibility
+
+- **New manifest read by old client** — older `ct-protocol`
+  consumers (e.g. macOS client built before v0.0.37) silently drop
+  the unknown field during deserialization. `VerifySpecV1` does not
+  set `#[serde(deny_unknown_fields)]`. Forward-compat preserved.
+- **Old manifest read by new server** — field defaults to `false`
+  via `#[serde(default)]`. The classifier's legacy paths
+  (`Ok` / `VersionMismatch` / `None => Ok`) run unchanged. Backward-
+  compat preserved.
+- **Per [`VERSIONING.md`](./VERSIONING.md):** *"Field set is
+  additive within V1; breaking changes go in V2."* This change is
+  additive → stays inside `ComponentManifestV1` (and `VerifySpecV1`).
+  No V2.
+
+### Out of scope (Cycle 2, future releases)
+
+Restoring **actual** drift detection for the six liveness-only
+components requires per-component banner-read probes (each with its
+own auth / network-coupling trade-off):
+
+| Component | Cycle 2 candidate | Trade-off |
+|---|---|---|
+| panel | re-emit `php artisan --version` stdout (Laravel banner) | trivial; was the v0.0.34 probe — just stop redirecting stdout |
+| redis | `redis-cli -h redis info server \| grep ^redis_version:` | low cost; informational TCP banner |
+| caddy | `curl -sI http://caddy:80/ \| grep -i ^server:` | only confirms Caddy presence, not pinned version |
+| mariadb | `SELECT VERSION()` via dedicated `health` user | needs auth provisioning |
+| sing-box | clash-API `/version` (currently internal) | needs admin port exposure |
+| haproxy | stats socket `show info` over `/var/run/haproxy/admin.sock` | needs socket mount in compose |
+
+Each lands one release at a time per the agreed risk-management
+strategy.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make ci          # rebuilds ct-server-core; runs tests
+docker compose build panel
+docker compose up -d
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected after rebuild: **11 / 11 OK**, with the six silenced-probe
+rows now carrying `"verified (liveness)"` in the message column
+instead of the implicit `None => Ok` fallthrough.
+
+---
+
 ## [0.0.36] — 2026-05-06 — fix proxy-account create 500 + components.md truth-up
 
 The Filament admin's **create proxy account** flow has been

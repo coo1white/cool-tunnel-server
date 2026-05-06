@@ -86,6 +86,18 @@ pub struct VerifySpecV1 {
     /// via exit code; don't require any stdout match in that case.
     #[serde(default)]
     pub expect_zero_exit: bool,
+    /// Liveness-probe declaration. True when the verifier
+    /// legitimately has no version line to print — TCP-open
+    /// (`bash -c 'exec 3<>/dev/tcp/host/port'`), HTTP reachability
+    /// (`curl -sIo /dev/null …`), artisan-boot (`php artisan
+    /// --version > /dev/null`). When true, the soft version
+    /// matcher is skipped; any verify-passed result is OK
+    /// regardless of stdout content. False / unset preserves the
+    /// pre-v0.0.37 behaviour exactly: a non-empty first stdout
+    /// line that doesn't contain the pinned `version` flips the
+    /// result to `VersionMismatch`.
+    #[serde(default)]
+    pub expect_no_version_line: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,6 +155,7 @@ mod tests {
                 command: alloc::vec!["naive".into(), "--version".into()],
                 expect_stdout_contains: Some("naive".into()),
                 expect_zero_exit: true,
+                expect_no_version_line: false,
             }),
             note: Some("BSD-3".into()),
         };
@@ -151,6 +164,84 @@ mod tests {
             .map_err(|_| ())
             .unwrap_or(m.clone());
         assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn expect_no_version_line_defaults_to_false_on_legacy_json() {
+        // v0.0.31..v0.0.36 manifests do NOT carry the field. After
+        // v0.0.37 deserialises one, the matcher must still see the
+        // field as `false` (the pre-v0.0.37 default behaviour),
+        // otherwise legacy manifests would silently shift to
+        // liveness-only semantics on read.
+        let legacy = r#"{
+            "name": "legacy",
+            "kind": "binary",
+            "version": "1.0.0",
+            "verify": {
+                "command": ["legacy", "--version"],
+                "expect_stdout_contains": "legacy",
+                "expect_zero_exit": true
+            }
+        }"#;
+        let m: ComponentManifestV1 =
+            serde_json::from_str(legacy)
+                .map_err(|_| ())
+                .unwrap_or_else(|()| ComponentManifestV1 {
+                    name: "fallback".into(),
+                    kind: ComponentKindV1::Binary,
+                    version: "0".into(),
+                    upstream: None,
+                    sha256: None,
+                    verify: None,
+                    note: None,
+                });
+        let v = m.verify.as_ref();
+        assert_eq!(
+            v.map(|s| s.expect_no_version_line),
+            Some(false),
+            "missing field must deserialise as false on legacy manifests"
+        );
+    }
+
+    #[test]
+    fn expect_no_version_line_round_trips_when_true() {
+        // Forward direction: a v0.0.37+ manifest with the field set
+        // must serialise the field, deserialise back to true, and
+        // not lose any other field across the round-trip. This
+        // anchors the "additive within V1" promise from
+        // VERSIONING.md against accidental rename / typo / serde-
+        // attribute regression.
+        let m = ComponentManifestV1 {
+            name: "haproxy".into(),
+            kind: ComponentKindV1::ContainerImage,
+            version: "3-alpine".into(),
+            upstream: None,
+            sha256: None,
+            verify: Some(VerifySpecV1 {
+                command: alloc::vec![
+                    "bash".into(),
+                    "-c".into(),
+                    "exec 3<>/dev/tcp/haproxy/443".into(),
+                ],
+                expect_stdout_contains: None,
+                expect_zero_exit: true,
+                expect_no_version_line: true,
+            }),
+            note: None,
+        };
+        let j = serde_json::to_string(&m).unwrap_or_default();
+        assert!(
+            j.contains("\"expect_no_version_line\":true"),
+            "field must serialise as snake_case bool: {j}"
+        );
+        let m2: ComponentManifestV1 = serde_json::from_str(&j)
+            .map_err(|_| ())
+            .unwrap_or(m.clone());
+        assert_eq!(m, m2);
+        assert_eq!(
+            m2.verify.as_ref().map(|s| s.expect_no_version_line),
+            Some(true)
+        );
     }
 
     #[test]

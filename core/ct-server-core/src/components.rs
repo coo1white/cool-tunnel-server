@@ -9,7 +9,9 @@
 
 use crate::{db, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use ct_protocol::{ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1};
+use ct_protocol::{
+    ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1, VerifySpecV1,
+};
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
@@ -164,7 +166,19 @@ async fn verify_via_command(m: &ComponentManifestV1) -> (ComponentStateV1, Strin
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let installed = first_line(&stdout).map(str::to_owned);
+    classify_verify(spec, m, &stdout)
+}
+
+/// Pure post-execution classifier — extracted so the matcher's
+/// `Ok` / `VersionMismatch` / `VerifyFailed` decision is unit-
+/// testable without spawning a process. Called by
+/// [`verify_via_command`] after the exit-code gate has passed.
+fn classify_verify(
+    spec: &VerifySpecV1,
+    m: &ComponentManifestV1,
+    stdout: &str,
+) -> (ComponentStateV1, String, Option<String>) {
+    let installed = first_line(stdout).map(str::to_owned);
 
     if let Some(needle) = spec.expect_stdout_contains.as_deref() {
         if !stdout.contains(needle) {
@@ -176,10 +190,27 @@ async fn verify_via_command(m: &ComponentManifestV1) -> (ComponentStateV1, Strin
         }
     }
 
-    // Soft version match: if installed first line equals pinned
-    // version, OK. Otherwise VersionMismatch (still functional, but
-    // not what the operator pinned). Conservative — better to flag
-    // than silently accept drift.
+    // Liveness-probe opt-in (v0.0.37). When the manifest declares
+    // `expect_no_version_line: true`, the verifier has no version
+    // string to assert — the soft version matcher is intentionally
+    // skipped, regardless of whether stdout happens to be empty or
+    // not. This is what restores the matcher's drift-detection
+    // semantics for components that DO print a version line: the
+    // permissive `None => Ok` corner case is no longer the only
+    // way to land on OK, so silenced probes can keep their stdout
+    // shape without occupying it by accident.
+    if spec.expect_no_version_line {
+        return (
+            ComponentStateV1::Ok,
+            "verified (liveness)".into(),
+            installed,
+        );
+    }
+
+    // Soft version match: if installed first line contains the
+    // pinned version, OK. Otherwise VersionMismatch (still
+    // functional, but not what the operator pinned). Conservative
+    // — better to flag than silently accept drift.
     let state = match installed.as_deref() {
         Some(line) if line.contains(&m.version) => ComponentStateV1::Ok,
         Some(_) => ComponentStateV1::VersionMismatch,
@@ -398,4 +429,112 @@ pub fn default_manifests_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(
         std::env::var("CT_MANIFESTS_DIR").unwrap_or_else(|_| "/srv/manifests".into()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(version: &str) -> ComponentManifestV1 {
+        ComponentManifestV1 {
+            name: "test".into(),
+            kind: ComponentKindV1::ContainerImage,
+            version: version.into(),
+            upstream: None,
+            sha256: None,
+            verify: None,
+            note: None,
+        }
+    }
+
+    fn spec(expect_no_version_line: bool) -> VerifySpecV1 {
+        VerifySpecV1 {
+            command: vec!["true".into()],
+            expect_stdout_contains: None,
+            expect_zero_exit: true,
+            expect_no_version_line,
+        }
+    }
+
+    #[test]
+    fn classify_legacy_matching_version_is_ok() {
+        // Pre-v0.0.37 happy path: probe prints a version line
+        // containing the pinned string. Result: Ok.
+        let (state, _, installed) = classify_verify(
+            &spec(false),
+            &manifest("1.10.7"),
+            "sing-box version 1.10.7\n",
+        );
+        assert_eq!(state, ComponentStateV1::Ok);
+        assert_eq!(installed.as_deref(), Some("sing-box version 1.10.7"));
+    }
+
+    #[test]
+    fn classify_legacy_non_matching_version_is_mismatch() {
+        // Pre-v0.0.37 drift detection: probe prints SOMETHING but
+        // it doesn't contain the pinned version. Must flip to
+        // VersionMismatch — this is the soft-version-match arm
+        // that v0.0.34 fell into and v0.0.35 sidestepped.
+        let (state, _, _) = classify_verify(
+            &spec(false),
+            &manifest("1.10.7"),
+            "sing-box version 1.10.6\n",
+        );
+        assert_eq!(state, ComponentStateV1::VersionMismatch);
+    }
+
+    #[test]
+    fn classify_legacy_silent_stdout_is_ok() {
+        // Pre-v0.0.37 corner case: empty stdout falls through to
+        // the `None => Ok` arm. v0.0.35's six silenced manifests
+        // ride this path. The behaviour is preserved verbatim so
+        // legacy manifests that don't set the new field continue
+        // to work bit-for-bit.
+        let (state, _, installed) = classify_verify(&spec(false), &manifest("1.10.7"), "");
+        assert_eq!(state, ComponentStateV1::Ok);
+        assert_eq!(installed, None);
+    }
+
+    #[test]
+    fn classify_liveness_skips_version_match_with_non_matching_stdout() {
+        // The actual v0.0.37 fix: when expect_no_version_line is
+        // true, even stdout that would otherwise trip the soft
+        // version matcher resolves to Ok. This is what lets a
+        // future probe restore informational output (e.g. "connected"
+        // from a TCP open or a Caddy `Server:` header) without
+        // re-introducing the v0.0.34 false-positive
+        // VersionMismatch flips for the silenced six.
+        let (state, msg, installed) =
+            classify_verify(&spec(true), &manifest("3-alpine"), "connected\n");
+        assert_eq!(state, ComponentStateV1::Ok);
+        assert_eq!(msg, "verified (liveness)");
+        assert_eq!(installed.as_deref(), Some("connected"));
+    }
+
+    #[test]
+    fn classify_liveness_with_silent_stdout_is_ok() {
+        // Today's silenced-probe shape (post-v0.0.35): empty
+        // stdout, expect_no_version_line: true. Must be Ok and
+        // must take the liveness branch (carries the "verified
+        // (liveness)" diagnostic, which is the only operator-side
+        // signal that this component was opted out of drift
+        // detection on purpose).
+        let (state, msg, _) = classify_verify(&spec(true), &manifest("7-alpine"), "");
+        assert_eq!(state, ComponentStateV1::Ok);
+        assert_eq!(msg, "verified (liveness)");
+    }
+
+    #[test]
+    fn classify_liveness_still_honours_expect_stdout_contains() {
+        // Defence in depth: expect_no_version_line and
+        // expect_stdout_contains are independent gates. If a
+        // manifest declares both (unusual but legal), the stdout
+        // assertion still runs FIRST. A liveness probe with a
+        // mandatory needle that doesn't match must VerifyFail,
+        // not silently OK.
+        let mut s = spec(true);
+        s.expect_stdout_contains = Some("required-banner".into());
+        let (state, _, _) = classify_verify(&s, &manifest("1.0"), "wrong banner\n");
+        assert_eq!(state, ComponentStateV1::VerifyFailed);
+    }
 }
