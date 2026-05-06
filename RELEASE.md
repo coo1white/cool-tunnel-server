@@ -47,7 +47,7 @@ Update the comparison links at the bottom.
 
 ### 4. Bump versions
 
-Three places need to agree:
+Four places need to agree:
 
 ```sh
 # Cargo workspace.
@@ -57,9 +57,15 @@ $EDITOR core/Cargo.toml          # workspace.package.version
 $EDITOR manifests/ct-server-core.upstream.json
 $EDITOR manifests/ct-protocol.upstream.json
 $EDITOR manifests/panel.upstream.json
+
+# Panel runtime version constant — what the `ct:version` artisan
+# command emits, and what manifests/panel.upstream.json's matcher
+# pin compares against. Drift between this and the manifest trips
+# VersionMismatch on the Components page (Cycle 2, v0.0.39).
+$EDITOR panel/config/cool-tunnel.php   # 'version' => 'X.Y.Z'
 ```
 
-`Makefile` provides `make set-version V=0.0.X` to update all three
+`Makefile` provides `make set-version V=0.0.X` to update all four
 in one go.
 
 ### 5. Re-run CI
