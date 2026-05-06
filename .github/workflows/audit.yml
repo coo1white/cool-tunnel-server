@@ -45,6 +45,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false   # don't cancel a scheduled run mid-flight
 
+# Default token permissions are read-only `contents` since the workflow
+# was originally scheduled-only. PR-triggered runs (gitleaks-action,
+# dependency-review-action, etc.) need read access to the PR's commits
+# and metadata; without the explicit grant the GITHUB_TOKEN gets HTTP
+# 403 listing /repos/.../pulls/N/commits and the secret-scan job dies
+# at startup before scanning a single commit.
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
 
   # ---------- Cycle 31: cargo-audit (RustSec advisories) ----------
@@ -92,7 +102,11 @@ jobs:
         with:
           toolchain: 1.86
       - name: Install cargo-deny
-        run: cargo install --locked cargo-deny
+        # Pin to the last cargo-deny that supports rustc 1.86 (the toolchain
+        # this job installs above). Bare `cargo install --locked cargo-deny`
+        # pulls the latest (0.19+) which requires rustc 1.88+ and fails the
+        # install step. Bump in lock-step with the toolchain field.
+        run: cargo install --locked cargo-deny --version "^0.18"
       - name: Check
         # deny.toml lives at core/deny.toml.
         run: cargo deny check
@@ -256,6 +270,7 @@ jobs:
                    --exclude=THIRD_PARTY_LICENSES.md \
                    --exclude=AUDIT.md \
                    --exclude-dir=.github \
+                   --exclude=sing-box.upstream.json \
                    --include='*.md' --include='*.rs' --include='*.php' \
                    --include='*.tpl' --include='*.json' --include='*.yml' \
                    --include='*.sh' --include='*.blade.php' \

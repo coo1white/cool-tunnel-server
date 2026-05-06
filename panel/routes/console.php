@@ -23,10 +23,10 @@ use Illuminate\Support\Facades\Schedule as Sched;
 // seconds of the failure. Future improvement: a Filament widget
 // that surfaces "last successful run at" per scheduled command.
 $logFailure = static function (string $cmd) {
-    return static function (\Throwable $e) use ($cmd): void {
+    return static function (Throwable $e) use ($cmd): void {
         Log::critical('schedule.failed', [
-            'cmd'  => $cmd,
-            'err'  => $e->getMessage(),
+            'cmd' => $cmd,
+            'err' => $e->getMessage(),
             'type' => get_class($e),
         ]);
     };

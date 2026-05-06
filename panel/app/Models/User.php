@@ -17,7 +17,8 @@ class User extends Authenticatable implements FilamentUser
 {
     use HasFactory, Notifiable;
 
-    public const ROLE_ADMIN  = 'admin';
+    public const ROLE_ADMIN = 'admin';
+
     public const ROLE_VIEWER = 'viewer';
 
     public const ROLES = [self::ROLE_ADMIN, self::ROLE_VIEWER];
@@ -35,14 +36,15 @@ class User extends Authenticatable implements FilamentUser
      * (H3-ish hardening from 2026-05-05 audit; H2 below.)
      */
     protected $fillable = ['name', 'email'];
-    protected $hidden   = ['password', 'remember_token'];
+
+    protected $hidden = ['password', 'remember_token'];
 
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
-            'password'          => 'hashed',
-            'is_active'         => 'boolean',
+            'password' => 'hashed',
+            'is_active' => 'boolean',
         ];
     }
 
@@ -71,6 +73,7 @@ class User extends Authenticatable implements FilamentUser
         if ($this->is_active !== true) {
             return false;
         }
+
         return $this->role === self::ROLE_ADMIN;
     }
 

@@ -86,7 +86,7 @@ class AppServiceProvider extends ServiceProvider
     {
         RateLimiter::for('login', function (Request $request) {
             $email = (string) $request->input('email', '');
-            $ip    = (string) $request->ip();
+            $ip = (string) $request->ip();
 
             return [
                 // Per (email|ip): catches a single attacker hammering

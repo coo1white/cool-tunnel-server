@@ -46,7 +46,7 @@ class ProxyAccountAfterCommitTest extends TestCase
     use RefreshDatabase;
 
     #[Test]
-    public function save_inside_rolled_back_transaction_does_NOT_dispatch_reload(): void
+    public function save_inside_rolled_back_transaction_does_no_t_dispatch_reload(): void
     {
         Queue::fake();
 
@@ -91,7 +91,7 @@ class ProxyAccountAfterCommitTest extends TestCase
     }
 
     #[Test]
-    public function deleted_inside_rolled_back_transaction_does_NOT_dispatch_reload(): void
+    public function deleted_inside_rolled_back_transaction_does_no_t_dispatch_reload(): void
     {
         // Deleted-event handler has the same DB::afterCommit
         // shape as saved-event handler. Same invariant must hold.

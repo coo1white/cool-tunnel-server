@@ -18,7 +18,8 @@ use Illuminate\Support\Facades\Schema;
 // create_server_configs migration without these columns; existing
 // installs run this drop.
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::table('server_configs', function (Blueprint $table) {

@@ -22,14 +22,14 @@ class ProxyAccountFactory extends Factory
         // afterMaking + setCleartextPassword to populate them
         // through the right channel.
         return [
-            'username'       => 'tu' . Str::random(8),
-            'label'          => fake()->word(),
-            'enabled'        => true,
-            'quota_bytes'    => null,
-            'used_bytes'     => 0,
-            'expires_at'     => null,
-            'last_seen_at'   => null,
-            'metadata'       => null,
+            'username' => 'tu'.Str::random(8),
+            'label' => fake()->word(),
+            'enabled' => true,
+            'quota_bytes' => null,
+            'used_bytes' => 0,
+            'expires_at' => null,
+            'last_seen_at' => null,
+            'metadata' => null,
         ];
     }
 
@@ -39,7 +39,7 @@ class ProxyAccountFactory extends Factory
             // Always have a cleartext password set so tests that
             // exercise the subscription manifest path don't trip
             // over the cleartext-missing-skip in the renderer.
-            $account->setCleartextPassword('test-password-' . Str::random(12));
+            $account->setCleartextPassword('test-password-'.Str::random(12));
         });
     }
 

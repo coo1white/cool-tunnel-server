@@ -16,7 +16,8 @@ use Illuminate\Console\Command;
  */
 class CaddyfileRender extends Command
 {
-    protected $signature   = 'caddyfile:render';
+    protected $signature = 'caddyfile:render';
+
     protected $description = 'Render the Caddyfile from the DB via ct-server-core';
 
     public function handle(CaddyfileGenerator $gen): int
@@ -27,6 +28,7 @@ class CaddyfileRender extends Command
         } else {
             $this->info("Caddyfile rendered hash={$newHash}");
         }
+
         return self::SUCCESS;
     }
 }

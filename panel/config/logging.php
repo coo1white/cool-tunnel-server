@@ -2,24 +2,25 @@
 
 declare(strict_types=1);
 
+use Monolog\Handler\NullHandler;
 use Monolog\Handler\StreamHandler;
 
 return [
-    'default'         => env('LOG_CHANNEL', 'stack'),
-    'deprecations'    => env('LOG_DEPRECATIONS_CHANNEL', 'null'),
+    'default' => env('LOG_CHANNEL', 'stack'),
+    'deprecations' => env('LOG_DEPRECATIONS_CHANNEL', 'null'),
     'channels' => [
         'stack' => [
-            'driver'   => 'stack',
+            'driver' => 'stack',
             'channels' => ['stderr'],
             'ignore_exceptions' => false,
         ],
         'stderr' => [
-            'driver'  => 'monolog',
-            'level'   => env('LOG_LEVEL', 'info'),
+            'driver' => 'monolog',
+            'level' => env('LOG_LEVEL', 'info'),
             'handler' => StreamHandler::class,
-            'with'    => ['stream' => 'php://stderr'],
+            'with' => ['stream' => 'php://stderr'],
             'formatter' => env('LOG_STDERR_FORMATTER'),
         ],
-        'null' => ['driver' => 'monolog', 'handler' => Monolog\Handler\NullHandler::class],
+        'null' => ['driver' => 'monolog', 'handler' => NullHandler::class],
     ],
 ];

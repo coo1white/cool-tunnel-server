@@ -18,12 +18,12 @@ class FakeWebsiteFactory extends Factory
     public function definition(): array
     {
         return [
-            'slug'      => 'fs-' . Str::random(8),
-            'name'      => fake()->company(),
-            'template'  => 'blog',
-            'title'     => fake()->sentence(3),
-            'tagline'   => fake()->sentence(6),
-            'payload'   => null,
+            'slug' => 'fs-'.Str::random(8),
+            'name' => fake()->company(),
+            'template' => 'blog',
+            'title' => fake()->sentence(3),
+            'tagline' => fake()->sentence(6),
+            'payload' => null,
             'is_active' => false,
         ];
     }

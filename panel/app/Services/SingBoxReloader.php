@@ -25,22 +25,23 @@ class SingBoxReloader
 {
     public function __construct(
         private CtServerCore $core,
-    ) {
-    }
+    ) {}
 
     public function reload(): bool
     {
         try {
             $this->core->reloadSingBox();
+
             return true;
         } catch (\Throwable $e) {
             // Broader than \RuntimeException — see CaddyfileGenerator
             // for rationale (an undefined-method Error broke this
             // path silently between v0.0.4 and v0.0.10).
             Log::warning('singbox.reload.failed', [
-                'err'  => $e->getMessage(),
+                'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);
+
             return false;
         }
     }

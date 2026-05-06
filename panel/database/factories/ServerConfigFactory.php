@@ -17,16 +17,16 @@ class ServerConfigFactory extends Factory
     public function definition(): array
     {
         return [
-            'domain'                            => 'test.localhost',
-            'acme_email'                        => 'test@example.com',
-            'acme_directory'                    => 'https://acme-staging-v02.api.letsencrypt.org/directory',
-            'anti_tracking_hide_ip'             => true,
-            'anti_tracking_hide_via'            => true,
-            'anti_tracking_probe_resistance'    => true,
-            'anti_tracking_doh_resolver'        => 'https://1.1.1.1/dns-query',
-            'http3_enabled'                     => false,
-            'last_caddyfile_hash'               => null,
-            'last_rendered_at'                  => null,
+            'domain' => 'test.localhost',
+            'acme_email' => 'test@example.com',
+            'acme_directory' => 'https://acme-staging-v02.api.letsencrypt.org/directory',
+            'anti_tracking_hide_ip' => true,
+            'anti_tracking_hide_via' => true,
+            'anti_tracking_probe_resistance' => true,
+            'anti_tracking_doh_resolver' => 'https://1.1.1.1/dns-query',
+            'http3_enabled' => false,
+            'last_caddyfile_hash' => null,
+            'last_rendered_at' => null,
         ];
     }
 }
