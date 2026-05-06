@@ -242,28 +242,59 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 	@echo "    bumped to $(V) in: core/Cargo.toml, core/Cargo.lock, manifests/{ct-server-core,ct-protocol,panel}.upstream.json"
 
 .PHONY: set-component-version
-set-component-version: ## bump an external component manifest's pinned version; pass COMPONENT=<slug> V=X.Y.Z
-	@# Companion to `set-version` for THIRD-PARTY component manifests
-	@# (caddy, haproxy, mariadb, redis, sing-box). Those track upstream
-	@# Docker-image versions and bump on a different cadence from
-	@# cool-tunnel-server's own version-of-record. Used during Cycle 2
-	@# drift-detection restoration to keep the manifest pin in lockstep
-	@# with whatever version is actually deployed via docker-compose.yml's
-	@# image tag — when they drift, the matcher trips VersionMismatch
-	@# on the Components page, which is exactly what Cycle 2 is for.
+set-component-version: ## bump component version across compose + Dockerfile + manifest in lockstep; pass COMPONENT=<slug> V=X.Y.Z
+	@# v0.0.40 introduced this macro for THIRD-PARTY manifest pins.
+	@# v0.0.45 extended it: a single invocation now drives the
+	@# compose `image:` tag, the Dockerfile `FROM` / `ARG` /
+	@# `COPY --from=` lines, AND the manifest version in lockstep.
+	@# The v0.0.43 drift probes assert these stay aligned — drift
+	@# between any two layers trips VersionMismatch on the panel
+	@# Components page. This macro is now the SINGLE source of
+	@# truth for "bump component <X> to <Y>"; partial bumps are
+	@# structurally impossible.
 	@if [ -z "$(COMPONENT)" ] || [ -z "$(V)" ]; then \
-	    echo 'usage: make set-component-version COMPONENT=redis V=7.4.8'; \
-	    echo 'valid components: caddy, ct-protocol, ct-server-core, doh-resolver,'; \
-	    echo '                  haproxy, mariadb, naiveproxy, naiveproxy-client,'; \
-	    echo '                  panel, redis, sing-box'; \
+	    echo 'usage: make set-component-version COMPONENT=redis V=7.4.9'; \
+	    echo ''; \
+	    echo 'lockstep-aware components (compose / Dockerfile / manifest):'; \
+	    echo '  redis    — docker-compose.yml + docker/panel/Dockerfile + manifest'; \
+	    echo '  mariadb  — docker-compose.yml + manifest'; \
+	    echo '  sing-box — docker/sing-box/Dockerfile (ARG) + manifest'; \
+	    echo '  haproxy  — docker/haproxy/Dockerfile (FROM) + manifest'; \
+	    echo ''; \
+	    echo 'manifest-only components:'; \
+	    echo '  caddy, ct-protocol, ct-server-core, doh-resolver,'; \
+	    echo '  naiveproxy, naiveproxy-client, panel'; \
 	    exit 1; \
 	fi
 	@if [ ! -f manifests/$(COMPONENT).upstream.json ]; then \
 	    echo "no such component: manifests/$(COMPONENT).upstream.json"; \
 	    exit 1; \
 	fi
+	@# Component-aware lockstep handlers (v0.0.45). Each branch
+	@# bumps the source-of-truth files for that component beyond
+	@# the manifest. Components without a branch fall through to
+	@# manifest-only — used by caddy (informational-only) and the
+	@# in-tree components that coordinate via `make set-version`.
+	@case "$(COMPONENT)" in \
+	    redis) \
+	        sed -i.bak -E 's|(image: *)redis:[^[:space:]]+|\1redis:$(V)-alpine|' docker-compose.yml && \
+	        sed -i.bak -E 's|(COPY --from=)redis:[^[:space:]]+|\1redis:$(V)-alpine|' docker/panel/Dockerfile && \
+	        echo "    bumped redis tag: docker-compose.yml + docker/panel/Dockerfile" \
+	        ;; \
+	    mariadb) \
+	        sed -i.bak -E 's|(image: *)mariadb:[^[:space:]]+|\1mariadb:$(V)|' docker-compose.yml && \
+	        echo "    bumped mariadb tag: docker-compose.yml" \
+	        ;; \
+	    sing-box) \
+	        sed -i.bak -E 's|^(ARG SING_BOX_VERSION=).*|\1$(V)|' docker/sing-box/Dockerfile && \
+	        echo "    bumped sing-box: docker/sing-box/Dockerfile (ARG)" \
+	        ;; \
+	    haproxy) \
+	        sed -i.bak -E 's|^(FROM )haproxy:[^[:space:]]+|\1haproxy:$(V)-alpine|' docker/haproxy/Dockerfile && \
+	        echo "    bumped haproxy: docker/haproxy/Dockerfile (FROM)" \
+	        ;; \
+	esac
 	@sed -i.bak -E 's/"version": "[^"]*"/"version": "$(V)"/' manifests/$(COMPONENT).upstream.json
-	@find manifests -name '*.bak' -delete
 	@# Re-run jq through the file to catch a sed regex bug that
 	@# would have produced invalid JSON (no-op replacement edge cases,
 	@# trailing commas, etc.). Loud failure here is exactly what we
@@ -271,8 +302,18 @@ set-component-version: ## bump an external component manifest's pinned version; 
 	@# JSON-parse skip, which would silently drop the component from
 	@# the OK/NG report.
 	@jq . manifests/$(COMPONENT).upstream.json >/dev/null \
-	    || { echo "  ✗ manifests/$(COMPONENT).upstream.json is no longer valid JSON" >&2; exit 1; }
+	    || { echo "  ✗ JSON invalid; .bak files preserved for rollback" >&2; exit 1; }
+	@# .bak cleanup only runs after jq validation passes — partial-
+	@# update failures leave the .bak files on disk for operator
+	@# inspection. Per-file rm rather than `find -delete` to avoid
+	@# touching unrelated .bak files in the working tree.
+	@rm -f docker-compose.yml.bak \
+	       docker/panel/Dockerfile.bak \
+	       docker/sing-box/Dockerfile.bak \
+	       docker/haproxy/Dockerfile.bak \
+	       manifests/$(COMPONENT).upstream.json.bak
 	@echo "    bumped manifests/$(COMPONENT).upstream.json::version → $(V)"
+	@echo "    LOCKSTEP COMPLETE — run \`make ci\` to verify"
 
 .PHONY: pin-images
 pin-images: ## resolve current docker base-image tags to digests; updates Dockerfiles in place

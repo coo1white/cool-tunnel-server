@@ -22,6 +22,128 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.45] — 2026-05-06 — Three-way lockstep pinning: `make set-component-version` becomes the sole source of truth
+
+Cycle 2 made drift **visible**. v0.0.44 demonstrated drift
+visibility producing a hardening release. v0.0.45 makes drift
+**structurally impossible** for the three layers that should never
+disagree: compose `image:` tags, Dockerfile `FROM` / `ARG` /
+`COPY --from=` pins, and manifest `version` fields.
+
+Pre-v0.0.45 the operator had to remember to bump up to three
+files in lockstep when upgrading a third-party component. The
+v0.0.43 drift probes would catch a forgotten bump as
+`VersionMismatch` on the panel — visibility worked — but the
+discipline was still operator-driven. v0.0.45 collapses this to
+a single Makefile invocation: `make set-component-version
+COMPONENT=<X> V=<Y>` is now the authoritative way to bump any
+third-party component, and partial bumps are structurally
+impossible.
+
+### Eliminated floating tags
+
+| Component | Before | After |
+|---|---|---|
+| redis (compose) | `image: redis:7-alpine` | `image: redis:7.4.8-alpine` |
+| redis (panel image) | `COPY --from=redis:7-alpine` | `COPY --from=redis:7.4.8-alpine` |
+| mariadb (compose) | `image: mariadb:11` | `image: mariadb:11.8.6` |
+| haproxy (Dockerfile) | `FROM haproxy:3.0-alpine` | `FROM haproxy:3.0.21-alpine` |
+| sing-box (Dockerfile ARG) | already exact (`1.13.11`) | unchanged — macro learns the path |
+
+All four third-party components now pin exactly. Manifest pins
+already exact since v0.0.40 / v0.0.41 / v0.0.43 / v0.0.44.
+
+### Added
+
+- **`Makefile::set-component-version` — case-block extension.**
+  v0.0.40 introduced the macro for manifest-only bumps; v0.0.45
+  extends it with component-aware sed branches:
+  - `redis` → bumps `docker-compose.yml` + `docker/panel/Dockerfile`
+  - `mariadb` → bumps `docker-compose.yml`
+  - `sing-box` → bumps `docker/sing-box/Dockerfile` (ARG)
+  - `haproxy` → bumps `docker/haproxy/Dockerfile` (FROM)
+  - everything else → falls through to manifest-only (caddy is
+    informational-only; in-tree components use `make set-version`).
+
+  Each branch's sed pattern is anchored to specific line shapes
+  (`^FROM `, `^ARG SING_BOX_VERSION=`, `(image: *)`, `(COPY --from=)`)
+  to avoid touching unrelated lines (`ARG NAIVE_VERSION`,
+  `REDIS_URL: redis://...`, etc.). Exercised live during v0.0.45
+  development against all five components (4 lockstep + 1
+  fall-through); revert tested by re-running with the canonical
+  version.
+
+### Atomicity
+
+Each `sed -i.bak` writes the original to `*.bak`. If any
+subsequent sed or the final `jq` JSON-revalidation fails, the
+.bak files remain on disk for operator rollback. Cleanup happens
+**only after** `jq` confirms the manifest is still valid JSON —
+a regex bug that produces broken JSON leaves the entire
+half-bumped state recoverable. Per-file `rm -f` rather than
+`find -delete` so the cleanup never touches unrelated `.bak`
+files in the working tree.
+
+### Compatibility
+
+- **No probe behaviour change.** All v0.0.40 / v0.0.41 / v0.0.42
+  / v0.0.43 drift probes assert manifest-pin matches deployed-
+  version; the manifest pins didn't change in v0.0.45 (only the
+  source files that produce those deployed versions). Operators
+  upgrading from v0.0.44 → v0.0.45 → next-`make update` will
+  see the same `installed=...` strings on the Components page,
+  rebuilt from now-explicitly-pinned source images.
+- **Operators on a paused-update flow** see no behavioural
+  change — the new pins resolve to the SAME Docker images the
+  floating tags would have served at this point in time
+  (verified via the deployed daemons' actual reported versions
+  in v0.0.40 / v0.0.41 / v0.0.42 / v0.0.43 / v0.0.44).
+- **Future upstream upgrades** are now one command:
+  `make set-component-version COMPONENT=redis V=7.4.9` (when
+  Redis 7.4.9 ships) → all three layers bump in one atomic
+  invocation → `make update` rebuilds → drift probe asserts
+  consistency.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. No probe change — same verified-string
+outputs as v0.0.44. The win is structural, not behavioural.
+
+### Future-upgrade workflow demonstration
+
+When Redis 7.4.9 ships:
+
+```sh
+make set-component-version COMPONENT=redis V=7.4.9
+# compose tag, panel Dockerfile COPY, manifest version — all bumped atomically
+git diff   # review the 3-file change
+make ci    # verify it builds + tests pass
+git commit -am "bump redis to 7.4.9"
+make update
+```
+
+One command, three files, zero drift. Same shape for mariadb,
+sing-box, haproxy.
+
+### Out of scope (queued)
+
+- **v0.0.46** — Compose env-var DRY cleanup. Strip the redundant
+  `REDIS_PASSWORD` / `DB_USERNAME` / `DB_PASSWORD` entries from
+  the panel service environment block (already injected via
+  `env_file: - .env`).
+- **`panel/.gitignore` truth-up** — still pending.
+- **`docs/components.md` 8 → 11 component table** — still
+  pending.
+
+---
+
 ## [0.0.44] — 2026-05-06 — HAProxy 2.9 → 3.0 hardening: retire EOL line, demonstrate Cycle 2's payoff
 
 The first post-Cycle-2 release. v0.0.43's drift-detection probe
