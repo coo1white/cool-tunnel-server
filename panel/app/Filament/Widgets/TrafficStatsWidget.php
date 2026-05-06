@@ -52,9 +52,12 @@ class TrafficStatsWidget extends BaseWidget
 
     private static function human(int $b): string
     {
-        if ($b === 0) return '0 B';
-        $u = ['B','KiB','MiB','GiB','TiB'];
+        if ($b === 0) {
+            return '0 B';
+        }
+        $u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
         $i = max(0, min((int) floor(log(max($b, 1), 1024)), 4));
+
         return round($b / (1024 ** $i), 2).' '.$u[$i];
     }
 }

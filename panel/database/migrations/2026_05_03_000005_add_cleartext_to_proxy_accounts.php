@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Schema;
 // APP_KEY recovers cleartext. The DB volume should be treated like
 // a secret — same posture as before, just the surface is wider.
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::table('proxy_accounts', function (Blueprint $table) {

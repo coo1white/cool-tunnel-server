@@ -9,7 +9,8 @@ use Illuminate\Console\Command;
 
 class QuotaEnforce extends Command
 {
-    protected $signature   = 'quota:enforce';
+    protected $signature = 'quota:enforce';
+
     protected $description = 'Disable accounts past expiry / quota; re-render Caddyfile + reload if any state changed';
 
     public function handle(CtServerCore $core): int
@@ -20,6 +21,7 @@ class QuotaEnforce extends Command
             (int) ($out['disabled'] ?? 0),
             ($out['reload_triggered'] ?? false) ? 'yes' : 'no',
         ));
+
         return self::SUCCESS;
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Filament\Pages\Auth\Login;
 use App\Http\Middleware\SecurityHeaders;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -33,7 +34,7 @@ class AdminPanelProvider extends PanelProvider
             // Custom Login subclass adds a per-(email|ip) rate limit
             // before delegating to Filament's stock authenticate().
             // (H1 in 2026-05-05 audit.)
-            ->login(\App\Filament\Pages\Auth\Login::class)
+            ->login(Login::class)
             ->profile()
             ->darkMode()
             ->brandName('Cool Tunnel Server')
@@ -49,14 +50,14 @@ class AdminPanelProvider extends PanelProvider
                 NavigationGroup::make('System')->icon('heroicon-o-server-stack'),
             ])
             ->discoverResources(in: app_path('Filament/Resources'),
-                                 for: 'App\\Filament\\Resources')
+                for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'),
-                             for: 'App\\Filament\\Pages')
+                for: 'App\\Filament\\Pages')
             ->pages([
                 Pages\Dashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'),
-                               for: 'App\\Filament\\Widgets')
+                for: 'App\\Filament\\Widgets')
             ->widgets([
                 Widgets\AccountWidget::class,
             ])

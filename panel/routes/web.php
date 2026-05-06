@@ -27,7 +27,7 @@ Route::get('/api/v1/subscription/{token}', [SubscriptionController::class, 'show
 // Everything else goes to the FakeSiteController catch-all so an
 // unauthenticated probe sees the cover site rather than a Laravel
 // welcome page.
-Route::get('/',          [FakeSiteController::class, 'show'])->name('fake-site.home');
-Route::get('/{any}',     [FakeSiteController::class, 'show'])
+Route::get('/', [FakeSiteController::class, 'show'])->name('fake-site.home');
+Route::get('/{any}', [FakeSiteController::class, 'show'])
     ->where('any', '^(?!admin|livewire|up|api).*$')
     ->name('fake-site.any');

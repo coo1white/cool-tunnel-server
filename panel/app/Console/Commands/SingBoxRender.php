@@ -42,6 +42,7 @@ class SingBoxRender extends Command
             if (! $this->option('if-changed') && $this->option('reload')) {
                 $reloader->reload();
             }
+
             return self::SUCCESS;
         }
 
@@ -49,6 +50,7 @@ class SingBoxRender extends Command
         if ($this->option('reload')) {
             $reloader->reload();
         }
+
         return self::SUCCESS;
     }
 }

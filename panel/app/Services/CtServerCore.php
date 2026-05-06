@@ -21,8 +21,7 @@ final class CtServerCore
 {
     public function __construct(
         private string $binary = 'ct-server-core',
-    ) {
-    }
+    ) {}
 
     /**
      * Cap on captured stdout/stderr per call. ct-server-core's
@@ -54,8 +53,8 @@ final class CtServerCore
         if (! $proc->isSuccessful()) {
             $stderr = $this->bound($proc->getErrorOutput());
             Log::error('ct-server-core failed', [
-                'args'   => $args,
-                'exit'   => $proc->getExitCode(),
+                'args' => $args,
+                'exit' => $proc->getExitCode(),
                 'stderr' => $stderr,
             ]);
             throw new \RuntimeException(sprintf(
@@ -85,6 +84,7 @@ final class CtServerCore
                 'ct-server-core returned non-JSON: '.$this->bound($stdout)
             );
         }
+
         return $decoded;
     }
 
@@ -99,6 +99,7 @@ final class CtServerCore
         if (strlen($s) <= self::MAX_CAPTURE_BYTES) {
             return $s;
         }
+
         return substr($s, 0, self::MAX_CAPTURE_BYTES).'…[truncated]';
     }
 
@@ -143,6 +144,7 @@ final class CtServerCore
         if ($via !== null) {
             array_push($args, '--via', $via);
         }
+
         return $this->run($args, timeoutSec: 20);
     }
 }

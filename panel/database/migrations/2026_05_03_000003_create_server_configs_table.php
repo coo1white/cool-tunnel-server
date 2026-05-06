@@ -9,7 +9,8 @@ use Illuminate\Support\Facades\Schema;
 // Singleton: exactly one row, id=1. Holds the values the panel
 // substitutes into Caddyfile.tpl on render.
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('server_configs', function (Blueprint $table) {
@@ -19,14 +20,14 @@ return new class extends Migration {
             $table->string('domain');
             $table->string('acme_email');
             $table->string('acme_directory')
-                  ->default('https://acme-v02.api.letsencrypt.org/directory');
+                ->default('https://acme-v02.api.letsencrypt.org/directory');
 
             // Anti-tracking knobs
             $table->boolean('anti_tracking_hide_ip')->default(true);
             $table->boolean('anti_tracking_hide_via')->default(true);
             $table->boolean('anti_tracking_probe_resistance')->default(true);
             $table->string('anti_tracking_doh_resolver')
-                  ->default('https://1.1.1.1/dns-query');
+                ->default('https://1.1.1.1/dns-query');
 
             // HTTP/3 toggle (some networks throttle UDP/443)
             $table->boolean('http3_enabled')->default(true);

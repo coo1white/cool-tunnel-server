@@ -43,9 +43,9 @@ final class RedisRevocationBus
     public function announceAccountChanged(string $username, string $reason): void
     {
         $this->publish([
-            'kind'     => 'account_changed',
+            'kind' => 'account_changed',
             'username' => $username,
-            'reason'   => $reason,
+            'reason' => $reason,
         ]);
     }
 
@@ -76,7 +76,7 @@ final class RedisRevocationBus
         } catch (\Throwable $e) {
             Log::warning('redis.account_status.failed', [
                 'username' => $username,
-                'err'      => $e->getMessage(),
+                'err' => $e->getMessage(),
             ]);
         }
     }
@@ -88,7 +88,7 @@ final class RedisRevocationBus
         } catch (\Throwable $e) {
             Log::warning('redis.account_status_del.failed', [
                 'username' => $username,
-                'err'      => $e->getMessage(),
+                'err' => $e->getMessage(),
             ]);
         }
     }
@@ -105,8 +105,8 @@ final class RedisRevocationBus
         } catch (\Throwable $e) {
             Log::warning('redis.publish.failed', [
                 'channel' => self::CHANNEL,
-                'kind'    => $payload['kind'] ?? '?',
-                'err'     => $e->getMessage(),
+                'kind' => $payload['kind'] ?? '?',
+                'err' => $e->getMessage(),
             ]);
         }
     }

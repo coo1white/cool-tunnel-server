@@ -16,8 +16,7 @@ final class ComponentChecker
 {
     public function __construct(
         private CtServerCore $core,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<int, array{name:string, installed_version:?string, pinned_version:string, state:string, message:string}>
@@ -37,6 +36,7 @@ final class ComponentChecker
             $rows = [];
         }
         Cache::put('components.check', $rows, 30);
+
         return $rows;
     }
 
@@ -45,9 +45,13 @@ final class ComponentChecker
         $ok = 0;
         $ng = 0;
         foreach ($rows as $r) {
-            if (($r['state'] ?? '') === 'ok') $ok++;
-            else                              $ng++;
+            if (($r['state'] ?? '') === 'ok') {
+                $ok++;
+            } else {
+                $ng++;
+            }
         }
+
         return ['ok' => $ok, 'ng' => $ng, 'total' => count($rows)];
     }
 }

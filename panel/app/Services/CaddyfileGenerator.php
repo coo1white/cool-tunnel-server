@@ -22,8 +22,7 @@ class CaddyfileGenerator
 {
     public function __construct(
         private CtServerCore $core,
-    ) {
-    }
+    ) {}
 
     public function renderToFile(): ?string
     {
@@ -35,12 +34,14 @@ class CaddyfileGenerator
             // found Error doesn't propagate silently up to the
             // panel and abort the surrounding model save.
             Log::error('caddyfile.render.failed', [
-                'err'  => $e->getMessage(),
+                'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);
+
             return null;
         }
         $changed = (bool) ($out['changed'] ?? false);
+
         return $changed ? ($out['hash'] ?? null) : null;
     }
 }

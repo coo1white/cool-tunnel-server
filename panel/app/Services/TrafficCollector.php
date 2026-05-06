@@ -16,8 +16,7 @@ final class TrafficCollector
 {
     public function __construct(
         private CtServerCore $core,
-    ) {
-    }
+    ) {}
 
     /** Returns the number of rows touched. */
     public function rollup(): int
@@ -26,8 +25,10 @@ final class TrafficCollector
             $out = $this->core->collectTraffic();
         } catch (\RuntimeException $e) {
             Log::warning('traffic.rollup.failed', ['err' => $e->getMessage()]);
+
             return 0;
         }
+
         return (int) ($out['rows'] ?? 0);
     }
 }

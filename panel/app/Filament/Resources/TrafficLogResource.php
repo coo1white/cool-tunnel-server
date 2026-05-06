@@ -6,8 +6,10 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\TrafficLogResource\Pages;
 use App\Models\TrafficLog;
+use Filament\Forms\Components\DatePicker;
 use Filament\Resources\Resource;
 use Filament\Tables;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Table;
 
 // Read-only view of the per-account, per-day traffic rollup.
@@ -15,9 +17,13 @@ use Filament\Tables\Table;
 class TrafficLogResource extends Resource
 {
     protected static ?string $model = TrafficLog::class;
+
     protected static ?string $navigationIcon = 'heroicon-o-chart-bar';
+
     protected static ?string $navigationLabel = 'Traffic logs';
+
     protected static ?string $navigationGroup = 'Reporting';
+
     protected static ?int $navigationSort = 30;
 
     public static function table(Table $table): Table
@@ -42,20 +48,25 @@ class TrafficLogResource extends Resource
                 Tables\Columns\TextColumn::make('connections')->alignEnd()->sortable(),
             ])
             ->filters([
-                \Filament\Tables\Filters\Filter::make('day_range')
+                Filter::make('day_range')
                     ->form([
-                        \Filament\Forms\Components\DatePicker::make('from')->label('From'),
-                        \Filament\Forms\Components\DatePicker::make('to')->label('To'),
+                        DatePicker::make('from')->label('From'),
+                        DatePicker::make('to')->label('To'),
                     ])
                     ->query(function ($query, array $data) {
                         return $query
                             ->when($data['from'] ?? null, fn ($q, $d) => $q->whereDate('day', '>=', $d))
-                            ->when($data['to']   ?? null, fn ($q, $d) => $q->whereDate('day', '<=', $d));
+                            ->when($data['to'] ?? null, fn ($q, $d) => $q->whereDate('day', '<=', $d));
                     })
                     ->indicateUsing(function (array $data): array {
                         $out = [];
-                        if ($data['from'] ?? null) $out[] = "From: {$data['from']}";
-                        if ($data['to']   ?? null) $out[] = "To: {$data['to']}";
+                        if ($data['from'] ?? null) {
+                            $out[] = "From: {$data['from']}";
+                        }
+                        if ($data['to'] ?? null) {
+                            $out[] = "To: {$data['to']}";
+                        }
+
                         return $out;
                     }),
             ])
@@ -68,15 +79,29 @@ class TrafficLogResource extends Resource
         return ['index' => Pages\ListTrafficLogs::route('/')];
     }
 
-    public static function canCreate(): bool { return false; }
-    public static function canEdit($record): bool { return false; }
-    public static function canDelete($record): bool { return false; }
+    public static function canCreate(): bool
+    {
+        return false;
+    }
+
+    public static function canEdit($record): bool
+    {
+        return false;
+    }
+
+    public static function canDelete($record): bool
+    {
+        return false;
+    }
 
     private static function human(?int $b): string
     {
-        if (! $b) return '0 B';
-        $u = ['B','KiB','MiB','GiB','TiB'];
+        if (! $b) {
+            return '0 B';
+        }
+        $u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
         $i = max(0, min((int) floor(log($b, 1024)), 4));
+
         return round($b / (1024 ** $i), 2).' '.$u[$i];
     }
 }

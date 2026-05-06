@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 return [
     'default' => env('CACHE_STORE', 'database'),
-    'stores'  => [
+    'stores' => [
         'redis' => [
-            'driver'     => 'redis',
+            'driver' => 'redis',
             'connection' => 'cache',
         ],
         'database' => [
-            'driver'     => 'database',
+            'driver' => 'database',
             'connection' => env('DB_CONNECTION', 'mysql'),
-            'table'      => 'cache',
+            'table' => 'cache',
         ],
         'file' => ['driver' => 'file', 'path' => storage_path('framework/cache/data')],
     ],
