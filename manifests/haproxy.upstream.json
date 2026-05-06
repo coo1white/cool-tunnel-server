@@ -1,12 +1,11 @@
 {
     "name": "haproxy",
     "kind": "container-image",
-    "version": "v2.9-alpine",
+    "version": "2.9.15",
     "upstream": "https://github.com/haproxy/haproxy",
     "verify": {
-        "command": ["bash", "-c", "exec 3<>/dev/tcp/haproxy/443"],
-        "expect_zero_exit": true,
-        "expect_no_version_line": true
+        "command": ["bash", "-c", "set -eo pipefail; echo 'show info' | socat -t 5 - UNIX-CONNECT:/var/run/haproxy/admin.sock | grep -E '^Version:'"],
+        "expect_zero_exit": true
     },
-    "note": "GPL-2.0+. Stock haproxy:2.9-alpine used as a TCP/SNI router on :443 (R1-1 / R1-2 in 2026-05-04 audit; landed in v0.0.33). Sniffs the SNI from each TLS ClientHello WITHOUT decrypting and TCP-forwards raw bytes to either caddy:8444 (panel subdomain) or sing-box:443 (proxy domain — NaiveProxy). No TLS termination here, so the on-the-wire fingerprint stays whatever the backend negotiates with the client (anti-tracking probe-resistance preserved). 2.9 is the latest LTS line — operator-friendly choice for a self-hosted deployment that may not get patched aggressively."
+    "note": "GPL-2.0+. Stock haproxy:2.9-alpine used as a TCP/SNI router on :443 (R1-1 / R1-2 in 2026-05-04 audit; landed in v0.0.33). Sniffs the SNI from each TLS ClientHello WITHOUT decrypting and TCP-forwards raw bytes to either caddy:8444 (panel subdomain) or sing-box:443 (proxy domain — NaiveProxy). No TLS termination here, so the on-the-wire fingerprint stays whatever the backend negotiates with the client (anti-tracking probe-resistance preserved). Verify probe is the Cycle 2 / 5 drift-detection upgrade (v0.0.43) — sends `show info` over the haproxy stats socket via socat (UNIX-domain only, never reachable over the network), greps the `Version:` line, and the matcher's soft version match asserts the pinned `version` field above is contained in that line. Socket is opened by haproxy.cfg.tpl's `stats socket /var/run/haproxy/admin.sock mode 660 level user` directive (level user is read-only — `show *` allowed, runtime state mutation forbidden). The panel container mounts the haproxy_admin volume RO; the volume is the security boundary, not the file mode. Probe evolution: v0.0.34 introduced TCP-open + echo (broken at the soft-version-match stage); v0.0.35 silenced it; v0.0.37 declared the silencing honestly via expect_no_version_line: true; v0.0.43 finally restores real drift detection by querying haproxy's own runtime API. expect_zero_exit: true means socket-missing / permission-denied / hung-daemon / `show info` failure all flip the row to VerifyFailed; a deployed haproxy whose Version line doesn't contain the pinned string flips to VersionMismatch. NOTE: HAProxy 2.9 reached upstream EOL after release; deployments should plan a 3.0+ upgrade as a separate hardening cycle. The drift detection added here is what will surface that upgrade as a `make set-component-version COMPONENT=haproxy V=3.0.X` event with a coordinated Dockerfile bump."
 }
