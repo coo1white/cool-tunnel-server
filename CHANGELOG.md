@@ -22,6 +22,138 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.52] — 2026-05-06 — Hotfix: HAProxy stats-socket mode 660 → 666 (panel UI runs probe as www-data, not root)
+
+The fourth hotfix-after-release in this sprint. v0.0.51's CLI
+test showed 11/11 OK; the Filament Components page in the
+browser kept showing haproxy NG. The discrepancy: `docker
+compose exec` defaults to root, but the panel UI invokes the
+probe through PHP-FPM running as www-data.
+
+Confirmed end-to-end on the operator's VPS:
+
+```
+$ docker compose exec -u www-data panel bash -c '...socat...'
+socat error: connect(): Permission denied
+
+$ docker compose exec panel bash -c '...socat...'   # default = root
+Version: 3.0.21-6e57320bb
+```
+
+Same probe, same target socket — different invoking user, different
+filesystem permission outcome. Mode 660 (rw owner+group, --- other)
+owned by `haproxy:haproxy` is unreadable by `www-data`. Root bypassed
+the check via DAC; www-data hit the wall.
+
+### Fixed
+
+- **`haproxy/haproxy.cfg.tpl`** — `stats socket ... mode 660` →
+  `mode 666`. World-readable within the docker volume's mount
+  scope. The threat model already restricts who can see the
+  socket (volume mounted only into haproxy + panel — the docker
+  volume IS the security boundary), and `level user` already
+  restricts what they can do (`show *` only, no `disable
+  server` / `set server` / runtime mutation). 660 was over-
+  cautious for the actual blast radius; 666 is the right
+  answer here, same way redis's `REDISCLI_AUTH=$REDIS_PASSWORD`
+  env-var auth is the right answer at the protocol layer (volume
+  + protocol-layer permission, not filesystem mode).
+- **`manifests/haproxy.upstream.json::note`** — updated the
+  mode reference to `666` and added a one-sentence explainer of
+  why 666 is safe given the volume + level-user posture.
+
+### Lesson recorded — fourth and final hotfix lesson of the sprint
+
+Three previous hotfix lessons compounded into this one:
+
+| Hotfix | Lesson |
+|---|---|
+| v0.0.47 → v0.0.48 | dev-side `git status` clean ≠ VPS-side clean |
+| v0.0.49 → v0.0.50 | dev-side `cargo build` clean ≠ VPS-side clean (cargo-chef MSRV) |
+| v0.0.43 → v0.0.51 | dev-side cfg.tpl edit ≠ VPS-side haproxy actually picks it up |
+| v0.0.51 → **v0.0.52** | **CLI invocation (root) ≠ panel UI invocation (www-data)** |
+
+The fourth lesson is the deepest: even when validation runs on the
+operator's actual VPS, `docker compose exec` defaults to root and
+masks **per-user** permission failures. When the same probe binary
+can be invoked by multiple users in the same container (root via
+`compose exec`, www-data via PHP-FPM, ct-server-core daemon as
+root via supervisord), each invocation path is its own validation
+target. v0.0.51's CLI smoke test was right but insufficient — it
+exercised one invocation path (root) and not the one that actually
+matters operationally (the panel UI's www-data path).
+
+**Going forward**: for any probe whose result is rendered in the
+Filament Components page, the validation discipline includes a
+per-invocation-path smoke test — both `docker compose exec` (root)
+AND `docker compose exec -u www-data` (Filament's path). If the
+two diverge, that's the bug.
+
+### Compatibility
+
+- **No code change in ct-server-core or in the panel.** Only the
+  cfg.tpl line and the manifest's note string changed.
+- **`make update` does the rest** — re-renders the cfg with the
+  new mode, SIGHUPs haproxy, the new socket gets created with
+  mode 666. www-data can now connect; panel UI shows haproxy
+  green.
+- **No DB migration, no env change, no Dockerfile rebuild
+  required.** Pure cfg.tpl + render+reload.
+
+### Security note (revisited)
+
+Threat-model recap with mode 666:
+
+- **Outside-container reach**: zero. The `haproxy_admin` volume
+  is mounted into haproxy (RW) and panel (RO) only. No docker-
+  network exposure of the socket. No host-port mapping.
+- **Inside-panel-container reach**: any process can connect.
+  This includes supervisord, ct-server-core daemon, php-fpm
+  workers, nginx workers, and (in compromised states) any
+  attacker who has gained code execution inside the panel.
+- **What an inside-panel attacker can do via the socket**:
+  read-only stats — `show info`, `show stat`, `show pools`.
+  Cannot modify haproxy state (level user). The information
+  disclosed (connection counts, server status) is operational
+  metrics, not secrets. The panel container already holds the
+  real secrets (DB password, REDIS password,
+  CT_CLASH_SECRET_SEED) in its env, accessible to any process
+  in the container regardless of the haproxy socket. The socket
+  adds zero new attack surface beyond what the panel already
+  exposes.
+
+Mode 666 is the right answer.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+```
+
+The `make update` re-renders the cfg with mode 666, SIGHUPs
+haproxy, the new socket gets created with the new mode. The
+Filament Components page (via www-data) can now read it.
+
+To verify the fix worked end-to-end, including the per-user path:
+
+```sh
+# Confirm both invocation paths now succeed
+docker compose exec -u www-data panel bash -c \
+    'set -eo pipefail; echo "show info" | socat -t 5 - UNIX-CONNECT:/var/run/haproxy/admin.sock | grep -E "^Version:"'
+# Expect: Version: 3.0.21-...
+
+docker compose exec panel bash -c \
+    'set -eo pipefail; echo "show info" | socat -t 5 - UNIX-CONNECT:/var/run/haproxy/admin.sock | grep -E "^Version:"'
+# Expect: Version: 3.0.21-...
+```
+
+Then click **Re-check** on the Filament Components page — haproxy
+should flip to OK alongside the other 10.
+
+---
+
 ## [0.0.51] — 2026-05-06 — Hotfix: HAProxy stats-socket bind-perm + update.sh haproxy render/reload gap
 
 The third hotfix-after-release in this sprint, all three sharing
