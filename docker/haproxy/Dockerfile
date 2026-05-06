@@ -38,6 +38,22 @@ FROM haproxy:3.0.21-alpine
 # haproxy.cfg.tpl) into /usr/local/etc/haproxy on first start.
 VOLUME ["/usr/local/etc/haproxy"]
 
+# v0.0.51 — pre-create /var/run/haproxy with haproxy:haproxy
+# ownership so the v0.0.43 stats-socket directive can bind on first
+# container start. The upstream haproxy:alpine image runs HAProxy as
+# the haproxy user (USER directive), so HAProxy can't create files
+# in a directory owned by root. The compose-mounted `haproxy_admin`
+# volume uses Docker's named-volume initialisation (image directory
+# contents copied to the volume on FIRST mount), so this chown
+# propagates correctly to fresh deploys. Operators upgrading from
+# v0.0.43..v0.0.50 with an existing root-owned volume must run the
+# one-time chown documented in the v0.0.51 CHANGELOG operator-
+# recovery section. (scripts/update.sh also runs a defensive chown
+# at every invocation to fix that path automatically.)
+USER root
+RUN mkdir -p /var/run/haproxy && chown haproxy:haproxy /var/run/haproxy
+USER haproxy
+
 EXPOSE 443
 # We deliberately do NOT EXPOSE 80. Port 80 is Caddy's domain (ACME
 # HTTP-01 challenges); HAProxy is :443 only.
