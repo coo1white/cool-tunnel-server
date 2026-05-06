@@ -321,6 +321,15 @@ services:
       # ct-server-core daemon subscribes here for the
       # cool_tunnel:revocations channel.
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      # Bare REDIS_PASSWORD for the Cycle 2 / 2 drift-detection probe
+      # (v0.0.40). manifests/redis.upstream.json::verify runs
+      # `REDISCLI_AUTH=$REDIS_PASSWORD redis-cli -h $REDIS_HOST ...`
+      # — env-var auth keeps the password out of argv (would otherwise
+      # surface in `ps -ef` for the probe's lifetime, mirroring the
+      # v0.0.17 mariadb-dump MYSQL_PWD discipline in scripts/backup.sh).
+      # Laravel itself does not consume this — it parses REDIS_URL —
+      # so duplicating the value here is purely for the probe.
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
       # Where the SingBoxConfigGenerator writes the rendered file.
       SINGBOX_CONFIG_PATH:    /etc/sing-box/config.json
       SINGBOX_CONFIG_TEMPLATE: /srv/sing-box/config.json.tpl

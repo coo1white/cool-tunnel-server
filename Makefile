@@ -241,6 +241,39 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 	    }
 	@echo "    bumped to $(V) in: core/Cargo.toml, core/Cargo.lock, manifests/{ct-server-core,ct-protocol,panel}.upstream.json"
 
+.PHONY: set-component-version
+set-component-version: ## bump an external component manifest's pinned version; pass COMPONENT=<slug> V=X.Y.Z
+	@# Companion to `set-version` for THIRD-PARTY component manifests
+	@# (caddy, haproxy, mariadb, redis, sing-box). Those track upstream
+	@# Docker-image versions and bump on a different cadence from
+	@# cool-tunnel-server's own version-of-record. Used during Cycle 2
+	@# drift-detection restoration to keep the manifest pin in lockstep
+	@# with whatever version is actually deployed via docker-compose.yml's
+	@# image tag — when they drift, the matcher trips VersionMismatch
+	@# on the Components page, which is exactly what Cycle 2 is for.
+	@if [ -z "$(COMPONENT)" ] || [ -z "$(V)" ]; then \
+	    echo 'usage: make set-component-version COMPONENT=redis V=7.4.8'; \
+	    echo 'valid components: caddy, ct-protocol, ct-server-core, doh-resolver,'; \
+	    echo '                  haproxy, mariadb, naiveproxy, naiveproxy-client,'; \
+	    echo '                  panel, redis, sing-box'; \
+	    exit 1; \
+	fi
+	@if [ ! -f manifests/$(COMPONENT).upstream.json ]; then \
+	    echo "no such component: manifests/$(COMPONENT).upstream.json"; \
+	    exit 1; \
+	fi
+	@sed -i.bak -E 's/"version": "[^"]*"/"version": "$(V)"/' manifests/$(COMPONENT).upstream.json
+	@find manifests -name '*.bak' -delete
+	@# Re-run jq through the file to catch a sed regex bug that
+	@# would have produced invalid JSON (no-op replacement edge cases,
+	@# trailing commas, etc.). Loud failure here is exactly what we
+	@# want — a silently-broken manifest reaches the matcher as a
+	@# JSON-parse skip, which would silently drop the component from
+	@# the OK/NG report.
+	@jq . manifests/$(COMPONENT).upstream.json >/dev/null \
+	    || { echo "  ✗ manifests/$(COMPONENT).upstream.json is no longer valid JSON" >&2; exit 1; }
+	@echo "    bumped manifests/$(COMPONENT).upstream.json::version → $(V)"
+
 .PHONY: pin-images
 pin-images: ## resolve current docker base-image tags to digests; updates Dockerfiles in place
 	@if ! command -v docker >/dev/null; then echo 'docker not on PATH'; exit 1; fi

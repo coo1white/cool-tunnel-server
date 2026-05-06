@@ -1,12 +1,11 @@
 {
     "name": "redis",
     "kind": "container-image",
-    "version": "7-alpine",
+    "version": "7.4.8",
     "upstream": "https://hub.docker.com/_/redis",
     "verify": {
-        "command": ["bash", "-c", "exec 3<>/dev/tcp/redis/6379"],
-        "expect_zero_exit": true,
-        "expect_no_version_line": true
+        "command": ["bash", "-c", "REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli -h \"$REDIS_HOST\" -p \"$REDIS_PORT\" INFO Server | grep -i ^redis_version:"],
+        "expect_zero_exit": true
     },
-    "note": "BSD-3. Used by Laravel for cache, sessions, and the queue worker that serializes Caddy reload jobs."
+    "note": "BSD-3. Used by Laravel for cache, sessions, and the queue worker that serializes Caddy reload jobs. Verify probe is the Cycle 2 / 2 drift-detection upgrade (v0.0.40) — runs `redis-cli INFO Server` from inside the panel container, filters the `redis_version:` line, and the matcher's soft version match asserts the pinned `version` field above is contained in that line. Auth is mandatory (the redis service launches with `--requirepass ${REDIS_PASSWORD}` in docker-compose.yml); REDISCLI_AUTH env-var is used so the password never reaches argv (would otherwise surface in `ps -ef` for the probe's lifetime). Probe evolution: v0.0.34 introduced `bash -c 'exec 3<>/dev/tcp/redis/6379 && echo connected'` (broken at the soft-version-match stage — `connected` doesn't contain `7-alpine`); v0.0.35 silenced it (dropped the echo); v0.0.37 declared the silencing honestly via `expect_no_version_line: true`; v0.0.40 finally restores real drift detection by giving the probe a Redis-banner identity string. expect_zero_exit: true means NOAUTH / connection-refused / cli-missing all flip the row to VerifyFailed; a deployed Redis whose `redis_version` doesn't contain the pinned string flips to VersionMismatch."
 }
