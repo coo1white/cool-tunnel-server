@@ -15,9 +15,13 @@ use Filament\Tables\Table;
 class FakeWebsiteResource extends Resource
 {
     protected static ?string $model = FakeWebsite::class;
+
     protected static ?string $navigationIcon = 'heroicon-o-globe-alt';
+
     protected static ?string $navigationLabel = 'Fake websites';
+
     protected static ?string $navigationGroup = 'System';
+
     protected static ?int $navigationSort = 20;
 
     public static function form(Form $form): Form
@@ -30,7 +34,7 @@ class FakeWebsiteResource extends Resource
 
             Forms\Components\Select::make('template')
                 ->options([
-                    'blog'      => 'Blog',
+                    'blog' => 'Blog',
                     'corporate' => 'Corporate / Consultancy',
                     'portfolio' => 'Personal portfolio',
                 ])
@@ -71,9 +75,9 @@ class FakeWebsiteResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'  => Pages\ListFakeWebsites::route('/'),
+            'index' => Pages\ListFakeWebsites::route('/'),
             'create' => Pages\CreateFakeWebsite::route('/create'),
-            'edit'   => Pages\EditFakeWebsite::route('/{record}/edit'),
+            'edit' => Pages\EditFakeWebsite::route('/{record}/edit'),
         ];
     }
 }

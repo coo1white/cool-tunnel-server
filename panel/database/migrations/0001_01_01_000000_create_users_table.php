@@ -9,7 +9,8 @@ use Illuminate\Support\Facades\Schema;
 // Filament admins. Distinct from `proxy_accounts` — admins log into
 // the Filament UI; proxy accounts log into Caddy's forward_proxy.
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('users', function (Blueprint $table) {

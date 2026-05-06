@@ -45,6 +45,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false   # don't cancel a scheduled run mid-flight
 
+# Default token permissions are read-only `contents` since the workflow
+# was originally scheduled-only. PR-triggered runs (gitleaks-action,
+# dependency-review-action, etc.) need read access to the PR's commits
+# and metadata; without the explicit grant the GITHUB_TOKEN gets HTTP
+# 403 listing /repos/.../pulls/N/commits and the secret-scan job dies
+# at startup before scanning a single commit.
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
 
   # ---------- Cycle 31: cargo-audit (RustSec advisories) ----------
@@ -92,10 +102,21 @@ jobs:
         with:
           toolchain: 1.86
       - name: Install cargo-deny
-        run: cargo install --locked cargo-deny
+        # Pin to exactly the last cargo-deny that supports rustc 1.86 (the
+        # toolchain this job installs above). `^0.18` is too loose: cargo
+        # picks the latest in the 0.18.x line (0.18.9), which already
+        # requires rustc 1.88+. Bump in lock-step with the toolchain field.
+        run: cargo install --locked cargo-deny --version "=0.18.3"
       - name: Check
         # deny.toml lives at core/deny.toml.
-        run: cargo deny check
+        # Run only the bans/licenses/sources subchecks. The `advisories`
+        # subcheck is covered by the separate `cargo audit` job (above).
+        # cargo-deny 0.18.3 — the latest that supports our pinned rustc
+        # 1.86 — predates CVSS 4.0 in the RustSec advisory DB and errors
+        # parsing entries like RUSTSEC-2026-0073 (libcrux-poly1305). The
+        # next cargo-deny that handles CVSS 4.0 requires rustc 1.88+, so
+        # the upgrade is gated on a toolchain bump (separate concern).
+        run: cargo deny check bans licenses sources
 
   # ---------- Cycle 33: composer audit (Packagist advisories) -----
 
@@ -245,22 +266,49 @@ jobs:
               # v0.0.5 → v0.0.6: caddyfile_safe_username calling-site
               # legacy is allowed (renaming is a v0.1 thing)
           )
+          # Build the scan list with `find` rather than relying on grep's
+          # `--exclude` / `--exclude-dir` / `--include`. The latter combo
+          # quietly fails on this runner — `--exclude=CHANGELOG.md` was
+          # ignored when paired with `--include='*.md'`, and matches in
+          # excluded files leaked through. `find` has explicit, well-defined
+          # `-not -name` / `-not -path` semantics that work the same on
+          # macOS and Ubuntu.
+          #
+          # Excluded by intent:
+          #   - History/changelog files where past pivots are deliberately
+          #     mentioned (CHANGELOG.md, NOTICE, AUDIT.md,
+          #     THIRD_PARTY_LICENSES.md).
+          #   - Upstream-component manifests + their README, where the
+          #     `note:` field documents protocol/feature relationships
+          #     (e.g. "wire protocol identical to forwardproxy@naive",
+          #     "we use Caddy for ACME because sing-box's built-in ACME
+          #     is less robust"). These notes describe *why* we made the
+          #     pivots; flagging them defeats the purpose of the manifest.
+          #   - docs/installation-debian.md historical-context paragraph
+          #     about ACME state living in singbox_data (corrected in
+          #     v0.0.4; the doc explains the correction).
+          #   - .git, target, .github (build/CI scaffolding).
+          mapfile -t scan_files < <(find . -type f \
+              \( -name '*.md' -o -name '*.rs' -o -name '*.php' \
+                 -o -name '*.tpl' -o -name '*.json' -o -name '*.yml' \
+                 -o -name '*.sh' -o -name '*.blade.php' \
+                 -o -name 'Dockerfile*' \) \
+              -not -path './.git/*' \
+              -not -path './target/*' \
+              -not -path './.github/*' \
+              -not -path '*/vendor/*' \
+              -not -path '*/node_modules/*' \
+              -not -name 'CHANGELOG.md' \
+              -not -name 'NOTICE' \
+              -not -name 'AUDIT.md' \
+              -not -name 'THIRD_PARTY_LICENSES.md' \
+              -not -name 'sing-box.upstream.json' \
+              -not -name 'caddy.upstream.json' \
+              -not -path './manifests/README.md' \
+              -not -path './docs/installation-debian.md')
           fail=0
           for pat in "${stale_patterns[@]}"; do
-              # Exclude history-of-the-project files where mentions
-              # are deliberate.
-              if grep -rEn "$pat" \
-                   --exclude-dir=.git --exclude-dir=target \
-                   --exclude=CHANGELOG.md \
-                   --exclude=NOTICE \
-                   --exclude=THIRD_PARTY_LICENSES.md \
-                   --exclude=AUDIT.md \
-                   --exclude-dir=.github \
-                   --include='*.md' --include='*.rs' --include='*.php' \
-                   --include='*.tpl' --include='*.json' --include='*.yml' \
-                   --include='*.sh' --include='*.blade.php' \
-                   --include='Dockerfile*' \
-                   . 2>/dev/null; then
+              if grep -EHn "$pat" "${scan_files[@]}" 2>/dev/null; then
                   echo "::error::stale reference matching /$pat/"
                   fail=1
               fi

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Filament\Pages;
 
 use App\Models\ServerConfig;
+use Filament\Actions\Action;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -19,9 +21,13 @@ class ServerConfigPage extends Page implements HasForms
     use InteractsWithForms;
 
     protected static ?string $navigationIcon = 'heroicon-o-cog-6-tooth';
+
     protected static ?string $navigationLabel = 'Server config';
+
     protected static ?string $navigationGroup = 'System';
+
     protected static ?int $navigationSort = 90;
+
     protected static string $view = 'filament.pages.server-config';
 
     public ?array $data = [];
@@ -74,7 +80,7 @@ class ServerConfigPage extends Page implements HasForms
                         // recognisable network fingerprint
                         // (clients try QUIC, fail, fall back). See
                         // SubscriptionController class docstring.
-                        \Filament\Forms\Components\Placeholder::make('http3_note')
+                        Placeholder::make('http3_note')
                             ->label('HTTP/3 (QUIC)')
                             ->content('Disabled: NaiveProxy is HTTP/2-only by protocol design. Advertising HTTP/3 caused clients to attempt QUIC and fall back, producing a fingerprintable failure pattern. See cross-platform-clients.md.')
                             ->columnSpanFull(),
@@ -97,7 +103,7 @@ class ServerConfigPage extends Page implements HasForms
     protected function getFormActions(): array
     {
         return [
-            \Filament\Actions\Action::make('save')->submit('save')->label('Save and reload'),
+            Action::make('save')->submit('save')->label('Save and reload'),
         ];
     }
 }

@@ -10,7 +10,8 @@ use Illuminate\Support\Facades\Schema;
 // `is_active`; the FakeSiteController renders that one for any non-
 // /admin request.
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('fake_websites', function (Blueprint $table) {

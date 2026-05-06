@@ -12,7 +12,8 @@ use Illuminate\Support\Facades\Schema;
 // rollup via `traffic:rollup` Artisan command which scrapes Caddy's
 // /metrics endpoint over the unix admin socket.
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('traffic_logs', function (Blueprint $table) {

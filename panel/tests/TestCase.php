@@ -20,6 +20,4 @@ use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 //
 // (v0.0.19 — Loop-5 self-check pass, panel/tests scaffold.)
 
-abstract class TestCase extends BaseTestCase
-{
-}
+abstract class TestCase extends BaseTestCase {}

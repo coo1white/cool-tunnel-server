@@ -29,6 +29,7 @@ class UserCanAccessPanelTest extends TestCase
     {
         $p = Mockery::mock(Panel::class);
         $p->shouldReceive('getId')->andReturn('admin');
+
         return $p;
     }
 
@@ -36,6 +37,7 @@ class UserCanAccessPanelTest extends TestCase
     {
         $p = Mockery::mock(Panel::class);
         $p->shouldReceive('getId')->andReturn('viewer');
+
         return $p;
     }
 
@@ -75,8 +77,8 @@ class UserCanAccessPanelTest extends TestCase
         // User::create($request->all()) cannot promote a viewer
         // to admin or rotate someone else's password.
         $u = User::factory()->create();
-        $this->assertNotContains('password',  $u->getFillable());
-        $this->assertNotContains('role',      $u->getFillable());
+        $this->assertNotContains('password', $u->getFillable());
+        $this->assertNotContains('role', $u->getFillable());
         $this->assertNotContains('is_active', $u->getFillable());
     }
 }

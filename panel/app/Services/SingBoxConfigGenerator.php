@@ -29,8 +29,7 @@ class SingBoxConfigGenerator
 {
     public function __construct(
         private CtServerCore $core,
-    ) {
-    }
+    ) {}
 
     /**
      * Render to disk. Returns the new file's SHA-256 if it changed,
@@ -46,15 +45,17 @@ class SingBoxConfigGenerator
             // found Error doesn't propagate silently up to the
             // panel and abort the surrounding model save.
             Log::error('singbox.render.failed', [
-                'err'  => $e->getMessage(),
+                'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);
+
             return null;
         }
         // ct-server-core --json singbox render emits {hash, bytes,
         // changed, active_users, path}. We only need the hash for
         // the existing contract.
         $changed = (bool) ($out['changed'] ?? false);
+
         return $changed ? ($out['hash'] ?? null) : null;
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Resources\ProxyAccountResource\Pages;
 
 use App\Filament\Resources\ProxyAccountResource;
+use App\Models\ProxyAccount;
 use App\Services\PasswordGenerator;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
@@ -26,13 +27,22 @@ class CreateProxyAccount extends CreateRecord
      */
     protected function afterCreate(): void
     {
+        /** @var ProxyAccount $record */
+        $record = $this->record;
         $pw = PasswordGenerator::make();
-        $this->record->setCleartextPassword($pw['cleartext']);
-        $this->record->save();
+        $record->setCleartextPassword($pw['cleartext']);
+        $record->save();
+
+        $subUrl = $record->subscriptionUrl();
+        $username = (string) $record->getAttribute('username');
+        $body = "Username: {$username}\nPassword: {$pw['cleartext']}";
+        if ($subUrl !== null) {
+            $body .= "\n\nSubscription URL (import in the app — shown once):\n{$subUrl}";
+        }
 
         Notification::make()
             ->title('New password — copy now, shown once')
-            ->body("Username: {$this->record->username}\nPassword: {$pw['cleartext']}")
+            ->body($body)
             ->success()
             ->persistent()
             ->send();

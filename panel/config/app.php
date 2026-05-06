@@ -3,14 +3,14 @@
 declare(strict_types=1);
 
 return [
-    'name'     => env('APP_NAME', 'Cool Tunnel Server'),
-    'env'      => env('APP_ENV', 'production'),
-    'debug'    => (bool) env('APP_DEBUG', false),
-    'url'      => env('APP_URL', 'http://localhost'),
+    'name' => env('APP_NAME', 'Cool Tunnel Server'),
+    'env' => env('APP_ENV', 'production'),
+    'debug' => (bool) env('APP_DEBUG', false),
+    'url' => env('APP_URL', 'http://localhost'),
     'timezone' => env('APP_TIMEZONE', 'UTC'),
-    'locale'   => 'en',
+    'locale' => 'en',
     'fallback_locale' => 'en',
-    'faker_locale'    => 'en_US',
+    'faker_locale' => 'en_US',
     // AES-256-GCM, not CBC: the Rust core's laravel_crypt module
     // (core/ct-server-core/src/laravel_crypt.rs) decodes only the
     // GCM envelope (`tag` field present, 12-byte iv). The legacy
@@ -21,8 +21,8 @@ return [
     // Pinning GCM here means setCleartextPassword() writes the
     // shape Rust expects; save the affected accounts once after
     // this change to re-encrypt existing rows.
-    'cipher'   => 'AES-256-GCM',
-    'key'      => env('APP_KEY'),
+    'cipher' => 'AES-256-GCM',
+    'key' => env('APP_KEY'),
     // APP_PREVIOUS_KEYS: comma-separated list of older APP_KEYs that
     // Crypt::decryptString() will try as fallbacks (used during a
     // key-rotation grace period). Trim each segment before
@@ -37,6 +37,6 @@ return [
     ))),
     'maintenance' => [
         'driver' => 'file',
-        'store'  => 'database',
+        'store' => 'database',
     ],
 ];
