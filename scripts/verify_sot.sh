@@ -25,6 +25,42 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# v0.0.56 — graceful skip when host lacks dev toolchains.
+# This script invokes `php` and `cargo` directly on the host to
+# exercise both SoT implementations. On dev hosts both are
+# installed; on docker-only VPS hosts they typically are not, and
+# the script previously failed with exit 127 (command not found)
+# without explaining why or pointing at the alternative.
+#
+# When either tool is missing, print a clear skip message and
+# point at `make verify-sot-vps`, which runs the same fixtures
+# via `docker compose exec` against the running panel container
+# (no host toolchains required). Exit 0 so the local CI gate
+# (`make ci`) still completes — the docker variant is the
+# operator's verification surface, not the dev-side gate.
+MISSING=()
+if ! command -v php >/dev/null 2>&1; then MISSING+=("php"); fi
+if ! command -v cargo >/dev/null 2>&1; then MISSING+=("cargo"); fi
+if [ ${#MISSING[@]} -gt 0 ]; then
+    cat <<EOF
+=== Cycle 3 / v0.0.55 — Panel-hostname SoT cross-language verification ===
+  ⚠ skipped — host missing: ${MISSING[*]}
+
+This script invokes PHP and cargo directly on the host to
+compare the two SoT implementations. Docker-only VPS hosts
+typically don't have the dev toolchains installed.
+
+For VPS confirmation, use the docker-based variant:
+
+    make verify-sot-vps
+
+It runs the same five fixtures via \`docker compose exec\`
+against the running panel container, so it needs no host
+toolchains. (v0.0.56.)
+EOF
+    exit 0
+fi
+
 PASSED=0
 FAILED=0
 
