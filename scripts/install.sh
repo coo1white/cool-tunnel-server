@@ -120,6 +120,107 @@ else
     ok "CT_CLASH_SECRET_SEED already set"
 fi
 
+# ---------- Pre-flight: prior-state checks -------------------------
+
+# Two poka-yokes that catch the most common "fresh install fails"
+# tickets, both rooted in operator state from a prior attempt:
+#
+#   1. STALE CLONE.  Operators who pulled the repo days ago hit
+#      hotfixes that have already shipped (e.g. v0.0.25 opcache.ini,
+#      v0.0.27 entrypoint seed). The fetch + ahead/behind check
+#      surfaces this *before* a 2-minute build pipeline runs against
+#      stale Dockerfiles.
+#
+#   2. STALE DOCKER VOLUME.  MariaDB only seeds users on the FIRST
+#      volume init. If a prior `compose up` left `db_data` behind
+#      and the operator regenerated DB_PASSWORD in .env between
+#      attempts, the new password is in .env but the volume still
+#      holds the old one — panel hits "1045 Access denied for user
+#      'cooltunnel'" at migration time, with no obvious cause.
+#
+# Both are interactive prompts, not hard fails — operators in known-
+# good states (CI, dev iteration, intentional offline runs) can
+# decline without aborting.
+step "Pre-flight: repo + Docker state freshness"
+
+# --- 1. Local clone vs origin/main ---
+if [[ -d .git ]] && command -v git >/dev/null 2>&1 \
+        && git remote get-url origin >/dev/null 2>&1; then
+    if git fetch --quiet origin main 2>/dev/null; then
+        local_head=$(git rev-parse HEAD 2>/dev/null || true)
+        remote_head=$(git rev-parse origin/main 2>/dev/null || true)
+        merge_base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+        if [[ -n "$local_head" && -n "$remote_head" \
+                && "$local_head" != "$remote_head" ]]; then
+            if [[ "$merge_base" == "$local_head" ]]; then
+                # Strictly behind — fast-forward possible.
+                behind=$(git rev-list --count "HEAD..origin/main" \
+                    2>/dev/null || echo "?")
+                warn "your clone is ${behind} commit(s) behind origin/main"
+                warn "stale clones often hit hotfixes that already shipped" \
+                    "(opcache.ini, DB seeding, entrypoint races)"
+                if prompt_yn "Pull origin/main now?" y; then
+                    git pull --ff-only origin main \
+                        || die "git pull failed" \
+                            "resolve manually then re-run ./scripts/install.sh"
+                    ok "fast-forwarded to $(git rev-parse --short HEAD)"
+                    warn "the script you're running is the OLD in-memory copy;" \
+                        "exit and re-run to pick up the new one"
+                    if ! prompt_yn "Continue with the OLD in-memory script anyway?" n; then
+                        die "aborted so you can re-run with the fresh script" \
+                            "./scripts/install.sh"
+                    fi
+                else
+                    warn "continuing with stale clone (you've been warned)"
+                fi
+            elif [[ "$merge_base" == "$remote_head" ]]; then
+                # Local has commits ahead — operator is developing.
+                ahead=$(git rev-list --count "origin/main..HEAD" \
+                    2>/dev/null || echo "?")
+                ok "clone has ${ahead} unpushed commit(s) ahead of origin/main (assuming intentional)"
+            else
+                # Diverged.
+                warn "clone has diverged from origin/main (commits on each side)"
+                if ! prompt_yn "Continue with this state?" n; then
+                    die "aborted on diverged clone" \
+                        "git rebase origin/main  (or: git reset --hard origin/main)"
+                fi
+            fi
+        else
+            ok "clone is up to date with origin/main"
+        fi
+    else
+        warn "could not fetch origin/main (offline?); skipping freshness check"
+    fi
+else
+    ok "not a git checkout — skipping clone-freshness check (tarball install?)"
+fi
+
+# --- 2. Leftover Docker state from a prior install ---
+project_name="$(basename "$(pwd)")"
+existing_containers=$(compose ps -a -q 2>/dev/null | grep -c . || true)
+existing_volumes=$(docker volume ls --format '{{.Name}}' 2>/dev/null \
+    | grep -cE "^${project_name}_" || true)
+# `grep -c` returns 1 (no matches) under set -e even via `|| true`,
+# but the assignment captured "0" in that case; coerce to be safe.
+existing_containers=${existing_containers:-0}
+existing_volumes=${existing_volumes:-0}
+if (( existing_containers > 0 || existing_volumes > 0 )); then
+    warn "Docker state from a prior install detected:"
+    warn "  containers: ${existing_containers}    volumes: ${existing_volumes}"
+    warn "stale volumes are the #1 cause of 'Access denied for user' on first boot —"
+    warn "the DB image only seeds users on FIRST volume init; if .env DB_PASSWORD"
+    warn "rotated since the last attempt, panel can't authenticate against the old volume."
+    if prompt_yn "Wipe prior state ('compose down -v') before installing? DESTROYS any DB data" n; then
+        compose down -v 2>/dev/null || true
+        ok "prior containers + volumes removed"
+    else
+        warn "continuing with existing state — if migrations fail with '1045', this is the cause"
+    fi
+else
+    ok "no leftover Docker state from prior install"
+fi
+
 # ---------- Build images -------------------------------------------
 
 step "Build ct-server-core (Rust, musl-static)"
