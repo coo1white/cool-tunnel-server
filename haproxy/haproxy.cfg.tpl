@@ -63,6 +63,22 @@ global
     maxconn 4096
     # No `tune.ssl.*` or `ca-base` — we do NOT terminate TLS here.
 
+    # Cycle 2 / 5 drift-detection probe (v0.0.43) — UNIX stats
+    # socket, read-only-stats privilege level, group-readable. The
+    # socket file lands in /var/run/haproxy inside this container,
+    # which docker-compose.yml mounts as a shared `haproxy_admin`
+    # volume so the panel container can reach it RO. The probe in
+    # manifests/haproxy.upstream.json sends `show info` over the
+    # socket via socat and greps the `Version:` line — drift
+    # surfaces on the Filament Components page within ~100 ms of a
+    # Re-check. `level user` is the minimum privilege that allows
+    # `show *` commands; it does NOT permit `disable server` /
+    # `set server` / `add backend` etc., so a buggy probe cannot
+    # mutate runtime state. UNIX-domain by design — no TCP
+    # listener, no docker-network reach beyond the volume's mount
+    # points (haproxy + panel only).
+    stats socket /var/run/haproxy/admin.sock mode 660 level user
+
 defaults
     mode tcp
     timeout connect 5s

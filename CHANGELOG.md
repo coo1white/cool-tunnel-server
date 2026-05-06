@@ -22,6 +22,214 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.43] — 2026-05-06 — Cycle 2 (5 / 5, **Cycle 2 closes**): restore real drift detection for haproxy via UNIX stats socket
+
+The final Cycle 2 release. Drift detection is now live for every
+component the matcher gates on (panel, redis, mariadb, sing-box,
+haproxy); caddy stays informational-only by design. The
+permissive `None => Ok` matcher arm that originally masked the
+v0.0.34 → v0.0.35 → v0.0.37 cascade is now structurally
+unreachable for the silenced-six set — every probe in that set
+emits a real version line and the matcher's soft version match
+runs against it.
+
+Architecturally the most invasive of the Cycle 2 set: unlike
+panel / redis / mariadb / sing-box (each of which had a
+ready-made admin endpoint or client protocol), haproxy required
+us to **enable its admin surface in the first place**. Pre-v0.0.43
+the rendered haproxy.cfg had no stats socket, no stats listener,
+no admin API of any kind — `nc -z 127.0.0.1 443` was the only
+liveness signal. v0.0.43 adds a UNIX-domain stats socket bound to
+read-only-stats privilege level, mounted as a shared docker
+volume into the panel container so the matcher can query it
+without exposing the admin surface to anything else on the docker
+network.
+
+### Added
+
+- **`haproxy/haproxy.cfg.tpl::global` block** —
+  ```
+  stats socket /var/run/haproxy/admin.sock mode 660 level user
+  ```
+  UNIX-domain socket only — no TCP listener, no docker-network
+  reach beyond the volume's mount points. `level user` is the
+  minimum privilege that allows `show *` commands; it does NOT
+  permit `disable server` / `set server` / `add backend`, so a
+  buggy probe cannot mutate runtime state.
+- **`docker-compose.yml::haproxy_admin`** — new named volume.
+  Mounted RW into the haproxy service (where haproxy creates the
+  socket on boot) and **RO** into the panel service (where the
+  matcher reads it). The volume itself is the security boundary
+  — no other service mounts it.
+- **`socat` in the panel image** — `apk add` now includes
+  `socat` (~150 KiB; smaller than v0.0.42's `jq` addition).
+  Required by the new probe to talk to the UNIX socket; vanilla
+  `bash`'s `/dev/tcp` redirection family doesn't speak UNIX.
+
+### Changed
+
+- **`manifests/haproxy.upstream.json`** — probe rewritten from
+  the v0.0.37 silenced TCP-open form to:
+  ```bash
+  bash -c 'set -eo pipefail; echo "show info" | socat -t 5 - UNIX-CONNECT:/var/run/haproxy/admin.sock | grep -E "^Version:"'
+  ```
+  `set -eo pipefail` is the same shell hygiene as v0.0.42 — closes
+  the silent-failure trap where a failed socat + empty-stdin grep
+  could land at exit 0. Dropped `expect_no_version_line: true`.
+  Bumped pinned `version` from the docker-tag-shaped string
+  `"v2.9-alpine"` to the exact patch `"2.9.15"`
+  (operator-confirmed via
+  `docker compose exec haproxy haproxy -v` against the live VPS
+  deployment). `note` expanded with the v0.0.34 → v0.0.43
+  evolution and the EOL flag below.
+
+### How drift detection now works for haproxy
+
+Probe runs in panel container:
+
+```bash
+set -eo pipefail
+echo "show info" | socat -t 5 - UNIX-CONNECT:/var/run/haproxy/admin.sock | grep -E "^Version:"
+```
+
+Output: `Version: 2.9.15-e872a3f` (or whatever your daemon
+returns). `first_line(stdout)` is exactly that string; matcher's
+`installed.contains(&m.version)` resolves against pin `"2.9.15"`.
+
+| Failure | Probe exit | Matcher state |
+|---|---|---|
+| `socat` missing in panel image (mis-merge) | 127 | `VerifyFailed` |
+| Socket file missing (haproxy down / volume not mounted) | non-zero (socat connect error) | `VerifyFailed` |
+| Permission denied on socket | non-zero (EACCES) | `VerifyFailed` |
+| haproxy refuses level (cfg drift) | empty stdout, grep exits 1 (pipefail catches) | `VerifyFailed` |
+| Probe timeout (`-t 5`) | non-zero | `VerifyFailed` |
+| 200-equivalent + missing `Version:` line | grep exits 1 (pipefail catches) | `VerifyFailed` |
+| Drift (deployed `2.9.16`, manifest pins `2.9.15`) | exit 0, output `Version: 2.9.16-...` | `VersionMismatch` |
+| Healthy + matched | exit 0, output `Version: 2.9.15-...` | `Ok` |
+
+No silent failures.
+
+### Security note — HAProxy 2.9 is upstream EOL
+
+The deployed daemon reports:
+
+```
+Status: End of life - please upgrade to branch 3.0.
+```
+
+The 2.9 branch reached upstream end-of-life after the
+2.9-alpine tag was originally chosen (v0.0.33). This is **not**
+a Cycle 2 concern — Cycle 2 is about making drift visible, and
+v0.0.43 just did that — but it is a hardening discipline for a
+follow-up release. The right shape:
+
+1. Bump `docker/haproxy/Dockerfile::FROM haproxy:3.0-alpine`.
+2. `make set-component-version COMPONENT=haproxy V=3.0.X` (where
+   `X` is whatever the new image resolves to).
+3. `make ci` to rebuild + run the component check.
+4. The drift-detection probe shipping today will surface any
+   misalignment between (1) and (2) immediately.
+
+This sequencing — *first* establish drift detection, *then*
+upgrade — is exactly what Cycle 2 was designed to enable. The
+EOL warning surfaced through the version probe is the first
+operator-visible payoff of the work.
+
+### Compatibility
+
+- **Pre-v0.0.43 deployments** — operators who pull v0.0.43 but
+  don't `make update` will see `VerifyFailed` for the haproxy
+  row (the new probe needs `socat` and the
+  `haproxy_admin:/var/run/haproxy:ro` mount, neither of which
+  exists in older panel / haproxy containers). `make update`
+  rebuilds both images, brings the new haproxy_admin volume up,
+  and the row flips to `Ok`. Same "deployed code older than
+  manifest" surfacing as v0.0.39 / v0.0.40 / v0.0.41 / v0.0.42.
+- **Pre-v0.0.43 haproxy deployments** — if your deployed haproxy
+  image is older than `2.9.15`, the probe will land as
+  `VersionMismatch`, which is **correct** drift-detection
+  behaviour. `make update` rebuilds haproxy from
+  `docker/haproxy/Dockerfile`'s pinned `FROM haproxy:2.9-alpine`
+  (which currently resolves to 2.9.15) and the row resolves to
+  `Ok`. (When you cut the 3.0 hardening release, bump the
+  Dockerfile and `make set-component-version` together.)
+- **No `expect_no_version_line` manifests remain.** Cycle 2 has
+  closed; the field's default (`false`) is now the only value
+  in use across all 11 in-tree manifests.
+
+### Cycle 2 closes — full retrospective
+
+| Component | Pre-Cycle 2 (v0.0.37) | Post-Cycle 2 (v0.0.43) |
+|---|---|---|
+| panel | silenced TCP-equivalent | `php artisan ct:version` (v0.0.39) |
+| redis | TCP open on `:6379` | `redis-cli INFO Server` (v0.0.40) |
+| mariadb | TCP open on `:3306` | `SELECT VERSION()` (v0.0.41) |
+| sing-box | TCP open on `:443` | clash-API `/version`, bearer-auth (v0.0.42) |
+| haproxy | TCP open on `:443` | UNIX stats socket `show info` (v0.0.43) |
+| caddy | HTTP HEAD reachability | unchanged — informational-only by design |
+
+Total Cycle 2 footprint: 5 patch releases over 1 day, 1 new Rust
+CLI subcommand (`ct-server-core admin clash-secret`), 1 new
+artisan command (`ct:version`), 2 new apk packages on the panel
+image (`jq`, `socat`), 2 new compose volumes (`haproxy_admin`,
+`haproxy_admin` mount-via-RO into panel), 1 new Makefile macro
+(`set-component-version`), 0 protocol-version bumps (additive
+within `ComponentManifestV1` V1 throughout — VERSIONING.md
+discipline upheld).
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. The haproxy row now reports
+`installed=Version: 2.9.15-... — verified` instead of v0.0.37's
+`installed=— verified (liveness)`.
+
+### Validation one-liner
+
+```sh
+docker compose exec panel bash -c \
+    'set -eo pipefail; echo "show info" | socat -t 5 - UNIX-CONNECT:/var/run/haproxy/admin.sock | grep -E "^Version:"'
+# Expect: Version: 2.9.15-...
+```
+
+To prove drift detection actually fires:
+
+```sh
+make set-component-version COMPONENT=haproxy V=9.9.9   # fake drift
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+# haproxy row → VersionMismatch
+make set-component-version COMPONENT=haproxy V=2.9.15  # restore
+```
+
+### Out of scope (post-Cycle 2 follow-ups)
+
+- **HAProxy 3.0+ hardening release.** The EOL warning surfaced
+  by today's probe is now an operator-visible follow-up.
+  Coordinated `Dockerfile::FROM` + `make set-component-version`
+  bump as a single discipline release.
+- **Three-way (compose ↔ Dockerfile ↔ manifest) lockstep
+  pinning** for redis / mariadb / sing-box / haproxy — currently
+  compose / Dockerfile pins to floating tags (`redis:7-alpine`,
+  `mariadb:11`, `haproxy:2.9-alpine`), manifests pin exact
+  patches. Coordinating all three would let a single
+  `make set-component-version` invocation be the sole source of
+  truth.
+- **`panel/.gitignore` truth-up** for the phpunit/Laravel cache
+  files first noted in v0.0.39.
+- **Cleanup of v0.0.40 / v0.0.41 redundant compose env duplications**
+  (`REDIS_PASSWORD`, `DB_USERNAME`, `DB_PASSWORD` — already
+  injected via `env_file: - .env`).
+- **`docs/components.md` 8 → 11 component table truth-up**
+  (still pending from before Cycle 2).
+
+---
+
 ## [0.0.42] — 2026-05-06 — Cycle 2 (4 / 5): restore real drift detection for sing-box via authenticated clash-API `/version`
 
 The most architecturally invasive Cycle 2 release so far. Unlike

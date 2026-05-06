@@ -243,6 +243,13 @@ services:
     volumes:
       # Panel-rendered haproxy.cfg lands in this volume.
       - haproxy_etc:/usr/local/etc/haproxy
+      # Cycle 2 / 5 drift-detection probe (v0.0.43): haproxy.cfg.tpl
+      # opens a UNIX stats socket here; the volume is mounted RO into
+      # the panel container so the matcher can reach the socket via
+      # socat. The volume itself is the security boundary — no other
+      # service mounts it. RW here so haproxy can create the socket;
+      # the panel side is RO.
+      - haproxy_admin:/var/run/haproxy
     depends_on:
       caddy:
         condition: service_started
@@ -410,6 +417,13 @@ services:
       # render path picks up Caddy's renewals (read_cert_mtime in
       # singbox/mod.rs). RO — only Caddy writes this volume.
       - caddy_data:/data/caddy:ro
+      # Cycle 2 / 5 drift-detection probe (v0.0.43): haproxy's UNIX
+      # stats socket lives in this volume. RO mount — the matcher
+      # only ever sends `show info` (level user), no runtime state
+      # mutation possible. socat in the panel image talks to
+      # /var/run/haproxy/admin.sock; haproxy renders the socket on
+      # boot per haproxy.cfg.tpl's `stats socket` directive.
+      - haproxy_admin:/var/run/haproxy:ro
     depends_on:
       db:
         condition: service_healthy
@@ -530,6 +544,11 @@ volumes:
   singbox_etc:
   singbox_data:
   haproxy_etc:
+  # Cycle 2 / 5 drift-detection probe (v0.0.43). Carries haproxy's
+  # UNIX stats socket into the panel container RO. Boundary: haproxy
+  # creates the socket (RW); panel reads it (RO); no other service
+  # touches this volume.
+  haproxy_admin:
   panel_storage:
   db_data:
   redis_data:
