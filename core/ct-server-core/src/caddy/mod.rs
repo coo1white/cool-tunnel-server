@@ -30,6 +30,7 @@ pub struct CaddyRenderOutcome {
 
 pub async fn render(
     database_url: &Option<String>,
+    panel_domain: &str,
     template_path: &str,
     output_path: &str,
     dry_run: bool,
@@ -60,11 +61,13 @@ pub async fn render(
     // directive argument — refuse to render rather than attempt to
     // sanitise. (v0.0.16 hardening — Caddyfile-injection class.)
     template::caddyfile_validate("Domain", &cfg.domain).map_err(Error::msg)?;
+    template::caddyfile_validate("PanelDomain", panel_domain).map_err(Error::msg)?;
     template::caddyfile_validate("AcmeEmail", &cfg.acme_email).map_err(Error::msg)?;
     template::caddyfile_validate("AcmeDirectory", &cfg.acme_directory).map_err(Error::msg)?;
 
     let bindings = template::Bindings::new()
         .set("Domain", &cfg.domain)
+        .set("PanelDomain", panel_domain)
         .set("AcmeEmail", &cfg.acme_email)
         .set("AcmeDirectory", &cfg.acme_directory)
         .into_map();
@@ -190,6 +193,7 @@ mod tests {
         };
         let bindings = template::Bindings::new()
             .set("Domain", &cfg().domain)
+            .set("PanelDomain", "panel.proxy.example.com")
             .set("AcmeEmail", &cfg().acme_email)
             .set("AcmeDirectory", &cfg().acme_directory)
             .into_map();
@@ -197,5 +201,8 @@ mod tests {
         assert!(body.contains("admin@example.com"));
         assert!(body.contains("proxy.example.com"));
         assert!(body.contains("acme_ca https://acme-v02.api.letsencrypt.org/directory"));
+        // R1-1: the panel reverse-proxy site block must render.
+        assert!(body.contains("panel.proxy.example.com:8444"));
+        assert!(body.contains("reverse_proxy panel:9000"));
     }
 }

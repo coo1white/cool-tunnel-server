@@ -22,6 +22,194 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.33] — 2026-05-06 — public admin panel via haproxy SNI router (R1-1 / R1-2)
+
+Closes the deferred audit items **R1-1** and **R1-2** from the
+2026-05-04 audit ("TLS-terminating front-door + path-based router
+for the admin panel"). Adds an HAProxy SNI router on `:443` that
+demuxes traffic to either the proxy backend or the panel
+backend based on the SNI in each TLS ClientHello, without
+decrypting any of it.
+
+The admin panel is now publicly reachable at
+`https://${PANEL_DOMAIN}/admin` (default `panel.${DOMAIN}`).
+The legacy SSH-tunnel access path
+(`ssh -L 9000:127.0.0.1:9000 host` + `http://localhost:9000/admin`)
+still works as a defence-in-depth fallback — the panel container
+keeps its `127.0.0.1:9000:9000` host binding.
+
+### Architecture
+
+```
+                cookie.example.com  ─┐
+                panel.cookie.example.com ─┤   (both A records → same VPS IP)
+                                          ▼
+              ┌──────────────────────────────────────────┐
+              │ VPS  :443                                │
+              │  ┌─────────────────────────────────────┐ │
+              │  │ HAProxy (SNI sniff, no TLS decrypt) │ │
+              │  └────────────────┬────────────────────┘ │
+              │       SNI = ?     │                       │
+              │  ┌────────────────┴────────────────────┐ │
+              │  ▼                                     ▼ │
+              │  apex domain               panel.subdomain│
+              │  ─────────                 ───────────────│
+              │  sing-box  (NaiveProxy)    Caddy → panel  │
+              │  internal :443             internal :8444 │
+              │  (terminates own TLS)      (own TLS, own  │
+              │                             cert from     │
+              │                             Caddy's ACME) │
+              └──────────────────────────────────────────┘
+```
+
+HAProxy in TCP/SSL-passthrough mode sees only encrypted bytes;
+the cipher / JA3 / JA4 fingerprint observed by a client is
+whatever the backend negotiates. Anti-tracking probe-resistance
+is preserved end-to-end. The default backend is the proxy (NOT
+the panel) — an SNI-less probe lands on sing-box's NaiveProxy,
+not the Filament login. (See `haproxy/haproxy.cfg.tpl` rationale
+comment.)
+
+### Added
+
+- **`haproxy` service** in `docker-compose.yml`, image
+  `cool-tunnel-server-haproxy:latest` from
+  `docker/haproxy/Dockerfile` (FROM `haproxy:2.9-alpine`). Owns
+  `:443` on the host. mem_limit 32 MiB, pids_limit 16, full
+  hardening anchor merge.
+
+- **`haproxy/haproxy.cfg.tpl`** — TCP-mode SNI router config.
+  `bind :443` in `mode tcp` with `tcp-request inspect-delay 5s`
+  to buffer the ClientHello before extracting `req_ssl_sni`.
+  Two backends: `panel_caddy` (`caddy:8444`) and
+  `naive_singbox` (`sing-box:443`). Default backend is the
+  proxy (anti-fingerprinting).
+
+- **`core/ct-server-core/src/haproxy/mod.rs`** — Rust render
+  module mirroring `caddy/mod.rs`. Reads the operator's
+  `DOMAIN` from the `server_configs` row plus `PANEL_DOMAIN`
+  from the global CLI flag (defaults from `.env`); validates
+  both via `template::caddyfile_validate` (HAProxy's hostname
+  grammar is a strict subset of Caddyfile's); atomic write
+  with the same `.tmp` + `rename` pattern.
+
+- **`ct-server-core haproxy render`** subcommand wired into
+  `main.rs::dispatch`. Globals: `--panel-domain` /
+  `PANEL_DOMAIN`. Op-locals: `--template` /
+  `HAPROXY_CONFIG_TEMPLATE` (default
+  `/srv/haproxy/haproxy.cfg.tpl`); `--output` /
+  `HAPROXY_CONFIG_PATH` (default
+  `/usr/local/etc/haproxy/haproxy.cfg`).
+
+- **`scripts/render-haproxy.sh`** — operator-facing one-shot
+  render mirroring `render-caddyfile.sh` /
+  `render-singbox.sh`.
+
+- **Caddyfile site block** for `${PANEL_DOMAIN}:8444` —
+  TLS-terminating reverse-proxy to `panel:9000`. Pinned to
+  TLS 1.3, strips `Server: Caddy` header, suppresses per-
+  request access log, lets Filament's built-in throttling
+  handle login brute-force.
+
+- **`PANEL_DOMAIN`** in `.env.example` (default
+  `panel.proxy.example.com`). Documented as requiring a
+  separate DNS A record on the same VPS IP.
+
+- **`manifests/haproxy.upstream.json`** — component manifest
+  for the OK/NG check at install end.
+
+- **Anti-tracking smell-test additions** in
+  `.github/workflows/audit.yml`:
+  - sing-box service must NOT host-expose `:443`
+  - haproxy.cfg.tpl must use `mode tcp` (no TLS termination)
+  - haproxy.cfg.tpl `bind :443` must NOT carry `ssl`
+  - `default_backend naive_singbox` (not panel)
+  - `use_backend panel_caddy` rule must use case-insensitive
+    SNI match (`-i`)
+
+### Changed
+
+- **sing-box service** lost its `ports: ["443:443"]` host
+  binding — it still listens on the container's `:443`
+  internally, reachable only from haproxy via `ct-net`. The
+  `sing-box/config.json.tpl` itself is unchanged.
+
+- **`scripts/install.sh`** step 3 detects an empty
+  `PANEL_DOMAIN` on upgrade and self-heals to `panel.${DOMAIN}`,
+  appending the value to `.env`. Step 11 ("Render initial
+  configs") now also renders `haproxy.cfg`. Steps 12-13 wait
+  for BOTH certs (apex + panel) to land in `caddy_data` before
+  proceeding. New step 14 starts haproxy after sing-box. Tail
+  message points the operator at `https://${PANEL_DOMAIN}/admin`
+  for panel access and a separate proxy-connection URL for
+  NaiveProxy clients.
+
+- **`SESSION_SECURE_COOKIE`** default flipped from `false` to
+  `true`. The panel is now reachable over real HTTPS so the
+  `Secure` cookie flag is correct. Operators who rely on the
+  legacy SSH-tunnel access path (`http://localhost:9000/admin`)
+  must flip this back to `false` — the comment in
+  `.env.example` documents the trade-off.
+
+- **`APP_URL`** default in `.env.example` changed from
+  `https://${DOMAIN}/admin` to `https://${PANEL_DOMAIN}/admin`.
+  Subscription URLs now also use `PANEL_DOMAIN`. Existing
+  operators who upgrade with their old `.env` keep their
+  custom value; install.sh's step 3 self-heal only fills in
+  `PANEL_DOMAIN` itself.
+
+- **`caddy::render`** signature now takes `panel_domain: &str`
+  alongside `database_url` etc. The new Caddyfile site block
+  needs the panel hostname, so the renderer plumbs it through
+  from `--panel-domain` / `PANEL_DOMAIN`.
+
+- **`core/Cargo.toml`** workspace version bumped from
+  `0.0.29` → `0.0.33`. `ct-protocol` inherits via
+  `version.workspace = true`. `manifests/{panel,
+  ct-server-core, ct-protocol}.upstream.json` pins bumped
+  in lock-step.
+
+### Operator upgrade path
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+# add panel.${DOMAIN} as a second DNS A record on the same VPS IP
+# (Cloudflare: gray-cloud / "DNS only" — orange-proxied breaks
+#  SNI passthrough)
+./scripts/install.sh
+# step 3 self-heals PANEL_DOMAIN if missing from .env
+# steps 11-14 render + start the new haproxy service
+# Caddy obtains a second cert for the panel subdomain via HTTP-01
+```
+
+For operators already on v0.0.32: the install.sh poka-yoke
+(v0.0.31) detects existing volumes and offers a non-destructive
+continue. The DB row is preserved; only the rendered configs
+change.
+
+### Migration risks
+
+- **Cert pipeline change**: Caddy now manages two certs.
+  HTTP-01 challenges still work because :80 is unchanged.
+  install.sh step 12 waits for both to land before proceeding.
+  Smoke-tested on Let's Encrypt staging.
+
+- **NaiveProxy fingerprint**: HAProxy's TCP/SSL-passthrough
+  preserves the cipher / JA3 / JA4 fingerprint. Verified by
+  design (no TLS termination at the router) and asserted by
+  the smell-test (`mode tcp`, no `ssl` on `bind`).
+
+- **Panel attack surface**: a public admin panel adds a
+  brute-force surface on `/admin/login`. Filament has built-in
+  throttling (5 attempts / minute) and the
+  `SESSION_SECURE_COOKIE=true` default closes the cleartext-
+  cookie window. A Caddy-level `rate_limit` directive would be
+  defence-in-depth but requires a non-stock plugin — deferred
+  to a v0.1 cycle.
+
+---
+
 ## [0.0.32] — 2026-05-06 — `ct:make-admin` command for hardened User model
 
 Step 14 of `install.sh` (create the first Filament admin) failed
