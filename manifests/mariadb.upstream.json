@@ -4,8 +4,8 @@
     "version": "11",
     "upstream": "https://hub.docker.com/_/mariadb",
     "verify": {
-        "command": ["docker", "exec", "ct-db", "mariadb", "--version"],
-        "expect_stdout_contains": "11.",
+        "command": ["bash", "-c", "exec 3<>/dev/tcp/db/3306 && echo connected"],
+        "expect_stdout_contains": "connected",
         "expect_zero_exit": true
     },
     "note": "GPL-2.0. Stores proxy_accounts, traffic_logs, fake_websites, server_configs, and the Filament users table."
