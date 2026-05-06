@@ -22,6 +22,136 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.39] — 2026-05-06 — Cycle 2 (1 / 5): restore real drift detection for the panel via `ct:version`
+
+The Cycle 1 release (v0.0.37) gave manifests a vocabulary
+(`expect_no_version_line: true`) for declaring honestly that drift
+detection was off for a probe. v0.0.39 starts paying down the
+inventory of probes that *should* drift-check, beginning with the
+panel — which is the single component most likely to ship a code
+change between releases (every panel-side fix touches it).
+
+This is **Cycle 2, release 1 of 5** — one component per release per
+the agreed risk-management strategy. Order: panel (this release),
+redis, mariadb, sing-box, haproxy. caddy is informational-only and
+not slated.
+
+### Added
+
+- **`panel/app/Console/Commands/Version.php`** — new artisan
+  command (`php artisan ct:version`) that emits exactly one
+  stdout line in the shape `Cool Tunnel Panel <version>`, where
+  `<version>` is read from `config('cool-tunnel.version')`.
+  Output discipline matches the matcher's expectations:
+  plain `$this->line()` (no ANSI), exit 0 on success, exit 1
+  with diagnostic on `error` channel if the config key is empty
+  (so `expect_zero_exit: true` correctly flips to `VerifyFailed`
+  rather than silently passing).
+- **`panel/config/cool-tunnel.php::version`** — new config key
+  carrying the panel's release-of-record. Read by `ct:version`,
+  intentionally NOT env-driven (release-time fact, not operator
+  setting). `'version' => '0.0.39'` for this release.
+- **`panel/tests/Unit/VersionCommandTest.php`** — three unit
+  tests anchoring the matcher contract: (a) emits the expected
+  identity line for a configured version, (b) fails loudly when
+  the config key is empty (closes the v0.0.35 trap where a
+  silent-zero-exit would have resurrected `None => Ok` as the
+  load-bearing OK path), (c) `panel/config/cool-tunnel.php::version`
+  equals `manifests/panel.upstream.json::version` at test time —
+  catches a `make set-version` skip or hand-edit drift before
+  tag-cut.
+
+### Changed
+
+- **`manifests/panel.upstream.json`** — probe rewritten from the
+  v0.0.37 silenced-bash form to a direct artisan invocation
+  `["php", "/var/www/html/artisan", "ct:version"]`. Dropped the
+  `expect_no_version_line: true` opt-out (the panel now emits a
+  real version line so the soft version matcher should run).
+  Bumped pinned `version` from the stale `"0.0.33"` (last touched
+  in v0.0.33; six releases stale because `make set-version` had
+  never been run during the tactical-patch cadence) to `"0.0.39"`
+  so it matches what the artisan command actually emits today.
+  Note expanded to record the v0.0.34 → v0.0.35 → v0.0.37 →
+  v0.0.39 evolution of this single probe so future-readers can
+  reconstruct the design call.
+- **`Makefile::set-version`** — added a fourth `sed` step to bump
+  `panel/config/cool-tunnel.php::version` alongside
+  `core/Cargo.toml`'s workspace version and the three component
+  manifests. `make set-version V=X.Y.Z` is once again
+  authoritative for "every place a version string lives".
+- **`RELEASE.md` step 4** — checklist updated from "three places"
+  to "four places", adding `panel/config/cool-tunnel.php` with a
+  pointer to why the matcher trips when it drifts from the
+  manifest pin.
+
+### How drift detection works post-v0.0.39
+
+The matcher in `core/ct-server-core/src/components.rs::classify_verify`
+runs `installed.contains(&m.version)`, where:
+
+- `installed` is `first_line(stdout)` of the probe — for the
+  panel, that's `"Cool Tunnel Panel 0.0.39"` (or whatever the
+  deployed panel's `cool-tunnel.php::version` says).
+- `m.version` is the manifest's pinned string — `"0.0.39"`.
+
+Match → `Ok`. No match (operator deployed a panel with a
+different config-version, or shipped a manifest that pins an
+older release) → `VersionMismatch`, surfaced in the panel's
+Components page with the diagnostic
+`"installed version line ... does not match pinned ..."`. This
+is the first component on the panel-side stack where drift
+between deployed code and pinned manifest is now operator-
+visible.
+
+### Compatibility
+
+- **Pre-v0.0.39 deployments** — operators who pull v0.0.39 but
+  haven't rebuilt the panel image will see `VersionMismatch` for
+  the panel row (probe runs against an old artisan command set
+  that lacks `ct:version`). Recovery: `make update` rebuilds the
+  panel image and the row flips back to `Ok`. This is the
+  intended behaviour — it surfaces the "deployed code older than
+  manifest" condition that pre-v0.0.39 was silently invisible.
+- **`expect_no_version_line` semantics** — unchanged. The five
+  remaining silenced manifests (caddy, haproxy, mariadb, redis,
+  sing-box) keep the field; their drift-detection restoration is
+  Cycle 2 / 2..5.
+
+### Out of scope
+
+- redis, mariadb, sing-box, haproxy probes still ride the
+  v0.0.37 liveness-only branch. Each will get its own release —
+  redis next (low-cost banner read via `redis-cli info server`).
+- `docs/components.md` 8 → 11 component-table truth-up still
+  pending; can be folded into Cycle 2 / 2 (redis) at zero cost.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. The panel row now reports
+`installed=Cool Tunnel Panel 0.0.39 — verified` instead of the
+v0.0.37 `installed=— verified (liveness)`. To verify the artisan
+command directly:
+
+```sh
+docker compose exec panel php artisan ct:version
+# Cool Tunnel Panel 0.0.39
+```
+
+To prove drift detection actually fires: temporarily edit
+`panel/config/cool-tunnel.php::version` to `"0.0.99"` and re-run
+`component check`. The panel row flips to `VersionMismatch`.
+Revert the edit; the row goes back to `Ok`.
+
+---
+
 ## [0.0.38] — 2026-05-06 — wire `CT_CORE_BUILD_PROFILE` through `docker-compose.yml` so the `.env` knob actually works
 
 `CT_CORE_BUILD_PROFILE` has lived in `.env.example` since the
