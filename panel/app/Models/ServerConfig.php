@@ -42,10 +42,9 @@ class ServerConfig extends Model
         // firstOrCreate keeps the singleton invariant under concurrent
         // first-boot seeding.
         return static::firstOrCreate(['id' => 1], [
-            'domain' => env('DOMAIN', 'proxy.example.com'),
-            'acme_email' => env('ACME_EMAIL', 'admin@example.com'),
-            'acme_directory' => env('ACME_DIRECTORY',
-                'https://acme-v02.api.letsencrypt.org/directory'),
+            'domain' => config('cool-tunnel.domain'),
+            'acme_email' => config('cool-tunnel.acme_email'),
+            'acme_directory' => config('cool-tunnel.acme_directory'),
         ]);
     }
 

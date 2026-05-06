@@ -19,11 +19,11 @@ class ComponentCheck extends Command
         $this->table(
             ['Status', 'Component', 'Pinned', 'Installed', 'Message'],
             collect($rows)->map(fn ($r) => [
-                ($r['state'] ?? 'unknown') === 'ok' ? 'OK' : 'NG',
-                $r['name'] ?? '?',
-                $r['pinned_version'] ?? '',
+                $r['state'] === 'ok' ? 'OK' : 'NG',
+                $r['name'],
+                $r['pinned_version'],
                 $r['installed_version'] ?? '—',
-                $r['message'] ?? '',
+                $r['message'],
             ])->all(),
         );
         $summary = $checker->summarize($rows);
