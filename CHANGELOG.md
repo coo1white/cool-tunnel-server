@@ -22,6 +22,181 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.42] — 2026-05-06 — Cycle 2 (4 / 5): restore real drift detection for sing-box via authenticated clash-API `/version`
+
+The most architecturally invasive Cycle 2 release so far. Unlike
+panel / redis / mariadb (which had a ready-made stdout banner or a
+shell-runnable identity query), sing-box exposes its version only
+through its **clash-API admin endpoint**, which is bearer-token
+authenticated against a per-install secret derived from
+`CT_CLASH_SECRET_SEED`. The probe needs that secret at probe time,
+and the secret derivation must agree bit-for-bit with the panel
+renderer's — anything else is silent drift.
+
+Solution: a new `ct-server-core admin clash-secret` CLI subcommand
+that prints the same secret the renderer uses, calling the same
+`singbox::clash_secret()` function. **Single source of truth**
+across probe, renderer, and daemon. A future change to the
+derivation (BLAKE2, salting, etc.) cannot desync the probe from
+sing-box's actual configured secret.
+
+### Added
+
+- **`ct-server-core admin clash-secret`** — new top-level CLI
+  subcommand. Prints the SHA-256-derived clash bearer token
+  (`hex(sha256("ct-clash-secret-v1:" + $CT_CLASH_SECRET_SEED))`)
+  to stdout on success, exits non-zero with a loud error if
+  `CT_CLASH_SECRET_SEED` is unset (the v0.0.x R2-2 vulnerability
+  surfaces as `VerifyFailed` rather than producing a falsy secret).
+  Wraps the existing pre-v0.0.42 `singbox::clash_secret()` —
+  no new derivation logic, just CLI surface.
+- **`jq` in the panel image** — `apk add` now includes `jq`
+  (~600 KiB). Required by the new probe to extract `.version`
+  from sing-box's clash-API JSON response. The `--silent` and
+  `-r` flags keep stdout clean for the matcher's
+  `installed.contains(&m.version)` check.
+
+### Changed
+
+- **`manifests/sing-box.upstream.json`** — probe rewritten from
+  the v0.0.37 silenced TCP-open form to:
+  ```bash
+  bash -c 'set -eo pipefail; SECRET="$(ct-server-core admin clash-secret)"; curl -sf -m 10 -H "Authorization: Bearer $SECRET" "$SINGBOX_CLASH_URL/version" | jq -r .version'
+  ```
+  `set -eo pipefail` is the key hygiene — without it, a failed
+  curl followed by an empty-stdin jq could land at exit 0 in
+  some jq versions (the same shape of silent-failure trap that
+  v0.0.35 originally created at the matcher level). Dropped
+  `expect_no_version_line: true`. Pinned `version` stays at
+  `"1.13.11"` (matches `docker/sing-box/Dockerfile::ARG SING_BOX_VERSION`).
+  `note` expanded with the v0.0.34 → v0.0.42 evolution.
+- **Workspace `version` bumped** from `0.0.34` to `0.0.35` in
+  `core/Cargo.toml`. The Rust workspace gained the new
+  `Admin::ClashSecret` enum variant — additive within `ct-protocol`
+  and the CLI surface, stays inside V1 per VERSIONING.md.
+- **`manifests/ct-server-core.upstream.json::version`** — bumped
+  from the stale `"0.0.33"` to `"0.0.35"` to match the new
+  `core/Cargo.toml` version. Without this the matcher would have
+  flipped the `ct-server-core` row to `VersionMismatch` on every
+  Components page check after v0.0.42 ships (the binary's
+  `version` subcommand emits the new 0.0.35 value, the manifest
+  was still pinning the pre-v0.0.37 value). The manifest pin had
+  been silently stale since the v0.0.33-only release of
+  `make set-version`; the silenced sing-box probe had been
+  masking it, but with drift detection back on, the discipline
+  matters.
+- **`manifests/ct-protocol.upstream.json::version`** — bumped
+  `"0.0.33"` → `"0.0.35"` for parallelism with `ct-server-core`.
+  This is purely cosmetic (`kind: rust-crate` is matcher-trusted
+  via the lockfile), but the panel page renders the pinned
+  version, and operators reading the row should see a string
+  consistent with the workspace.
+
+### How drift detection now works for sing-box
+
+Probe runs in panel container:
+
+```bash
+set -eo pipefail
+SECRET="$(ct-server-core admin clash-secret)"  # SHA-256 of $CT_CLASH_SECRET_SEED
+curl -sf -m 10 -H "Authorization: Bearer $SECRET" \
+     "$SINGBOX_CLASH_URL/version" | jq -r .version
+```
+
+| Failure | Probe exit | Matcher state |
+|---|---|---|
+| `CT_CLASH_SECRET_SEED` unset / empty | non-zero (errexit propagates) | `VerifyFailed` |
+| Wrong bearer (`401`/`403`) | exit 22 (`curl -f` + pipefail) | `VerifyFailed` |
+| sing-box down (connection refused) | exit 7 | `VerifyFailed` |
+| Probe timeout (`-m 10`) | exit 28 | `VerifyFailed` |
+| `jq` parse failure (malformed JSON) | non-zero (pipefail catches) | `VerifyFailed` |
+| 200 OK + JSON missing `.version` | exit 0, output `null` | `VersionMismatch` (operator sees `installed=null`) |
+| Healthy + matched | exit 0, output `1.13.11` | `Ok` (`installed=1.13.11`) |
+| Drift (deployed `1.13.12`, manifest pins `1.13.11`) | exit 0, output `1.13.12` | `VersionMismatch` |
+
+No silent failures — `set -eo pipefail` plus `curl -f` plus the
+authoritative-secret CLI subcommand mean every legitimate failure
+mode surfaces on the Filament Components page.
+
+### Compatibility
+
+- **Pre-v0.0.42 deployments** — operators who pull v0.0.42 but
+  don't rebuild the panel image will see `VerifyFailed` for the
+  sing-box row (the new probe references `ct-server-core admin
+  clash-secret` and `jq`, neither of which exists in older panel
+  containers). Recovery: `make update` rebuilds the panel image
+  and the row flips to `Ok`. Same "deployed code older than
+  manifest" surfacing as v0.0.39 / v0.0.40 / v0.0.41.
+- **Pre-v0.0.42 sing-box deployments** — if the operator's
+  deployed sing-box image is older than `1.13.11` (e.g. they
+  paused updates), the probe will land as `VersionMismatch`,
+  which is **correct** drift-detection behaviour. `make update`
+  rebuilds sing-box from `docker/sing-box/Dockerfile`'s pinned
+  `ARG SING_BOX_VERSION=1.13.11` and the row resolves to `Ok`.
+- **`expect_no_version_line` semantics** — unchanged. Only
+  haproxy still carries the field; Cycle 2 / 5 closes that.
+- **Side discovery** during v0.0.42 scoping: `env_file: - .env`
+  on the panel service ([docker-compose.yml:305](docker-compose.yml:305))
+  already injects every `.env` key into the panel container's
+  environment, so the `REDIS_PASSWORD` / `DB_USERNAME` /
+  `DB_PASSWORD` additions in v0.0.40 / v0.0.41's `environment:`
+  blocks were redundant (no regression — duplicate vars with
+  identical values are a no-op). v0.0.42 does not duplicate
+  `CT_CLASH_SECRET_SEED` for the same reason. Cleanup of the
+  v0.0.40 / v0.0.41 redundancy is a future tidy-up release.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. The sing-box row now reports
+`installed=1.13.11 — verified` instead of v0.0.37's
+`installed=— verified (liveness)`. The `ct-server-core` row stays
+`Ok` because its manifest pin was bumped to match the new
+workspace version.
+
+### Validation one-liner
+
+```sh
+docker compose exec panel bash -c \
+    'set -eo pipefail; SECRET="$(ct-server-core admin clash-secret)"; curl -sf -m 10 -H "Authorization: Bearer $SECRET" "$SINGBOX_CLASH_URL/version" | jq -r .version'
+# Expect: 1.13.11
+```
+
+To prove the secret derivation matches between probe and renderer:
+
+```sh
+docker compose exec panel ct-server-core admin clash-secret
+# Expect: 64-char hex string — same value the renderer wrote into
+# /etc/sing-box/config.json's experimental.clash_api.secret field
+```
+
+To prove drift detection actually fires:
+
+```sh
+make set-component-version COMPONENT=sing-box V=9.9.9
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+# sing-box row → VersionMismatch
+make set-component-version COMPONENT=sing-box V=1.13.11
+```
+
+### Out of scope (Cycle 2, release 5 / 5)
+
+- haproxy probe (stats socket `show info` over
+  `/var/run/haproxy/admin.sock`) — needs socket mount in compose;
+  release 5 / 5, the final Cycle 2 release
+- caddy stays informational-only — not slated
+- The `make set-version` / `make set-component-version` family is
+  comprehensive after this release; no Makefile changes
+- `panel/.gitignore` truth-up still pending — minor follow-up
+
+---
+
 ## [0.0.41] — 2026-05-06 — Cycle 2 (3 / 5): restore real drift detection for mariadb via `SELECT VERSION()`
 
 Continuing the per-component drift-detection restoration. v0.0.39
