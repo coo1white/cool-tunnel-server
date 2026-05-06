@@ -26,6 +26,7 @@ class FakeSiteController extends Controller
         // PHP's string-interpolation parser does not accept the
         // null-coalescing operator inside `{...}`, so resolve the
         // template name first.
+        // @phpstan-ignore-next-line nullsafe.neverNull ($site is null when FakeWebsite table has no rows)
         $template = $site?->template ?? 'blog';
         $body = view("fake-sites.{$template}", [
             'site' => $site,

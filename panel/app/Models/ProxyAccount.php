@@ -9,6 +9,7 @@ use App\Services\RedisRevocationBus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 
@@ -39,6 +40,20 @@ use Illuminate\Support\Facades\DB;
 // directly (not as a hash), so we have to keep the cleartext at
 // rest. password_hash is preserved for audit/legacy purposes.
 
+/**
+ * @property int $id
+ * @property string $username
+ * @property string $password_hash
+ * @property string|null $password_cleartext_encrypted
+ * @property string|null $label
+ * @property bool $enabled
+ * @property int|null $quota_bytes
+ * @property int $used_bytes
+ * @property Carbon|null $expires_at
+ * @property Carbon|null $last_seen_at
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ */
 class ProxyAccount extends Model
 {
     use HasFactory;

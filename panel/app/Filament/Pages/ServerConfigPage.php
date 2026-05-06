@@ -16,6 +16,9 @@ use Filament\Forms\Form;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 
+/**
+ * @property Form $form Provided by InteractsWithForms (Filament magic).
+ */
 class ServerConfigPage extends Page implements HasForms
 {
     use InteractsWithForms;
