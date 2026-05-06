@@ -76,6 +76,17 @@ allow = [
 # Anything not on `allow` is denied by default.
 confidence-threshold = 0.93   # cargo-deny's default; bump if false-positives.
 
+# Mark our own (publish=false) workspace crates as private so cargo-deny
+# does not reject them as `unlicensed`. They carry
+# `license-file = "../LICENSE"` (proprietary "All Rights Reserved") rather
+# than an SPDX expression on the `license` field, and cargo-deny only
+# recognises SPDX. The `publish = false` in `[workspace.package]` is the
+# canonical declaration that these never reach a public registry; this
+# stanza tells cargo-deny to honour it. Third-party deps still go through
+# the full licence check.
+[licenses.private]
+ignore = true
+
 [bans]
 # Don't allow crates with multiple-version diamonds — an N-N+1 same-
 # crate pair usually means an upgrade was incomplete.
