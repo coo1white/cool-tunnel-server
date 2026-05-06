@@ -21,6 +21,7 @@ RUN apk add --no-cache \
         bash \
         curl \
         git \
+        jq \
         unzip \
         xz \
         icu-dev \

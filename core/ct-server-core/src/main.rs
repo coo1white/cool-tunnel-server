@@ -157,8 +157,28 @@ enum Cmd {
         #[command(subcommand)]
         op: ComponentOp,
     },
+    /// sing-box clash-API administration helpers.
+    Admin {
+        #[command(subcommand)]
+        op: AdminOp,
+    },
     /// Print the build manifest.
     Version,
+}
+
+#[derive(Subcommand, Debug)]
+enum AdminOp {
+    /// Print the derived clash-API bearer secret to stdout. Used
+    /// by manifests/sing-box.upstream.json's drift-detection probe
+    /// (Cycle 2 / 4, v0.0.42) to authenticate against the sing-box
+    /// clash-API /version endpoint. Single source of truth — calls
+    /// the same `singbox::clash_secret()` function the panel
+    /// renderer and the daemon use, so a future change to the
+    /// derivation (BLAKE2, salting, etc.) cannot create silent
+    /// drift between probe-time and render-time. Reads
+    /// `CT_CLASH_SECRET_SEED` from the environment; errors loudly
+    /// if unset (probe falls through to `VerifyFailed`).
+    ClashSecret,
 }
 
 #[derive(Subcommand, Debug)]
@@ -458,6 +478,13 @@ async fn dispatch(cli: Cli) -> Result<()> {
             }
             ComponentOp::Check { manifests } => {
                 components::print_check(&manifests, &cli.database_url, cli.json).await
+            }
+        },
+        Cmd::Admin { op } => match op {
+            AdminOp::ClashSecret => {
+                let secret = singbox::clash_secret()?;
+                println!("{secret}");
+                Ok(())
             }
         },
         Cmd::Version => {
