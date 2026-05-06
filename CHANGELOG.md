@@ -22,6 +22,63 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.31] — 2026-05-06 — install.sh poka-yokes for stale clone + Docker state
+
+Two preventative checks added to `scripts/install.sh` before any
+Docker build or `compose up` runs. Both surface the most common
+"fresh install fails on first try" patterns explicitly, with
+remediation prompts, instead of letting them cascade into opaque
+downstream errors (PHP `BOOL_TRUE` parse failures from old
+opcache.ini, MariaDB `1045 Access denied for user 'cooltunnel'`
+from stale `db_data` volumes).
+
+Real-world catch from the v0.0.22 deployment arc that ended at
+v0.0.30: an operator's VPS clone predated the v0.0.25 opcache.ini
+hotfix, so the bake-time `COPY opcache.ini` brought in the
+broken version, *and* a prior failed install left a
+`cool-tunnel-server_db_data` volume seeded with the previous
+`DB_PASSWORD` while `.env` had a freshly-generated one. Both
+failed at step 8 (migrations) with no signal that the cause was
+operator state, not project code.
+
+### Added
+
+- **Pre-flight check: clone freshness.** New step 3 (between
+  `.env` validation and the image build phase) runs
+  `git fetch --quiet origin main`, compares the local HEAD to
+  `origin/main` via `git merge-base`, and routes on the four
+  possible states: up-to-date, behind (offers `git pull
+  --ff-only`), ahead (notes it, assumes intentional), diverged
+  (prompts before continuing). After a successful pull the
+  step warns the operator that `install.sh` itself may have
+  been the file that updated and offers to abort so they re-run
+  with the fresh script. Skips silently if the install isn't a
+  git checkout (tarball installs).
+
+- **Pre-flight check: leftover Docker state.** Same step,
+  second half. Counts existing project containers
+  (`compose ps -a -q`) and project-prefixed volumes
+  (`docker volume ls`). Any count > 0 surfaces the `1045
+  Access denied` failure mode in plain language and offers
+  `compose down -v` (DESTRUCTIVE — defaults to N). Operators
+  on a known-good upgrade path can decline; first-time
+  installers re-trying after a partial failure can wipe and
+  proceed.
+
+Both prompts use the existing `prompt_yn` helper from `lib.sh`,
+so non-interactive runs (CI) take the safe default and don't
+hang. `shellcheck -x` clean.
+
+### Changed
+
+- `scripts/install.sh` step numbering shifts by one for steps
+  formerly 3-13, since the new pre-flight is now step 3. Step
+  numbers aren't load-bearing (no scripts grep them) but worth
+  flagging for operators reading old runbook drafts side-by-side
+  with the running script.
+
+---
+
 ## [0.0.30] — 2026-05-06 — larastan v3 + phpstan v2 upgrade
 
 PR #2 installed larastan + phpstan on top of v0.0.29 to clear the
