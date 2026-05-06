@@ -22,6 +22,95 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.35] — 2026-05-06 — silent component-check probes (drop verify-stage version match)
+
+After v0.0.34's manifest rewrite, the Components page went from
+`could not exec docker` (7 NG) to "verify ran but stdout doesn't
+contain pinned version" (6 NG). The probe layer worked; a second
+stage tripped them.
+
+### Root cause
+
+`core/ct-server-core/src/components.rs::check_one` (lines 183-187)
+runs a **soft version match** *after* the verify command's
+`expect_zero_exit` and `expect_stdout_contains` checks pass:
+
+```rust
+let state = match installed.as_deref() {
+    Some(line) if line.contains(&m.version) => ComponentStateV1::Ok,
+    Some(_) => ComponentStateV1::VersionMismatch,
+    None => ComponentStateV1::Ok,
+};
+```
+
+`installed` is `first_line(stdout)`. If the verify command
+produces *any* stdout that doesn't contain the pinned version
+string, the result flips to VersionMismatch. v0.0.34's probes
+emitted `connected` / `308` / `Laravel Framework 11.51.0`, none
+of which contain `v2.9-alpine` / `7-alpine` / `0.0.33` / etc.
+
+### Changed
+
+The TCP / HTTP probes added in v0.0.34 don't *have* a version
+string to assert — they're pure liveness probes. The right
+shape for a liveness probe under this checker is **silent on
+success**: empty stdout makes `first_line(stdout) → None`,
+which falls into the `None => Ok` branch (verify passed; no
+version line to compare).
+
+Updated the six liveness probes accordingly:
+
+| Component   | v0.0.34 probe                                                                | v0.0.35 probe (silent)                                              |
+|-------------|------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| caddy       | `curl … -w '%{http_code}' http://caddy:80/` + `expect_stdout_contains: "308"` | `curl -sIo /dev/null --connect-timeout 5 http://caddy:80/`         |
+| haproxy     | `bash -c 'exec 3<>/dev/tcp/haproxy/443 && echo connected'`                    | `bash -c 'exec 3<>/dev/tcp/haproxy/443'`                            |
+| mariadb     | `bash -c 'exec 3<>/dev/tcp/db/3306 && echo connected'`                        | `bash -c 'exec 3<>/dev/tcp/db/3306'`                                |
+| panel       | `php /var/www/html/artisan --version` + `expect_stdout_contains: "Laravel..."` | `bash -c 'php /var/www/html/artisan --version > /dev/null'`        |
+| redis       | `bash -c 'exec 3<>/dev/tcp/redis/6379 && echo connected'`                     | `bash -c 'exec 3<>/dev/tcp/redis/6379'`                             |
+| sing-box    | `bash -c 'exec 3<>/dev/tcp/sing-box/443 && echo connected'`                   | `bash -c 'exec 3<>/dev/tcp/sing-box/443'`                           |
+
+`bash`'s `exec 3<>/dev/tcp/host/port` form opens FD 3 on the
+TCP socket and continues — the redirect's exit status is the
+last command's status (0 on connect, non-zero on connect-
+refused). With no `&& echo` after it, stdout is empty and the
+checker correctly classifies the result as "verify passed, no
+version line, OK". The `naiveproxy` (silent `grep -q`) and
+`naiveproxy-client` (silent `test -x`) probes already used the
+silent pattern and stayed OK throughout.
+
+### Why not improve the checker instead
+
+Adding an opt-in `expect_no_version_line` field to `VerifyV1`
+would be cleaner protocol-wise but requires a `ct-protocol`
+edit + crate version bump + client-side awareness. For a
+single-cycle hotfix on JSON-only manifests, "make probes
+silent" is the smaller change. The protocol-level fix is a
+candidate for v0.1 alongside the structured-probe work
+deferred from R1-1.
+
+### Operator recovery
+
+Same pattern as v0.0.34 — manifests are RO-mounted into the
+panel; `git pull` exposes the new verify commands without an
+image rebuild:
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+# Or click "Re-check" on the Components page.
+```
+
+Expected after pull: **11 / 11 OK**.
+
+The "Installed" column will show `—` for the silent-probe
+services (caddy, haproxy, mariadb, naiveproxy, panel, redis,
+sing-box). Version pinning is still enforced at image-build
+time by the docker tag in `docker-compose.yml`, and the
+manifest-drift CI guard cross-checks it on every PR.
+
+---
+
 ## [0.0.34] — 2026-05-06 — component-check verify commands run inside the panel
 
 The Components page on the new public admin panel (v0.0.33) showed
