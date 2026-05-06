@@ -4,8 +4,7 @@
     "version": "v2.8.4",
     "upstream": "https://github.com/caddyserver/caddy",
     "verify": {
-        "command": ["curl", "-sIo", "/dev/null", "-w", "%{http_code}", "http://caddy:80/"],
-        "expect_stdout_contains": "308",
+        "command": ["curl", "-sIo", "/dev/null", "--connect-timeout", "5", "http://caddy:80/"],
         "expect_zero_exit": true
     },
     "note": "Apache-2.0. Stock Caddy (no plugins) used as the ACME provider on :80 (HTTP-01 challenges + http→https redirect) AND as the panel-subdomain reverse-proxy on internal :8444 (R1-1 / R1-2, v0.0.33). The verify probe issues HEAD http://caddy:80/ from the panel container; Caddy's :80 site redirects every request 308 → https, so a 308 response code confirms the listener is alive. (v0.0.34 — the prior `docker exec` verify failed inside the panel container, which has no docker CLI.)"

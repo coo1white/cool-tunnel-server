@@ -4,8 +4,7 @@
     "version": "7-alpine",
     "upstream": "https://hub.docker.com/_/redis",
     "verify": {
-        "command": ["bash", "-c", "exec 3<>/dev/tcp/redis/6379 && echo connected"],
-        "expect_stdout_contains": "connected",
+        "command": ["bash", "-c", "exec 3<>/dev/tcp/redis/6379"],
         "expect_zero_exit": true
     },
     "note": "BSD-3. Used by Laravel for cache, sessions, and the queue worker that serializes Caddy reload jobs."
