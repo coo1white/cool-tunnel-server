@@ -22,6 +22,155 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.41] — 2026-05-06 — Cycle 2 (3 / 5): restore real drift detection for mariadb via `SELECT VERSION()`
+
+Continuing the per-component drift-detection restoration. v0.0.39
+closed the panel; v0.0.40 closed redis; v0.0.41 closes mariadb.
+The probe goes from a TCP-open liveness check to an authenticated
+`SELECT VERSION()` against the live daemon — drift between the
+deployed patch version and the operator's version-of-record is
+now visible on the Components page. The smallest Cycle 2 release
+so far: no Dockerfile change (`mariadb-client` was already in the
+panel image), no Makefile change (`set-component-version` shipped
+in v0.0.40), 3 files total.
+
+Strategic decision: Option A (exact patch pin), pinned to **11.8.6**
+— operator-confirmed via `docker compose exec db mariadbd --version`
+against the live VPS deployment. Note the deployed string is
+`11.8.6-MariaDB-ubu2404` (Ubuntu 24.04 build flavour); the matcher's
+`installed.contains("11.8.6")` resolves cleanly against any of the
+shapes `SELECT VERSION()` returns (`11.8.6-MariaDB`, `11.8.6-MariaDB-1`,
+or `11.8.6-MariaDB-ubu2404`) so a build-flavour change alone won't
+trip a false-positive VersionMismatch.
+
+### Added
+
+- **`docker-compose.yml::panel.environment`** — exposes
+  `DB_USERNAME: "${DB_USERNAME}"` and
+  `DB_PASSWORD: "${DB_PASSWORD}"` to the panel container. Laravel
+  itself reads these from `.env` via phpdotenv at PHP boot —
+  phpdotenv does NOT export to the shell environment of arbitrary
+  processes, so a `bash -c 'mariadb -u $DB_USERNAME ...'` probe
+  spawned by the matcher would have seen them as empty without
+  this explicit duplication. Same pattern as the v0.0.40
+  REDIS_PASSWORD addition. `DB_DATABASE` is intentionally **not**
+  duplicated — `SELECT VERSION()` is a system function that
+  doesn't need a database context, and excluding the schema name
+  trims one more value from the `ps`-window exposure surface.
+
+### Changed
+
+- **`manifests/mariadb.upstream.json`** — probe rewritten from
+  the v0.0.37 silenced TCP-open form to:
+  ```
+  bash -c 'MYSQL_PWD="$DB_PASSWORD" mariadb -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -BN -e "SELECT VERSION()"'
+  ```
+  `-BN` (batch + no-headers) strips the ASCII-table formatting so
+  `first_line(stdout)` is exactly `<version>-MariaDB[-build]`. The
+  matcher's `installed.contains(&m.version)` asserts the pinned
+  `version` field is contained in that line. Dropped
+  `expect_no_version_line: true`. Bumped pinned `version` from
+  the major-only string `"11"` to the exact patch `"11.8.6"`.
+  `note` expanded with the v0.0.34 → v0.0.35 → v0.0.37 → v0.0.41
+  evolution and the auth-discipline rationale.
+
+### Auth posture
+
+The probe uses the existing app user (`DB_USERNAME` /
+`DB_PASSWORD`) rather than a dedicated `health` user with
+`USAGE`-only privileges. Two reasons:
+
+1. **`SELECT VERSION()` is a system function.** Any authenticated
+   user can call it regardless of grants — the existing app user
+   is no more privileged for this probe than a dedicated health
+   user would be.
+2. **Provisioning cost.** A dedicated user requires new env vars
+   (`HEALTH_DB_USERNAME` / `HEALTH_DB_PASSWORD`), an install.sh
+   GRANT statement, and `.env.example` updates. That's a separate
+   discipline release worth its own forensic; v0.0.41 stays
+   surgical.
+
+The probe never writes, never reads schema rows, and only invokes
+the `VERSION()` function — its blast radius if `DB_PASSWORD` were
+to leak via this code path is identical to the existing leak
+surface (Laravel itself uses the same credential against the
+same daemon every request).
+
+### How drift detection now works for mariadb
+
+| Failure | Probe exit | Matcher state |
+|---|---|---|
+| Wrong `DB_PASSWORD` (Access denied) | non-zero | `VerifyFailed` |
+| db container down / not ready | non-zero (Can't connect) | `VerifyFailed` |
+| `mariadb` CLI missing from panel image | 127 | `VerifyFailed` |
+| Probe hangs (deadlock / TCP wedge) | matcher's 15 s timeout | `VerifyFailed` |
+| Deployed `11.8.7`, manifest pins `11.8.6` | exit 0, stdout mismatches pin | `VersionMismatch` |
+| Healthy + matched | exit 0, stdout matches pin | `Ok` (`installed=11.8.6-MariaDB-...`) |
+
+No silent failures.
+
+### Compatibility
+
+- **Pre-v0.0.41 deployments** — operators who pull v0.0.41 but
+  don't restart the panel container will see `VerifyFailed` for
+  the mariadb row (the probe references `$DB_USERNAME` /
+  `$DB_PASSWORD` env vars that aren't on the running container
+  yet). Recovery: `make update` recreates the panel container
+  with the new env block and the row flips to `Ok`.
+- **`mariadb:11` floating tag in compose** — left as-is per the
+  v0.0.40 scope agreement. Three-way (compose ↔ image ↔
+  manifest) lockstep pinning is a separate discipline release.
+- **Other silenced manifests** — sing-box and haproxy keep
+  `expect_no_version_line: true`. Cycle 2 / 4, 5 next.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. The mariadb row now reports
+`installed=11.8.6-MariaDB-... — verified` instead of v0.0.37's
+`installed=— verified (liveness)`.
+
+### Validation one-liner
+
+```sh
+docker compose exec panel bash -c \
+    'MYSQL_PWD="$DB_PASSWORD" mariadb -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" -BN -e "SELECT VERSION()"'
+# Expect: 11.8.6-MariaDB-ubu2404   (or whatever your daemon returns)
+```
+
+To prove drift detection actually fires:
+
+```sh
+make set-component-version COMPONENT=mariadb V=9.9.9   # fake drift
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+# mariadb row → VersionMismatch
+make set-component-version COMPONENT=mariadb V=11.8.6  # restore
+```
+
+### Out of scope (Cycle 2, releases 4 / 5..5 / 5)
+
+- sing-box probe (clash-API `/version`) — needs admin port
+  exposure decision; release 4 / 5
+- haproxy probe (stats socket `show info` over
+  `/var/run/haproxy/admin.sock`) — needs socket mount in compose;
+  release 5 / 5
+- caddy stays informational-only (HTTP HEAD reachability) — no
+  drift detection; not slated
+- Dedicated `health` DB user provisioning — separate discipline
+  release; not blocking (see "Auth posture" above)
+- Pinning compose's floating tags (`mariadb:11`, `redis:7-alpine`)
+  to exact patches — separate three-way-lockstep discipline release
+- `panel/.gitignore` truth-up for the phpunit/Laravel cache files
+  — still pending
+
+---
+
 ## [0.0.40] — 2026-05-06 — Cycle 2 (2 / 5): restore real drift detection for redis via `redis-cli INFO Server`
 
 Continuing the per-component drift-detection restoration agreed in
