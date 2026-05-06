@@ -124,6 +124,22 @@ class ProxyAccount extends Model
     /**
      * Full HTTPS subscription URL for this account.
      * Returns null when APP_KEY is unset or the domain is not yet configured.
+     *
+     * Hostname MUST be the panel subdomain (panel.<domain>), not the apex
+     * (<domain>) — the v0.0.33 haproxy SNI router routes the apex to
+     * sing-box (NaiveProxy) and the panel subdomain to caddy → panel.
+     * A request to https://<domain>/api/v1/subscription/<token> hits
+     * sing-box, which has no HTTP API and returns 400. The pre-v0.0.53
+     * URL generator predated the SNI split (added in v0.0.7, before the
+     * apex/panel domain split landed in v0.0.33) and was never updated
+     * — silent breakage for any operator using the macOS client's
+     * "Import from subscription URL" flow.
+     *
+     * The "panel." prefix matches haproxy.cfg.tpl's hardcoded
+     * convention (`use_backend panel_caddy if { req_ssl_sni -i panel.<base> }`).
+     * If a future deployment ever wants a different panel hostname, the
+     * change lands in BOTH this method and the haproxy template; for
+     * now they're paired by the same hardcoded prefix on both sides.
      */
     public function subscriptionUrl(): ?string
     {
@@ -136,7 +152,7 @@ class ProxyAccount extends Model
             return null;
         }
 
-        return "https://{$domain}/api/v1/subscription/{$token}";
+        return "https://panel.{$domain}/api/v1/subscription/{$token}";
     }
 
     /** Whether the account is currently considered active by sing-box. */
