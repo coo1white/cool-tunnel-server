@@ -361,12 +361,19 @@ ok "sing-box running on :443 (TCP only — NaiveProxy is HTTP/2-only)"
 # ---------- Create first Filament admin ----------------------------
 
 step "Create the first Filament admin user (interactive prompt follows)"
+# Use the project's ct:make-admin command, NOT Filament's stock
+# `make:filament-user`. The User model drops `password`, `role`,
+# and `is_active` from $fillable for audit H3, so the stock
+# command's `User::create([...])` silently strips `password` and
+# the insert fails with "Field 'password' doesn't have a default
+# value". `ct:make-admin` writes the privileged fields by direct
+# property access. (v0.0.32 — first-real-deploy fix.)
 if [[ -t 0 ]]; then
-    compose exec panel php artisan make:filament-user \
-        || warn "could not create admin — re-run later with: docker compose exec panel php artisan make:filament-user"
+    compose exec panel php artisan ct:make-admin \
+        || warn "could not create admin — re-run later with: docker compose exec panel php artisan ct:make-admin"
 else
     warn "non-interactive run - skipping admin creation"
-    warn "create one later with: docker compose exec panel php artisan make:filament-user"
+    warn "create one later with: docker compose exec panel php artisan ct:make-admin"
 fi
 
 # ---------- Final OK/NG check --------------------------------------

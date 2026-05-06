@@ -22,6 +22,66 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.32] — 2026-05-06 — `ct:make-admin` command for hardened User model
+
+Step 14 of `install.sh` (create the first Filament admin) failed
+on first real-world Debian 13 deploy with:
+
+```
+SQLSTATE[HY000]: General error: 1364 Field 'password'
+doesn't have a default value
+```
+
+Filament's stock `make:filament-user` calls
+`User::create(['name' => …, 'email' => …, 'password' => Hash::make(…)])`.
+Cool Tunnel's `User` model deliberately removes `password`,
+`role`, and `is_active` from `$fillable` (audit H3 — a
+mass-assignment privilege-escalation defence), so the
+`password` key is silently stripped from the insert. The DB
+column is NOT NULL with no default, so the insert hits 1364
+and the admin is never created. The User model's docblock
+spelled out the intended path ("Set `password` via the
+framework's `setPasswordAttribute`") but no console command
+followed through.
+
+### Added
+
+- **`php artisan ct:make-admin` console command** in
+  `panel/app/Console/Commands/MakeAdmin.php`. Mirrors
+  Filament's stock UX (interactive prompts for name / email /
+  password, with `--name` / `--email` / `--password` flags
+  for scripted use; password input via `$this->secret()` so
+  it doesn't echo). Writes the privileged fields by direct
+  property assignment so they bypass `$fillable`; the User
+  model's `'hashed'` cast on `password` performs the hash-on-
+  assign. `role` is set to `User::ROLE_ADMIN`, `is_active` to
+  `true` — both explicit so the command is self-documenting
+  about the privilege state of rows it creates. Validates
+  name + RFC email + `min:8` password, refuses duplicate
+  emails. `phpstan analyse` (level 5, larastan v3) clean.
+
+### Changed
+
+- **`scripts/install.sh` step 14** invokes `ct:make-admin`
+  instead of `make:filament-user`. The on-failure and non-
+  interactive hint texts also point operators at the new
+  command.
+
+### Operator recovery for the failed first install
+
+The panel source is bind-mounted via `./panel:/var/www/html`
+(see `docker-compose.yml`), so a `git pull` on the host
+immediately exposes the new command inside the running
+container — no image rebuild needed:
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+docker compose exec panel php artisan ct:make-admin
+```
+
+---
+
 ## [0.0.31] — 2026-05-06 — install.sh poka-yokes for stale clone + Docker state
 
 Two preventative checks added to `scripts/install.sh` before any
