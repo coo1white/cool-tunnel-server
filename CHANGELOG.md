@@ -22,6 +22,110 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.46] — 2026-05-06 — Compose env DRY: strip the v0.0.40 / v0.0.41 / v0.0.42 redundant duplications
+
+The bookend to the Cycle 2 stabilisation phase. v0.0.45 made
+version drift structurally impossible; v0.0.46 makes the
+*configuration* DRY by removing three explicit `environment:`
+entries that `env_file: - .env` already injects.
+
+The redundant duplications crept in across the Cycle 2 sprint:
+v0.0.40 added `REDIS_PASSWORD`, v0.0.41 added `DB_USERNAME` /
+`DB_PASSWORD`, each with a multi-paragraph comment explaining
+why the probe needed them as bare env vars. The v0.0.42 forensic
+caught the redundancy:
+
+> Side discovery: env_file: - .env on the panel service already
+> injects every .env key into the panel container's environment.
+> The REDIS_PASSWORD / DB_USERNAME / DB_PASSWORD additions in
+> v0.0.40 / v0.0.41's environment: blocks were redundant (no
+> regression — duplicate vars with identical values are a no-op).
+
+v0.0.46 removes them.
+
+### Changed
+
+- **`docker-compose.yml::panel.environment`** — stripped 3
+  redundant entries plus their explanatory comment blocks
+  (~28 lines total). Replaced with a single forward-pointer
+  comment naming `env_file: - .env` as the canonical delivery
+  mechanism for credentials and operator-tunable values, and
+  documenting that the remaining `environment:` keys are only
+  those that need to differ from `.env` or don't live there at
+  all (container-internal hostnames, render paths, derived URLs).
+
+### Why this is safe (proven from scan + post-edit verification)
+
+1. `env_file: - .env` is on the panel service
+   ([docker-compose.yml:312](docker-compose.yml:312)) — confirmed.
+2. Compose semantics: `env_file` injects every `KEY=VALUE` line
+   from `.env` into the container env at start time.
+3. Both delivery mechanisms (`environment:` block + `env_file:`)
+   put values in the same place — the container's `/proc/1/environ`.
+   The shell probes don't care which mechanism delivered the value.
+4. Hygiene preserved: `MYSQL_PWD=$DB_PASSWORD` /
+   `REDISCLI_AUTH=$REDIS_PASSWORD` env-var auth in the probes is
+   about how the SHELL uses the env var (keeping password out of
+   argv), not about how Docker delivers it. Both delivery
+   mechanisms have identical security properties.
+
+### Compatibility
+
+- **No probe behaviour change.** Each Cycle 2 probe (v0.0.40
+  redis, v0.0.41 mariadb, v0.0.42 sing-box) still resolves the
+  required env vars from the panel container's environment —
+  just via `env_file` instead of the explicit block.
+- **Operator verification post-pull**:
+  ```sh
+  docker compose config panel | grep -E "REDIS_PASSWORD|DB_USERNAME|DB_PASSWORD"
+  ```
+  Expect each variable to appear once in the resolved environment
+  with the value from `.env`.
+- **Failure mode if the env_file assumption fails** — the
+  v0.0.40 / v0.0.41 / v0.0.42 probes will trip `VerifyFailed`
+  (NOAUTH for redis / mariadb, 401 for sing-box) on `make update`,
+  surfacing the regression immediately. The v0.0.43 drift
+  detection infrastructure built during Cycle 2 is what makes
+  this cleanup safe to ship — pre-Cycle-2 a regression would
+  have been silently invisible.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update
+docker compose exec panel ct-server-core component check --manifests /srv/manifests
+```
+
+Expected: 11 / 11 OK. No probe change — same verified-string
+outputs as v0.0.45. The win is configuration-entropy reduction,
+not behavioural.
+
+### Cycle 2 stabilisation phase complete
+
+v0.0.39 → v0.0.46 (8 patch releases) closes the Cycle 2 arc:
+
+| Phase | Releases | Theme |
+|---|---|---|
+| Drift restoration | v0.0.39..v0.0.43 | Make drift visible |
+| Hardening | v0.0.44 | Demonstrate Cycle 2's payoff |
+| Stabilisation | v0.0.45..v0.0.46 | Make drift structurally impossible (lockstep + DRY) |
+
+The remaining queued items (panel/.gitignore truth-up,
+docs/components.md component-table truth-up) are minor
+documentation cleanups not in the stabilisation thesis. Either
+can be folded into the next operator-driven release at zero
+cost.
+
+### Out of scope
+
+- **`panel/.gitignore` truth-up** — still pending.
+- **`docs/components.md` 8 → 11 component table** — still
+  pending.
+
+---
+
 ## [0.0.45] — 2026-05-06 — Three-way lockstep pinning: `make set-component-version` becomes the sole source of truth
 
 Cycle 2 made drift **visible**. v0.0.44 demonstrated drift
