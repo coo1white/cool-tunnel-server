@@ -20,11 +20,18 @@
 # tag in one place, add a HEALTHCHECK, keep this comment block next
 # to the cfg.tpl that actually configures it.
 #
-# Pinned to 2.9-alpine: HAProxy 2.9 is the latest LTS as of 2026-05.
-# 3.0+ exists but the LTS line is the operator-friendly choice for a
-# self-hosted deployment that may not get patched aggressively.
+# Pinned to 3.0-alpine: HAProxy 3.0 is the active LTS line. The
+# v0.0.43 drift-detection probe (manifests/haproxy.upstream.json)
+# surfaced that the prior 2.9-alpine pin had reached upstream EOL
+# ("Status: End of life - please upgrade to branch 3.0."); v0.0.44
+# bumped both the Dockerfile FROM and the manifest pin in lockstep
+# so the operator's Components page goes green again. 3.0 LTS is
+# scheduled to receive fixes through ~Q2 2029 per upstream's
+# branch-status page. No cfg.tpl change was required — every
+# directive in haproxy.cfg.tpl (TCP mode, SNI ACLs, stats socket,
+# tcp-request inspect-delay) is stable across 2.9 → 3.0.
 
-FROM haproxy:2.9-alpine
+FROM haproxy:3.0-alpine
 
 # HAProxy reads /usr/local/etc/haproxy/haproxy.cfg on boot. The compose
 # file mounts the panel-rendered file (from the rendered
