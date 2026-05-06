@@ -123,23 +123,21 @@ class ProxyAccount extends Model
 
     /**
      * Full HTTPS subscription URL for this account.
-     * Returns null when APP_KEY is unset or the domain is not yet configured.
+     * Returns null when APP_KEY is unset.
      *
-     * Hostname MUST be the panel subdomain (panel.<domain>), not the apex
-     * (<domain>) — the v0.0.33 haproxy SNI router routes the apex to
-     * sing-box (NaiveProxy) and the panel subdomain to caddy → panel.
-     * A request to https://<domain>/api/v1/subscription/<token> hits
-     * sing-box, which has no HTTP API and returns 400. The pre-v0.0.53
-     * URL generator predated the SNI split (added in v0.0.7, before the
-     * apex/panel domain split landed in v0.0.33) and was never updated
-     * — silent breakage for any operator using the macOS client's
-     * "Import from subscription URL" flow.
+     * Hostname comes from `config('cool-tunnel.panel_domain')`, the
+     * Cycle 3 / v0.0.55 single source of truth (mirrored byte-for-byte
+     * by core/ct-server-core/src/util/domain.rs::panel_domain). The
+     * resolution: PANEL_DOMAIN env > panel.<DOMAIN> env > fail-fast.
      *
-     * The "panel." prefix matches haproxy.cfg.tpl's hardcoded
-     * convention (`use_backend panel_caddy if { req_ssl_sni -i panel.<base> }`).
-     * If a future deployment ever wants a different panel hostname, the
-     * change lands in BOTH this method and the haproxy template; for
-     * now they're paired by the same hardcoded prefix on both sides.
+     * Pre-v0.0.55 this method hardcoded "panel.{$domain}" inline,
+     * making it the third hardcoded site for the same logic (after
+     * APP_URL in .env and PanelDomain in haproxy.cfg.tpl). v0.0.53
+     * fixed the value (apex → panel subdomain) but kept the hardcode;
+     * v0.0.55 collapses the hardcode into the config helper. If the
+     * config throws (both PANEL_DOMAIN and DOMAIN unset), let the
+     * exception propagate — it surfaces as a clear operator-facing
+     * error rather than a silently-malformed URL.
      */
     public function subscriptionUrl(): ?string
     {
@@ -147,12 +145,17 @@ class ProxyAccount extends Model
         if ($token === '') {
             return null;
         }
-        $domain = (string) ServerConfig::current()->getAttribute('domain');
-        if ($domain === '') {
+        $panelDomain = (string) config('cool-tunnel.panel_domain');
+        if ($panelDomain === '') {
+            // SoT helper returned empty (both PANEL_DOMAIN and
+            // DOMAIN unset in .env). Surface as null — the panel
+            // UI's "Subscription URL" action shows "Cannot generate
+            // URL" rather than constructing a malformed
+            // `https:///api/v1/...` link.
             return null;
         }
 
-        return "https://panel.{$domain}/api/v1/subscription/{$token}";
+        return "https://{$panelDomain}/api/v1/subscription/{$token}";
     }
 
     /** Whether the account is currently considered active by sing-box. */
