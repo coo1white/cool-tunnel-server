@@ -18,8 +18,11 @@
 # LTSC pin: Rust toolchain matches core/rust-toolchain.toml exactly.
 # Bumping one without the other will surface as a "rustc 1.X is not
 # supported" error during cargo build. Both files name the same
-# version on purpose.
-FROM rust:1.86-alpine AS chef
+# version on purpose. v0.0.50 bumped 1.86 → 1.88 because v0.0.49's
+# `cargo install cargo-chef --locked` resolves cargo-platform 0.3.2
+# transitively, and cargo-platform 0.3.2 requires rustc 1.88 — the
+# binding floor today.
+FROM rust:1.88-alpine AS chef
 
 # Build deps: musl for static linking, openssl/pkg-config for sqlx +
 # rustls (which we use, but transitive deps still need pkg-config).
@@ -201,7 +204,7 @@ CMD ["--help"]
 #
 # Brought up via:
 #   docker compose --profile sqlx run --rm sqlx-prepare
-FROM rust:1.86-alpine AS sqlx-prepare
+FROM rust:1.88-alpine AS sqlx-prepare
 RUN apk add --no-cache \
         musl-dev \
         pkgconfig \
