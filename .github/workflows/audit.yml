@@ -581,6 +581,56 @@ jobs:
               echo "::error file=docker-compose.yml::clash API port 9090 must not appear in any service's ports: block"
               fail=1
           fi
+          # v0.0.33 R1-1 / R1-2: sing-box must NOT host-expose :443.
+          # haproxy fronts the :443 host port and TCP-forwards by SNI;
+          # if a future edit re-adds `- "443:443"` to the sing-box
+          # service, the SNI router becomes a parallel listener and
+          # clients that bypass it (direct connection to the host)
+          # see a different TLS fingerprint than the one haproxy
+          # forwards through. Audit-enforced: any list item under
+          # the sing-box service mentioning :443 fails CI.
+          # awk extracts just the sing-box service block; grep then
+          # looks for a `- "443..."` line. Restricting to the
+          # service block keeps haproxy's legitimate `- "443:443"`
+          # off-limits to this check.
+          if awk '/^  sing-box:/{f=1;next} f && /^  [a-z]/{f=0} f' docker-compose.yml \
+                  | grep -qE '^[[:space:]]+-[[:space:]]+"?[^"]*443'; then
+              echo "::error file=docker-compose.yml::sing-box service must NOT expose :443 on the host (haproxy fronts it via SNI router — R1-1 / R1-2, v0.0.33)"
+              fail=1
+          fi
+          exit "$fail"
+      - name: assert haproxy SNI-router hardening
+        run: |
+          set -euo pipefail
+          tpl=haproxy/haproxy.cfg.tpl
+          fail=0
+          # Must be TCP mode in defaults — `mode http` would terminate
+          # TLS at the router and leak the cert/cipher fingerprint
+          # forward to the backend on every connection.
+          if ! grep -qE '^[[:space:]]+mode tcp' "$tpl"; then
+              echo "::error file=$tpl::defaults must use 'mode tcp' (no TLS termination at router — R1-1)"
+              fail=1
+          fi
+          # No `bind ... ssl crt` — the frontend must be
+          # ssl-passthrough only.
+          if grep -qE '^[[:space:]]+bind[[:space:]]+:443[[:space:]]+ssl' "$tpl"; then
+              echo "::error file=$tpl::frontend bind must NOT carry 'ssl' (no TLS termination at router — R1-1)"
+              fail=1
+          fi
+          # Default backend must be the proxy (sing-box). Routing
+          # default to the panel would expose the Filament login
+          # to any SNI-less probe.
+          if ! grep -qE '^[[:space:]]+default_backend naive_singbox' "$tpl"; then
+              echo "::error file=$tpl::default_backend must be 'naive_singbox' (anti-fingerprinting: SNI-less probes hit the proxy, not the panel)"
+              fail=1
+          fi
+          # SNI routing rule for the panel must be present and
+          # case-insensitive (`-i`). DNS is case-insensitive and a
+          # probe lowercasing the SNI must not bypass the rule.
+          if ! grep -qE '^[[:space:]]+use_backend panel_caddy if \{ req_ssl_sni -i \{\{ \.PanelDomain \}\} \}' "$tpl"; then
+              echo "::error file=$tpl::missing 'use_backend panel_caddy if { req_ssl_sni -i {{ .PanelDomain }} }' rule"
+              fail=1
+          fi
           exit "$fail"
       - name: assert Caddyfile hardening
         run: |
