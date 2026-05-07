@@ -40,6 +40,21 @@ FROM ${CT_CORE_IMAGE} AS ct-core-stage
 # transitive dep down.
 FROM dunglas/frankenphp:1-php8.4-alpine
 
+# Strip the FrankenPHP binary's file capabilities. The dunglas
+# image ships the binary with `cap_net_bind_service+ep` so it
+# can bind privileged ports (80/443) as a non-root user. Our
+# panel container is constrained by `security_opt:
+# no-new-privileges:true` (set globally via x-svc-hardening in
+# docker-compose.yml), and the kernel REFUSES to exec any
+# binary with file capabilities under that flag — supervisord
+# fails with `couldn't exec /usr/local/bin/frankenphp: EPERM`.
+# This container listens on :9000 (non-privileged) so the cap
+# is unused; stripping it restores exec while preserving the
+# hardening posture. Caught on the operator's real VPS deploy
+# of v0.0.58 (the FrankenPHP swap chain).
+RUN setcap -r /usr/local/bin/frankenphp \
+    && /usr/local/bin/frankenphp version
+
 ARG COMPOSER_VERSION=2.7.7
 
 # Composer is bundled in dunglas/frankenphp (under /usr/bin/composer
