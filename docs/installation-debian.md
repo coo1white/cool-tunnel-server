@@ -640,9 +640,48 @@ migrations, re-renders the sing-box config, and `docker compose up -d`.
 
 ```bash
 ./scripts/backup.sh
-# → backups/cool-tunnel-YYYY-MM-DD.tar.gz
-#   contains: .env, db dump, singbox_data (certs), singbox_etc (config.json)
+# → backups/cool-tunnel-YYYY-MM-DD.tar.gz   (mode 0600 — operator-only)
+#   contains: .env (APP_KEY + DB / Redis / clash secrets), db dump
+#             (--single-transaction), caddy_data.tgz (ACME certs +
+#             private keys, post-v0.0.4 swap from sing-box ACME), the
+#             three render-input templates (sing-box, caddy, haproxy)
+#             + manifests/
 ```
+
+The tarball mode is `0600` — the contents are operator-secret
+(APP_KEY decrypts every cleartext password in the DB dump). Move
+it off the VPS to a private storage bucket / encrypted disk
+ASAP.
+
+### Restore
+
+```bash
+./scripts/restore.sh backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz
+```
+
+Documented disaster-recovery procedure (works on a fresh VPS):
+
+1. Provision the new VPS (1 vCPU / 1 GB minimum, same region or
+   the closest one to your users).
+2. Install Docker + clone the repo:
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   git clone https://github.com/coo1white/cool-tunnel-server.git
+   cd cool-tunnel-server
+   ```
+3. Copy the backup tarball into `backups/`.
+4. **Repoint DNS** — update both `${DOMAIN}` and `${PANEL_DOMAIN}`
+   A records to the new VPS IP. Wait for propagation
+   (`dig +short ${DOMAIN}` matches the new IP).
+5. `./scripts/restore.sh backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz`
+6. Verify: `make components` shows OK across all rows;
+   `curl -ksI https://${PANEL_DOMAIN}/admin` returns 200/302.
+
+The restored `.env` brings APP_KEY + DB + Redis + clash secrets
+across, so every existing proxy account's encrypted cleartext
+password decrypts correctly. The restored `caddy_data` brings
+the existing Let's Encrypt certs across, avoiding LE rate-limit
+budget on re-issue (5 duplicate certs per 7 days).
 
 ### Tail logs
 
@@ -715,9 +754,14 @@ docker compose restart caddy
   `naive` inbound (e.g. someone swapped to a build without it),
   the proxy will silently degrade to "just an ACME endpoint" and
   client connections will fail. The OK/NG check is the canary.
-- **Backup the `singbox_data` volume**, not just the DB. ACME state
-  lives there; without it, every `docker compose down -v` resets
-  your cert and burns LE rate-limit budget.
+- **Use `./scripts/backup.sh`** — it captures `caddy_data` (ACME
+  certs + private keys; ACME moved from sing-box to Caddy in
+  v0.0.4) plus the DB dump, the three render-input templates,
+  manifests/, and `.env`. Run weekly to a private storage bucket;
+  store with the same security posture as your DB password.
+  Without `caddy_data`, every `docker compose down -v` resets
+  your cert and burns LE rate-limit budget (5 duplicate-cert
+  issuances per 7-day window).
 - **Public IPv6** — if your VPS has v6, set the `AAAA` record. Some
   censorship systems are weaker over v6, and clients pick up the
   faster path automatically (Happy Eyeballs).
