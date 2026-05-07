@@ -14,9 +14,28 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
-- `panel/tests/Feature/SubscriptionContractTest.php` — anchors two
-  client-contract invariants the round-10 audit identified as
-  silent-failure modes:
+- `panel/tests/Feature/SubscriptionContractTest.php` — round-11
+  added two more contract tests on top of the round-10 pair:
+  3. The served manifest's HMAC verifies under the documented
+     client recipe — deserialise, drop `signature`, re-canonicalise
+     with `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE`, HMAC
+     against APP_KEY. Pre-fix the controller emitted
+     `"signature":null` and `"note":null` literals in its canonical,
+     which a Rust client following the spec would NOT reproduce on
+     re-canonicalisation (skip_if_none drops the keys entirely).
+     Every Rust-client verification would fail.
+  4. With no active fake site, `capabilities.fake_site_slug` is
+     ABSENT from the manifest — not present-as-null. Same trap as
+     #3 but on a sub-object.
+- `core/ct-protocol/src/subscription.rs` — two new tests pin the
+  canonical contract on the spec side:
+  `canonical_roundtrips_under_signature_strip` (server-built canonical
+  must equal client-deserialise + signature=None + re-serialise) and
+  `field_order_is_part_of_the_wire_contract` (struct field order is
+  on-the-wire order — a careless field reorder would break every
+  encoder that hard-codes the order, including the PHP controller).
+- `panel/tests/Feature/SubscriptionContractTest.php` — round-10
+  anchored two contracts the prior audits didn't catch:
   1. The served subscription manifest never carries the literal
      `{{CLEARTEXT_PLACEHOLDER}}` string (the Rust emitter's
      CLI-path marker that the panel's HTTP path is meant to splice
@@ -48,6 +67,28 @@ before relying on a version bump as a compatibility signal.
 
 ### Fixed
 
+- `panel/app/Http/Controllers/SubscriptionController.php` —
+  canonicalisation contract for the manifest's HMAC signature
+  was inconsistent with the documented Rust client verify flow.
+  Pre-fix the canonical the server signed included `"note":null`
+  and `"signature":null` literal fields, plus
+  `"fake_site_slug":null` inside `capabilities` when no fake site
+  was active. The Rust spec
+  (`core/ct-protocol/src/subscription.rs`) marks all three with
+  `#[serde(skip_serializing_if = "Option::is_none")]`, so a Rust
+  client that follows the documented "deserialise, set signature
+  to None, re-serialise, HMAC, compare" flow produces canonical
+  bytes WITHOUT those keys — different bytes, different HMAC,
+  verification fails on every legitimately-signed manifest. The
+  bug had no observable production impact because no shipped
+  client implements verification yet (the ct-protocol crate
+  carries the structs but no verify function), but the FIRST
+  client to follow the spec would silently reject every manifest.
+  Fix: build the canonical with `signature` field absent (not
+  null), and omit `note` / `capabilities.fake_site_slug` when
+  null. The HMAC still rides in the `signature` field of the
+  served body — only the canonical-for-signing differs. Round-11
+  data-integrity audit.
 - `panel/app/Http/Controllers/SubscriptionController.php` — when
   `getCleartextPassword()` returns null or empty (legacy row
   pre-v0.0.5 cleartext column, or `Crypt::decryptString` failure

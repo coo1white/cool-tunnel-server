@@ -19,10 +19,31 @@ use Illuminate\Support\Facades\RateLimiter;
 // Anti-tracking note: the response carries NO project-identifying
 // custom headers. The signature rides in the JSON body's
 // `signature` field (computed over the canonical body with that
-// field set to null). On the wire this looks like any other
-// authenticated JSON API response, not a "Cool Tunnel" tell.
-// (v0.0.8 and earlier emitted X-CT-Signature / X-CT-Protocol
-// response headers; those are gone.)
+// field ABSENT — see the canonical-form note below; pre-v0.0.59
+// docs said "set to null" but that did not match the Rust spec
+// and broke client-side verification). On the wire this looks
+// like any other authenticated JSON API response, not a "Cool
+// Tunnel" tell. (v0.0.8 and earlier emitted X-CT-Signature /
+// X-CT-Protocol response headers; those are gone.)
+//
+// Canonical form (v0.0.59+, must match
+// core/ct-protocol/src/subscription.rs serde behaviour):
+//   - Field order = SubscriptionManifestV1 declaration order:
+//     version, server, profiles, capabilities, issued_at,
+//     expires_at, note, signature.
+//   - Optional fields with `skip_serializing_if = "Option::is_none"`
+//     on the Rust side are emitted ONLY when set: `note` (top
+//     level) and `capabilities.fake_site_slug`. Emitting them as
+//     `"key":null` in the canonical breaks Rust-client verification
+//     (the client deserialises null → None → drops the key on
+//     re-canonicalise → bytes diverge → HMAC fails).
+//   - The signature itself is NOT in the canonical at all (NOT
+//     present-as-null). The server builds the body without a
+//     signature key, HMACs those bytes, then adds the signature
+//     key for the response body only.
+//   - PHP flags: JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE.
+//   - The contract is pinned by SubscriptionContractTest +
+//     ct-protocol's canonical_roundtrips_under_signature_strip.
 //
 // HTTP/3 honesty: NaiveProxy is HTTP/2-only at the protocol level,
 // so the manifest's `capabilities.http3` is always false regardless
@@ -121,6 +142,30 @@ class SubscriptionController extends Controller
             return (new FakeSiteController)->show($request);
         }
 
+        // Build the body in field-declaration order of
+        // SubscriptionManifestV1 (core/ct-protocol/src/subscription.rs):
+        // version, server, profiles, capabilities, issued_at,
+        // expires_at, note, signature. serde emits struct fields in
+        // declaration order; PHP arrays preserve insertion order; so
+        // the on-the-wire byte order is the same on both sides as
+        // long as we keep the literal below in sync with the Rust
+        // struct.
+        //
+        // Optional fields with `#[serde(skip_serializing_if =
+        // "Option::is_none")]` on the Rust side MUST be OMITTED here
+        // when null — `serde_json::to_string(&m)` on a struct whose
+        // `note` is None produces JSON without a `note` key at all.
+        // If we emit `"note":null`, the Rust client deserialises ↦
+        // `note: None`, then re-canonicalises (signature = None) and
+        // gets DIFFERENT bytes (no `note` key). HMACs diverge.
+        // Verification fails on a manifest the server signed
+        // correctly. Same trap for `capabilities.fake_site_slug`
+        // when no fake site is active. (Round-11 data-integrity.)
+        $optionalCaps = [];
+        if (($slug = optional(FakeWebsite::active())->slug) !== null) {
+            $optionalCaps['fake_site_slug'] = $slug;
+        }
+
         $body = [
             'version' => 1,
             'server' => $cfg->domain,
@@ -141,19 +186,23 @@ class SubscriptionController extends Controller
                 // HTTP/3 always advertised as false — see class
                 // docstring. NaiveProxy does not do QUIC.
                 'http3' => false,
-                'fake_site_slug' => optional(FakeWebsite::active())->slug,
-            ],
+            ] + $optionalCaps,
             'issued_at' => time(),
             'expires_at' => time() + 60 * 60 * 24 * 30,
-            'note' => null,
-            'signature' => null, // placeholder; signed below
+            // note: omitted when null (Rust skip_if_none). Today the
+            // panel never sets a note; if a future column is added,
+            // emit only when non-null and non-empty.
         ];
 
-        // Compute HMAC over the canonical body with `signature`
-        // set to null, then splice the hex digest back in. Verifies
-        // identically on the client without needing the original
-        // field order — clients re-canonicalise (set signature to
-        // null, re-serialise) before checking.
+        // HMAC over the body WITHOUT a `signature` field at all.
+        // The Rust client verifies by deserialising, setting
+        // `signature` to None, and re-serialising — which produces
+        // bytes with no `signature` key (skip_if_none). We must
+        // canonicalise the same way: build and sign with no
+        // `signature` key present. Pre-fix this code emitted
+        // `"signature":null` in the canonical, which DOES NOT round-
+        // trip through serde — every Rust-side verification would
+        // fail. (Round-11 data-integrity.)
         $canonical = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $body['signature'] = hash_hmac('sha256', $canonical, $this->signingKey());
         $json = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
