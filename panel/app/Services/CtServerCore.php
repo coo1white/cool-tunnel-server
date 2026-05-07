@@ -149,7 +149,7 @@ final class CtServerCore
     }
 
     /**
-     * Run one self-probe canary cycle. (v0.0.57.)
+     * Run one self-probe canary cycle.
      *
      * 15-second cap covers DoH lookup (5 s) + TCP connect (5 s) +
      * write-back (~ms) with headroom. The scheduled cron runs every

@@ -164,8 +164,8 @@ enum Cmd {
         op: AdminOp,
     },
     /// Self-probe canary — early-warning surface for "this VPS is
-    /// becoming unreachable from its own network position."
-    /// (v0.0.57 china-readiness — see docs/going-to-china.md.)
+    /// becoming unreachable from its own network position." See
+    /// `docs/going-to-china.md` for the operator-facing context.
     Canary {
         #[command(subcommand)]
         op: CanaryOp,
