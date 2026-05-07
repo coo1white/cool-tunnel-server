@@ -129,6 +129,20 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+- `scripts/pin-images.sh` — round-18 dep-hygiene refresh. The
+  mapping table was out of date: `rust:1.86-alpine` →
+  `rust:1.88-alpine` (matches `core/rust-toolchain.toml` after
+  the toolchain bump), `php:8.3-fpm-alpine` →
+  `dunglas/frankenphp:1-php8.4-alpine` (post-v0.0.58 panel
+  runtime swap), added `haproxy:3.0.21-alpine` (introduced in
+  v0.0.33 SNI-router split). The stale entries previously caused
+  silent misses: `make pin-images` ran without error but didn't
+  pin the panel runtime or the Rust builder image, defeating
+  the script's reproducibility purpose. The `pin()` helper now
+  also fails LOUDLY (with an actionable hint) when a mapping
+  doesn't match any FROM line in the target file — a future
+  Dockerfile rename surfaces in the next pin-images run, not in
+  a months-later supply-chain incident.
 - `scripts/lib.sh` and `scripts/install.sh` — round-16 error-
   message-UX. `wait_for` now picks up an optional `WAIT_FOR_HINT`
   env var and threads it through to the on-timeout `die` as the
@@ -261,6 +275,18 @@ before relying on a version bump as a compatibility signal.
   the operator hits the Regenerate button.
 
 ### Security
+
+- `docker/panel/Dockerfile` — round-18 supply-chain pin. The arm64
+  naiveproxy tarball SHA256 was UNPINNED (`NAIVE_SHA256_ARM64=`
+  empty). The Dockerfile gracefully degraded with a warning and
+  built anyway, so an arm64 build (Graviton, Apple Silicon CI,
+  arm64 VPS) skipped checksum verification of the upstream
+  binary entirely. A compromised GitHub release asset or CDN
+  hijack would land the malicious binary silently. Computed the
+  hash for the same release tag as the AMD64 pin
+  (`v148.0.7778.96-2`); both arches now have explicit checksums.
+  The AMD64 hash was re-verified against the Dockerfile pin as
+  a sanity check on the release artifact's integrity.
 
 ---
 
