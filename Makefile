@@ -37,7 +37,7 @@ help: ## list available targets
 # ---------- CI gate (exactly what GitHub Actions runs) ------------
 
 .PHONY: ci
-ci: rust-fmt-check rust-clippy rust-test php-syntax shellcheck manifests-jq verify-sot ## full local CI gate
+ci: rust-fmt-check rust-clippy rust-test php-syntax shellcheck manifests-jq verify-sot verify-supervisord ## full local CI gate
 
 # Cycle 3 / v0.0.55 — cross-language SoT parity guard. Runs both
 # the PHP and Rust panel-hostname resolvers against fixture envs and
@@ -66,6 +66,18 @@ verify-sot: ## cross-language SoT parity check (Cycle 3 / v0.0.55; skips when ho
 .PHONY: verify-sot-vps
 verify-sot-vps: ## VPS-side SoT parity check via docker compose exec (v0.0.56)
 	./scripts/verify_sot_vps.sh
+
+# Round-22 process-lifecycle audit — pin the round-6 supervisord
+# graceful-shutdown invariants (stopsignal=TERM, stopwaitsecs=20,
+# killasgroup, stopasgroup) on every [program:*] block, plus the
+# frankenphp MAX_REQUESTS=500 worker-recycle ceiling. A future
+# edit that drops one of these wouldn't break any test —
+# supervisord still works — but `docker compose stop` would
+# SIGKILL in-flight requests on the affected program. Wired into
+# `make ci` so drift surfaces on every PR.
+.PHONY: verify-supervisord
+verify-supervisord: ## supervisord.conf lifecycle-invariants drift detector (round-22)
+	./scripts/verify_supervisord.sh
 
 # Convenience aliases — `make fmt`, `make lint`, `make test` are
 # the muscle-memory commands every Rust project ships. The full
