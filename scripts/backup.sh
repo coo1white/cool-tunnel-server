@@ -7,6 +7,20 @@
 # deploy burns Let's Encrypt rate-limit budget on re-issue.
 
 set -euo pipefail
+
+# umask 0077 — round-9 DR audit fix. Pre-fix the tarball
+# inherited the operator's umask (commonly 0644 on Debian),
+# leaving `cool-tunnel-${ts}.tar.gz` world-readable. The
+# tarball contains `.env` (APP_KEY, DB_ROOT_PASSWORD,
+# REDIS_PASSWORD, CT_CLASH_SECRET_SEED) AND the full DB dump
+# (every encrypted password blob — useless without APP_KEY,
+# but APP_KEY is RIGHT THERE in the same archive). On a
+# multi-user host or a backup-staging server, anyone with
+# read access to `backups/` recovers all tenant cleartext.
+# 0077 makes new files mode 0600; the tarball + tmp/* land
+# operator-only.
+umask 0077
+
 cd "$(dirname "$0")/.." || exit 1
 
 # shellcheck source=lib.sh
@@ -64,9 +78,19 @@ fi
 ok "caddy_data.tgz written"
 
 step "Bundle into ${out}"
+# haproxy/haproxy.cfg.tpl added in round 9 — pre-fix backup
+# missed it; restore would silently fall back to the post-
+# update tree's template (which may have drifted from what
+# was running in production at backup time). All three
+# render-input templates (sing-box, caddy, haproxy) are now
+# captured for byte-identical restore.
 tar -czf "$out" \
     -C tmp db.sql caddy_data.tgz \
-    -C .. .env manifests sing-box/config.json.tpl caddy/Caddyfile.tpl
+    -C .. .env manifests \
+        sing-box/config.json.tpl \
+        caddy/Caddyfile.tpl \
+        haproxy/haproxy.cfg.tpl
+chmod 0600 "$out"
 rm -rf tmp
 # shellcheck disable=SC2012  # ls -lh's compact output is exactly what we want here
-ok "wrote $(ls -lh "$out" | awk '{print $5,$NF}')"
+ok "wrote $(ls -lh "$out" | awk '{print $5,$NF}') (mode 0600 — operator-only)"

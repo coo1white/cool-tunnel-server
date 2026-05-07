@@ -53,6 +53,11 @@ chmod 0600 .env
 cp -r tmp/restore/manifests .
 cp tmp/restore/sing-box/config.json.tpl sing-box/config.json.tpl 2>/dev/null || true
 cp tmp/restore/caddy/Caddyfile.tpl     caddy/Caddyfile.tpl     2>/dev/null || true
+# haproxy template captured by backup.sh as of round-9 DR audit;
+# legacy backups (pre-round-9) lack it — `|| true` falls back to
+# the in-tree post-update template, which is the correct
+# behaviour for older backups.
+cp tmp/restore/haproxy/haproxy.cfg.tpl haproxy/haproxy.cfg.tpl 2>/dev/null || true
 ok ".env restored (mode 0600), manifests + templates in place"
 
 # ---------- Stage 2 — bring up data layer first -------------------
@@ -101,8 +106,18 @@ ok "caddy_data restored (ACME certs + private keys)"
 step "Bring up panel + caddy + sing-box"
 compose up -d panel
 # shellcheck disable=SC2016
-wait_for "panel vendor/autoload.php" 60 5 \
-    bash -c 'docker compose exec -T panel test -f /var/www/html/vendor/autoload.php'
+# Wait for the entrypoint-complete sentinel — same pattern
+# install.sh uses (post-v0.0.26 race fix). Pre-fix this restore
+# script polled for `vendor/autoload.php`, which appears as
+# soon as composer install starts laying out files but BEFORE
+# the entrypoint has run migrate / seed / config:cache / asset
+# publish. A `compose exec panel ct-server-core component
+# check` immediately after that early signal would race the
+# in-flight migrate. Sentinel-based wait is the right
+# contract: presence-of-sentinel == "this entrypoint run
+# finished cleanly." (round-9 DR audit fix.)
+wait_for "panel entrypoint sentinel" 90 5 \
+    bash -c 'docker compose exec -T panel test -f /tmp/cool-tunnel/entrypoint-complete'
 
 compose up -d caddy sing-box
 sleep 5
@@ -119,8 +134,8 @@ cat <<EOF
 
 ${CT_BOLD}${CT_GREEN}Restore complete.${CT_RESET}
 
-  Panel         https://${DOMAIN:-?}/admin    (via SSH-local-port-forward)
-  Subscription  https://${DOMAIN:-?}/api/v1/subscription/<token>
+  Panel         https://${PANEL_DOMAIN:-?}/admin    (or via SSH-local-port-forward to 127.0.0.1:9000)
+  Subscription  https://${PANEL_DOMAIN:-?}/api/v1/subscription/<token>
 
 Next:
   1. Tail logs:    docker compose logs -f --tail=80
