@@ -118,12 +118,17 @@ pub async fn collect(pool: &MySqlPool, admin: &ClashAdmin) -> Result<()> {
         }
     }
 
-    println!(
-        r#"{{"rows": {}, "total_bytes_delta": {}}}"#,
-        samples.len(),
-        total,
-    );
+    println!("{}", outcome_json(samples.len(), total));
     Ok(())
+}
+
+/// Serialise the collect-outcome to the JSON shape the PHP panel
+/// reads (`panel/app/Services/TrafficCollector.php:32` reads
+/// `$out['rows']`). Pulled out as a free function so the field
+/// names can be pinned by a unit test without scraping live
+/// Prometheus output. Round-17 chassis-cockpit boundary.
+fn outcome_json(rows: usize, total_bytes_delta: i64) -> String {
+    format!(r#"{{"rows": {rows}, "total_bytes_delta": {total_bytes_delta}}}"#)
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +195,7 @@ fn parse_labels(raw: &str) -> HashMap<&str, &str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -215,5 +221,22 @@ caddy_forwardproxy_connections_total{user="alice"} 12
     fn ignores_unrelated_metrics() {
         let text = "go_goroutines 42\ncaddy_unrelated_metric{x=\"y\"} 1\n";
         assert!(parse_prometheus(text).is_empty());
+    }
+
+    #[test]
+    fn outcome_json_pins_php_visible_keys() {
+        // Round-17 chassis-cockpit: panel reads `rows` only today,
+        // but pin both since `total_bytes_delta` is the natural
+        // next field a future panel feature ("show data
+        // throughput") would reach for.
+        let s = outcome_json(7, 12345);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(v.get("rows").is_some(), "panel reads `rows`: {s}");
+        assert!(
+            v.get("total_bytes_delta").is_some(),
+            "future panel feature reads `total_bytes_delta`: {s}"
+        );
+        assert_eq!(v["rows"], 7);
+        assert_eq!(v["total_bytes_delta"], 12345);
     }
 }

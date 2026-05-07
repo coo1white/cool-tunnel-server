@@ -205,4 +205,23 @@ mod tests {
         assert!(body.contains("panel.proxy.example.com:8444"));
         assert!(body.contains("reverse_proxy panel:9000"));
     }
+
+    // Round-17 chassis-cockpit boundary: same shape as the
+    // sing-box `render_outcome_json_pins_php_visible_keys` test.
+    // PHP-side reader is
+    // `panel/app/Services/CaddyfileGenerator.php:53-55`: reads
+    // `$out['changed']` + `$out['hash']` with `?? <default>`.
+    #[test]
+    fn render_outcome_json_pins_php_visible_keys() {
+        let out = CaddyRenderOutcome {
+            path: "/etc/caddy/Caddyfile".into(),
+            bytes: 512,
+            hash: "deadbeef".repeat(8),
+            changed: true,
+        };
+        let s = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(v.get("changed").is_some(), "panel reads `changed`: {s}");
+        assert!(v.get("hash").is_some(), "panel reads `hash`: {s}");
+    }
 }

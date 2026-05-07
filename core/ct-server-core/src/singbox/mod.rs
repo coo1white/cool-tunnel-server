@@ -576,4 +576,38 @@ mod tests {
             .unwrap();
         assert!(body.contains("__no_active_accounts__"));
     }
+
+    // Round-17 chassis-cockpit boundary: pin the JSON-output keys
+    // the PHP panel parses from `ct-server-core --json singbox
+    // render`. The PHP side
+    // (`panel/app/Services/SingBoxConfigGenerator.php:67-69`)
+    // reads `$out['changed']` and `$out['hash']` with `?? <default>`
+    // — so a Rust-side rename produces null on the cockpit and the
+    // operator silently sees "no change" + "saved hash null" with
+    // no diagnostic. This test fails first if either field is
+    // renamed or removed.
+    #[test]
+    fn render_outcome_json_pins_php_visible_keys() {
+        let out = RenderOutcome {
+            path: "/etc/sing-box/config.json".into(),
+            bytes: 1024,
+            hash: "deadbeef".repeat(8),
+            changed: true,
+            active_users: 3,
+        };
+        let s = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(
+            v.get("changed").is_some(),
+            "panel reads `changed` — RenderOutcome MUST emit it: {s}"
+        );
+        assert!(
+            v.get("hash").is_some(),
+            "panel reads `hash` — RenderOutcome MUST emit it: {s}"
+        );
+        // `path`, `bytes`, `active_users` aren't read by the panel
+        // today, but emit them so a future panel feature ("show
+        // last render bytes in admin UI") doesn't have to touch
+        // the Rust struct.
+    }
 }
