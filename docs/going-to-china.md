@@ -207,23 +207,34 @@ when things are healthy:
 {"ts":"2026-05-07T02:35:02+00:00","status":"ok"}
 ```
 
-When a probe fails:
+When a probe fails, the `reason` field names the failure class.
+The canary distinguishes RCODE-level upstream errors from actual
+censorship signals so the operator gets an accurate diagnostic
+instead of "everything looks like censorship":
 
 ```json
-{"ts":"2026-05-07T03:00:01+00:00","status":"fail","reason":"DoH lookup failed: dns error: failed to lookup address information"}
+{"ts":"2026-05-07T03:00:01+00:00","status":"fail","reason":"DoH lookup failed: DoH request failed (connection error)"}
+{"ts":"2026-05-07T03:05:01+00:00","status":"fail","reason":"DoH lookup failed: DoH SERVFAIL for proxy.example.com (upstream auth-server failure — usually transient; not a censorship signal)"}
+{"ts":"2026-05-07T03:10:01+00:00","status":"fail","reason":"DoH lookup failed: DoH NXDOMAIN for proxy.example.com (resolver claims this name does not exist — DNS hijacking if the name should resolve)"}
+{"ts":"2026-05-07T03:15:01+00:00","status":"fail","reason":"DoH lookup failed: DoH returned NOERROR with 0 answer records for proxy.example.com (likely captive portal / DNS poisoner — try a different resolver via the panel)"}
+{"ts":"2026-05-07T03:20:01+00:00","status":"fail","reason":"TCP connect to haproxy:443 failed: ..."}
 ```
+
+Map each `reason` class to the right action:
+
+| Reason starts with | Likely cause | First action |
+|---|---|---|
+| `DoH request failed (timeout)` / `(connection error)` | DoH endpoint unreachable from VPS | Switch DoH resolver in panel — AliDNS most reliable |
+| `DoH SERVFAIL` | Upstream authoritative-server hiccup | Usually transient — wait one cycle, switch resolver if it persists |
+| `DoH NXDOMAIN` | Resolver claims your apex doesn't exist | DNS hijacking — switch resolver immediately |
+| `DoH REFUSED` | Resolver policy rejected the query | Switch DoH endpoint |
+| `DoH returned NOERROR with 0 answer records` | Captive portal / DNS poisoner returning empty success | Classic GFW-style intercept — switch resolver |
+| `TCP connect to haproxy:443` | haproxy container crashed | `docker compose restart haproxy` |
 
 If the last 3 entries are all `"status":"fail"`, treat that as
 "external reachability degraded" — the canary's intended early-
 warning signal. You typically have ~15 minutes' head start over
-user complaints. The most likely root causes (in order):
-
-1. **DoH resolver suddenly stopped working** — typical "I just
-   crossed the GFW" scenario when the default was Cloudflare.
-   Switch to AliDNS in the panel.
-2. **haproxy container crashed** — `docker compose restart haproxy`.
-3. **VPS lost outbound connectivity entirely** — provider issue;
-   contact support.
+user complaints.
 
 A panel banner widget that surfaces this state in the dashboard UI
 without polling the CLI is a v0.0.58 follow-up. Until then, wire
