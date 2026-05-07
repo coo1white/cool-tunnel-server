@@ -79,6 +79,47 @@ pub async fn enforce(
         }
     }
 
-    println!(r#"{{"disabled": {disabled}, "reload_triggered": {reloaded}}}"#,);
+    println!("{}", outcome_json(disabled, reloaded));
     Ok(())
+}
+
+/// Serialise the enforce-outcome to the JSON shape the PHP panel
+/// reads (`panel/app/Console/Commands/QuotaEnforce.php:21-22`
+/// reads `$out['disabled']` + `$out['reload_triggered']`). Pulled
+/// out as a free function so the field names can be pinned by a
+/// unit test without spinning up a DB. Round-17 chassis-cockpit
+/// boundary.
+fn outcome_json(disabled: usize, reloaded: bool) -> String {
+    format!(r#"{{"disabled": {disabled}, "reload_triggered": {reloaded}}}"#)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outcome_json_pins_php_visible_keys() {
+        let s = outcome_json(2, true);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(v.get("disabled").is_some(), "panel reads `disabled`: {s}");
+        assert!(
+            v.get("reload_triggered").is_some(),
+            "panel reads `reload_triggered`: {s}"
+        );
+        assert_eq!(v["disabled"], 2);
+        assert_eq!(v["reload_triggered"], true);
+    }
+
+    #[test]
+    fn outcome_json_zero_disabled_emits_false_for_reload() {
+        // The (disabled=0, reloaded=false) branch is the common
+        // happy path (no expiry hit this tick). Pin the wire
+        // values so an accidental tristate (e.g. `Option<bool>`)
+        // doesn't leak `null` to the panel.
+        let s = outcome_json(0, false);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["disabled"], 0);
+        assert_eq!(v["reload_triggered"], false);
+    }
 }

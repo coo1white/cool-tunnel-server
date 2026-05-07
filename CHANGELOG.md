@@ -14,6 +14,31 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- Round-17 chassis-cockpit boundary tests pin every JSON-output
+  field name the PHP panel reads from `ct-server-core`. Pre-this,
+  the PHP side reads `$out['changed']`, `$out['hash']`, `$out
+  ['rows']`, `$out['disabled']`, `$out['reload_triggered']`,
+  `$out['state']` etc. with `?? <default>` — a Rust-side rename
+  produces null on the cockpit and the operator silently sees
+  "no change", "0 OK / 0 NG", `disabled=null` with no diagnostic.
+  The pin tests live next to the structs they protect:
+  - `core/ct-server-core/src/singbox/mod.rs` —
+    `RenderOutcome` (`changed`, `hash`).
+  - `core/ct-server-core/src/caddy/mod.rs` —
+    `CaddyRenderOutcome` (`changed`, `hash`).
+  - `core/ct-server-core/src/quota.rs` — extracted hand-rolled
+    JSON `r#"{{"disabled": ..., "reload_triggered": ...}}"#` into
+    a testable `outcome_json()` free fn; pinned both keys + the
+    `(0, false)` happy-path branch values.
+  - `core/ct-server-core/src/metrics.rs` — extracted the
+    `r#"{{"rows": ..., "total_bytes_delta": ...}}"#` emit the
+    same way; pinned both keys.
+  - `core/ct-protocol/src/components.rs` — pinned
+    `ComponentStatusV1.state` field name AND every variant's
+    snake_case wire form (`ok`, `version_mismatch`,
+    `verify_failed`, `missing`, `unknown`). The panel compares
+    `$row['state'] === 'ok'`; a PascalCase regression would flip
+    every row to NG silently.
 - `panel/tests/Feature/SubscriptionTokenDeterminismTest.php` —
   round-15 idempotency / replay-safety anchor. Pins three
   contracts on `ProxyAccount::subscriptionToken()`:
