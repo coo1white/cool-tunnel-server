@@ -285,6 +285,11 @@ compose build sing-box
 ok "sing-box image built"
 
 step "Build panel image (FrankenPHP + Composer + ct-server-core baked in)"
+warn "First panel build takes 8-15 min on a 1-vCPU VPS — most of the time"
+warn "is gd / intl / zip PHP-extension compilation against icu-dev /"
+warn "libzip-dev (no prebuilt wheels in dunglas/frankenphp:alpine). On a"
+warn "4-vCPU box ~3-5 min. Subsequent builds hit the layer cache and"
+warn "drop to ~30 s. Tail: docker compose logs -f --tail=80 panel"
 compose build panel
 ok "panel image built"
 
@@ -364,6 +369,67 @@ compose exec -T panel ct-server-core --json haproxy render \
 [[ "$haproxy_render_ok" == true ]] && ok "haproxy.cfg rendered to /usr/local/etc/haproxy/haproxy.cfg (haproxy_etc volume)"
 
 # ---------- Start Caddy first; wait for both certs to land --------
+
+# Pre-flight: port-80 reachability + DNS. The MOST common first-
+# boot ticket is "Caddy cert (apex) … never came up after 90s"
+# with no diagnostic, because the operator's cloud security
+# group blocks :80 OR DNS A records haven't propagated yet.
+# Surface both before paying the 90-s ACME wait.
+#
+# The DNS check uses dig +short for the A record and compares
+# against the host's public IP via icanhazip.com (over IPv4 only —
+# `-4` because the v6 path is more likely to be misconfigured on
+# fresh VPS images and would surface a false-mismatch). The
+# port-80 check binds a one-shot listener via socat (preinstalled
+# in panel container, but here we use python3 -c which is
+# universally present in Debian's default install).
+step "Pre-flight: DNS + port 80 reachability for ACME"
+public_ip=$(curl -s4 --max-time 5 https://icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)
+if [[ -z "$public_ip" ]]; then
+    warn "Couldn't determine public IPv4 via icanhazip.com — skipping DNS check"
+    warn "If ACME stalls below, verify dig +short ${DOMAIN} matches your VPS IP"
+else
+    apex_a=$(dig +short A "${DOMAIN}" 2>/dev/null | head -1 || true)
+    panel_a=$(dig +short A "${PANEL_DOMAIN}" 2>/dev/null | head -1 || true)
+    if [[ "$apex_a" != "$public_ip" ]]; then
+        warn "DNS mismatch: ${DOMAIN} → ${apex_a:-<empty>}, but VPS IP is $public_ip"
+        warn "ACME HTTP-01 challenge for ${DOMAIN} WILL fail until DNS propagates"
+        warn "Fix: at your DNS provider, set A record ${DOMAIN} → $public_ip"
+    else
+        ok "DNS: ${DOMAIN} → $public_ip"
+    fi
+    if [[ "$panel_a" != "$public_ip" ]]; then
+        warn "DNS mismatch: ${PANEL_DOMAIN} → ${panel_a:-<empty>}, but VPS IP is $public_ip"
+        warn "ACME for ${PANEL_DOMAIN} WILL fail until DNS propagates"
+    else
+        ok "DNS: ${PANEL_DOMAIN} → $public_ip"
+    fi
+fi
+# Port-80 reachability — bind a tiny listener in the background,
+# curl ourselves, kill the listener. Catches firewall blocks,
+# CGNAT, missing security-group rule before the ACME wait.
+if command -v python3 >/dev/null 2>&1 && [[ -n "$public_ip" ]]; then
+    python3 -c '
+import http.server, socketserver, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s): s.send_response(200); s.end_headers(); s.wfile.write(b"ok")
+    def log_message(s, *a): pass
+try:
+    socketserver.TCPServer(("0.0.0.0", 80), H).serve_forever()
+except Exception as e: sys.exit(0)
+' &
+    listener_pid=$!
+    sleep 1
+    if curl -s --max-time 8 "http://${public_ip}:80" | grep -q ok 2>/dev/null; then
+        ok "Port 80 reachable from public IP"
+    else
+        warn "Port 80 NOT reachable from public IP $public_ip"
+        warn "Likely causes: cloud-provider firewall, ufw, IPv6-only DNS, CGNAT"
+        warn "ACME HTTP-01 will fail. Fix: open TCP 80 inbound + verify DNS"
+    fi
+    kill "$listener_pid" 2>/dev/null || true
+    wait "$listener_pid" 2>/dev/null || true
+fi
 
 step "Start Caddy (ACME — :80 challenges; manages certs for ${DOMAIN:-?} and ${PANEL_DOMAIN:-?})"
 compose up -d caddy
