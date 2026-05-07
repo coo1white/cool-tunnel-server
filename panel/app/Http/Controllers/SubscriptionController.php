@@ -81,6 +81,20 @@ class SubscriptionController extends Controller
 
     private const RATE_LIMIT_DECAY_SEC = 60;
 
+    /**
+     * Server-issued manifest expiry, in seconds. The Rust spec
+     * (ct-protocol::SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS)
+     * also enforces a 7-day replay window measured from issued_at —
+     * so even though we issue a 30-day expires_at here, a captured
+     * manifest is only usable for 7 days regardless. The 30-day
+     * value is what the operator chose for "how often a healthy
+     * client must re-fetch". Don't bump this above 30 days without
+     * coordinating with the FRESHNESS_WINDOW_SECONDS bound (the
+     * client will reject earlier than the server-issued expiry).
+     * (Round-13 time-and-clock audit.)
+     */
+    private const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 30;
+
     public function show(Request $request, string $token): Response
     {
         // Single anti-enumeration choke point: ANY failure mode —
@@ -196,6 +210,17 @@ class SubscriptionController extends Controller
             $optionalCaps['fake_site_slug'] = $slug;
         }
 
+        // Capture wall-clock ONCE for both timestamps. Pre-fix this
+        // called `time()` twice in succession on adjacent lines —
+        // an extremely rare second-boundary race could land
+        // issued_at = N and expires_at = N+1 + 30 days = an
+        // off-by-one window. The MANIFEST_TTL_SECONDS constant
+        // matches ct-protocol::SubscriptionManifestV1::FRESHNESS_-
+        // WINDOW_SECONDS-aware design: server emits a 30-day
+        // expires_at; the client's spec-side replay-resistance
+        // window cuts in earlier at 7 days. (Round-13 time-and-
+        // clock audit.)
+        $now = time();
         $body = [
             'version' => 1,
             'server' => $cfg->domain,
@@ -217,8 +242,8 @@ class SubscriptionController extends Controller
                 // docstring. NaiveProxy does not do QUIC.
                 'http3' => false,
             ] + $optionalCaps,
-            'issued_at' => time(),
-            'expires_at' => time() + 60 * 60 * 24 * 30,
+            'issued_at' => $now,
+            'expires_at' => $now + self::MANIFEST_TTL_SECONDS,
             // note: omitted when null (Rust skip_if_none). Today the
             // panel never sets a note; if a future column is added,
             // emit only when non-null and non-empty.
