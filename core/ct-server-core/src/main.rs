@@ -9,6 +9,7 @@
 
 mod admin;
 mod caddy;
+mod canary;
 mod components;
 mod daemon;
 mod db;
@@ -162,8 +163,28 @@ enum Cmd {
         #[command(subcommand)]
         op: AdminOp,
     },
+    /// Self-probe canary — early-warning surface for "this VPS is
+    /// becoming unreachable from its own network position."
+    /// (v0.0.57 china-readiness — see docs/going-to-china.md.)
+    Canary {
+        #[command(subcommand)]
+        op: CanaryOp,
+    },
     /// Print the build manifest.
     Version,
+}
+
+#[derive(Subcommand, Debug)]
+enum CanaryOp {
+    /// Run one self-probe (DoH-resolve apex + TCP-connect to
+    /// haproxy:443) and append the result to ServerConfig.
+    /// `self_probe_history`. Wired into the Laravel scheduler
+    /// (every 5 min) by panel/routes/console.php.
+    Probe,
+    /// Print the recorded self-probe history (one JSON entry per
+    /// line, oldest first). Operator surface for "what's the
+    /// canary saying right now" without going through the panel.
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -472,6 +493,16 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 let pd = util::domain::panel_domain()?;
                 println!("{pd}");
                 Ok(())
+            }
+        },
+        Cmd::Canary { op } => match op {
+            CanaryOp::Probe => {
+                let pool = db::connect(&cli.database_url).await?;
+                canary::probe(&pool).await
+            }
+            CanaryOp::Status => {
+                let pool = db::connect(&cli.database_url).await?;
+                canary::status(&pool).await
             }
         },
         Cmd::Version => {

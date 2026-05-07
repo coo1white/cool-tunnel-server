@@ -24,6 +24,7 @@ class ServerConfig extends Model
         'anti_tracking_probe_resistance', 'anti_tracking_doh_resolver',
         'http3_enabled',
         'last_caddyfile_hash', 'last_rendered_at',
+        'self_probe_history',
     ];
 
     protected function casts(): array
@@ -34,6 +35,10 @@ class ServerConfig extends Model
             'anti_tracking_probe_resistance' => 'boolean',
             'http3_enabled' => 'boolean',
             'last_rendered_at' => 'datetime',
+            // v0.0.57 china-readiness — bounded array of
+            // {ts, status, reason?} entries written by
+            // `ct-server-core canary probe`.
+            'self_probe_history' => 'array',
         ];
     }
 
