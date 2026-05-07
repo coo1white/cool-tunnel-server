@@ -14,6 +14,23 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- `core/ct-protocol/src/subscription.rs` and
+  `panel/tests/Feature/SubscriptionContractTest.php` — round-14
+  pinned the cross-encoder canonical contract for non-ASCII
+  payloads. The Round-11 fix made server-canonical ==
+  client-canonical for the simple ASCII case; round-14 anchors
+  that the equivalence holds when the payload contains
+  non-ASCII codepoints (Chinese, Japanese, Korean, anything
+  outside ASCII). Specifically: PHP's `JSON_UNESCAPED_UNICODE`
+  flag and Rust serde_json's default both emit RAW UTF-8 (not
+  `\uXXXX` escapes); both emit RAW `/` (not `\/`). If either
+  encoder ever flips its default in a future upstream release,
+  these tests catch it before a Chinese/Japanese/Korean
+  password user's HMAC starts failing in production.
+  `unicode_passwords_round_trip_byte_identical_to_php_unescaped`
+  + `forward_slashes_emit_raw_not_escaped` (Rust) /
+  `manifest_with_non_ascii_password_round_trips_through_hmac_verify`
+  (PHP).
 - `core/ct-protocol/src/subscription.rs` — round-13 added
   `SubscriptionManifestV1::check_freshness(now: u64) -> FreshnessCheck`
   and the public constant `FRESHNESS_WINDOW_SECONDS = 7 days`.
