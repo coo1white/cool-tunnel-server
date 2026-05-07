@@ -10,26 +10,18 @@
 //   4. Atomically appends the result to
 //      `server_configs.self_probe_history` (JSON column, trimmed
 //      to the last MAX_HISTORY entries via `JSON_ARRAY_APPEND`).
+//   5. Propagates the failure (if any) so the scheduler's
+//      `onFailure` hook fires and a `schedule.failed` log line
+//      surfaces alongside the recorded history entry.
 //
 // The panel reads the tail to drive a "last N self-probes failed"
 // banner so blocking / DoH / haproxy issues surface ~15 min ahead
 // of user complaints.
-//
-// What this catches:
-//   - Operator's chosen DoH resolver became unreachable.
-//   - DoH returns 0 answers (captive portal / DNS poisoner).
-//   - haproxy crashed / failed to start.
-//
-// What this does NOT catch:
-//   - External IP poisoning (the apex resolves correctly via the
-//     VPS's egress DoH but maps to a different IP from inside
-//     China). External probe infrastructure required.
-//   - Sing-box crashed but haproxy still accepts connections
-//     (we don't TLS-handshake into sing-box).
 
 use crate::util::doh;
-use crate::{db, Result};
+use crate::{db, Error, Result};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -42,34 +34,33 @@ use tokio::time::timeout;
 const MAX_HISTORY: usize = 10;
 
 /// TCP-connect timeout for the docker-internal haproxy probe.
-/// haproxy is on the same docker network as the daemon; sub-ms
-/// connect time is normal. 5 s is generous enough to absorb
-/// transient hiccups but short enough that a stalled probe doesn't
-/// straddle the next 5-min cron tick.
 const TCP_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Run one canary probe and append the result to ServerConfig.
+/// Run one canary probe, append the result to ServerConfig, and
+/// propagate the underlying probe failure (if any) so the scheduler's
+/// `onFailure` hook fires. Always writes the history entry first, so
+/// the panel banner reads the same state regardless of how the cron
+/// reacts.
 ///
 /// # Errors
 ///
-/// Returns `Err` only on database failures — DoH / TCP failures
-/// are recorded as `"fail"` history entries, not propagated. The
-/// scheduler reads the recorded entries to decide what to surface;
-/// returning an error here would also produce a `schedule.failed`
-/// log line that says nothing useful (the entry already explains
-/// the failure).
+/// Returns `Err` on either a database write failure (unable to
+/// record the entry) or a probe failure (DoH / TCP / config). The
+/// scheduler's `onFailure` log line distinguishes these via the
+/// underlying error message.
 pub async fn probe(pool: &MySqlPool) -> Result<()> {
     let cfg = db::server_config(pool).await?;
-    let entry = match run_probe(&cfg.domain, &cfg.doh_resolver).await {
+    let probe_result = run_probe(&cfg.domain, &cfg.doh_resolver).await;
+    let entry = match &probe_result {
         Ok(()) => CanaryEntry::ok(),
         Err(reason) => {
             tracing::warn!(reason = %reason, "self-probe failed");
-            CanaryEntry::fail(reason)
+            CanaryEntry::fail(reason.clone())
         }
     };
     append_history(pool, &entry).await?;
     println!("{}", serde_json::to_string(&entry)?);
-    Ok(())
+    probe_result.map_err(Error::msg)
 }
 
 /// Print the most recent probe entries as JSON-per-line — operator
@@ -108,47 +99,59 @@ pub async fn status(pool: &MySqlPool) -> Result<()> {
             // The next `canary probe` invocation will overwrite
             // with a single-entry array, which is the simplest
             // recovery path; we surface the bytes that triggered
-            // the parse failure so the operator can decide
-            // whether to capture them first.
-            println!(
-                r#"{{"history": "<corrupted>", "parse_error": {:?}, "raw_bytes": {:?}}}"#,
-                e.to_string(),
-                json,
-            );
+            // the parse failure so the operator can capture them
+            // first. Built via serde_json so control characters in
+            // raw_bytes are escaped per JSON rules (Rust's `{:?}`
+            // Debug emits `\u{XX}` with braces, which is invalid
+            // JSON and breaks downstream `jq` consumers).
+            let report = serde_json::json!({
+                "history": "<corrupted>",
+                "parse_error": e.to_string(),
+                "raw_bytes": json,
+            });
+            println!("{report}");
         }
     }
     Ok(())
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+/// One probe history entry. Serializes as
+/// `{"ts": "...", "status": "ok"}` or
+/// `{"ts": "...", "status": "fail", "reason": "..."}` — the wire
+/// shape PHP reads through `ServerConfig.self_probe_history`'s
+/// `'array'` cast.
+#[derive(Debug, Serialize, Deserialize)]
 struct CanaryEntry {
     /// ISO-8601 UTC timestamp of when the probe ran.
     ts: String,
-    /// "ok" or "fail" — the panel reads this to count consecutive
-    /// failures. Stringly-typed across the wire because the panel
-    /// is PHP and a Rust enum variant tag would force the panel
-    /// to special-case the serde-tagged shape.
-    status: String,
-    /// Human-readable failure reason. Surfaced in the panel banner
-    /// so the operator can act without grepping docker logs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
+    /// Externally-tagged: serde flattens the discriminant into the
+    /// outer object as the `status` key, putting any failure
+    /// `reason` alongside it. Identical wire form to the prior
+    /// stringly-typed `status: String + reason: Option<String>`
+    /// shape, but compile-time exhaustive at write sites.
+    #[serde(flatten)]
+    status: CanaryStatus,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+enum CanaryStatus {
+    Ok,
+    Fail { reason: String },
 }
 
 impl CanaryEntry {
     fn ok() -> Self {
         Self {
             ts: Utc::now().to_rfc3339(),
-            status: "ok".to_owned(),
-            reason: None,
+            status: CanaryStatus::Ok,
         }
     }
 
     fn fail(reason: String) -> Self {
         Self {
             ts: Utc::now().to_rfc3339(),
-            status: "fail".to_owned(),
-            reason: Some(reason),
+            status: CanaryStatus::Fail { reason },
         }
     }
 }
@@ -161,17 +164,10 @@ async fn run_probe(domain: &str, doh_url: &str) -> std::result::Result<(), Strin
         return Err("ServerConfig.doh_resolver is empty".to_owned());
     }
 
-    // Step 1: DoH-resolve the apex. The shared util has its own
-    // 5-second per-request timeout via reqwest; no outer
-    // tokio::time::timeout wrapper is needed.
     doh::resolve_a(domain, doh_url)
         .await
         .map_err(|e| format!("DoH lookup failed: {e}"))?;
 
-    // Step 2: TCP-connect to docker-internal haproxy:443. Docker's
-    // network DNS resolves "haproxy" to the haproxy service's IP;
-    // 443 is the SNI router's listening port. Timeout matters here
-    // because tokio's connect has no built-in cap.
     timeout(TCP_TIMEOUT, TcpStream::connect("haproxy:443"))
         .await
         .map_err(|_| format!("TCP connect to haproxy:443 timed out after {TCP_TIMEOUT:?}"))?
@@ -184,20 +180,16 @@ async fn run_probe(domain: &str, doh_url: &str) -> std::result::Result<(), Strin
 /// `self_probe_history` column, then trim to the last MAX_HISTORY
 /// entries.
 ///
-/// MariaDB's `JSON_ARRAY_APPEND(<col-or-null>, '$', <new>)` returns
-/// NULL when the existing column is NULL, so we COALESCE to an
-/// empty array first; the trim step uses `JSON_REMOVE` against the
-/// computed positional path. Single statement = single round trip
-/// = no SELECT/UPDATE race window when an operator runs `ct-server-
-/// core canary probe` manually while the cron is mid-tick.
+/// `JSON_ARRAY_APPEND(<col-or-null>, '$', <new>)` returns NULL when
+/// the existing column is NULL, so we COALESCE to an empty array
+/// first. `JSON_EXTRACT(?, '$')` is the idiom for "treat this string
+/// parameter as JSON and embed the parsed value" — without it,
+/// MariaDB would append the entire JSON text as a single string-
+/// typed array element. Single statement = single round trip = no
+/// SELECT/UPDATE race window for an operator-triggered manual
+/// `ct-server-core canary probe` running concurrently with the cron.
 async fn append_history(pool: &MySqlPool, entry: &CanaryEntry) -> Result<()> {
     let json = serde_json::to_string(entry)?;
-    // Use a CTE-shaped expression: `JSON_ARRAY_APPEND` adds the new
-    // entry; the outer expression then trims the leading entries
-    // when the array exceeds MAX_HISTORY. JSON path indexing is
-    // 0-based; `$[0]` removes the oldest. We trim one entry per
-    // tick because the array grows by exactly one per call — no
-    // need to handle multi-entry overshoots.
     sqlx::query(
         "UPDATE server_configs
          SET self_probe_history = IF(
@@ -224,7 +216,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canary_entry_ok_serialises_without_reason_field() {
+    fn canary_entry_ok_serialises_with_status_only() {
         let e = CanaryEntry::ok();
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains(r#""status":"ok""#));
@@ -232,11 +224,11 @@ mod tests {
     }
 
     #[test]
-    fn canary_entry_fail_carries_reason() {
+    fn canary_entry_fail_carries_reason_alongside_status() {
         let e = CanaryEntry::fail("DoH lookup failed: timeout".into());
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains(r#""status":"fail""#));
-        assert!(s.contains("DoH lookup failed: timeout"));
+        assert!(s.contains(r#""reason":"DoH lookup failed: timeout""#));
     }
 
     #[test]
@@ -244,7 +236,31 @@ mod tests {
         let e = CanaryEntry::fail("test reason".into());
         let s = serde_json::to_string(&e).unwrap();
         let back: CanaryEntry = serde_json::from_str(&s).unwrap();
-        assert_eq!(back.status, "fail");
-        assert_eq!(back.reason.as_deref(), Some("test reason"));
+        match back.status {
+            CanaryStatus::Fail { reason } => assert_eq!(reason, "test reason"),
+            CanaryStatus::Ok => panic!("expected fail variant"),
+        }
+    }
+
+    #[test]
+    fn canary_entry_wire_shape_matches_prior_string_typed_form() {
+        // Anchor: PHP-side `ServerConfig.self_probe_history`'s
+        // `'array'` cast just `json_decode`s the column. Pre-enum,
+        // the keys were {ts, status, reason?}. The serde-tagged
+        // enum must produce byte-equal wire form so the panel
+        // doesn't need a model migration.
+        let ok = CanaryEntry::ok();
+        let s = serde_json::to_string(&ok).unwrap();
+        assert!(s.starts_with('{') && s.ends_with('}'));
+        let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(parsed.get("ts").is_some(), "ts key required");
+        assert_eq!(parsed["status"], "ok");
+        assert!(parsed.get("reason").is_none(), "reason absent on Ok");
+
+        let fail = CanaryEntry::fail("x".into());
+        let s = serde_json::to_string(&fail).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(parsed["status"], "fail");
+        assert_eq!(parsed["reason"], "x");
     }
 }

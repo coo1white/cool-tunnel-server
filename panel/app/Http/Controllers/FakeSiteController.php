@@ -101,10 +101,21 @@ class FakeSiteController extends Controller
      * Uses the framework's RateLimiter facade — same primitive
      * SubscriptionController uses for its per-minute rate limit.
      * `hit()` is atomic across cache stores; the `:alarmed`
-     * sentinel ensures we log once per crossing even when many
-     * concurrent requests race past the threshold (raw `===`
-     * against the count would silently miss the alarm when
-     * concurrent increments take it from N-1 → N+1).
+     * sentinel collapses the "alarm fires once per (ip, decay-
+     * window)" property under sequential traffic. Raw `===`
+     * against the count (the original v0.0.57 implementation)
+     * would silently miss the alarm when concurrent increments
+     * take it from N-1 → N+1; the `tooManyAttempts(>=N)` +
+     * sentinel pair covers that.
+     *
+     * Caveat: the sentinel check / `hit` pair is not single-
+     * statement atomic, so two concurrent requests that race past
+     * the threshold can both observe `attempts=0` on the sentinel
+     * and both log. Worst-case duplicate-log spread is one per
+     * crossing under heavy concurrent probing — small enough
+     * that fixing it would mean either a Redis-only Lua script
+     * or moving to a database-locking primitive, neither worth
+     * the complexity for an early-warning signal.
      *
      * If `$request->ip()` is null (proxy misconfiguration / unit
      * test) we skip the path entirely rather than collapsing all
