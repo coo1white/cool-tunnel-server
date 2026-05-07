@@ -71,19 +71,33 @@ pub fn build_dns_query(name: &str) -> std::result::Result<Vec<u8>, String> {
 /// Resolve `name` IN A through `doh_url`. Returns `Ok(ancount)` on
 /// success, `Err(human-readable reason)` on any failure.
 ///
-/// "Success" means the DoH endpoint returned an HTTP 2xx with a
-/// well-formed message header containing ≥1 answer record.
-/// `ANCOUNT=0` is treated as a failure (likely captive portal /
-/// poisoner / NXDOMAIN-on-everything intercept) — IANA-managed
-/// names like `example.com` always have A records, and the apex
-/// of an operator's deployment has at least one A record by
-/// definition (the install would never have succeeded otherwise).
+/// "Success" means the DoH endpoint returned an HTTP 2xx, a
+/// well-formed message header with `RCODE = NOERROR`, and at
+/// least one answer record. The error path distinguishes the
+/// RCODE classes — `SERVFAIL` (upstream auth-server failure),
+/// `NXDOMAIN` (name doesn't exist), `REFUSED` (resolver policy
+/// rejected) — so the operator gets an accurate diagnostic
+/// instead of "possible censorship intercept" for every kind of
+/// upstream hiccup.
+///
+/// `ANCOUNT == 0` *with* `RCODE == NOERROR` is the actual
+/// censorship-intercept signal (a captive portal returning a
+/// well-formed empty response).
+///
+/// Error messages deliberately omit the DoH URL — reqwest's
+/// `Display` impl can include the full URL in connect / TLS
+/// errors, which would leak any URL-embedded credentials
+/// (`https://user:pass@host/path` form, accepted by reqwest
+/// even though it's not standard for DoH) into the canary's
+/// stored history and `docker compose logs`. The operator
+/// already knows the URL — it's in the panel.
 ///
 /// # Errors
 ///
 /// Returns `Err` when the wire-format query can't be built, the
 /// HTTP request fails / times out, the resolver returns non-2xx,
-/// the body is too short to parse a header, or `ANCOUNT == 0`.
+/// the body is too short to parse a header, the response RCODE
+/// is non-zero, or `ANCOUNT == 0`.
 pub async fn resolve_a(name: &str, doh_url: &str) -> std::result::Result<u16, String> {
     let query = build_dns_query(name)?;
     let b64 = URL_SAFE_NO_PAD.encode(&query);
@@ -96,33 +110,63 @@ pub async fn resolve_a(name: &str, doh_url: &str) -> std::result::Result<u16, St
     let client = reqwest::Client::builder()
         .timeout(DEFAULT_TIMEOUT)
         .build()
-        .map_err(|e| format!("HTTP client build failed: {e}"))?;
+        .map_err(|_| "HTTP client build failed".to_owned())?;
     let resp = client
         .get(&url)
         .header("Accept", "application/dns-message")
         .send()
         .await
-        .map_err(|e| format!("DoH request failed: {e}"))?;
+        .map_err(reqwest_error_kind)?;
     let status = resp.status();
     if !status.is_success() {
         return Err(format!(
             "DoH HTTP {status} (resolver may be censored or misconfigured)"
         ));
     }
-    let body = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("DoH body read failed: {e}"))?;
+    let body = resp.bytes().await.map_err(reqwest_error_kind)?;
     if body.len() < 12 {
         return Err(format!("DoH response too small ({} bytes)", body.len()));
     }
+
+    // RFC 1035 §4.1.1: byte 3, lower 4 bits = RCODE.
+    let rcode = body[3] & 0x0F;
+    match rcode {
+        0 => {} // NOERROR — fall through to ANCOUNT check.
+        2 => return Err(format!("DoH SERVFAIL for {name} (upstream auth-server failure — usually transient; not a censorship signal)")),
+        3 => return Err(format!("DoH NXDOMAIN for {name} (resolver claims this name does not exist — DNS hijacking if the name should resolve)")),
+        5 => return Err(format!("DoH REFUSED for {name} (resolver policy rejected the query — try a different DoH endpoint)")),
+        n => return Err(format!("DoH returned RCODE={n} for {name} (non-NOERROR; resolver may be censored or misconfigured)")),
+    }
+
     let ancount = u16::from_be_bytes([body[6], body[7]]);
     if ancount == 0 {
         return Err(format!(
-            "DoH returned 0 answer records for {name} (possible censorship intercept — try a different resolver via the panel)"
+            "DoH returned NOERROR with 0 answer records for {name} (likely captive portal / DNS poisoner — try a different resolver via the panel)"
         ));
     }
     Ok(ancount)
+}
+
+/// Reqwest's `Display` impl can include the request URL in
+/// connect / TLS error messages. The DoH URL is operator-
+/// controlled and could carry embedded credentials. Strip the
+/// URL by classifying the error kind via reqwest's typed
+/// predicates and return only the category name.
+fn reqwest_error_kind(e: reqwest::Error) -> String {
+    let kind = if e.is_timeout() {
+        "timeout"
+    } else if e.is_connect() {
+        "connection error"
+    } else if e.is_decode() {
+        "decode error"
+    } else if e.is_redirect() {
+        "redirect error"
+    } else if e.is_status() {
+        "status error"
+    } else {
+        "request error"
+    };
+    format!("DoH request failed ({kind})")
 }
 
 #[cfg(test)]

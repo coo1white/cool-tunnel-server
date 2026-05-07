@@ -14,9 +14,11 @@
 //      `onFailure` hook fires and a `schedule.failed` log line
 //      surfaces alongside the recorded history entry.
 //
-// The panel reads the tail to drive a "last N self-probes failed"
-// banner so blocking / DoH / haproxy issues surface ~15 min ahead
-// of user complaints.
+// Operator surface today: `ct-server-core canary status` reads the
+// recorded history. A panel banner widget that surfaces the same
+// state in the dashboard UI without polling the CLI is a v0.0.58
+// follow-up; this column / wire shape is the contract that widget
+// will read.
 
 use crate::util::doh;
 use crate::{db, Error, Result};
