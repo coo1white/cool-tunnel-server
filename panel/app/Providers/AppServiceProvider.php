@@ -14,7 +14,6 @@ use App\Services\TrafficCollector;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -32,28 +31,34 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // Force HTTPS in URL generation only when the request itself
-        // is secure. Pre-v0.0.28 this was unconditional in production,
-        // which broke the documented SSH-tunnel access path
-        // (`ssh -L 9000:127.0.0.1:9000 host` → http://127.0.0.1:9000/
-        // admin) — Laravel emitted https:// redirects that the
-        // browser then failed to TLS-handshake against the plain-HTTP
-        // tunnel listener (ERR_SSL_PROTOCOL_ERROR), and stamped
-        // session cookies with `Secure` (so the browser refused to
-        // send them back over plain HTTP, blocking login).
+        // URL scheme handling — historical context.
         //
-        // request()->isSecure() is the right gate: it returns true
-        // when the request was either direct HTTPS (a hypothetical
-        // future TLS terminator on this listener) or arrived with
-        // `X-Forwarded-Proto: https` from a trusted proxy
-        // (TrustProxies in bootstrap/app.php trusts 127.0.0.1 and
-        // 172.16/12 — covers the SSH-tunnel peer and the docker
-        // bridge subnet ahead of the deferred R1-1 / R1-2 SNI router).
-        // The SSH-tunnel path is plain HTTP, so isSecure() is false
-        // and we leave URL generation alone — http:// in, http:// out.
-        if (request()->isSecure()) {
-            URL::forceScheme('https');
-        }
+        // Pre-FrankenPHP-runtime-swap, this method called
+        //   if (request()->isSecure()) { URL::forceScheme('https'); }
+        // The intent was: emit https URLs only when the request
+        // arrived via a real HTTPS terminator (or via a trusted
+        // proxy forwarding X-Forwarded-Proto: https through the
+        // TrustProxies middleware in bootstrap/app.php).
+        //
+        // That worked under PHP-FPM because boot() runs once per
+        // request, so URL::forceScheme reset on every request. Under
+        // Octane / FrankenPHP worker mode boot() runs ONCE per worker
+        // and the per-request `if` was checked against whatever
+        // request happened to be FIRST through that worker; the
+        // global URL::forceScheme then leaked into every subsequent
+        // request the worker handled. SSH-tunnel users would get
+        // https redirects the moment any HTTPS-fronted request hit
+        // the same worker — silent, intermittent breakage of the
+        // documented loopback access path.
+        //
+        // Fix: drop the explicit URL::forceScheme. Laravel's URL
+        // generator picks the scheme from the current request via
+        // TrustProxies (trusts 127.0.0.1 + 172.16/12 — covers SSH
+        // tunnel peer + docker bridge), AND from APP_URL when no
+        // request is in scope (queue jobs, scheduler). When the
+        // deferred R1-1 / R1-2 SNI router lands and forwards
+        // X-Forwarded-Proto: https, URL generation will respect it
+        // automatically — no service-provider gymnastics needed.
 
         $this->configureRateLimiters();
     }

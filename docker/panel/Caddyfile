@@ -30,10 +30,10 @@
 #     evaluate.
 
 {
-    # Strip the Server header globally. Without this, every panel
-    # response carries `Server: Caddy` — a wire-level fingerprint
-    # the v0.0.14 cover-site invariant work was designed to
-    # eliminate. Servers tag = none drops the header entirely.
+    # Enable HTTP/2 + HTTP/3 (HTTP/3's reach is cosmetic on this
+    # loopback-bound listener — UDP/QUIC doesn't traverse SSH's
+    # TCP forwarder — but it pays off automatically when the panel
+    # is fronted by a public TLS terminator in v0.1).
     servers {
         protocols h1 h2 h3
     }
@@ -47,11 +47,16 @@
         # boot in memory (~30-50 MiB after Filament loads). At 4
         # workers the steady-state ~200 MiB sits within the panel
         # container's 320 MiB mem_limit alongside the queue worker,
-        # scheduler, and ct-server-core daemon. Operators on bigger
-        # boxes raise via the OCTANE_WORKERS env (read by
-        # supervisord.conf's octane:start invocation; this Caddyfile
-        # constant is the in-process worker pool used by
-        # `frankenphp_handle_request()` — Octane wraps it).
+        # scheduler, and ct-server-core daemon.
+        #
+        # Operators on bigger boxes who want more workers edit
+        # `num` below and rebuild the panel image. Env-driven
+        # tuning was dropped in PR #10 along with the
+        # `octane:start` CLI wrapper — the OCTANE_WORKERS env
+        # was an octane:start option, not a FrankenPHP-direct
+        # one. Templating this Caddyfile to read an env var is a
+        # ~10-line follow-up if the operator-facing surface
+        # justifies it.
         num_threads 4
         worker {
             file /var/www/html/public/frankenphp-worker.php
@@ -60,12 +65,26 @@
     }
 }
 
-# Listen on plain HTTP on 127.0.0.1:9000. The panel binds loopback
-# only; SSH-tunnel users reach via `ssh -L 9000:127.0.0.1:9000
-# <host>`. Once the v0.1 public-fronted panel architecture lands
-# (R1-3 in the SNI-router design), this listener moves to the
+# Listen on plain HTTP on container port 9000, all interfaces.
+# Host-side loopback gating is enforced by docker-compose's
+# `127.0.0.1:9000:9000` port mapping — packets from outside the
+# host can't reach the container at all. SSH-tunnel users hit
+# the host's loopback via `ssh -L 9000:127.0.0.1:9000 <host>`.
+#
+# IMPORTANT: do NOT change this back to `http://127.0.0.1:9000`
+# — that binds the listener to the container's OWN loopback
+# only. Docker's iptables DNAT routes mapped traffic to the
+# container's bridge interface (eth0), not its loopback, so a
+# loopback-bound listener accepts the docker-internal
+# healthcheck call (which runs inside the container, against
+# the same loopback) but silently fails every SSH-tunnel
+# request from the operator's laptop. Caught in the v0.0.58
+# round-5 audit.
+#
+# Once the v0.1 public-fronted panel architecture lands (R1-3
+# in the SNI-router design), this listener moves to the
 # operator-managed apex domain with TLS at the SNI router.
-http://127.0.0.1:9000 {
+http://:9000 {
     root * /var/www/html/public
 
     # Strip `Server` header on every response (defence in depth —
