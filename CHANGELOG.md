@@ -14,6 +14,15 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- `panel/tests/Feature/SubscriptionObservabilityTest.php` — round-12
+  pins which subscription fall-throughs MUST log and which MUST
+  stay silent. Critical contract: the disabled-account and
+  cleartext-decrypt-failed paths log so the operator can debug
+  "user X says their URL stopped working"; the unknown-token
+  path stays silent so a censor probing /api/v1/subscription/<random>
+  cannot 1:1 amplify scanner traffic into panel logs (cardinality
+  control). Also covers the happy path emitting no fall-through
+  log at all (no phantom dashboard alerts on healthy traffic).
 - `panel/tests/Feature/SubscriptionContractTest.php` — round-11
   added two more contract tests on top of the round-10 pair:
   3. The served manifest's HMAC verifies under the documented
@@ -46,6 +55,17 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+- `panel/app/Services/CaddyfileGenerator.php` and
+  `panel/app/Services/SingBoxConfigGenerator.php` — render-failure
+  log severity ERROR → CRITICAL. When a re-render fails on a
+  ServerConfig save (or account create / delete / regenerate),
+  the surrounding save SUCCEEDS in the UI but the OLD config stays
+  live in Caddy / sing-box. New users can't connect; deleted users
+  can still connect; domain / ACME-email changes silently don't
+  take effect. The panel and the running proxy diverge with no
+  signal in the UI. CRITICAL is the right level so dashboard
+  alarms fire instead of letting the divergence persist quietly.
+  (Round-12 observability.)
 - `panel/.env.example` — APP_KEY block now carries an explicit
   warning that rotating it after accounts exist silently
   invalidates every existing subscription URL (HMAC over
@@ -67,6 +87,32 @@ before relying on a version bump as a compatibility signal.
 
 ### Fixed
 
+- `panel/app/Http/Controllers/SubscriptionController.php` — three
+  silent fall-through paths now emit panel-side logs proportionate
+  to operator-action-needed-ness:
+  - **Disabled / expired account** (resolves to a real row but
+    `isActive() === false`) — `Log::warning('subscription.fallthrough.account_disabled', [account_id, username])`.
+    Cardinality bounded by legitimate-user count; operator can
+    grep this when a user complains.
+  - **Empty / undecryptable cleartext** (active row, but
+    `getCleartextPassword()` returned null/empty — APP_KEY
+    rotation or legacy pre-v0.0.5 row) —
+    `Log::critical('subscription.fallthrough.cleartext_decrypt_failed', [account_id, username])`.
+    Operator must hit the per-account Regenerate-password flow.
+  - **Unknown / forged token** (resolves to NULL) — kept SILENT
+    on purpose. Logging here would 1:1 amplify scanner traffic
+    into panel logs at China-bound probe rates (potential
+    DoS-via-logs). The cover-site
+    `FakeSiteController::maybeAlarmOnRapidFallThrough` already
+    aggregates probes per IP per minute. (Round-12 observability.)
+- `panel/app/Services/ComponentChecker.php` — pre-fix the
+  Filament Components page rendered "0 OK / 0 NG" with NO
+  panel-side log when `ct-server-core component check` failed
+  (binary missing on PATH, manifests dir gone). Operator saw a
+  blank page and had no clue why. Now logs
+  `Log::warning('component.check.failed', [err, type, manifests_dir])`
+  so it's grep-able. The page UI still degrades gracefully via
+  the empty-array path. (Round-12 observability.)
 - `panel/app/Http/Controllers/SubscriptionController.php` —
   canonicalisation contract for the manifest's HMAC signature
   was inconsistent with the documented Rust client verify flow.

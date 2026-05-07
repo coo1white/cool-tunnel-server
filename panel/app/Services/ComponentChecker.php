@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 // Thin shell-out to `ct-server-core component check`.
 //
@@ -32,7 +33,20 @@ final class ComponentChecker
 
         try {
             $rows = $this->core->componentCheck($manifestsDir);
-        } catch (\RuntimeException) {
+        } catch (\RuntimeException $e) {
+            // Pre-fix the operator saw a blank Components page
+            // ("0 OK / 0 NG") with NO panel-side log line — the
+            // most likely cause (`ct-server-core` not on PATH on a
+            // fresh deploy, or the manifests dir missing) was
+            // invisible from the panel. Surface it. The page UI
+            // still degrades gracefully via the empty array, but
+            // the operator can now grep `component.check.failed`.
+            // (Round-12 observability.)
+            Log::warning('component.check.failed', [
+                'err' => $e->getMessage(),
+                'type' => get_class($e),
+                'manifests_dir' => $manifestsDir,
+            ]);
             $rows = [];
         }
         Cache::put('components.check', $rows, 30);

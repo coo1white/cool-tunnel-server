@@ -112,13 +112,31 @@ class SubscriptionController extends Controller
             return (new FakeSiteController)->show($request);
         }
 
-        if (! $account || ! $account->isActive()) {
-            // Forward to the cover-site catch-all so an invalid /
-            // expired subscription URL returns the same bytes (body
-            // shape, status, headers) as any other unmatched path.
-            // Returning a short empty body — even with text/html —
-            // would distinguish a bogus /subscription/<token> from a
-            // regular cover-site path purely by Content-Length.
+        if (! $account) {
+            // Token didn't resolve to any row. This is the
+            // probe-class path (random/expired/forged tokens) —
+            // logging once per probe would amplify scanner traffic
+            // 1:1 in panel logs (cardinality blow-up at China-bound
+            // scan rates). Stay silent here; the cover-site
+            // alarm in FakeSiteController::maybeAlarmOnRapidFall-
+            // Through aggregates probes per IP per minute.
+            return (new FakeSiteController)->show($request);
+        }
+        if (! $account->isActive()) {
+            // Token resolved to a real row, but the account is
+            // disabled (operator-toggled, or expired by date).
+            // This is a LEGITIMATE user with a working subscription
+            // URL who is now seeing "URL stopped working" with no
+            // surface — log once per request so the operator can
+            // grep `subscription.fallthrough.account_disabled` for
+            // "why is user X complaining". Cardinality is bounded
+            // by the legitimate-user count, NOT the probe rate.
+            // (Round-12 observability.)
+            Log::warning('subscription.fallthrough.account_disabled', [
+                'account_id' => $account->id,
+                'username' => $account->username,
+            ]);
+
             return (new FakeSiteController)->show($request);
         }
 
@@ -139,6 +157,18 @@ class SubscriptionController extends Controller
         // flow. (Round-10 client-contract audit.)
         $cleartext = $account->getCleartextPassword();
         if ($cleartext === null || $cleartext === '') {
+            // Active, real account with a broken cleartext column —
+            // ALWAYS critical (this means an APP_KEY rotation or
+            // legacy-row issue is silently breaking THIS specific
+            // user's subscription). Operator must hit the
+            // Regenerate-password flow for this account. Cardinality
+            // is bounded by the broken-account count, not the probe
+            // rate. (Round-12 observability.)
+            Log::critical('subscription.fallthrough.cleartext_decrypt_failed', [
+                'account_id' => $account->id,
+                'username' => $account->username,
+            ]);
+
             return (new FakeSiteController)->show($request);
         }
 
