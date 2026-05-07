@@ -12,6 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ct_protocol::{
     ComponentKindV1, ComponentManifestV1, ComponentStateV1, ComponentStatusV1, VerifySpecV1,
 };
+use sqlx::MySqlPool;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
@@ -71,25 +72,19 @@ pub async fn list(manifests_dir: &str) -> Result<Vec<ComponentManifestV1>> {
     Ok(out)
 }
 
-pub async fn check_all(
-    manifests_dir: &str,
-    database_url: &Option<String>,
-) -> Result<Vec<ComponentStatusV1>> {
+pub async fn check_all(manifests_dir: &str, pool: &MySqlPool) -> Result<Vec<ComponentStatusV1>> {
     let manifests = list(manifests_dir).await?;
     let mut out = Vec::with_capacity(manifests.len());
     for m in manifests {
-        out.push(check_one(&m, database_url).await);
+        out.push(check_one(&m, pool).await);
     }
     Ok(out)
 }
 
-pub async fn check_one(
-    m: &ComponentManifestV1,
-    database_url: &Option<String>,
-) -> ComponentStatusV1 {
+pub async fn check_one(m: &ComponentManifestV1, pool: &MySqlPool) -> ComponentStatusV1 {
     let (state, message, installed) = match m.kind {
         ComponentKindV1::Binary | ComponentKindV1::ContainerImage => verify_via_command(m).await,
-        ComponentKindV1::DohEndpoint => verify_via_doh(database_url).await,
+        ComponentKindV1::DohEndpoint => verify_via_doh(pool).await,
         ComponentKindV1::RustCrate | ComponentKindV1::PhpPackage => {
             // For workspace crates / Composer packages we trust the
             // lockfile to enforce versions. Mark OK with the pin
@@ -256,9 +251,7 @@ fn first_line(s: &str) -> Option<&str> {
 /// 5s wall-clock cap — DoH lookups are typically <100ms when the
 /// resolver is reachable. A censored-blackhole probe would otherwise
 /// stall the whole `component check` pass.
-async fn verify_via_doh(
-    database_url: &Option<String>,
-) -> (ComponentStateV1, String, Option<String>) {
+async fn verify_via_doh(pool: &MySqlPool) -> (ComponentStateV1, String, Option<String>) {
     // RFC 8484 wire-format query for "example.com IN A".
     // 29 bytes total: 12-byte header + 13-byte QNAME + 4-byte
     // QTYPE/QCLASS. Standard query, RD=1 (request recursion).
@@ -275,17 +268,7 @@ async fn verify_via_doh(
         0x00, 0x01, 0x00, 0x01,
     ];
 
-    let pool = match db::connect(database_url).await {
-        Ok(p) => p,
-        Err(e) => {
-            return (
-                ComponentStateV1::Unknown,
-                format!("could not read ServerConfig from DB: {e}"),
-                None,
-            );
-        }
-    };
-    let cfg = match db::server_config(&pool).await {
+    let cfg = match db::server_config(pool).await {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -392,12 +375,8 @@ async fn verify_via_doh(
     )
 }
 
-pub async fn print_check(
-    manifests_dir: &str,
-    database_url: &Option<String>,
-    json: bool,
-) -> Result<()> {
-    let statuses = check_all(manifests_dir, database_url).await?;
+pub async fn print_check(manifests_dir: &str, pool: &MySqlPool, json: bool) -> Result<()> {
+    let statuses = check_all(manifests_dir, pool).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&statuses)?);
     } else {

@@ -16,6 +16,7 @@ use crate::template;
 use crate::{Error, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use sqlx::MySqlPool;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -29,15 +30,14 @@ pub struct CaddyRenderOutcome {
 }
 
 pub async fn render(
-    database_url: &Option<String>,
+    pool: &MySqlPool,
     panel_domain: &str,
     template_path: &str,
     output_path: &str,
     dry_run: bool,
     json_output: bool,
 ) -> Result<()> {
-    let pool = db::connect(database_url).await?;
-    let cfg = db::server_config(&pool).await?;
+    let cfg = db::server_config(pool).await?;
 
     let template = fs::read_to_string(template_path).await.map_err(|e| {
         Error::msg(format!(
