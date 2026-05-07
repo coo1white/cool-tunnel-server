@@ -23,7 +23,7 @@ class ServerConfigFactory extends Factory
             'anti_tracking_hide_ip' => true,
             'anti_tracking_hide_via' => true,
             'anti_tracking_probe_resistance' => true,
-            'anti_tracking_doh_resolver' => 'https://1.1.1.1/dns-query',
+            'anti_tracking_doh_resolver' => 'https://dns.alidns.com/dns-query',
             'http3_enabled' => false,
             'last_caddyfile_hash' => null,
             'last_rendered_at' => null,
