@@ -15,8 +15,12 @@ class DatabaseSeeder extends Seeder
         // Seed the singleton ServerConfig row.
         ServerConfig::current();
 
-        // Seed three cover-site templates so the operator has
-        // something to pick from on first login.
+        // Seed a single default cover-site. Operators can create
+        // additional fake sites in the panel using any of the
+        // available templates (blog / corporate / portfolio — see
+        // FakeWebsiteResource's template picker); shipping just
+        // one default keeps the first-login surface minimal and
+        // makes "which one is live?" unambiguous.
         if (FakeWebsite::count() === 0) {
             FakeWebsite::create([
                 'slug' => 'minimal-blog',
@@ -30,34 +34,6 @@ class DatabaseSeeder extends Seeder
                     ['title' => 'On simplicity', 'date' => '2026-05-01', 'excerpt' => 'Why doing less often beats doing more.'],
                 ]],
                 'is_active' => true,
-            ]);
-
-            FakeWebsite::create([
-                'slug' => 'consultancy',
-                'name' => 'Solo Consultancy',
-                'template' => 'corporate',
-                'title' => 'Calm Software Consulting',
-                'tagline' => 'Boring infrastructure, done well.',
-                'payload' => ['services' => [
-                    ['name' => 'Architecture review',   'desc' => 'Independent look at your system design.'],
-                    ['name' => 'Performance audit',     'desc' => 'Find what is slow and quantify the fix.'],
-                    ['name' => 'On-call rotation help', 'desc' => 'Fewer pages, better runbooks.'],
-                ]],
-                'is_active' => false,
-            ]);
-
-            FakeWebsite::create([
-                'slug' => 'portfolio',
-                'name' => 'Personal Portfolio',
-                'template' => 'portfolio',
-                'title' => 'Things I have built',
-                'tagline' => 'Photographs, side-projects, and the occasional essay.',
-                'payload' => ['projects' => [
-                    ['name' => 'Tide chart for the bay', 'year' => 2024],
-                    ['name' => 'Static site generator',   'year' => 2025],
-                    ['name' => 'Small synth in Rust',     'year' => 2026],
-                ]],
-                'is_active' => false,
             ]);
         }
     }
