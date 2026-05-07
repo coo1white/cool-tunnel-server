@@ -14,6 +14,18 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- `panel/tests/Feature/SubscriptionTokenDeterminismTest.php` —
+  round-15 idempotency / replay-safety anchor. Pins three
+  contracts on `ProxyAccount::subscriptionToken()`:
+  1. Pure in `(account_id, APP_KEY)` — calling it twice on the
+     same model instance OR on a fresh DB-loaded instance returns
+     the SAME string. A future change that mixed in a nonce,
+     timestamp, or per-process random would invalidate every
+     bookmarked subscription URL on every panel refresh.
+  2. APP_KEY rotation flips it — the round-10 `.env.example`
+     warning depends on the HMAC actually mixing in the key.
+  3. Empty APP_KEY produces empty token, never an HMAC-with-
+     empty-key (which would be trivially forgeable).
 - `core/ct-protocol/src/subscription.rs` and
   `panel/tests/Feature/SubscriptionContractTest.php` — round-14
   pinned the cross-encoder canonical contract for non-ASCII
