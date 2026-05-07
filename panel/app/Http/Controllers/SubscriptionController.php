@@ -103,6 +103,24 @@ class SubscriptionController extends Controller
 
         $cfg = ServerConfig::current();
 
+        // Refuse to emit a manifest with an empty cleartext
+        // password. Pre-fix the controller served `password => ''`
+        // when getCleartextPassword() returned null (legacy row
+        // pre-v0.0.5 cleartext column, or a Crypt::decryptString
+        // failure from APP_KEY rotation — see ProxyAccount.php:
+        // 192-202). The client would receive a valid-looking
+        // manifest, attempt the proxy connect with empty
+        // basic_auth, and get a sing-box 401 with no diagnostic
+        // surface. Falling through to the cover-site preserves
+        // the cover-site invariant AND surfaces the failure as
+        // an obvious "subscription URL not working" — the
+        // operator can debug via the panel's Regenerate-password
+        // flow. (Round-10 client-contract audit.)
+        $cleartext = $account->getCleartextPassword();
+        if ($cleartext === null || $cleartext === '') {
+            return (new FakeSiteController)->show($request);
+        }
+
         $body = [
             'version' => 1,
             'server' => $cfg->domain,
@@ -110,7 +128,7 @@ class SubscriptionController extends Controller
                 'host' => $cfg->domain,
                 'port' => 443,
                 'username' => $account->username,
-                'password' => $account->getCleartextPassword() ?? '',
+                'password' => $cleartext,
                 'label' => "{$cfg->domain} ({$account->username})",
             ]],
             'capabilities' => [

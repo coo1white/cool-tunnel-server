@@ -133,10 +133,35 @@ not rely on any tell that contradicts this:
   HTTP/3 support; clients that attempt QUIC against this server
   will fail and fall back to TCP, producing a fingerprintable
   network signature. Don't try.
-- **Invalid subscription tokens get a 404 + HTML body** that's
-  indistinguishable from the camouflage cover-site catch-all.
-  Don't probe a token you don't have — the server cannot tell you
-  it's wrong without breaking that property.
+- **Invalid subscription tokens get a 200 + cover-site HTML body**,
+  byte-identical to the camouflage cover-site catch-all (same body,
+  same Content-Type, same `Cache-Control: public, max-age=3600`,
+  same `ETag`). Don't probe a token you don't have — the server
+  cannot tell you it's wrong without breaking that property. The
+  same fall-through fires for: unknown token, expired/disabled
+  account, rate-limit hit, signing-key misconfigured, and (as of
+  v0.0.59) any account whose stored cleartext is empty or fails
+  to decrypt — all of these are operationally distinct but
+  on-the-wire identical. (Earlier revisions of this doc said "404 +
+  HTML"; that was wrong — a 404 would distinguish the subscription
+  endpoint from the rest of the cover-site catch-all by status code
+  alone.)
+- **`{{CLEARTEXT_PLACEHOLDER}}` is a server-internal marker.** The
+  Rust core's `core/ct-server-core/src/subscription.rs` emits the
+  literal string `{{CLEARTEXT_PLACEHOLDER}}` for the CLI-without-
+  panel path; the panel's HTTP path splices the actual cleartext
+  before signing and the HMAC covers the spliced body. If a client
+  ever sees that string in a manifest's `password` field, the
+  server is broken — DO NOT treat it as a literal password (it
+  won't authenticate). Report it to the operator and refuse the
+  profile.
+- **A signed manifest with `password: ""` should be refused.**
+  v0.0.58 and earlier could emit one when the panel's encrypted-
+  cleartext column was empty (legacy row pre-v0.0.5, or APP_KEY
+  rotation broke decryption). v0.0.59+ falls through to the cover
+  site instead of emitting it, but a defensive client should still
+  reject empty passwords on its own — that's a contract a future
+  server bug or a man-in-the-middle proxy could violate.
 - **No `Server:` or `X-Powered-By:` headers** on the subscription
   response. If you're testing a client and see one, that's a bug
   on the server side; please report.
