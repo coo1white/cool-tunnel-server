@@ -296,21 +296,21 @@ services:
     # 1 GB-VPS sizing (post-FrankenPHP-runtime-swap). Pre-swap the
     # panel ran nginx + php-fpm + 4 ondemand FPM workers, with
     # measured idle at ~110 MiB and peak ~250 MiB. Post-swap it
-    # runs FrankenPHP (one supervisor process holding `OCTANE_WORKERS`
-    # PHP workers — default `auto` = one per CPU on the operator's
-    # box) plus the queue worker, scheduler, and ct-server-core
-    # daemon. On a 1 vCPU / 1 GB VPS the steady state is ~150 MiB;
-    # on a 4-CPU box `auto` resolves to 4 workers and tracks the
-    # prior FPM steady state. 320 MiB still gives ~30 % headroom
+    # runs FrankenPHP (one parent process holding 4 long-lived
+    # PHP workers — count baked into docker/panel/Caddyfile's
+    # `worker { num 4 }` block) plus the queue worker, scheduler,
+    # and ct-server-core daemon. Each worker holds a Laravel +
+    # Filament boot in memory (~30-50 MiB resident); steady state
+    # at 4 workers is ~250 MiB. 320 MiB still gives modest headroom
     # for opcache touching its 64 MiB cap; raise to 512 MiB if you
-    # bump OCTANE_WORKERS past 4.
+    # bump the Caddyfile worker count past 4.
     mem_limit: 320m
-    # Octane wraps each PHP worker in a long-lived process; the
-    # supervisord process tree is now (1) frankenphp/octane parent
+    # FrankenPHP's worker pool is N PHP processes + the parent
+    # supervisor; supervisord process tree is (1) frankenphp parent
     # + N PHP workers + (2) queue worker + (3) scheduler + (4)
     # ct-core daemon + opcache cleanup threads. 256 process slots
-    # is generous; raise alongside OCTANE_WORKERS if you
-    # significantly grow the worker pool.
+    # is generous; raise alongside the Caddyfile `worker { num }`
+    # value if you significantly grow the worker pool.
     pids_limit: 256
     env_file:
       - .env
