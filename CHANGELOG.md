@@ -104,6 +104,30 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+- `scripts/lib.sh` and `scripts/install.sh` — round-16 error-
+  message-UX. `wait_for` now picks up an optional `WAIT_FOR_HINT`
+  env var and threads it through to the on-timeout `die` as the
+  `↳ try: ...` actionable hint. Used at three sites in
+  `install.sh` where a silent timeout previously left the operator
+  stuck:
+  - **MariaDB healthcheck** — surfaces "stale volume from prior
+    install (DB_PASSWORD rotated since volume init) → wipe-prompt
+    or CPU-starved VPS still running initdb" + the `docker compose
+    logs --tail=80 db` command.
+  - **Panel entrypoint sentinel** — surfaces the entrypoint's
+    step ordering (composer install → key:generate → migrate →
+    cache build → render) and which one is most likely stuck
+    on a fresh box vs. an upgrade, plus the log-tail command.
+  - **Caddy ACME cert wait** — enumerates the FOUR distinct
+    causes (DNS, port 80, Caddy crash, Let's Encrypt rate limit)
+    that previously all surfaced as the same "Caddy cert never
+    came up after 90s". Includes the staging-CA workaround for
+    the rate-limit case.
+  Pre-fix the operator saw `[!] Caddy cert (apex) at /data/...
+  never came up after 90s`. Post-fix the operator sees that line
+  followed by `↳ try: docker compose logs --tail=120 caddy   #
+  then check, in order: (1) DNS A records ... (2) firewall ...
+  (3) Caddy crash-loop (4) Let's Encrypt rate limit ...`.
 - `panel/app/Services/CaddyfileGenerator.php` and
   `panel/app/Services/SingBoxConfigGenerator.php` — render-failure
   log severity ERROR → CRITICAL. When a re-render fails on a
