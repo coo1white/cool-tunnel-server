@@ -52,21 +52,17 @@ Sched::command('singbox:render --if-changed --reload')->everyFiveMinutes()
     ->withoutOverlapping()
     ->onFailure($logFailure('singbox:render'));
 
-// Self-probe canary — every 5 min, run the daemon's `canary probe`
-// (DoH-resolve apex + TCP-connect to haproxy:443). Result writes to
-// ServerConfig.self_probe_history; the panel reads the tail to
-// drive a "last N self-probes failed" banner. Early-warning surface
-// for operators in censored regions where DoH resolvers (the
-// Cloudflare default pre-v0.0.57) can be silently dropped, breaking
-// the daemon's DNS path before users notice. (v0.0.57 china-
-// readiness — see docs/going-to-china.md.)
+// Self-probe canary — DoH-resolve apex + TCP-connect to
+// haproxy:443; result writes to ServerConfig.self_probe_history
+// for the panel to surface as a "last N failed" banner (operator-
+// facing context: docs/going-to-china.md).
 //
-// withoutOverlapping is mandatory: a stalled DoH lookup in tick N
-// must not stack with tick N+1's probe (would skew the 3-consecutive-
-// failure heuristic). Failure here logs but does NOT alert — the
-// banner itself is the operator-visible signal; logging at critical
-// would mean every China-side DoH outage produces a noise spike in
-// the panel container's stderr.
+// withoutOverlapping is mandatory: a stalled DoH lookup in tick
+// N must not stack with tick N+1's probe (would skew the
+// consecutive-failure heuristic). Failure here logs but does NOT
+// alert — the banner itself is the operator-visible signal;
+// logging at critical would mean every China-side DoH outage
+// produces a noise spike in the panel container's stderr.
 Sched::command('canary:probe')->everyFiveMinutes()
     ->withoutOverlapping()
     ->onFailure($logFailure('canary:probe'));

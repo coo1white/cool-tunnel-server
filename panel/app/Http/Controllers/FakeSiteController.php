@@ -7,8 +7,8 @@ namespace App\Http\Controllers;
 use App\Models\FakeWebsite;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 
 // Catch-all controller for any non-/admin request that comes through
 // Caddy's fall-through. We render whichever fake site is currently
@@ -17,19 +17,25 @@ use Illuminate\Support\Facades\Log;
 class FakeSiteController extends Controller
 {
     /**
-     * Active-probing alarm threshold (v0.0.57 china-readiness).
+     * Active-probing alarm threshold.
      *
      * Cover-site fall-through hits per source IP per minute that
-     * trigger a single `probe.detected` log line. Real human
-     * traffic to a personal blog rarely produces > 30 distinct
-     * URL hits/min from one IP; sustained spikes from a single
-     * source are characteristic of an active scanner / GFW probe
-     * sweep walking URL space. Lower threshold = more false
-     * alarms; higher = slower detection. 30/min is a balanced
-     * starting point — operators can tune via Cache::tags or by
-     * editing this constant.
+     * trip a single `probe.detected` log line. Real human traffic
+     * to a personal blog rarely produces > 30 distinct URL hits/min
+     * from one IP; sustained spikes from a single source are
+     * characteristic of an active scanner / GFW probe sweep walking
+     * URL space. Lower threshold = more false alarms; higher =
+     * slower detection.
      */
     private const PROBE_ALARM_RATE_PER_MIN = 30;
+
+    /**
+     * RateLimiter decay window. The fall-through counter resets
+     * after this many seconds of no hits, so an attacker who
+     * paces probes outside the window slips under the radar — a
+     * 60-second window matches the threshold's per-minute units.
+     */
+    private const PROBE_DECAY_SEC = 60;
 
     public function show(Request $request): Response
     {
@@ -78,58 +84,78 @@ class FakeSiteController extends Controller
     }
 
     /**
-     * Active-probing detector (v0.0.57 china-readiness).
+     * Active-probing detector — emits `probe.detected` once per
+     * (source-ip, decay-window) when fall-through hit rate from
+     * one IP crosses PROBE_ALARM_RATE_PER_MIN.
      *
-     * Real human traffic to a personal blog cover-site distributes
-     * across many source IPs at low rates. An active scanner — GFW
-     * probe sweep, automated bot, mass-target censor — concentrates
-     * many distinct URL hits at one source IP within a short
-     * window. We count fall-through hits per (source-ip, minute) in
-     * the cache and emit a structured `probe.detected` log line
-     * when the rate crosses the threshold.
+     * Why a log line, not a block: the cover-site invariant is
+     * the actual defence — every fall-through returns byte-
+     * identical cover bytes, so the probe gets nothing useful
+     * regardless of volume. The log is an early-warning signal so
+     * the operator knows their server has been spotted and may
+     * want to rotate the domain. Blocking source IPs would be
+     * visible to the censor (a sudden 503 from a previously-200
+     * host) and is a strictly worse signal than letting them keep
+     * getting cover bytes.
      *
-     * Why a log line, not a block: the cover-site invariant is the
-     * actual defence — every fall-through returns byte-identical
-     * cover bytes, so the probe gets nothing useful regardless of
-     * volume. The log line is purely an early-warning signal so the
-     * operator knows their server has been spotted and may want to
-     * rotate the domain. Blocking source IPs would be visible to
-     * the censor (a sudden 503 from a previously-200 host) and is
-     * a strictly worse signal than letting them keep getting cover
-     * bytes.
+     * Uses the framework's RateLimiter facade — same primitive
+     * SubscriptionController uses for its per-minute rate limit.
+     * `hit()` is atomic across cache stores; the `:alarmed`
+     * sentinel collapses the "alarm fires once per (ip, decay-
+     * window)" property under sequential traffic. Raw `===`
+     * against the count (the original v0.0.57 implementation)
+     * would silently miss the alarm when concurrent increments
+     * take it from N-1 → N+1; the `tooManyAttempts(>=N)` +
+     * sentinel pair covers that.
      *
-     * Cache key bucket = (ip, year-month-day-hour-minute). Minute
-     * boundaries reset the counter; sustained probes accumulate
-     * within each minute and trip the alarm fast.
+     * Caveat: the sentinel check / `hit` pair is not single-
+     * statement atomic, so two concurrent requests that race past
+     * the threshold can both observe `attempts=0` on the sentinel
+     * and both log. Worst-case duplicate-log spread is one per
+     * crossing under heavy concurrent probing — small enough
+     * that fixing it would mean either a Redis-only Lua script
+     * or moving to a database-locking primitive, neither worth
+     * the complexity for an early-warning signal.
      *
-     * NOT instrumented on the response itself — must NOT change
-     * status / headers / body of the cover response (the invariant
-     * test enforces this).
+     * If `$request->ip()` is null (proxy misconfiguration / unit
+     * test) we skip the path entirely rather than collapsing all
+     * unidentified clients into one shared bucket where they'd
+     * trip spurious alarms together.
+     *
+     * NOT instrumented on the response itself — must not change
+     * status / headers / body of the cover response (the
+     * invariant test enforces this).
      */
     private function maybeAlarmOnRapidFallThrough(Request $request): void
     {
-        $ip = $request->ip() ?? 'unknown';
-        $bucket = 'probe:'.$ip.':'.now()->format('YmdHi');
-
-        // Cache::increment is atomic in Redis (the v0.0.x cache
-        // store). The `add` first-set ensures the bucket exists at
-        // 0 with a 90-second TTL before we increment, so the key
-        // self-reaps after the minute it covers; we don't need a
-        // sweep cron.
-        Cache::add($bucket, 0, 90);
-        $count = Cache::increment($bucket);
-
-        // Log exactly once per (ip, minute) — when crossing the
-        // threshold. Pre-fix, every hit past threshold logged,
-        // producing noise spikes that drowned legitimate alerts.
-        if ($count === self::PROBE_ALARM_RATE_PER_MIN) {
-            Log::warning('probe.detected', [
-                'source_ip' => $ip,
-                'rate_per_min' => $count,
-                'path' => $request->path(),
-                'user_agent' => substr((string) $request->userAgent(), 0, 200),
-                'note' => 'cover-site fall-through rate crossed threshold; possible active probing',
-            ]);
+        $ip = $request->ip();
+        if ($ip === null || $ip === '') {
+            return;
         }
+
+        $key = 'probe:'.$ip;
+        RateLimiter::hit($key, self::PROBE_DECAY_SEC);
+
+        if (! RateLimiter::tooManyAttempts($key, self::PROBE_ALARM_RATE_PER_MIN)) {
+            return;
+        }
+
+        // Sentinel — fire the log line at most once per
+        // (ip, decay-window). Without this, every hit past the
+        // threshold would log, producing noise spikes that
+        // drown the actual alert.
+        $sentinel = 'probe:alarmed:'.$ip;
+        if (RateLimiter::tooManyAttempts($sentinel, 1)) {
+            return;
+        }
+        RateLimiter::hit($sentinel, self::PROBE_DECAY_SEC);
+
+        Log::warning('probe.detected', [
+            'source_ip' => $ip,
+            'rate_per_min' => RateLimiter::attempts($key),
+            'path' => $request->path(),
+            'user_agent' => substr((string) $request->userAgent(), 0, 200),
+            'note' => 'cover-site fall-through rate crossed threshold; possible active probing',
+        ]);
     }
 }
