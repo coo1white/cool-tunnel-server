@@ -112,10 +112,11 @@ once we cut that integration.
               │  → naive (CONNECT)     │
               └────────────────────────┘
 
-(The panel container — PHP-FPM + nginx + Filament + the ct-server-
-core daemon under supervisord — is reachable via the loopback host
-port-map at 127.0.0.1:9000 only; there is no `:443` SNI fallback
-to it from sing-box at v1.13.11. See `docs/design/sni-router-v0.1.md`
+(The panel container — FrankenPHP (Caddy + PHP in-process) +
+Laravel Octane workers + Filament + the ct-server-core daemon
+under supervisord — is reachable via the loopback host port-map
+at 127.0.0.1:9000 only; there is no `:443` SNI fallback to it
+from sing-box at v1.13.11. See `docs/design/sni-router-v0.1.md`
 for the deferred public cover-site path under R1-1.)
 ```
 
@@ -130,12 +131,16 @@ for the deferred public cover-site path under R1-1.)
   on `0.0.0.0:9090` (docker-bridge-only; not host-published) is
   what `ct-server-core` PUTs `/configs?force=true&path=…` to for
   hot reloads.
-- **`panel` container** — PHP-FPM + nginx + Laravel + Filament,
+- **`panel` container** — FrankenPHP (Caddy + PHP 8.4 in one
+  process) + Laravel Octane in worker mode + Laravel + Filament,
   plus a copy of the `ct-server-core` Rust binary on PATH and the
   ct-server-core daemon running under supervisord. The PHP services
   in `app/Services/` are thin shell-outs to the Rust binary; the
   Rust daemon owns the Redis pub/sub subscription with the burst
-  Coalescer.
+  Coalescer. Worker mode keeps Laravel booted in long-lived
+  workers between requests — the panel "Save → reload" round-trip
+  drops by the boot cost (~30-50 ms) per cycle vs. classic
+  request-scoped FPM.
 - **`db` container** — MariaDB. Stores everything: proxy accounts
   (incl. encrypted cleartext passwords), fake-site templates, server
   config, traffic rollups, panel admins.

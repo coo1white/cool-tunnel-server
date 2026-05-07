@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 # entrypoint for the panel container — first-boot install + boot.
+#
+# Post-runtime-swap layout: nginx + php-fpm decommissioned. The
+# previous version of this script generated a php-fpm pool config
+# (PHP_FPM_PM_MODE / PHP_FPM_MAX_CHILDREN / etc.); FrankenPHP's
+# Octane wrapper handles the worker pool internally and reads its
+# tunables from the OCTANE_* env namespace (see .env.example +
+# docker-compose.yml). Pool generation is gone; everything else
+# (composer install, key:generate, migrate, seed, asset publish,
+# cache builds, initial render) is unchanged.
 set -euo pipefail
 
 cd /var/www/html
@@ -10,73 +19,20 @@ mkdir -p "$COMPOSER_HOME" storage/framework/{cache,sessions,views} storage/logs 
 
 # Hand storage/ + bootstrap/cache/ to www-data. The entrypoint runs
 # as root (so we can write into bind-mounted volumes whose host
-# ownership we don't control), but PHP-FPM workers run as www-data
-# per docker/panel/zz-pool.conf (set in this script just below). If
-# we don't transfer ownership here the FPM workers can't write
-# Blade-compiled view cache into storage/framework/views/, every
-# view-rendering route 500s with `file_put_contents(... .php):
-# Failed to open stream: Permission denied`, and the operator gets
-# a generic Symfony 500 page on /admin/login with no useful log
-# (PHP error_log is empty in the alpine FPM image; LOG_CHANNEL=
-# stderr writes to FPM stderr but the framework catches the
-# ErrorException internally before it reaches that path). Pre-fix
-# only chmod 0775 ran here, which left ownership at root:root —
-# www-data hits the "others" bucket with mode r-x, no write. First
-# real-world Debian 13 deploy with a clean panel_storage volume
-# caught this. (v0.0.28 deployment hotfix.)
+# ownership we don't control). Pre-swap: PHP-FPM workers ran as
+# www-data per the FPM pool config and needed write access to
+# Blade-compiled views + bootstrap cache. Post-swap: FrankenPHP's
+# Octane process runs as the image's default user (root in
+# dunglas/frankenphp:1-alpine), but we keep the chown for
+# defensive consistency — Filament's published assets and any
+# operator-side `docker compose exec panel ...` commands still
+# expect www-data ownership for parity with prior deployments.
 chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || true
 chmod -R 0775 storage bootstrap/cache 2>/dev/null || true
 
 # ct-server-core daemon's unix-socket lives under /run/cool-tunnel.
 # Pre-create with mode 0770 so supervisord's daemon program can bind.
 mkdir -p /run/cool-tunnel && chmod 0770 /run/cool-tunnel || true
-
-# php-fpm pool config: listen on a TCP port so nginx in the same
-# container can talk to it without a unix socket race.
-#
-# Tunables (each can be overridden via container env / .env):
-#   PHP_FPM_PM_MODE         dynamic | ondemand | static  (default: ondemand)
-#   PHP_FPM_MAX_CHILDREN    upper bound on concurrent FPM workers (default: 4)
-#   PHP_FPM_IDLE_TIMEOUT    seconds an idle worker survives before exit (default: 60s)
-#   PHP_FPM_MAX_REQUESTS    requests per worker before respawn (default: 500)
-#
-# Defaults are tuned for a 1 vCPU / 1 GB VPS — pre-2026-05-05 the
-# pool was `pm = dynamic` with `max_children = 16`, which on a tiny
-# server was a 480-800 MiB worst-case (each FPM worker resident is
-# ~30-50 MiB after Laravel + Filament are loaded). `ondemand` only
-# spawns when a request arrives and lets workers exit on idle, so
-# the steady-state cost drops to roughly one warm worker. Operators
-# on bigger boxes raise the cap via env without re-rolling the image.
-PM_MODE="${PHP_FPM_PM_MODE:-ondemand}"
-PM_MAX_CHILDREN="${PHP_FPM_MAX_CHILDREN:-4}"
-PM_IDLE_TIMEOUT="${PHP_FPM_IDLE_TIMEOUT:-60s}"
-PM_MAX_REQUESTS="${PHP_FPM_MAX_REQUESTS:-500}"
-
-cat >/usr/local/etc/php-fpm.d/zz-pool.conf <<POOL
-[www]
-user = www-data
-group = www-data
-listen = 127.0.0.1:9001
-listen.allowed_clients = 127.0.0.1
-pm = ${PM_MODE}
-pm.max_children = ${PM_MAX_CHILDREN}
-pm.process_idle_timeout = ${PM_IDLE_TIMEOUT}
-pm.max_requests = ${PM_MAX_REQUESTS}
-clear_env = no
-catch_workers_output = yes
-decorate_workers_output = no
-POOL
-
-# `dynamic` requires the start/min/max-spare trio; emit them only
-# when the operator opted into that mode (otherwise php-fpm refuses
-# to start with "pm.start_servers required" or similar).
-if [ "${PM_MODE}" = "dynamic" ]; then
-    cat >>/usr/local/etc/php-fpm.d/zz-pool.conf <<POOL
-pm.start_servers = ${PHP_FPM_START_SERVERS:-2}
-pm.min_spare_servers = ${PHP_FPM_MIN_SPARE:-1}
-pm.max_spare_servers = ${PHP_FPM_MAX_SPARE:-3}
-POOL
-fi
 
 # First-boot: pull dependencies if vendor/ is missing.
 #
@@ -88,10 +44,7 @@ fi
 # post-autoload-dump (`Illuminate\\Foundation\\ComposerScripts::
 # postAutoloadDump` + `php artisan package:discover --ansi`); we
 # explicitly invoke `package:discover` after install rather than
-# letting any hook run blanket. ComposerScripts::postAutoloadDump
-# is a Laravel-internal helper that matters only when the
-# autoloader is generated WITHOUT --optimize-autoloader; we pass
-# --optimize-autoloader so it isn't needed.
+# letting any hook run blanket.
 if [ ! -d vendor ]; then
     echo "[entrypoint] vendor/ missing — running composer install"
     composer install \
@@ -120,34 +73,28 @@ done
 
 php artisan migrate --force --no-interaction || true
 
-# Seed the singleton ServerConfig row + the three cover-site templates.
-# Both paths are idempotent (ServerConfig::current() is firstOrCreate
-# on id=1, FakeWebsite::create runs only when count()===0), so this is
-# safe to run on every boot — and required to run BEFORE the renderer
-# below. Without this seed pass on first boot, the renderer crashes
-# with "no rows returned by a query that expected to return at least
-# one row" because server_configs.id=1 doesn't exist yet, leaving
-# Caddyfile empty and Caddy unable to fetch a TLS cert. install.sh
-# also runs db:seed (after the migrate-status check) but that path
-# would fail-open if the renderer needs the seed before install.sh
-# gets a chance — duplicating it here closes the gap. (v0.0.27 hotfix
-# — first real-world Debian 13 deploy on a clean db_data volume hit
-# this once the v0.0.26 race fix unblocked the renderer.)
+# Seed the singleton ServerConfig row + the default cover-site
+# template. Both paths are idempotent (ServerConfig::current() is
+# firstOrCreate on id=1, FakeWebsite::create runs only when
+# count()===0), so this is safe to run on every boot — and required
+# to run BEFORE the renderer below. Without this seed pass on first
+# boot, the renderer crashes with "no rows returned by a query that
+# expected to return at least one row" because server_configs.id=1
+# doesn't exist yet, leaving Caddyfile empty and Caddy unable to
+# fetch a TLS cert. install.sh also runs db:seed (after the
+# migrate-status check) but that path would fail-open if the
+# renderer needs the seed before install.sh gets a chance —
+# duplicating it here closes the gap. (v0.0.27 hotfix.)
 php artisan db:seed --force --no-interaction || true
 
 php artisan filament:cache-components --no-interaction || true
 
-# Publish Filament's CSS/JS assets to public/css/filament/ + public/js/
-# filament/. Filament 3 ships these inside the package; the panel's
-# Blade layout references them at /css/filament/filament/app.css and
-# friends, which nginx serves out of public/. Without this step the
-# files don't exist on first boot and the panel renders as a wall of
-# unstyled HTML (Filament's HTML loads, browser falls back to default
-# styles, dashboard is technically functional but visually broken).
-# `filament:assets` is idempotent — copies the package's published
-# files over each boot, no-op when already current. (v0.0.29 hotfix
-# — first real-world Debian 13 deploy hit this once the v0.0.28
-# fixes unblocked the login flow.)
+# Publish Filament's CSS/JS assets to public/css/filament/ + public/
+# js/filament/. Filament 3 ships these inside the package; the
+# panel's Blade layout references them at /css/filament/... .
+# Without this step the files don't exist on first boot and the
+# panel renders as a wall of unstyled HTML. `filament:assets` is
+# idempotent. (v0.0.29 hotfix.)
 php artisan filament:assets --no-interaction || true
 
 php artisan config:cache  --no-interaction || true
@@ -164,13 +111,11 @@ php artisan singbox:render   --no-interaction || true
 # Sentinel for install.sh — signals first-boot setup (composer +
 # migrate + cache + render) is finished and it's safe to query
 # state without racing the entrypoint. v0.0.26 race-fix: install.sh
-# previously ran its own `migrate` immediately after `vendor/
-# autoload.php` appeared, which raced this entrypoint's migrate
-# above and crashed with "Table 'cache' already exists" when the
-# install-side process saw migration #1 mid-transaction (cache
-# table created, migrations row not yet inserted). /tmp is tmpfs
-# in this container, so the sentinel auto-clears on restart and
-# the next first-boot run waits cleanly.
+# previously ran its own `migrate` immediately after
+# `vendor/autoload.php` appeared, which raced this entrypoint's
+# migrate above and crashed with "Table 'cache' already exists".
+# /tmp is tmpfs in this container, so the sentinel auto-clears on
+# restart and the next first-boot run waits cleanly.
 mkdir -p /tmp/cool-tunnel
 : >/tmp/cool-tunnel/entrypoint-complete
 
