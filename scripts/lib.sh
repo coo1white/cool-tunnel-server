@@ -158,6 +158,15 @@ load_env() {
 #
 # Poll a command until it exits zero. Prints a friendly progress
 # indicator. die() on timeout.
+#
+# Optional environment variable: WAIT_FOR_HINT. When set, the
+# value is passed as the second `die` argument on timeout —
+# surfaces as `↳ try: <hint>` in the operator-facing output.
+# Use this to give the next-step diagnostic for waits where
+# "never came up after Ns" leaves the operator stuck (most
+# commonly: ACME cert acquisition, where 90s of silence could
+# mean any of four distinct failures). Round-16 error-message-
+# UX audit.
 wait_for() {
     local desc="$1" max="$2" delay="$3"
     shift 3
@@ -171,7 +180,11 @@ wait_for() {
         sleep "$delay"
     done
     printf "\n" >&2
-    die "$desc never came up after $((max * delay))s"
+    if [[ -n "${WAIT_FOR_HINT:-}" ]]; then
+        die "$desc never came up after $((max * delay))s" "$WAIT_FOR_HINT"
+    else
+        die "$desc never came up after $((max * delay))s"
+    fi
 }
 
 # ---------- Interactive prompts ------------------------------------
