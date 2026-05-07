@@ -33,7 +33,17 @@ class CaddyfileGenerator
             // future undefined-method / type-error / class-not-
             // found Error doesn't propagate silently up to the
             // panel and abort the surrounding model save.
-            Log::error('caddyfile.render.failed', [
+            //
+            // Severity is CRITICAL (was ERROR pre-v0.0.59): when
+            // a Caddyfile re-render fails on ServerConfig save,
+            // the surrounding save SUCCEEDS in the UI but the
+            // OLD Caddyfile stays live. Domain / ACME-email /
+            // ACME-directory changes silently don't take effect.
+            // Operator sees green "saved" with no signal that
+            // production state diverged from the panel state.
+            // CRITICAL is the right level — the dashboard alarm
+            // should fire. (Round-12 observability.)
+            Log::critical('caddyfile.render.failed', [
                 'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);

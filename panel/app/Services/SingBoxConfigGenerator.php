@@ -44,7 +44,17 @@ class SingBoxConfigGenerator
             // future undefined-method / type-error / class-not-
             // found Error doesn't propagate silently up to the
             // panel and abort the surrounding model save.
-            Log::error('singbox.render.failed', [
+            //
+            // Severity is CRITICAL (was ERROR pre-v0.0.59): when
+            // a sing-box re-render fails on account create /
+            // delete / password regenerate, the surrounding save
+            // SUCCEEDS in the UI but the OLD config stays live in
+            // sing-box. The newly-created user can't connect (not
+            // in sing-box's user list); a deleted/disabled user
+            // can still connect. The panel and the running proxy
+            // diverge silently. CRITICAL is the right level — the
+            // dashboard alarm should fire. (Round-12 observability.)
+            Log::critical('singbox.render.failed', [
                 'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);
