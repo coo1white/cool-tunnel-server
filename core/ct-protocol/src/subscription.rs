@@ -149,4 +149,139 @@ mod tests {
             "signature should be omitted when None: {s}"
         );
     }
+
+    // Round-11 data-integrity: the canonical the server signs MUST
+    // round-trip through (deserialise → set signature=None →
+    // re-serialise) without changing bytes. If those bytes differ,
+    // every client that follows the documented verify-by-stripping-
+    // signature flow rejects manifests this server emits — a silent
+    // protocol break.
+    //
+    // The two traps we anchor here:
+    //   (a) Optional fields with skip_if_none must NOT round-trip
+    //       through `"key":null`. A server that emits `"note":null`
+    //       in the canonical produces bytes the Rust client cannot
+    //       reproduce on re-canonicalisation (the field disappears
+    //       entirely on re-serialise → divergent bytes).
+    //   (b) Field declaration order in the struct equals on-the-
+    //       wire order. The server-side encoder (PHP, Go, etc.)
+    //       must emit fields in this order or canonicals diverge.
+    //
+    // Both traps caught a real PHP-side bug; this test pins the
+    // contract on the spec side so a future struct-field reorder
+    // or skip_if_none removal is caught here too.
+    #[test]
+    fn canonical_roundtrips_under_signature_strip() {
+        // A served manifest looks like: deserialise carries
+        // signature: Some("..."). The verification flow clones,
+        // sets signature to None, and re-serialises. Those bytes
+        // must equal what the SERVER signed, byte-for-byte.
+        let served = SubscriptionManifestV1 {
+            version: 1,
+            server: "proxy.example.com".into(),
+            profiles: alloc::vec![ProfileV1 {
+                host: "proxy.example.com".into(),
+                port: 443,
+                username: "alice".into(),
+                password: "secret".into(),
+                label: Some("proxy.example.com (alice)".into()),
+            }],
+            capabilities: ServerCapabilitiesV1 {
+                anti_tracking: alloc::vec![AntiTrackingFeature::HideIp],
+                http3: false,
+                fake_site_slug: None, // omitted on the wire
+            },
+            issued_at: 1000,
+            expires_at: 2000,
+            note: None,                                   // omitted on the wire
+            signature: Some("deadbeef".repeat(8).into()), // 64-hex-char placeholder
+        };
+
+        // Server-side: build the canonical the way the PHP
+        // controller does — same struct with signature=None.
+        let server_canonical_struct = SubscriptionManifestV1 {
+            signature: None,
+            ..served.clone()
+        };
+        let server_canonical = serde_json::to_string(&server_canonical_struct).unwrap();
+
+        // Client-side: deserialise the served body, strip
+        // signature, re-serialise.
+        let served_json = serde_json::to_string(&served).unwrap();
+        let mut from_wire: SubscriptionManifestV1 = serde_json::from_str(&served_json).unwrap();
+        from_wire.signature = None;
+        let client_canonical = serde_json::to_string(&from_wire).unwrap();
+
+        assert_eq!(
+            server_canonical, client_canonical,
+            "canonical bytes diverge between server (build-with-signature-None) and \
+             client (deserialise + signature=None + re-serialise) — every HMAC \
+             verification will fail"
+        );
+
+        // Spot-check the absence of the dropped optional fields
+        // (catches a future skip_if_none removal that would cause
+        // null-leakage on the wire).
+        assert!(
+            !server_canonical.contains("\"note\""),
+            "note must be omitted when None: {server_canonical}"
+        );
+        assert!(
+            !server_canonical.contains("\"signature\""),
+            "signature must be omitted when None: {server_canonical}"
+        );
+        assert!(
+            !server_canonical.contains("\"fake_site_slug\""),
+            "fake_site_slug must be omitted when None: {server_canonical}"
+        );
+    }
+
+    // Field declaration order is part of the wire contract —
+    // serde emits struct fields in declaration order. A reorder
+    // here breaks every server that builds the canonical without
+    // re-deriving from this struct (the PHP controller, for one,
+    // hard-codes the order in its array literal). This test pins
+    // the order so a careless edit fails CI.
+    #[test]
+    fn field_order_is_part_of_the_wire_contract() {
+        let m = SubscriptionManifestV1 {
+            version: 1,
+            server: "s".into(),
+            profiles: alloc::vec![],
+            capabilities: ServerCapabilitiesV1 {
+                anti_tracking: alloc::vec![],
+                http3: false,
+                fake_site_slug: None,
+            },
+            issued_at: 1,
+            expires_at: 2,
+            note: Some("n".into()),
+            signature: Some("sig".into()),
+        };
+        let s = serde_json::to_string(&m).unwrap();
+        // Find each key's position; keys must appear in the
+        // exact order: version, server, profiles, capabilities,
+        // issued_at, expires_at, note, signature.
+        let order = [
+            "\"version\"",
+            "\"server\"",
+            "\"profiles\"",
+            "\"capabilities\"",
+            "\"issued_at\"",
+            "\"expires_at\"",
+            "\"note\"",
+            "\"signature\"",
+        ];
+        let mut last_pos = 0;
+        for (i, key) in order.iter().enumerate() {
+            let pos = s
+                .find(key)
+                .unwrap_or_else(|| panic!("expected key {key} in serialised manifest, got {s}"));
+            assert!(
+                pos >= last_pos,
+                "field order violated at position {i} ({key}): full output = {s}"
+            );
+            last_pos = pos;
+        }
+    }
 }
