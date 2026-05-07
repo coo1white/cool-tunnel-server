@@ -42,8 +42,10 @@ pub struct SubscriptionManifestV1 {
     /// Server capabilities the operator opted into.
     pub capabilities: ServerCapabilitiesV1,
 
-    /// Unix timestamp the manifest was issued. Clients refuse
-    /// manifests older than 7 days as a freshness guard.
+    /// Unix timestamp the manifest was issued. The replay-resistance
+    /// window is `FRESHNESS_WINDOW_SECONDS` (7 days) measured from
+    /// this value; see `Self::check_freshness` for the canonical
+    /// time-bounds check.
     pub issued_at: u64,
 
     /// Unix timestamp after which clients must re-fetch.
@@ -61,6 +63,79 @@ pub struct SubscriptionManifestV1 {
     /// and re-canonicalising.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+}
+
+/// Outcome of `SubscriptionManifestV1::check_freshness`. Distinguishes
+/// the three interesting reject reasons so a client can surface the
+/// right error to the user (the operator-meaningful difference
+/// between "your URL has been intercepted and replayed" and "your
+/// app is offline and the manifest aged out").
+///
+/// Round-13 time-and-clock audit: pre-v0.0.59 the docstring on
+/// `issued_at` claimed "Clients refuse manifests older than 7 days
+/// as a freshness guard," but no implementation existed in the
+/// crate. The first client to follow the spec would either invent
+/// its own check (drift between implementations) or skip it
+/// (defeats the freshness contract). This function is the single
+/// source of truth for both bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreshnessCheck {
+    /// `now < issued_at`. The manifest was created in the future
+    /// relative to the client's clock — either the server clock
+    /// jumped or the client's clock did. Clients should refuse
+    /// rather than treat as "fresh by virtue of being recent."
+    IssuedInFuture { issued_at: u64, now: u64 },
+    /// `now > issued_at + 7 days`. The manifest is older than the
+    /// freshness window even if it has not yet hit `expires_at`.
+    /// This bounds replay attacks: a captured manifest is usable
+    /// for at most 7 days regardless of the server-issued
+    /// `expires_at`. Suggested client UX: re-fetch the
+    /// subscription URL.
+    StaleByIssuedAt { age_seconds: u64 },
+    /// `now > expires_at`. The manifest reached its server-issued
+    /// expiry. Clients should re-fetch.
+    ExpiredByExpiresAt { expired_seconds_ago: u64 },
+    /// Inside both bounds.
+    Fresh,
+}
+
+impl SubscriptionManifestV1 {
+    /// Replay-resistance window applied on top of `expires_at`. A
+    /// captured manifest is rejected after this many seconds
+    /// regardless of the server-issued expiry. Picked at the spec
+    /// level so every client agrees. Round-13 time-and-clock audit.
+    pub const FRESHNESS_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
+
+    /// Time-bounds check. Pure function — caller passes the current
+    /// time so this is testable and works in `no_std` (the crate
+    /// is `#![no_std]`).
+    ///
+    /// Bounds:
+    ///   - `issued_at <= now`               (no future-dated manifests)
+    ///   - `now <= issued_at + 7 days`      (replay window)
+    ///   - `now <= expires_at`              (server expiry)
+    ///
+    /// All three must hold; the function returns the FIRST violation
+    /// it finds in that order, so a client can surface the most
+    /// specific error.
+    pub fn check_freshness(&self, now: u64) -> FreshnessCheck {
+        if now < self.issued_at {
+            return FreshnessCheck::IssuedInFuture {
+                issued_at: self.issued_at,
+                now,
+            };
+        }
+        let age = now - self.issued_at;
+        if age > Self::FRESHNESS_WINDOW_SECONDS {
+            return FreshnessCheck::StaleByIssuedAt { age_seconds: age };
+        }
+        if now > self.expires_at {
+            return FreshnessCheck::ExpiredByExpiresAt {
+                expired_seconds_ago: now - self.expires_at,
+            };
+        }
+        FreshnessCheck::Fresh
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -282,6 +357,102 @@ mod tests {
                 "field order violated at position {i} ({key}): full output = {s}"
             );
             last_pos = pos;
+        }
+    }
+
+    fn manifest_with_times(issued_at: u64, expires_at: u64) -> SubscriptionManifestV1 {
+        SubscriptionManifestV1 {
+            version: 1,
+            server: "s".into(),
+            profiles: alloc::vec![],
+            capabilities: ServerCapabilitiesV1 {
+                anti_tracking: alloc::vec![],
+                http3: false,
+                fake_site_slug: None,
+            },
+            issued_at,
+            expires_at,
+            note: None,
+            signature: None,
+        }
+    }
+
+    // Round-13 time-and-clock: the freshness check the docstring
+    // promised has to actually work. These tests pin the THREE
+    // distinguishable failure modes plus the happy path, so the
+    // first client implementer can rely on the contract.
+
+    #[test]
+    fn freshness_check_accepts_inside_window() {
+        // Issued 1 hour ago, expires in 30 days. now is right now.
+        let m = manifest_with_times(10_000, 10_000 + 30 * 24 * 60 * 60);
+        let now = 10_000 + 60 * 60;
+        assert_eq!(m.check_freshness(now), FreshnessCheck::Fresh);
+    }
+
+    #[test]
+    fn freshness_check_rejects_future_dated_manifest() {
+        // Server clock raced ahead, or client clock is behind.
+        // issued_at > now must be a hard reject — otherwise an
+        // attacker who can set issued_at into the future would get
+        // a manifest that "ages" out of the freshness window only
+        // FROM THE FUTURE, effectively immortalising it.
+        let m = manifest_with_times(10_000, 10_000 + 30 * 24 * 60 * 60);
+        let now = 9_500; // 500s before issued_at
+        match m.check_freshness(now) {
+            FreshnessCheck::IssuedInFuture { issued_at, now: n } => {
+                assert_eq!(issued_at, 10_000);
+                assert_eq!(n, 9_500);
+            }
+            other => panic!("expected IssuedInFuture, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn freshness_check_rejects_stale_by_issued_at() {
+        // Manifest is 8 days old. Even though expires_at is 30 days
+        // from issued_at, the replay-resistance window cuts in at
+        // 7 days. This is the spec's anti-replay guarantee.
+        let m = manifest_with_times(10_000, 10_000 + 30 * 24 * 60 * 60);
+        let now = 10_000 + 8 * 24 * 60 * 60;
+        match m.check_freshness(now) {
+            FreshnessCheck::StaleByIssuedAt { age_seconds } => {
+                assert_eq!(age_seconds, 8 * 24 * 60 * 60);
+            }
+            other => panic!("expected StaleByIssuedAt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn freshness_check_rejects_at_exact_window_plus_one() {
+        // Boundary: ON the 7-day mark is still fresh (the rule is
+        // STRICTLY greater); one second past is stale. Pin this so
+        // a future "use >= instead of >" change is caught.
+        let m = manifest_with_times(0, 30 * 24 * 60 * 60);
+        let on_window = SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS;
+        assert_eq!(m.check_freshness(on_window), FreshnessCheck::Fresh);
+        assert!(matches!(
+            m.check_freshness(on_window + 1),
+            FreshnessCheck::StaleByIssuedAt { age_seconds: _ }
+        ));
+    }
+
+    #[test]
+    fn freshness_check_rejects_expired_inside_freshness_window() {
+        // Operator issued a SHORT-lived manifest (e.g. expires_at
+        // 1 day from issued_at). At day 2 the manifest has expired
+        // even though it is still inside the 7-day freshness
+        // window. The expiry check fires SECOND in priority, so
+        // the test confirms the order.
+        let m = manifest_with_times(0, 24 * 60 * 60); // expires after 1 day
+        let now = 2 * 24 * 60 * 60;
+        match m.check_freshness(now) {
+            FreshnessCheck::ExpiredByExpiresAt {
+                expired_seconds_ago,
+            } => {
+                assert_eq!(expired_seconds_ago, 24 * 60 * 60);
+            }
+            other => panic!("expected ExpiredByExpiresAt, got {other:?}"),
         }
     }
 }
