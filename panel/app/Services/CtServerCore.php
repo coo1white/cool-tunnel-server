@@ -147,4 +147,16 @@ final class CtServerCore
 
         return $this->run($args, timeoutSec: 20);
     }
+
+    /**
+     * Run one self-probe canary cycle. (v0.0.57.)
+     *
+     * 15-second cap covers DoH lookup (5 s) + TCP connect (5 s) +
+     * write-back (~ms) with headroom. The scheduled cron runs every
+     * 5 min so a stalled probe must not block the next tick.
+     */
+    public function canaryProbe(): array
+    {
+        return $this->run(['canary', 'probe'], timeoutSec: 15);
+    }
 }

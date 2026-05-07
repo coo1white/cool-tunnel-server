@@ -1,7 +1,7 @@
 {
     "name": "ct-protocol",
     "kind": "rust-crate",
-    "version": "0.0.36",
+    "version": "0.0.57",
     "upstream": "https://github.com/coo1white/cool-tunnel-server",
     "note": "Proprietary. The cross-platform shared Rust crate every client (current macOS, future iOS / Android / Windows / Linux desktop) and the server depend on for profile parsing, subscription manifests, the wire format, and the component model. no_std-friendly, zero-unsafe, zero-IO. The server is the canonical source of this crate; clients pull a matching version via Cargo.lock."
 }
