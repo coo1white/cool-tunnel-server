@@ -52,18 +52,20 @@ class MakeAdmin extends Command
             foreach ($validator->errors()->all() as $msg) {
                 $this->error($msg);
             }
+
             return self::FAILURE;
         }
 
         if (User::query()->where('email', $email)->exists()) {
             $this->error("user with email {$email} already exists");
+
             return self::FAILURE;
         }
 
         // Leave $email_verified_at null. canAccessPanel() doesn't
         // enforce verification (Cool Tunnel ships no SMTP); setting
         // it would imply a verification step that didn't happen.
-        $user = new User();
+        $user = new User;
         $user->name = $name;
         $user->email = $email;
         $user->password = $password;     // 'hashed' cast applies on assign
