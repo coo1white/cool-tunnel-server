@@ -188,6 +188,21 @@ deploys; the rest were doc drift and defensive cleanups.
   package:discover unconditionally, and supervisord runs
   frankenphp directly — all three deploy hotfixes are baked
   in.
+- **China-bound operators upgrading from v0.0.56 or earlier
+  must manually flip the DoH resolver.** v0.0.57 changed the
+  default for FRESH installs from `https://1.1.1.1/dns-query`
+  (Cloudflare, intermittently blocked / silently dropped from
+  mainland China) to `https://dns.alidns.com/dns-query`
+  (AliDNS, in-country reliable). The migration's `default()`
+  applies only at row creation; existing installs' rows are
+  not auto-flipped. There is intentionally NO data migration
+  to overwrite the value — non-China operators may be using
+  Cloudflare deliberately, and silently swapping their
+  resolver to a Chinese-operated endpoint would be a privacy
+  regression. Going to China? Open the panel → Server Config
+  → Anti-Tracking → DoH Resolver and change manually.
+  Documented in detail in `docs/going-to-china.md`'s
+  pre-departure checklist.
 - **Wire shape unchanged.** Same `/up` healthcheck, same
   `/admin` panel URLs, same `/api/v1/subscription/<token>`
   shape, same anti-fingerprint surfaces (no `Server` header,
