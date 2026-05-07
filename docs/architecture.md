@@ -127,10 +127,17 @@ for the deferred public cover-site path under R1-1.)
   decrypted at render time). Built-in ACME on :80; TLS-terminating
   HTTP/2 CONNECT on :443. There is no `:443` SNI fallback at
   v1.13.11 (upstream schema gap, tracked under R1-1; design seed
-  at `docs/design/sni-router-v0.1.md`). The clash-API TCP listener
-  on `0.0.0.0:9090` (docker-bridge-only; not host-published) is
-  what `ct-server-core` PUTs `/configs?force=true&path=…` to for
-  hot reloads.
+  at `docs/design/sni-router-v0.1.md`). The clash-API HTTP listener
+  is bound to `172.30.0.10:9090` on the internal-only `ct-clash`
+  docker network (the static IP is configurable via
+  `CT_CLASH_SINGBOX_IP`; the bind is rendered into sing-box's
+  config at `clash-api`). Network membership IS the security
+  boundary here: only the `panel` container is on `ct-clash`, so
+  caddy / haproxy / db / redis cannot reach the management
+  endpoint even though it answers to a docker-routable address.
+  This is what `ct-server-core` PUTs `/configs?force=true&path=…`
+  to for hot reloads. (H3 audit 2026-05-04 hardened this past the
+  earlier "0.0.0.0:9090, docker-bridge-only" model.)
 - **`panel` container** — FrankenPHP (Caddy + PHP 8.4 in one
   process) + Laravel Octane in worker mode + Laravel + Filament,
   plus a copy of the `ct-server-core` Rust binary on PATH and the

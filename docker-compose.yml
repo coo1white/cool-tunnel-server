@@ -20,7 +20,10 @@
 #                       - caddy:8444    for PANEL_DOMAIN
 #                                       (Caddy terminates TLS, then
 #                                        reverse-proxies HTTP to the
-#                                        panel container's nginx)
+#                                        panel container's FrankenPHP
+#                                        — Caddy + PHP in one process,
+#                                        v0.0.58 swap; pre-swap was
+#                                        nginx + php-fpm)
 #
 #         sing-box   Multi-user NaiveProxy server. Listens on the
 #                    container's :443 only (no host port — haproxy

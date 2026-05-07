@@ -9,7 +9,8 @@
 #      decrypting the connection (TCP mode, ssl-passthrough).
 #   3. Forwards the raw bytes to sing-box (apex domain, NaiveProxy)
 #      or Caddy (panel subdomain, reverse-proxies to the panel
-#      container's nginx).
+#      container's FrankenPHP — Caddy + PHP in one process, post-
+#      v0.0.58 swap; pre-swap this was nginx + php-fpm).
 #
 # Stock haproxy:alpine — no patches, no plugins. The whole
 # configuration surface is haproxy.cfg.tpl rendered by ct-server-core
