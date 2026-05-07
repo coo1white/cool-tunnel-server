@@ -237,12 +237,21 @@ jobs:
           version=$(jq -r .version manifests/sing-box.upstream.json | sed 's/^v//')
           echo "validating against sing-box ${version}"
 
-          # Touch dummy cert + key so file-existence sanity checks
-          # in the parser don't trip the validation. Sing-box's
-          # `check` command parses but doesn't actually load TLS,
-          # so empty files are fine.
-          : > /tmp/cert.pem
-          : > /tmp/key.pem
+          # Generate a real (self-signed, throwaway) PEM cert + key.
+          # Pre-v0.0.56 this step `: > /tmp/cert.pem` empty-touched the
+          # files based on a documented assumption that sing-box's
+          # `check` command parses-only without actually loading TLS.
+          # That stopped being true at some point — current sing-box
+          # `check` runs the full inbound init, including
+          # x509.LoadX509KeyPair, which fails on empty files with:
+          #   FATAL initialize inbound[0]: parse x509 key pair:
+          #     tls: failed to find any PEM data in certificate input
+          # A 1-day self-signed cert satisfies the parser without
+          # needing a CA — sing-box only validates PEM shape at
+          # check-time, not validity dates / chain.
+          openssl req -x509 -nodes -newkey rsa:2048 \
+              -keyout /tmp/key.pem -out /tmp/cert.pem \
+              -days 1 -subj '/CN=test.example.com' >/dev/null 2>&1
           docker run --rm \
               -v "$rendered":/etc/sing-box/config.json:ro \
               -v /tmp/cert.pem:/tmp/cert.pem:ro \

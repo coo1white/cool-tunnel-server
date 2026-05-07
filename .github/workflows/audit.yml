@@ -236,22 +236,28 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    # actions/dependency-review-action requires GitHub Advanced
-    # Security or a public repository for the dependency-graph API
-    # to be available. This repo is private without GHAS, so the
-    # action hard-errors with "Dependency review is not supported on
-    # this repository." That's a repo-config state, not a code-level
-    # signal we can act on — and `cargo audit` (RustSec) + `cargo
-    # deny` (license / source registry) + `composer audit` already
-    # provide the equivalent vuln/license gate for the actual code
-    # paths. Marking the job as continue-on-error keeps the message
-    # visible (in PR check listings) while not blocking PRs that the
-    # other audits already cleared. If GHAS is later enabled, this
-    # flag can be dropped to restore strict mode. (v0.0.56.)
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      # actions/dependency-review-action requires GitHub Advanced
+      # Security or a public repository for the dependency-graph API
+      # to be available. This repo is private without GHAS, so the
+      # action hard-errors with "Dependency review is not supported
+      # on this repository." That's a repo-config state, not a
+      # code-level signal we can act on — and `cargo audit` (RustSec)
+      # + `cargo deny` (license / source registry) + `composer audit`
+      # already provide the equivalent vuln/license gate for the
+      # actual code paths.
+      #
+      # Step-level continue-on-error makes the action's failure
+      # report as success at the step level, which propagates to the
+      # job's overall conclusion. (Job-level continue-on-error has
+      # different semantics: the WORKFLOW continues but the job
+      # itself still reports as failed.) The error message is still
+      # visible in the run log if a maintainer wants to inspect.
+      # If GHAS is later enabled, drop this flag to restore strict
+      # mode. (v0.0.56.)
       - uses: actions/dependency-review-action@v4
+        continue-on-error: true
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
@@ -681,21 +687,31 @@ jobs:
           set -euo pipefail
           tpl=caddy/Caddyfile.tpl
           fail=0
+          # All three rules below check OPERATIVE Caddyfile lines, not
+          # commentary. The Caddyfile keeps a hashed-comment history
+          # of past forms (e.g. `# The previous \`respond "managed"\``)
+          # explaining why the present form was chosen — invaluable
+          # context for future maintainers, but the regexes here would
+          # naively match those commented-out historical strings and
+          # flag them as live regressions. v0.0.56 anchors the checks
+          # to non-comment lines via `grep -v '^\s*#'` upstream of the
+          # regex test.
+          non_comments=$(grep -vE '^\s*#' "$tpl")
           # The :8443 ghost site must NOT respond with a recognisable
           # string ("managed", "ok", "alive"). Empty body + 444 is the
           # contract.
-          if grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"' "$tpl"; then
+          if echo "$non_comments" | grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"'; then
               echo "::error file=$tpl:::8443 ghost site must not respond with a recognisable string (use empty + 444)"
               fail=1
           fi
           # tls1.2 must not be in the ghost site's protocols list.
-          if grep -qE 'protocols\s+tls1\.2' "$tpl"; then
+          if echo "$non_comments" | grep -qE 'protocols\s+tls1\.2'; then
               echo "::error file=$tpl::Caddy protocols list must not include tls1.2 on the ghost site"
               fail=1
           fi
           # cert_failed must NOT append to a file in /data — that's a
           # forensic trail. Log to stderr instead.
-          if grep -qE 'cert_failed.*>>\s*/data' "$tpl"; then
+          if echo "$non_comments" | grep -qE 'cert_failed.*>>\s*/data'; then
               echo "::error file=$tpl::cert_failed event must log to stderr, not append to a file in /data"
               fail=1
           fi
