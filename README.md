@@ -121,6 +121,12 @@ to operate the server.
 If you want the architecture deep-dive, see
 [`docs/architecture.md`](./docs/architecture.md).
 
+**Deploying for use from inside the Great Firewall of China?** Read
+[`docs/going-to-china.md`](./docs/going-to-china.md) end-to-end
+before you travel. It covers the DoH-resolver default switch, the
+self-probe canary, the active-probing detector, and a "when
+something stops working" runbook tuned for that threat model.
+
 ---
 
 ## Adding your first proxy user
