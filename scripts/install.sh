@@ -284,7 +284,7 @@ step "Build sing-box image (downloads upstream pre-built binary)"
 compose build sing-box
 ok "sing-box image built"
 
-step "Build panel image (PHP-FPM + Composer + nginx + ct-server-core baked in)"
+step "Build panel image (FrankenPHP + Composer + ct-server-core baked in)"
 compose build panel
 ok "panel image built"
 
@@ -310,7 +310,7 @@ compose up -d panel
 #   4. php artisan migrate (--force, swallows errors with `|| true`)
 #   5. {filament,config,route,view}:cache + caddyfile/singbox render
 #   6. touch /tmp/cool-tunnel/entrypoint-complete (sentinel)
-#   7. exec supervisord (PHP-FPM, nginx, ct-server-core daemon)
+#   7. exec supervisord (frankenphp/octane, queue, scheduler, ct-server-core daemon)
 #
 # Wait for the sentinel rather than `vendor/autoload.php`. The
 # autoload file lands ~5s into composer install, but the entrypoint

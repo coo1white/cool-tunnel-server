@@ -5,6 +5,13 @@
 # Composer / Laravel
 panel/vendor/
 panel/node_modules/
+# `php artisan octane:install --server=frankenphp` downloads the
+# host-arch FrankenPHP binary (~165 MiB) into panel/frankenphp for
+# `php artisan octane:start` use OUTSIDE Docker. The container
+# uses the dunglas/frankenphp base image's bundled binary; this
+# host-arch file is a developer convenience only and must not
+# land in git.
+panel/frankenphp
 # PHPUnit 11 test-result cache. Created on every `make test` /
 # `phpunit` run, scoped to a single working tree. (v0.0.47.)
 panel/.phpunit.cache/
