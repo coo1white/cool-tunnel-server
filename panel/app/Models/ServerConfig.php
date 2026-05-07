@@ -35,9 +35,6 @@ class ServerConfig extends Model
             'anti_tracking_probe_resistance' => 'boolean',
             'http3_enabled' => 'boolean',
             'last_rendered_at' => 'datetime',
-            // v0.0.57 china-readiness — bounded array of
-            // {ts, status, reason?} entries written by
-            // `ct-server-core canary probe`.
             'self_probe_history' => 'array',
         ];
     }

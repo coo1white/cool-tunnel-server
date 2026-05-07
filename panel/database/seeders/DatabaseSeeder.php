@@ -17,22 +17,11 @@ class DatabaseSeeder extends Seeder
 
         // Seed a single default cover-site. Operators can create
         // additional fake sites in the panel using any of the
-        // available templates (blog / corporate / portfolio — see
-        // FakeWebsiteResource's template picker); shipping just
-        // one default keeps the first-login surface minimal and
-        // makes "which one is live?" unambiguous.
-        //
-        // Seed payload — 12 posts with monthly cadence over 2025–2026.
-        // v0.0.57 china-readiness bumped this from 3 to 12: a probe
-        // doing manual inspection on a 3-post site sees an obvious
-        // stub; a 12-post archive with monthly cadence over a year
-        // looks like a real low-volume personal blog. Excerpts are
-        // generic enough to not match any real published content
-        // (avoiding "this looks copy-pasted" red flags) while
-        // staying topical for a "software and design" blog. Per-
-        // post body / archive / RSS endpoints are a v0.0.58
-        // follow-up; for now the home page is the surface a probe
-        // sees.
+        // available templates (blog / corporate / portfolio); the
+        // 12-post seed payload is convincing-enough under manual
+        // probe inspection (a 3-post site reads as an obvious
+        // stub; monthly cadence over a year reads as a real low-
+        // volume personal blog).
         if (FakeWebsite::count() === 0) {
             FakeWebsite::create([
                 'slug' => 'minimal-blog',
