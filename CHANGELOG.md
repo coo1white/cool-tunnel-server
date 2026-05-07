@@ -22,6 +22,152 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.57] — 2026-05-07 — China-readiness: DoH default switch, self-probe canary, active-probing detector, cover-site polish, operator runbook
+
+A focused hardening pass for operators deploying or maintaining a
+Cool Tunnel server that needs to survive use from inside the Great
+Firewall of China. The protocol stack (NaiveProxy + sing-box +
+uTLS Chrome fingerprint) is already best-in-class for active-
+probing resistance — what bites China-side users in practice is
+operational: DoH resolvers blocked, IP poisoning, slow detection
+when something starts breaking. v0.0.57 closes the operational
+gaps without touching the protocol surface.
+
+### Added
+
+- **`docs/going-to-china.md`** — full operator runbook. Pre-
+  departure checklist, first-connection verification, "when
+  something stops working" decision tree, domain hygiene
+  guidance, last-resort access plans (bastion VPS, Tailscale).
+  All knowledge that previously lived only in
+  conversational/informal threads is now in-tree.
+- **Self-probe canary (`ct-server-core canary {probe,status}`).**
+  New CLI subcommand. `probe` runs every 5 min via Laravel's
+  scheduler — DoH-resolves the apex through the operator's
+  configured resolver, then TCP-connects to docker-internal
+  `haproxy:443`. Result appended as a JSON entry to
+  `ServerConfig.self_probe_history` (new column, trimmed to
+  last 10). `status` prints the recorded history for operator
+  inspection. Catches: DoH resolver suddenly stopped working
+  (the canonical Cloudflare-from-China case), DoH returns 0
+  answers (captive portal / poisoner), haproxy crashed.
+  Operator-visible via `docker compose exec panel ct-server-core
+  canary status`. Panel banner widget that surfaces "last 3
+  failed" without polling the CLI is a v0.0.58 follow-up.
+- **Active-probing detector** —
+  `panel/app/Http/Controllers/FakeSiteController.php` now
+  counts cover-site fall-through hits per source IP per minute
+  in the cache. When the rate crosses 30/min from one source,
+  emits a single structured `probe.detected` log line at warn
+  level. Real human traffic to a personal blog rarely produces
+  > 30 distinct URL hits/min from one IP; sustained spikes are
+  characteristic of an active scanner / GFW probe sweep.
+  Operator surface: `docker compose logs panel | grep
+  probe.detected`. The cover response itself is unchanged
+  (cover-site invariant test still asserts byte-identity); this
+  is purely an observability addition.
+- **`canary:probe` artisan command** + service hook in
+  `App\Services\CtServerCore::canaryProbe()`. The thin Laravel
+  wrapper that the scheduler invokes; shells out to the Rust
+  CLI binary inside the panel container.
+- **`server_configs.self_probe_history` (JSON column)** —
+  bounded persistence for canary results. New migration:
+  `2026_05_07_000001_add_self_probe_history_to_server_configs`.
+
+### Changed
+
+- **DoH resolver default — Cloudflare → AliDNS.** Pre-v0.0.57
+  fresh installs got `https://1.1.1.1/dns-query` as the
+  default `ServerConfig.anti_tracking_doh_resolver`. Cloudflare
+  DoH is intermittently blocked or silently dropped from
+  mainland China — the daemon's DNS path looks healthy
+  ("connection open") but every name lookup fails. AliDNS
+  (`https://dns.alidns.com/dns-query`) is the most reliable
+  in-China endpoint. Operators outside China can override via
+  the panel; the migration default is the one that doesn't
+  break a "first install, deploying for China" flow. Existing
+  installs are NOT auto-migrated — operators going to China
+  flip this in the panel themselves (see runbook). The trust /
+  reachability matrix for alternate resolvers is documented in
+  `docs/going-to-china.md`.
+- **Cover-site polish — Minimal Blog seed bumped from 3 → 12
+  posts.** A 3-post site looks like an obvious stub under
+  manual probe inspection; 12 posts with monthly cadence over
+  2025-2026 looks like a real low-volume personal blog. Excerpts
+  are generic enough to not match any published content (avoids
+  "this looks copy-pasted" red flags). Per-post body / archive
+  / RSS endpoints are a v0.0.58 follow-up; for now the home
+  page is the surface a probe sees, and 12 posts vs 3 is the
+  highest-leverage signal.
+
+### Removed
+
+- Nothing. All v0.0.56 surfaces preserved.
+
+### Compatibility
+
+- **No operator-side action required for non-China deployments.**
+  The DoH default change applies only to FRESH installs; the
+  schema migration is additive. `make update` from v0.0.56
+  applies the migration cleanly.
+- **For operators going to China**: the runbook
+  (`docs/going-to-china.md`) is the ordered checklist of what to
+  verify and switch BEFORE leaving and AFTER first connection
+  inside the GFW. Plan to read end-to-end at least once.
+- **The canary CLI requires the daemon's MariaDB connection
+  env** (DB_HOST, DB_PORT, etc.) to be present — already true
+  inside the panel container via `env_file: .env`. Nothing to
+  configure.
+
+### What's NOT in v0.0.57 (deferred)
+
+Per the operator directive, v0.0.57 was scoped to the highest-
+leverage operational hardening. Three items were intentionally
+deferred to v0.0.58+:
+
+- **Filament panel banner widget** for the canary state. Today
+  operators inspect via `ct-server-core canary status`.
+  Surfacing in the dashboard is mechanical work in Filament; we
+  shipped the canary first and will land the UI in v0.0.58.
+- **Per-post / archive / RSS endpoints** on the cover site. The
+  current cover renders the home page for any URL. Differentiated
+  per-URL responses (preserving the cover-site invariant for
+  the "no real route matches" case while serving plausible
+  per-post content for `/post/<slug>`) is a v0.0.58 epic.
+- **Multi-VPS orchestration / IP rotation.** The single-server
+  architecture has known limits for adversarial environments.
+  v0.1 epic — see `docs/architectural-decisions-2026.md`.
+
+### Operator recovery
+
+```sh
+cd ~/cool-tunnel-server
+git pull --ff-only
+make update                              # applies migration; rebuilds panel image with new canary CLI
+make verify-sot-vps                      # confirm SoT contract still holds
+docker compose exec panel ct-server-core canary probe   # one-off: verify the canary works end-to-end
+docker compose exec panel ct-server-core canary status  # inspect recorded history
+```
+
+Then — IF you're heading to China — read `docs/going-to-china.md`
+end-to-end and follow the pre-departure checklist before you
+leave.
+
+### Lesson — the threat model is operational, not protocol
+
+Every prior anti-tracking hardening release (v0.0.13 → v0.0.18)
+addressed PROTOCOL surface: don't leak X-CT-* headers, don't
+respond with recognisable strings, don't expose UDP/443. v0.0.57
+shifts to OPERATIONAL surface: don't ship a default that doesn't
+work in your target environment, give operators an early warning
+when it stops working, and write down what "stops working"
+typically looks like.
+
+The protocol layer was already strong; the operational layer was
+"figure it out, good luck." This release closes the gap.
+
+---
+
 ## [0.0.56] — 2026-05-07 — [Cycle 3][SoT] verify-sot UX follow-up: graceful skip on docker-only hosts + new `make verify-sot-vps`
 
 A two-script UX patch on top of v0.0.55's SoT contract. The Cycle 3

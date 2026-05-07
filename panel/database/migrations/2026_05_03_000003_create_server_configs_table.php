@@ -26,8 +26,15 @@ return new class extends Migration
             $table->boolean('anti_tracking_hide_ip')->default(true);
             $table->boolean('anti_tracking_hide_via')->default(true);
             $table->boolean('anti_tracking_probe_resistance')->default(true);
+            // DoH resolver default — AliDNS (https://dns.alidns.com/dns-query)
+            // works from inside the GFW, where the previous default
+            // (Cloudflare 1.1.1.1) is intermittently blocked or silently
+            // dropped, breaking sing-box's DNS path. (v0.0.57 china-
+            // readiness — see docs/going-to-china.md for the trust /
+            // reachability matrix and how to switch to a different
+            // endpoint per deployment context.)
             $table->string('anti_tracking_doh_resolver')
-                ->default('https://1.1.1.1/dns-query');
+                ->default('https://dns.alidns.com/dns-query');
 
             // HTTP/3 toggle (some networks throttle UDP/443)
             $table->boolean('http3_enabled')->default(true);
