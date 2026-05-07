@@ -14,9 +14,52 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- `panel/tests/Feature/SubscriptionContractTest.php` — anchors two
+  client-contract invariants the round-10 audit identified as
+  silent-failure modes:
+  1. The served subscription manifest never carries the literal
+     `{{CLEARTEXT_PLACEHOLDER}}` string (the Rust emitter's
+     CLI-path marker that the panel's HTTP path is meant to splice
+     over before signing).
+  2. A row with empty / undecryptable cleartext falls through to
+     the cover site byte-identically, instead of emitting a
+     working-looking manifest with `password: ""`.
+
 ### Changed
 
+- `panel/.env.example` — APP_KEY block now carries an explicit
+  warning that rotating it after accounts exist silently
+  invalidates every existing subscription URL (HMAC over
+  `<account_id>.<sig>` stops verifying AND the encrypted-
+  cleartext column stops decrypting; both fall-throughs are
+  on-the-wire identical to a cover-site probe). Recovery: per-
+  account regenerate-token + reset-password via the panel's
+  Regenerate flow. Treat APP_KEY as immutable for the lifetime
+  of the deployment.
+- `docs/cross-platform-clients.md` — corrected the "Invalid
+  subscription tokens get a 404 + HTML body" line (it was
+  actually 200 + cover-site bytes; a 404 would have distinguished
+  the subscription endpoint from the cover-site catch-all by
+  status code alone, which is exactly what the cover-site
+  invariant exists to prevent). Added two new client-implementer
+  invariants: refuse a manifest whose `password` is the literal
+  `{{CLEARTEXT_PLACEHOLDER}}`; refuse a signed manifest with
+  `password: ""`.
+
 ### Fixed
+
+- `panel/app/Http/Controllers/SubscriptionController.php` — when
+  `getCleartextPassword()` returns null or empty (legacy row
+  pre-v0.0.5 cleartext column, or `Crypt::decryptString` failure
+  from APP_KEY rotation), the controller now falls through to
+  the cover site rather than emitting a manifest with
+  `password => '' ?? ''`. Pre-fix, clients received a valid-
+  looking, correctly-signed manifest with empty `basic_auth`,
+  attempted the proxy connect, and got a sing-box 401 with no
+  surface for the operator to debug. The fall-through preserves
+  the cover-site invariant AND surfaces the failure as an
+  obvious "subscription URL not working" — visible enough that
+  the operator hits the Regenerate button.
 
 ### Security
 
