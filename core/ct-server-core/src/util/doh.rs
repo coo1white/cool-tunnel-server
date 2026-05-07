@@ -124,6 +124,23 @@ pub async fn resolve_a(name: &str, doh_url: &str) -> std::result::Result<u16, St
         ));
     }
     let body = resp.bytes().await.map_err(reqwest_error_kind)?;
+    classify_dns_response(&body, name)
+}
+
+/// Pure post-fetch classifier — extracted from `resolve_a` so the
+/// RCODE / ANCOUNT decision tree is unit-testable without a live
+/// DoH endpoint. Returns the answer count on NOERROR + ANCOUNT > 0;
+/// returns a human-readable error string for every other case
+/// (size-too-small, RCODE != NOERROR, NOERROR-but-zero-answers).
+///
+/// Why this matters for the canary's operator-facing diagnostic:
+/// pre-cleanup the code reported every non-success as "possible
+/// censorship intercept", which sent operators chasing the wrong
+/// root cause for legitimate upstream failures (SERVFAIL is
+/// usually transient, NXDOMAIN means name-doesn't-exist, REFUSED
+/// is a policy reject — none of those are censorship signals).
+/// The branching here gives each class its own message.
+fn classify_dns_response(body: &[u8], name: &str) -> std::result::Result<u16, String> {
     if body.len() < 12 {
         return Err(format!("DoH response too small ({} bytes)", body.len()));
     }
@@ -207,5 +224,123 @@ mod tests {
     fn dns_query_rejects_oversize_label() {
         let long = "a".repeat(64);
         assert!(build_dns_query(&format!("{long}.example.com")).is_err());
+    }
+
+    /// Build a synthetic DoH response header for testing
+    /// `classify_dns_response`. All test inputs are valid per
+    /// RFC 1035 §4.1.1 — only the RCODE nibble (low 4 bits of
+    /// byte 3) and ANCOUNT (bytes 6-7) actually matter for our
+    /// classifier. ID, flags, QDCOUNT, NSCOUNT, ARCOUNT can be
+    /// anything since we never inspect them.
+    fn synthetic_response(rcode: u8, ancount: u16) -> Vec<u8> {
+        let mut buf = vec![
+            0x00,
+            0x01, // ID
+            0x80,
+            (rcode & 0x0F), // flags: QR=1, OPCODE=0, AA=0, TC=0, RD=0; RCODE in low nibble of byte 3
+            0x00,
+            0x01, // QDCOUNT
+            0x00,
+            0x00, // ANCOUNT placeholder (filled below)
+            0x00,
+            0x00, // NSCOUNT
+            0x00,
+            0x00, // ARCOUNT
+        ];
+        let ancount_bytes = ancount.to_be_bytes();
+        buf[6] = ancount_bytes[0];
+        buf[7] = ancount_bytes[1];
+        buf
+    }
+
+    #[test]
+    fn classify_rejects_short_body() {
+        let result = classify_dns_response(&[0x00; 11], "example.com");
+        assert!(matches!(result, Err(ref e) if e.contains("too small")));
+    }
+
+    #[test]
+    fn classify_noerror_with_answers_returns_ancount() {
+        let body = synthetic_response(0, 3);
+        assert_eq!(classify_dns_response(&body, "example.com"), Ok(3));
+    }
+
+    #[test]
+    fn classify_noerror_zero_answers_signals_censorship_intercept() {
+        let body = synthetic_response(0, 0);
+        let err = classify_dns_response(&body, "proxy.example.com").unwrap_err();
+        assert!(
+            err.contains("NOERROR with 0 answer records"),
+            "should call out NOERROR-with-zero-answers as the actual intercept signal: {err}"
+        );
+        assert!(
+            err.contains("proxy.example.com"),
+            "should echo the queried name"
+        );
+    }
+
+    #[test]
+    fn classify_servfail_is_not_reported_as_censorship() {
+        let body = synthetic_response(2, 0);
+        let err = classify_dns_response(&body, "example.com").unwrap_err();
+        assert!(
+            err.contains("SERVFAIL"),
+            "should name the RCODE class: {err}"
+        );
+        // The SERVFAIL message intentionally contains the word
+        // "censorship" in the phrase "not a censorship signal";
+        // assert the operator-actionable framing instead. The
+        // message must say it's transient and NOT use the
+        // alarming "intercept" / "poisoner" vocabulary that the
+        // genuine censorship branches do.
+        assert!(
+            err.contains("transient"),
+            "SERVFAIL message must frame as transient upstream failure: {err}"
+        );
+        assert!(
+            !err.contains("intercept") && !err.contains("poisoner"),
+            "SERVFAIL must not use the censorship-event vocabulary: {err}"
+        );
+    }
+
+    #[test]
+    fn classify_nxdomain_distinguishes_from_intercept() {
+        let body = synthetic_response(3, 0);
+        let err = classify_dns_response(&body, "doesnotexist.invalid").unwrap_err();
+        assert!(
+            err.contains("NXDOMAIN"),
+            "should name the RCODE class: {err}"
+        );
+        assert!(
+            err.contains("DNS hijacking"),
+            "should hint at hijacking when name should exist: {err}"
+        );
+    }
+
+    #[test]
+    fn classify_refused_directs_to_alternate_resolver() {
+        let body = synthetic_response(5, 0);
+        let err = classify_dns_response(&body, "example.com").unwrap_err();
+        assert!(
+            err.contains("REFUSED"),
+            "should name the RCODE class: {err}"
+        );
+        assert!(
+            err.contains("different DoH endpoint"),
+            "should suggest the recovery action: {err}"
+        );
+    }
+
+    #[test]
+    fn classify_unknown_rcode_falls_through_to_generic_error() {
+        // RCODE=4 (NotImp) and others: we don't have a class-
+        // specific message. Fall-through must still surface the
+        // numeric RCODE for operator triage.
+        let body = synthetic_response(4, 0);
+        let err = classify_dns_response(&body, "example.com").unwrap_err();
+        assert!(
+            err.contains("RCODE=4"),
+            "fall-through must echo the numeric RCODE: {err}"
+        );
     }
 }
