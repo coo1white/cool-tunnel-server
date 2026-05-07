@@ -447,14 +447,22 @@ echo 'CT_CORE_BUILD_PROFILE=release-small' >> .env
 
 ### c. Confirm the runtime tuning knobs (already low-mem-friendly by default)
 
-The shipped defaults are already sized for a 1 GB box. The values
-below are what `.env.example` ships; only change them if you have
-more RAM and want bigger caps:
+The shipped defaults are already sized for a 1 GB box.
+FrankenPHP's worker pool size is configured in
+`docker/panel/Caddyfile` via the `frankenphp { worker { num 4 } }`
+block — NOT via env. To grow the pool: edit the `num` value in
+that file and rebuild the panel image (`docker compose build
+panel && docker compose up -d --force-recreate panel`). Default
+`num 4` matches the prior PHP-FPM `pm.max_children` cap and
+keeps steady-state ~250 MiB inside the panel container's 320 MiB
+mem_limit. Raising past 4 should usually be paired with a
+mem_limit raise in `docker-compose.yml`.
 
-| Knob | Default | Effect | Raise to |
-| --- | --- | --- | --- |
-| `OCTANE_WORKERS` | `auto` | one worker per CPU; each holds a long-lived Laravel boot (~30-50 MiB) | fixed `4` on ≥2 GB if `auto` resolves higher than you want |
-| `OCTANE_MAX_REQUESTS` | `500` | requests per worker before respawn (bounds vendor memory leakage under long-lived workers) | leave |
+(Pre-FrankenPHP-runtime-swap this section documented
+`PHP_FPM_*` env vars, then briefly `OCTANE_*` env vars during
+the swap iterations. Both code paths were dropped — see
+`CHANGELOG.md` for context. The Caddyfile `num` literal is the
+single source of truth today.)
 
 The MariaDB tuning lives in `docker-compose.yml` (`db.command:`
 flags: `innodb-buffer-pool-size=64M`, `performance-schema=OFF`,
@@ -494,22 +502,25 @@ something like:
 
 ```
 ct-db        ~ 95-100 MiB    (mariadb, performance_schema OFF)
-ct-panel     ~150-180 MiB    (frankenphp/octane parent + N PHP workers
+ct-panel     ~220-280 MiB    (frankenphp parent + 4 PHP workers
                              + ct-server-core daemon + queue:work +
-                             scheduler; workers hold Laravel boot in
-                             memory across requests)
+                             scheduler; each PHP worker holds a
+                             Laravel + Filament boot resident
+                             across requests, ~30-50 MiB each)
 ct-singbox   ~ 10-15 MiB
 ct-caddy     ~ 15-20 MiB
+ct-haproxy   ~  5-10 MiB
 ct-redis     ~  9-12 MiB
                     ─────
-TOTAL        ~ 230-260 MiB  → ~760 MiB free on a 1 GB box
+TOTAL        ~ 350-400 MiB  → ~600 MiB free on a 1 GB box
 ```
 
 Under moderate load (10-20 active proxy users + admin browsing in
-a tab) the panel container climbs toward 220-300 MiB as Octane
-workers serve concurrent requests from their long-lived Laravel
-boot; total stack peaks around 400-500 MiB. The `R-panel-1` queue
-refactor caps growth from bulk-delete admin actions at ~600 MiB.
+a tab) the panel container sits around 250-300 MiB (4 long-lived
+PHP workers + queue + scheduler + ct-core daemon, each worker
+holding the Filament boot in memory); total stack peaks around
+400-500 MiB. The `R-panel-1` queue refactor caps growth from
+bulk-delete admin actions at ~600 MiB.
 
 ---
 

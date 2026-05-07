@@ -16,7 +16,8 @@
 #   - Manages a SECOND TLS certificate for {{ .PanelDomain }} via
 #     the same ACME directory. (R1-1 / R1-2, v0.0.33.) Caddy
 #     terminates TLS for the panel subdomain itself and reverse-
-#     proxies plain HTTP to the panel container's nginx on :9000.
+#     proxies plain HTTP to the panel container's FrankenPHP on
+#     :9000 (post-v0.0.58 swap; pre-swap was nginx on :9000).
 #   - sing-box's render path watches the cert file's mtime
 #     directly (folded into the render-change SHA-256 hash in
 #     `core/ct-server-core/src/singbox/mod.rs::read_cert_mtime`),
@@ -124,8 +125,9 @@
 # Caddy terminates TLS for the panel subdomain here using its own
 # auto-HTTPS-managed cert. HAProxy on host :443 reaches this listener
 # at caddy:8444 over the internal ct-net; the port is NOT host-mapped.
-# Caddy reverse-proxies plain HTTP to the panel container's nginx on
-# :9000 (which maps via FastCGI to PHP-FPM serving the Filament app).
+# Caddy reverse-proxies plain HTTP to the panel container's
+# FrankenPHP on :9000 (post-v0.0.58 swap; pre-swap was nginx →
+# FastCGI → PHP-FPM, replaced by Caddy + PHP in one process).
 #
 # Anti-fingerprinting:
 #

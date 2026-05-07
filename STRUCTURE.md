@@ -48,12 +48,13 @@ cool-tunnel-server/
 ├── docker/
 │   ├── core/Dockerfile                  Rust musl static build
 │   ├── sing-box/Dockerfile              downloads upstream binary
-│   └── panel/                           PHP-fpm + nginx + ct-server-core
+│   └── panel/                           FrankenPHP (Caddy + PHP in-process) + ct-server-core
 │       ├── Dockerfile
-│       ├── nginx.conf
-│       ├── supervisord.conf             runs php-fpm + nginx + queue + scheduler + ct-core daemon
+│       ├── Caddyfile                    in-process Caddy config (worker mode + token mask + Server-header strip)
+│       ├── supervisord.conf             runs frankenphp + queue + scheduler + ct-core daemon
 │       ├── opcache.ini
-│       └── entrypoint.sh                first-boot composer / migrate / render
+│       ├── php-hardening.ini
+│       └── entrypoint.sh                composer install (lock-drift-aware) + package:discover + migrate / render
 │
 ├── sing-box/
 │   └── config.json.tpl                  Go-template ({{ .Field }}) — rendered by ct-server-core
