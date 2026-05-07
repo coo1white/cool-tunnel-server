@@ -455,4 +455,85 @@ mod tests {
             other => panic!("expected ExpiredByExpiresAt, got {other:?}"),
         }
     }
+
+    // Round-14 input-boundary: the cross-encoder canonical form
+    // depends on PHP's `JSON_UNESCAPED_UNICODE` and Rust's
+    // serde_json default emitting bytewise-identical UTF-8 for
+    // non-ASCII input. Pre-this an audit verified empirically
+    // they match — but a future serde_json default flip (e.g. an
+    // `escape_non_ascii` flag becoming default-on) would silently
+    // diverge canonicalisations: PHP emits `"héllo"` raw, Rust
+    // emits `"héllo"` escaped → 13 bytes vs 17 bytes →
+    // different HMAC → every Chinese/Japanese/Korean username
+    // breaks verification. Pin the contract on the spec side.
+    //
+    // Equivalent PHP reference output (with the controller's flags
+    // `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE`) for the
+    // same input:
+    //
+    //   $body = ['password' => 'héllo Zürich'];
+    //   json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    //   → {"password":"héllo Zürich"}
+    //
+    // If this test starts failing because serde_json changed
+    // default behaviour, the PHP controller's encode flags need
+    // a corresponding adjustment — not the test.
+    #[test]
+    fn unicode_passwords_round_trip_byte_identical_to_php_unescaped() {
+        // A profile carrying a non-ASCII password — realistic for
+        // operators who accept user-chosen passwords or who set
+        // labels in their own language.
+        let profile = ProfileV1 {
+            host: "p.example".into(),
+            port: 443,
+            username: "alice".into(),
+            password: "héllo Zürich".into(),
+            label: Some("プロキシ".into()), // Japanese
+        };
+        let s = serde_json::to_string(&profile).unwrap();
+
+        // Raw UTF-8 bytes for `héllo Zürich` and `プロキシ` must
+        // be present without `\uXXXX` escapes.
+        assert!(
+            s.contains("héllo Zürich"),
+            "expected raw UTF-8 password; got {s}"
+        );
+        assert!(s.contains("プロキシ"), "expected raw UTF-8 label; got {s}");
+        assert!(
+            !s.contains("\\u00e9"),
+            "must NOT escape `é` to \\u00e9 — would diverge from PHP \
+             JSON_UNESCAPED_UNICODE: {s}"
+        );
+        assert!(
+            !s.contains("\\u30D7"),
+            "must NOT escape `プ` to \\u30D7 — would diverge from PHP: {s}"
+        );
+    }
+
+    // Forward-slash handling is the OTHER cross-encoder gotcha:
+    // PHP defaults to escaping `/` to `\/`; we explicitly use
+    // `JSON_UNESCAPED_SLASHES` to match Rust serde_json's default
+    // (raw `/`). If a future serde_json flip ever escapes
+    // forward-slashes by default, every URL-bearing label
+    // (`https://...`) in the manifest would diverge.
+    #[test]
+    fn forward_slashes_emit_raw_not_escaped() {
+        let profile = ProfileV1 {
+            host: "p.example".into(),
+            port: 443,
+            username: "alice".into(),
+            password: "p".into(),
+            label: Some("https://docs.example.com/help".into()),
+        };
+        let s = serde_json::to_string(&profile).unwrap();
+        assert!(
+            s.contains("https://docs.example.com/help"),
+            "expected raw `/`; got {s}"
+        );
+        assert!(
+            !s.contains("\\/"),
+            "must NOT escape `/` to `\\/` — would diverge from PHP \
+             JSON_UNESCAPED_SLASHES: {s}"
+        );
+    }
 }

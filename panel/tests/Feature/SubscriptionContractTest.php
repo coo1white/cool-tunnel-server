@@ -207,6 +207,61 @@ class SubscriptionContractTest extends TestCase
     }
 
     #[Test]
+    public function manifest_with_non_ascii_password_round_trips_through_hmac_verify(): void
+    {
+        // Round-14 input-boundary: non-ASCII passwords (Chinese,
+        // Japanese, Korean, anything non-ASCII) must survive the
+        // server-canonicalise → HMAC-sign → client-deserialise →
+        // re-canonicalise → HMAC-verify round-trip.
+        //
+        // Pre-this test, the contract relied on PHP's
+        // JSON_UNESCAPED_UNICODE flag matching Rust's serde_json
+        // default — both emit raw UTF-8 bytes for non-ASCII. If
+        // EITHER encoder ever flips to default-escape, the
+        // canonical bytes diverge and HMAC verification fails on
+        // every account whose password contains a non-ASCII
+        // codepoint. This test exercises the actual PHP encode
+        // path and proves the round-trip succeeds in the
+        // non-ASCII case (the analogous Rust-side test is in
+        // ct-protocol::subscription::tests).
+        $this->seedActiveCover();
+        $account = ProxyAccount::factory()->create();
+        $account->setCleartextPassword('héllo Zürich プロキシ 中文密码');
+        $account->save();
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $served = $response->getContent();
+
+        // Body must contain the raw UTF-8 bytes (NOT \u-escaped).
+        $this->assertStringContainsString('héllo Zürich', $served);
+        $this->assertStringContainsString('プロキシ', $served);
+        $this->assertStringContainsString('中文密码', $served);
+        $this->assertStringNotContainsString('\\u00e9', $served, 'no \\u escapes for é');
+        $this->assertStringNotContainsString('\\u4e2d', $served, 'no \\u escapes for 中');
+
+        // HMAC round-trip must succeed in the non-ASCII branch
+        // (same recipe as manifest_canonical_is_serde_round_trippable
+        // but with non-ASCII payload).
+        $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
+        $sig = $decoded['signature'];
+        unset($decoded['signature']);
+        $canonical = json_encode(
+            $decoded,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+        $this->assertSame(
+            hash_hmac('sha256', $canonical, (string) config('app.key')),
+            $sig,
+            'HMAC must verify with non-ASCII password — if this fails, '
+            .'check that PHP JSON_UNESCAPED_UNICODE is still emitted by the '
+            .'controller AND that no upstream PHP version change shifted '
+            .'json_encode default behaviour',
+        );
+    }
+
+    #[Test]
     public function manifest_issued_at_and_expires_at_are_exactly_30_days_apart(): void
     {
         // Round-13 time-and-clock: pre-fix the controller called
