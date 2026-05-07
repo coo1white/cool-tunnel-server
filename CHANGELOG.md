@@ -129,6 +129,33 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+- `docs/architecture.md`, `docker-compose.yml`,
+  `docker/haproxy/Dockerfile`, `README.md` — round-19 docs-vs-
+  code drift fixes:
+  - **clash-API listener address.** `architecture.md:130-133`
+    described the listener as `0.0.0.0:9090 (docker-bridge-only;
+    not host-published)`, which was the pre-H3 model. Post-2026-
+    05-04 H3 audit it binds to `172.30.0.10:9090` on the
+    internal-only `ct-clash` docker network — network membership
+    IS the security boundary now (only `panel` is on
+    `ct-clash`; caddy / haproxy / db / redis cannot reach the
+    management endpoint). The doc updated to name the network +
+    the static IP + the boundary, with a parenthetical noting
+    when the model changed.
+  - **panel runtime references.** `docker-compose.yml:23` and
+    `docker/haproxy/Dockerfile:12` both said the panel
+    container's web tier was `nginx`. Post-v0.0.58 it's
+    FrankenPHP (Caddy + PHP in one process). Updated to name
+    FrankenPHP + a parenthetical that pre-swap was nginx +
+    php-fpm so an operator looking for nginx logs / config
+    knows where the rename happened.
+  - **README.md services table.** Was missing `haproxy` (added
+    in v0.0.33 SNI-router split). Without it, an operator
+    reading just the README would see the panel-subdomain →
+    caddy → panel reverse-proxy chain referenced elsewhere in
+    the doc and wonder where the second `:443` consumer fits
+    in. Added a row explaining the SNI-route shape and why
+    haproxy exists.
 - `scripts/pin-images.sh` — round-18 dep-hygiene refresh. The
   mapping table was out of date: `rust:1.86-alpine` →
   `rust:1.88-alpine` (matches `core/rust-toolchain.toml` after
