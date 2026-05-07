@@ -32,10 +32,13 @@ ARG CT_CORE_IMAGE=cool-tunnel-server-core:latest
 FROM ${CT_CORE_IMAGE} AS ct-core-stage
 
 # dunglas/frankenphp ships PHP + Caddy + Composer in a single Alpine
-# image. The 1-php8.3-alpine tag is the closest match to the prior
-# php:8.3-fpm-alpine — same PHP minor, same Alpine base, same
-# arch matrix.
-FROM dunglas/frankenphp:1-php8.3-alpine
+# image. PHP 8.4 over the prior 8.3-fpm-alpine: laravel/octane v2.17
+# (the version this swap pins) transitively depends on
+# symfony/psr-http-message-bridge v8.0.8 which requires PHP ≥ 8.4.
+# panel/composer.json's "php": "^8.2" constraint allows 8.4; bumping
+# the runtime is the cleanest path versus version-pinning the
+# transitive dep down.
+FROM dunglas/frankenphp:1-php8.4-alpine
 
 ARG COMPOSER_VERSION=2.7.7
 

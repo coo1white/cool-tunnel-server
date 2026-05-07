@@ -131,7 +131,7 @@ for the deferred public cover-site path under R1-1.)
   on `0.0.0.0:9090` (docker-bridge-only; not host-published) is
   what `ct-server-core` PUTs `/configs?force=true&path=…` to for
   hot reloads.
-- **`panel` container** — FrankenPHP (Caddy + PHP 8.3 in one
+- **`panel` container** — FrankenPHP (Caddy + PHP 8.4 in one
   process) + Laravel Octane in worker mode + Laravel + Filament,
   plus a copy of the `ct-server-core` Rust binary on PATH and the
   ct-server-core daemon running under supervisord. The PHP services
