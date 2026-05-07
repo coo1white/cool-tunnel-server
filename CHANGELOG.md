@@ -14,6 +14,24 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- `panel/tests/Feature/SubscriptionRouteEdgeCaseTest.php` —
+  round-20 edge-case input handling. Pins the two-layer
+  protection chain that keeps the cover-site invariant intact
+  for malformed-token requests:
+  1. Route regex `[A-Za-z0-9_-]+` rejects any path segment that
+     isn't strict base64url; non-matching segments produce
+     NotFoundHttpException.
+  2. The `bootstrap/app.php` exception handler catches that on
+     non-admin paths and re-renders FakeSiteController.
+  Either layer alone is insufficient — regex without catch
+  leaks a Laravel-branded 404 page (a censor distinguisher);
+  catch without regex would let downstream parsers see
+  arbitrary bytes. The new test exercises 11 malformed token
+  shapes (dot, slash, plus, equals, percent-encoded null,
+  leading-/trailing-/only-special chars, 1000-char lengths)
+  plus a path with extra segments and a path with a query
+  string, and asserts every one returns bytes byte-identical
+  to a vanilla cover-site probe.
 - Round-17 chassis-cockpit boundary tests pin every JSON-output
   field name the PHP panel reads from `ct-server-core`. Pre-this,
   the PHP side reads `$out['changed']`, `$out['hash']`, `$out
