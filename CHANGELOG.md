@@ -14,6 +14,20 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- `scripts/verify_supervisord.sh` and `make verify-supervisord` —
+  round-22 process-lifecycle drift detector. Pins the round-6
+  supervisord graceful-shutdown invariants
+  (`stopsignal=TERM`, `stopwaitsecs=20`, `killasgroup=true`,
+  `stopasgroup=true`) on every `[program:*]` block, plus the
+  frankenphp `MAX_REQUESTS=500` worker-recycle ceiling. A future
+  edit that drops one wouldn't break any test — supervisord
+  still boots — but `docker compose stop` would SIGKILL
+  in-flight requests on the affected program (the round-6 fix
+  exists specifically to drain workers cleanly within the
+  compose grace window). The validator is wired into `make ci`,
+  so drift surfaces on every PR. Bash-3.2 compatible (avoids
+  `mapfile` and `declare -A`) so it runs on the operator's
+  macOS dev host as well as the Linux CI runner.
 - `panel/tests/Feature/SubscriptionRouteEdgeCaseTest.php` —
   round-20 edge-case input handling. Pins the two-layer
   protection chain that keeps the cover-site invariant intact
