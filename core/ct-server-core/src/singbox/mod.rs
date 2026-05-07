@@ -23,6 +23,7 @@ use crate::{Error, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use sqlx::MySqlPool;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -38,16 +39,14 @@ pub struct RenderOutcome {
 }
 
 pub async fn render(
-    database_url: &Option<String>,
+    pool: &MySqlPool,
     template_path: &str,
     output_path: &str,
     dry_run: bool,
     json_output: bool,
 ) -> Result<()> {
-    let pool = db::connect(database_url).await?;
-
-    let cfg = db::server_config(&pool).await?;
-    let accounts = db::active_proxy_accounts(&pool).await?;
+    let cfg = db::server_config(pool).await?;
+    let accounts = db::active_proxy_accounts(pool).await?;
     let safe_accounts: Vec<_> = accounts
         .into_iter()
         .filter(|a| {
@@ -86,7 +85,7 @@ pub async fn render(
 
     if changed {
         atomic_write(output_path, &body).await?;
-        db::record_caddyfile_hash(&pool, &hash).await?;
+        db::record_caddyfile_hash(pool, &hash).await?;
         tracing::info!(
             path = output_path, %hash, bytes = body.len(),
             users = safe_accounts.len(),
@@ -118,10 +117,11 @@ pub async fn render(
 /// [`crate::admin::ClashAdmin`] whose secret matches what the most
 /// recent `render` baked into `experimental.clash_api.secret`.
 ///
-/// The `database_url` parameter is preserved for API stability —
-/// post-R2-2 the secret is derived purely from the `CT_CLASH_SECRET
-/// _SEED` environment variable, so no DB round-trip is required.
-pub async fn current_clash_secret(_database_url: &Option<String>) -> Result<String> {
+/// Pure over the `CT_CLASH_SECRET_SEED` env var — no DB round-trip
+/// is required, so this signature carries no pool. (post-R2-2;
+/// the legacy `database_url` parameter was dropped in the
+/// shared-pool refactor — it had been a stale artefact since R2-2.)
+pub async fn current_clash_secret() -> Result<String> {
     clash_secret()
 }
 

@@ -34,9 +34,10 @@
 
 use crate::{admin::ClashAdmin, db, Result};
 use chrono::Utc;
+use sqlx::MySqlPool;
 use std::collections::HashMap;
 
-pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Result<()> {
+pub async fn collect(pool: &MySqlPool, admin: &ClashAdmin) -> Result<()> {
     // See module-level docstring for the honest state. Until sing-box
     // exposes per-user proxy bytes in a Prometheus-text-compatible
     // shape, this is a no-op rather than a silent failure: previous
@@ -70,14 +71,13 @@ pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Resul
         return Ok(());
     }
 
-    let pool = db::connect(database_url).await?;
     let day = Utc::now().date_naive();
     let mut total = 0i64;
 
     // Resolve username → id once.
     let username_to_id: HashMap<String, i64> =
         sqlx::query_as::<_, (i64, String)>(r"SELECT id, username FROM proxy_accounts")
-            .fetch_all(&pool)
+            .fetch_all(pool)
             .await?
             .into_iter()
             .map(|(id, u)| (u, id))
@@ -96,7 +96,7 @@ pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Resul
         )
         .bind(id)
         .bind(day)
-        .fetch_optional(&pool)
+        .fetch_optional(pool)
         .await?;
 
         let (prev_up, prev_down) = prev.unwrap_or((0, 0));
@@ -111,9 +111,9 @@ pub async fn collect(database_url: &Option<String>, admin: &ClashAdmin) -> Resul
         let delta_up = s.uplink.saturating_sub(prev_up).max(0);
         let delta_down = s.downlink.saturating_sub(prev_down).max(0);
 
-        db::upsert_traffic(&pool, id, day, s.uplink, s.downlink, s.connections).await?;
+        db::upsert_traffic(pool, id, day, s.uplink, s.downlink, s.connections).await?;
         if delta_up + delta_down > 0 {
-            db::add_used_bytes(&pool, id, delta_up + delta_down).await?;
+            db::add_used_bytes(pool, id, delta_up + delta_down).await?;
             total += delta_up + delta_down;
         }
     }
