@@ -34,7 +34,18 @@ chmod -R 0775 storage bootstrap/cache 2>/dev/null || true
 # Pre-create with mode 0770 so supervisord's daemon program can bind.
 mkdir -p /run/cool-tunnel && chmod 0770 /run/cool-tunnel || true
 
-# First-boot: pull dependencies if vendor/ is missing.
+# First-boot OR composer.lock-drift: pull dependencies.
+#
+# Pre-FrankenPHP-swap this only fired when vendor/ was missing.
+# That broke the FrankenPHP swap deploy — the host's vendor/ from
+# the prior deploy didn't include laravel/octane, the entrypoint
+# skipped install, and the panel boot crashed at config/octane.php
+# with `Class "Laravel\Octane\Octane" not found`. The fix: also
+# re-install when composer.lock is NEWER than vendor/autoload.php.
+# That mtime-comparison catches every "lock changed since last
+# install" path (PR merge, manual lock edit, dependency bump)
+# without paying the install cost on every container boot — the
+# common case (vendor/ already current) is one stat() syscall.
 #
 # Supply-chain hardening (v0.0.16): pass --no-scripts to composer.
 # Without it, every transitive package's post-install /
@@ -45,8 +56,15 @@ mkdir -p /run/cool-tunnel && chmod 0770 /run/cool-tunnel || true
 # postAutoloadDump` + `php artisan package:discover --ansi`); we
 # explicitly invoke `package:discover` after install rather than
 # letting any hook run blanket.
+needs_install=0
 if [ ! -d vendor ]; then
     echo "[entrypoint] vendor/ missing — running composer install"
+    needs_install=1
+elif [ composer.lock -nt vendor/autoload.php ]; then
+    echo "[entrypoint] composer.lock newer than vendor/ — running composer install"
+    needs_install=1
+fi
+if [ "$needs_install" = "1" ]; then
     composer install \
         --no-dev \
         --no-interaction \
