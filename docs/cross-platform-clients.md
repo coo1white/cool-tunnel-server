@@ -123,10 +123,39 @@ not rely on any tell that contradicts this:
   `X-CT-Protocol` response headers; v0.0.9+ removed them because
   they were unmistakable project tells. The signature is now in the
   body's `signature` field, computed as
-  `HMAC-SHA-256(canonical_body_with_signature_null, account_secret)`.
-  To verify: clear `signature` to `null`, re-canonicalise (same
-  serialiser settings, key order preserved), HMAC, compare against
-  the spliced value with constant-time equality.
+  `HMAC-SHA-256(canonical_body_with_signature_field_absent, account_secret)`.
+  To verify: deserialise, clear `signature` to your language's
+  null/None, re-serialise with the canonical rules below, HMAC,
+  compare against the original spliced value with constant-time
+  equality.
+- **Canonical form for HMAC** (v0.0.59+): the server signs the
+  body with the `signature` field **absent from the JSON entirely**
+  (not present-as-null). Optional fields with `Option<T>` shape on
+  the Rust side carry `#[serde(skip_serializing_if =
+  "Option::is_none")]`, and the server-side encoder emits them the
+  same way: present-when-Some, absent-when-None. Today that covers
+  `note` and `capabilities.fake_site_slug`; future optional fields
+  follow the same rule. **Concrete recipe** (matches Rust serde
+  exactly):
+    1. `obj := json_decode(served_body)` — preserves whatever was
+       on the wire.
+    2. `received_sig := obj.signature`; then `delete obj.signature`
+       (NOT `obj.signature = null` — the field must be absent).
+    3. `canonical := serialise(obj)` with: UTF-8 unescaped, slashes
+       unescaped (PHP `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE`,
+       Go's default `encoding/json` with `SetEscapeHTML(false)`,
+       Rust's default `serde_json::to_string`); fields emitted in
+       struct-declaration order (see
+       `core/ct-protocol/src/subscription.rs`); no whitespace
+       between tokens; null-valued optional fields omitted.
+    4. `expected := hex(hmac_sha256(canonical, account_secret))`.
+    5. `constant_time_eq(received_sig, expected)`.
+   Pre-v0.0.59 the server emitted `"note":null` and
+   `"signature":null` literals in the canonical, which a Rust
+   client following step 2 above would NOT reproduce on
+   re-canonicalise — every verification would fail. The
+   `core/ct-protocol/src/subscription.rs` test
+   `canonical_roundtrips_under_signature_strip` pins this contract.
 - **`capabilities.http3` is always `false`.** NaiveProxy is
   HTTP/2-only at the protocol level — sing-box's `naive` inbound
   does not serve QUIC. The server intentionally does NOT advertise

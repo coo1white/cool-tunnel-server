@@ -82,6 +82,131 @@ class SubscriptionContractTest extends TestCase
     }
 
     #[Test]
+    public function manifest_canonical_is_serde_round_trippable(): void
+    {
+        // Round-11 data-integrity: the contract docstring on
+        // SubscriptionManifestV1 (core/ct-protocol/src/subscription.rs)
+        // says clients verify by setting `signature` to None and
+        // re-serialising. With serde's `skip_serializing_if =
+        // "Option::is_none"` on Option<String> fields, an absent
+        // None field produces JSON with NO key, not `"key":null`.
+        //
+        // Pre-fix the controller emitted `"note":null` and
+        // `"signature":null` literals in the canonical body. Round-
+        // tripping THAT through a Rust deserialise + (signature →
+        // None) + re-serialise produces a SHORTER string (no `note`
+        // key, no `signature` key) — different bytes, different
+        // HMAC, every Rust client verification fails.
+        //
+        // This test asserts the served JSON survives a remove-
+        // signature round-trip without losing or gaining keys —
+        // i.e. the bytes the SERVER signed equal the bytes a CLIENT
+        // would canonicalise. PHP's `json_encode` and `json_decode`
+        // round-trip is byte-stable for our flag set (UNESCAPED_-
+        // SLASHES | UNESCAPED_UNICODE) and the rest of the body
+        // contains only flat scalars + ordered arrays — same shape
+        // serde produces.
+        $this->seedActiveCover();
+        $account = ProxyAccount::factory()->create();
+        $account->setCleartextPassword('s3cr3t-actual');
+        $account->save();
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $served = $response->getContent();
+        $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertArrayHasKey('signature', $decoded, 'served manifest must carry a signature');
+        $servedSig = $decoded['signature'];
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $servedSig, 'signature must be 32-byte hex');
+
+        // Reconstruct the canonical: drop `signature` entirely
+        // (matching `signature: None` + skip_if_none on the Rust
+        // side). Re-encode with the same flags the controller uses.
+        unset($decoded['signature']);
+        $canonical = json_encode(
+            $decoded,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+
+        // The body must NOT contain `note` when it is null —
+        // pre-fix this test would catch `"note":null` leaking into
+        // canonical bytes.
+        $this->assertStringNotContainsString(
+            '"note":',
+            $canonical,
+            'canonical must omit `note` when null (Rust skip_if_none); '
+            .'leaking `"note":null` into the canonical breaks HMAC verification',
+        );
+        $this->assertStringNotContainsString(
+            '"signature":',
+            $canonical,
+            'canonical (post-strip) must NOT carry signature in any form',
+        );
+
+        // HMAC the reconstructed canonical with the same key the
+        // controller used — must equal the served signature. This
+        // is the EXACT computation a Rust/Go/Swift client does;
+        // if it diverges, that client cannot verify a manifest
+        // this server signs.
+        $expected = hash_hmac('sha256', $canonical, (string) config('app.key'));
+        $this->assertSame(
+            $expected,
+            $servedSig,
+            'server-signed HMAC must equal the HMAC a client would compute by '
+            .'removing `signature` and re-canonicalising — '
+            .'if this fails, every client implementing the documented '
+            .'verify-by-stripping-signature flow will reject this manifest',
+        );
+    }
+
+    #[Test]
+    public function manifest_capabilities_skip_optional_when_absent(): void
+    {
+        // capabilities.fake_site_slug carries
+        // `#[serde(default, skip_serializing_if = "Option::is_none")]`
+        // on the Rust side. When no fake site is active, the field
+        // must be ABSENT from the canonical, not present-as-null.
+        // Pre-fix the controller emitted
+        // `"fake_site_slug":null` always — same divergence trap as
+        // the top-level `note` field.
+        ServerConfig::factory()->create();
+        // intentionally NOT creating an active FakeWebsite
+
+        $account = ProxyAccount::factory()->create();
+        $account->setCleartextPassword('s3cr3t-actual');
+        $account->save();
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $served = $response->getContent();
+        $this->assertStringNotContainsString(
+            '"fake_site_slug":null',
+            $served,
+            'capabilities.fake_site_slug must be omitted when no active fake site, '
+            .'not emitted as null — Rust round-trip drops it and HMAC diverges',
+        );
+
+        $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertArrayNotHasKey('fake_site_slug', $decoded['capabilities']);
+
+        // Sanity: the round-trip HMAC still verifies in this branch.
+        $sig = $decoded['signature'];
+        unset($decoded['signature']);
+        $canonical = json_encode(
+            $decoded,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+        $this->assertSame(
+            hash_hmac('sha256', $canonical, (string) config('app.key')),
+            $sig,
+            'HMAC must verify in the no-active-fake-site branch too',
+        );
+    }
+
+    #[Test]
     public function manifest_with_empty_cleartext_falls_through_to_cover_site(): void
     {
         // A row whose cleartext column is empty (or whose
