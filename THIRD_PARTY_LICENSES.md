@@ -81,7 +81,7 @@ predominantly MIT.
 | `caddy:2.8.4-alpine` | ACME provider | Apache-2.0 + Alpine |
 | `alpine:3.20` | sing-box runtime + builder stage | Alpine licence collection |
 | `rust:1.86-alpine` | Rust core build env | MIT/Apache-2.0 + Alpine |
-| `php:8.3-fpm-alpine` | Panel runtime | PHP licence + Alpine |
+| `dunglas/frankenphp:1-php8.4-alpine` | Panel runtime (Caddy + PHP in-process) | Apache-2.0 (Caddy) + PHP licence + Alpine |
 | `mariadb:11` | DB | GPL-2.0 |
 | `redis:7-alpine` | Cache + queue + revocation bus | BSD-3-Clause + Alpine |
 

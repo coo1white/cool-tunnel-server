@@ -39,7 +39,7 @@ precedence.
 | Component | Pinned to | When we re-pin |
 | --- | --- | --- |
 | Rust | `1.86` | When a transitive crate raises the floor |
-| PHP | `8.3-fpm-alpine` | At PHP minor releases inside the supported window |
+| PHP runtime | `dunglas/frankenphp:1-php8.4-alpine` | At PHP minor releases inside the supported window |
 | Caddy | `caddy:2.8.4-alpine` | At Caddy minor releases (security only on patch) |
 | sing-box | `1.10.7` | At sing-box minor releases |
 | MariaDB | `mariadb:11` | At MariaDB minor releases |
