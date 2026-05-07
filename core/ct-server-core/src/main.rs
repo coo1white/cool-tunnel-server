@@ -336,7 +336,7 @@ fn main() -> ExitCode {
 /// to also rotate their `.env`'s `PANEL_DOMAIN`; the v0.0.54
 /// auto-heal in update.sh + the Filament UI making both fields
 /// editable side-by-side cover this discipline).
-fn resolve_panel_domain(cli_value: &str, _database_url: &Option<String>) -> Result<String> {
+fn resolve_panel_domain(cli_value: &str) -> Result<String> {
     if !cli_value.trim().is_empty() {
         return Ok(cli_value.trim().to_owned());
     }
@@ -347,14 +347,8 @@ async fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Singbox { op } => match op {
             SingboxOp::Render { dry_run } => {
-                singbox::render(
-                    &cli.database_url,
-                    &cli.template,
-                    &cli.output,
-                    dry_run,
-                    cli.json,
-                )
-                .await
+                let pool = db::connect(&cli.database_url).await?;
+                singbox::render(&pool, &cli.template, &cli.output, dry_run, cli.json).await
             }
             SingboxOp::Validate => singbox::validate(&cli.output).await,
         },
@@ -364,16 +358,9 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 template,
                 output,
             } => {
-                let panel_domain = resolve_panel_domain(&cli.panel_domain, &cli.database_url)?;
-                caddy::render(
-                    &cli.database_url,
-                    &panel_domain,
-                    &template,
-                    &output,
-                    dry_run,
-                    cli.json,
-                )
-                .await
+                let panel_domain = resolve_panel_domain(&cli.panel_domain)?;
+                let pool = db::connect(&cli.database_url).await?;
+                caddy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
         },
         Cmd::Haproxy { op } => match op {
@@ -382,26 +369,18 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 template,
                 output,
             } => {
-                let panel_domain = resolve_panel_domain(&cli.panel_domain, &cli.database_url)?;
-                haproxy::render(
-                    &cli.database_url,
-                    &panel_domain,
-                    &template,
-                    &output,
-                    dry_run,
-                    cli.json,
-                )
-                .await
+                let panel_domain = resolve_panel_domain(&cli.panel_domain)?;
+                let pool = db::connect(&cli.database_url).await?;
+                haproxy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
         },
         Cmd::Server { op } => {
             // CLI Server.{Reload,Config} are operator-facing — they
-            // have no DB pool to derive the secret from on their
-            // own. If --admin-secret / SINGBOX_CLASH_SECRET is empty
-            // we load ServerConfig once and use the deterministic
-            // value; an explicit override wins for ad-hoc debugging.
+            // don't read the DB; the clash bearer is now env-derived
+            // (CT_CLASH_SECRET_SEED). An explicit --admin-secret /
+            // SINGBOX_CLASH_SECRET still wins for ad-hoc debugging.
             let secret = if cli.admin_secret.is_empty() {
-                singbox::current_clash_secret(&cli.database_url).await?
+                singbox::current_clash_secret().await?
             } else {
                 cli.admin_secret.clone()
             };
@@ -414,26 +393,18 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Traffic { op } => match op {
             TrafficOp::Collect => {
                 let secret = if cli.admin_secret.is_empty() {
-                    singbox::current_clash_secret(&cli.database_url).await?
+                    singbox::current_clash_secret().await?
                 } else {
                     cli.admin_secret.clone()
                 };
-                metrics::collect(
-                    &cli.database_url,
-                    &admin::ClashAdmin::new(&cli.admin_url, &secret),
-                )
-                .await
+                let pool = db::connect(&cli.database_url).await?;
+                metrics::collect(&pool, &admin::ClashAdmin::new(&cli.admin_url, &secret)).await
             }
         },
         Cmd::Quota { op } => match op {
             QuotaOp::Enforce => {
-                quota::enforce(
-                    &cli.database_url,
-                    &cli.template,
-                    &cli.output,
-                    &cli.admin_url,
-                )
-                .await
+                let pool = db::connect(&cli.database_url).await?;
+                quota::enforce(&pool, &cli.template, &cli.output, &cli.admin_url).await
             }
         },
         Cmd::Probe { op } => match op {
@@ -442,10 +413,20 @@ async fn dispatch(cli: Cli) -> Result<()> {
             }
         },
         Cmd::Daemon { socket, redis_url } => {
+            // Build the shared pool ONCE here. Both the wire-handler
+            // serve loop and the redis_bridge subscriber share it,
+            // so neither path pays per-request connection setup.
+            // sqlx's MySqlPool is internally Arc-wrapped — clones
+            // bump a refcount, not a connection count.
+            let pool = db::connect(&cli.database_url).await?;
+            tracing::info!(
+                max_connections = 4,
+                "ct-server-core: shared DB pool ready (lifted from per-request)"
+            );
             if !redis_url.is_empty() {
                 redis_bridge::spawn(
                     redis_url,
-                    cli.database_url.clone(),
+                    pool.clone(),
                     cli.template.clone(),
                     cli.output.clone(),
                     cli.admin_url.clone(),
@@ -453,16 +434,12 @@ async fn dispatch(cli: Cli) -> Result<()> {
             } else {
                 tracing::warn!("REDIS_URL empty — running without revocation subscriber");
             }
-            daemon::serve(
-                &socket,
-                &cli.database_url,
-                &cli.template,
-                &cli.output,
-                &cli.admin_url,
-            )
-            .await
+            daemon::serve(&socket, pool, &cli.template, &cli.output, &cli.admin_url).await
         }
-        Cmd::Subscription { account_id } => subscription::emit(&cli.database_url, account_id).await,
+        Cmd::Subscription { account_id } => {
+            let pool = db::connect(&cli.database_url).await?;
+            subscription::emit(&pool, account_id).await
+        }
         Cmd::Component { op } => match op {
             ComponentOp::List { manifests } => {
                 let list = components::list(&manifests).await?;
@@ -481,7 +458,8 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 Ok(())
             }
             ComponentOp::Check { manifests } => {
-                components::print_check(&manifests, &cli.database_url, cli.json).await
+                let pool = db::connect(&cli.database_url).await?;
+                components::print_check(&manifests, &pool, cli.json).await
             }
         },
         Cmd::Admin { op } => match op {

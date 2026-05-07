@@ -20,17 +20,16 @@
 // by our concurrent disable. The transaction is short (typically
 // 0-3 rows) so it doesn't hold locks for any perceivable time.
 
-use crate::{admin, db, singbox, Result};
+use crate::{admin, singbox, Result};
 use chrono::Utc;
+use sqlx::MySqlPool;
 
 pub async fn enforce(
-    database_url: &Option<String>,
+    pool: &MySqlPool,
     template: &str,
     output: &str,
     admin_url: &str,
 ) -> Result<()> {
-    let pool = db::connect(database_url).await?;
-
     let mut tx = pool.begin().await?;
 
     // Find expired accounts to disable. SELECT ... FOR UPDATE locks
@@ -70,8 +69,8 @@ pub async fn enforce(
         // config + the clash-API call don't share locks with the DB.
         // If render says "unchanged" we still reload; disabling an
         // account always changes the sing-box `users` array.
-        singbox::render(database_url, template, output, false, false).await?;
-        let secret = singbox::current_clash_secret(database_url).await?;
+        singbox::render(pool, template, output, false, false).await?;
+        let secret = singbox::current_clash_secret().await?;
         let admin_client = admin::ClashAdmin::new(admin_url, &secret);
         if let Err(e) = admin_client.reload(output).await {
             tracing::warn!(error = %e, "reload after quota enforcement failed");

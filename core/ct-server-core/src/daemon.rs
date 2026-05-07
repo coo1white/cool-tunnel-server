@@ -5,9 +5,20 @@
 // stays warm, which makes per-request latency roughly 5x lower —
 // that matters for the "save in Filament → reload visible" cycle the
 // admin clicks through dozens of times.
+//
+// Pool lifecycle (post-perf/share-db-pool refactor): `serve()`
+// constructs ONE `MySqlPool` at startup and holds it for the
+// process lifetime; every `handle()` invocation borrows it. Pre-
+// refactor, every wire request opened a fresh pool via
+// `db::connect()` — the daemon docstring claimed "the DB pool stays
+// warm" but the code defeated it, paying ~30-50 ms of TCP+auth
+// handshake per request. The shared pool restores the docstring's
+// promise: the panel's "save → reload" round-trip drops by that
+// same handshake cost.
 
-use crate::{admin, db, metrics, singbox, Error, Result};
+use crate::{admin, metrics, singbox, Error, Result};
 use ct_protocol::{WireRequestV1, WireResponseV1};
+use sqlx::MySqlPool;
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -21,7 +32,7 @@ const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
 
 pub async fn serve(
     socket_path: &str,
-    database_url: &Option<String>,
+    pool: MySqlPool,
     template: &str,
     output: &str,
     admin_url: &str,
@@ -42,7 +53,6 @@ pub async fn serve(
 
     tracing::info!(path = socket_path, "ct-server-core daemon listening");
 
-    let database_url = database_url.clone();
     let template = template.to_owned();
     let output = output.to_owned();
     let admin_url = admin_url.to_owned();
@@ -64,13 +74,16 @@ pub async fn serve(
             }
             res = listener.accept() => {
                 let (stream, _) = res?;
-                let database_url = database_url.clone();
+                // MySqlPool is internally Arc'd; cloning bumps a
+                // refcount and shares the underlying connection set.
+                // No new TCP connections are opened on clone.
+                let pool = pool.clone();
                 let template = template.clone();
                 let output = output.clone();
                 let admin_url = admin_url.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
-                        handle_client(stream, &database_url, &template, &output, &admin_url).await
+                        handle_client(stream, &pool, &template, &output, &admin_url).await
                     {
                         tracing::warn!(error = %e, "client handler errored");
                     }
@@ -100,7 +113,7 @@ async fn shutdown_signal() {
 
 async fn handle_client(
     stream: UnixStream,
-    database_url: &Option<String>,
+    pool: &MySqlPool,
     template: &str,
     output: &str,
     admin_url: &str,
@@ -154,7 +167,7 @@ async fn handle_client(
                 continue;
             }
         };
-        let resp = match handle(req, database_url, template, output, admin_url).await {
+        let resp = match handle(req, pool, template, output, admin_url).await {
             Ok(r) => r,
             Err(e) => WireResponseV1::Error {
                 code: "internal".into(),
@@ -176,7 +189,7 @@ async fn send<W: AsyncWriteExt + Unpin>(w: &mut W, resp: &WireResponseV1) -> Res
 
 async fn handle(
     req: WireRequestV1,
-    database_url: &Option<String>,
+    pool: &MySqlPool,
     template: &str,
     output: &str,
     admin_url: &str,
@@ -189,7 +202,7 @@ async fn handle(
             // since v0.0.2; Caddy is ACME-only since v0.0.4.
             // Renaming the variant is a v0.1 task (it'd break
             // every connected client core that speaks WireV1).
-            singbox::render(database_url, template, output, false, false).await?;
+            singbox::render(pool, template, output, false, false).await?;
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::ReloadCaddy => {
@@ -197,7 +210,7 @@ async fn handle(
             // sing-box via its clash API. Variant name preserved
             // for WireV1 compat.
             let started = std::time::Instant::now();
-            let secret = singbox::current_clash_secret(database_url).await?;
+            let secret = singbox::current_clash_secret().await?;
             admin::ClashAdmin::new(admin_url, &secret)
                 .reload(output)
                 .await?;
@@ -206,21 +219,23 @@ async fn handle(
             })
         }
         WireRequestV1::CollectTraffic => {
-            let secret = singbox::current_clash_secret(database_url).await?;
-            metrics::collect(database_url, &admin::ClashAdmin::new(admin_url, &secret)).await?;
+            let secret = singbox::current_clash_secret().await?;
+            metrics::collect(pool, &admin::ClashAdmin::new(admin_url, &secret)).await?;
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::EnforceQuota => {
-            crate::quota::enforce(database_url, template, output, admin_url).await?;
+            crate::quota::enforce(pool, template, output, admin_url).await?;
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::ProbeAntiTracking => Err(Error::msg(
             "anti-tracking probe needs a `via` URL; use the CLI for now",
         )),
         WireRequestV1::Health => {
-            // Connect to the DB to confirm it's reachable; cheap.
-            let pool = db::connect(database_url).await?;
-            sqlx::query("SELECT 1").execute(&pool).await?;
+            // SELECT 1 borrows a connection from the shared pool;
+            // no fresh TCP/auth handshake. Used by the panel's
+            // health probe, so this runs whenever the operator
+            // refreshes the panel — keeping it cheap matters.
+            sqlx::query("SELECT 1").execute(pool).await?;
             Ok(WireResponseV1::HealthOk)
         }
     }

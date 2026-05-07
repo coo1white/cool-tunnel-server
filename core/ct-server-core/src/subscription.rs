@@ -14,11 +14,11 @@ use crate::{db, Error, Result};
 use ct_protocol::{
     AntiTrackingFeature, ProfileV1, ServerCapabilitiesV1, SubscriptionManifestV1, PROTOCOL_VERSION,
 };
+use sqlx::MySqlPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> {
-    let pool = db::connect(database_url).await?;
-    let cfg = db::server_config(&pool).await?;
+pub async fn emit(pool: &MySqlPool, account_id: i64) -> Result<()> {
+    let cfg = db::server_config(pool).await?;
 
     // Note: we deliberately fetch even *disabled* accounts — the
     // operator might want to issue a manifest, then disable the
@@ -36,7 +36,7 @@ pub async fn emit(database_url: &Option<String>, account_id: i64) -> Result<()> 
         "#,
         id_u,
     )
-    .fetch_optional(&pool)
+    .fetch_optional(pool)
     .await?
     .ok_or_else(|| Error::msg(format!("no proxy_account with id={account_id}")))?;
 
