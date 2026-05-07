@@ -11,7 +11,8 @@
 #                                                    Caddy reverse-
 #                                                    proxies to the
 #                                                    panel container's
-#                                                    nginx on :9000)
+#                                                    FrankenPHP on
+#                                                    :9000)
 #         SNI = {{ .Domain }}        →  sing-box:443 (NaiveProxy)
 #         (anything else)            →  sing-box:443 (default; matches
 #                                                    NaiveProxy probe-

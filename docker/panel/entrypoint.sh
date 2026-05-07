@@ -85,7 +85,19 @@ fi
 # discover ONLY inside the install branch; running it always
 # (cheap, ~100 ms, idempotent) decouples cache freshness from the
 # install path so manual / out-of-band installs heal too.
-php artisan package:discover --ansi || true
+#
+# Self-heal: if discover fails (e.g. corrupted services.php from
+# an interrupted prior boot), drop the discovery cache and retry
+# once. A second failure is genuine — supervisord still starts
+# (entrypoint never blocks the boot), but the operator gets a
+# clear diagnostic on stderr instead of a silent stale-cache
+# state.
+if ! php artisan package:discover --ansi; then
+    echo "[entrypoint] package:discover failed — clearing stale cache + retry" >&2
+    rm -f bootstrap/cache/packages.php bootstrap/cache/services.php
+    php artisan package:discover --ansi || \
+        echo "[entrypoint] WARN: package:discover failed twice — booting with last-known cache" >&2
+fi
 
 # Generate APP_KEY if it isn't set.
 if ! grep -q '^APP_KEY=base64:' .env 2>/dev/null; then
