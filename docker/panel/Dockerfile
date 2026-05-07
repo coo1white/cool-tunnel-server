@@ -125,7 +125,14 @@ COPY --from=redis:7.4.8-alpine /usr/local/bin/redis-cli /usr/local/bin/redis-cli
 ARG TARGETARCH
 ARG NAIVE_VERSION=v148.0.7778.96-2
 ARG NAIVE_SHA256_AMD64=acd2359291d4248a12e8c1ce51a685562449a9cefe24b97f75929a48e348830f
-ARG NAIVE_SHA256_ARM64=
+# Round-18 supply-chain pin: arm64 hash for the same release tag
+# as AMD64. Computed against the GitHub-hosted tarball; bytes-in →
+# bytes-out, so the value is host-architecture-independent — the
+# pin protects against the upstream CDN serving different bits at
+# build time, which is the same threat model the AMD64 pin closes.
+# Bumps must update both arches together (or only the one being
+# bumped if upstream ever ships per-arch independently).
+ARG NAIVE_SHA256_ARM64=113935bc07116de1e260590331d34f2f1793f7e4cf8f96201f6b414d5e442b30
 RUN set -eux; \
     cd /tmp; \
     case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')}" in \
