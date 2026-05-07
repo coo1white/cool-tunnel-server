@@ -278,4 +278,60 @@ mod tests {
             .unwrap_or(m.clone());
         assert_eq!(m, m2);
     }
+
+    // Round-17 chassis-cockpit boundary: the PHP panel reads the
+    // status array from `ct-server-core component check` and only
+    // reaches into `$row['state']`
+    // (`panel/app/Services/ComponentChecker.php:62`). Pin the
+    // field-name AND the snake_case enum representation — a
+    // PascalCase variant rename ("Ok" → "ok") snuck in during the
+    // serde-rename refactor would silently turn every "OK" row
+    // into "0 OK / 0 NG" on the panel's Components page (the
+    // panel's `state === 'ok'` comparison would match neither).
+    #[test]
+    fn component_status_json_pins_php_visible_keys() {
+        let s = ComponentStatusV1 {
+            name: "caddy".into(),
+            installed_version: Some("v2.8.4".into()),
+            pinned_version: "v2.8.4".into(),
+            state: ComponentStateV1::Ok,
+            message: "OK".into(),
+        };
+        let j = serde_json::to_string(&s).unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_str(&j).unwrap_or(serde_json::Value::Null);
+        assert!(
+            v.get("state").is_some(),
+            "panel reads `state` for OK/NG count: {j}"
+        );
+        assert_eq!(
+            v["state"], "ok",
+            "Ok variant must serialise as the lowercase `ok` literal — the panel \
+             compares `state === 'ok'`; any PascalCase or kebab variant flips every \
+             row to NG: {j}"
+        );
+
+        // And the four NG-class variants must serialise as their
+        // documented snake_case forms — anything else also breaks
+        // the panel's OK/NG count.
+        for (variant, wire) in [
+            (ComponentStateV1::VersionMismatch, "version_mismatch"),
+            (ComponentStateV1::VerifyFailed, "verify_failed"),
+            (ComponentStateV1::Missing, "missing"),
+            (ComponentStateV1::Unknown, "unknown"),
+        ] {
+            let s = ComponentStatusV1 {
+                name: "x".into(),
+                installed_version: None,
+                pinned_version: "v1".into(),
+                state: variant,
+                message: String::new(),
+            };
+            let j = serde_json::to_string(&s).unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&j).unwrap_or(serde_json::Value::Null);
+            assert_eq!(
+                v["state"], wire,
+                "ComponentStateV1::{variant:?} must serialise as `{wire}`: {j}"
+            );
+        }
+    }
 }
