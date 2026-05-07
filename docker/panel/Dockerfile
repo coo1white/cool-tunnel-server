@@ -185,7 +185,20 @@ EXPOSE 9000
 # Periodic liveness probe: hit Laravel's /up health endpoint via
 # FrankenPHP on the local port. Same probe as the FPM era; only
 # the server tier behind the URL changed.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+#
+# `start-period=120s` (was 30s pre-round-7-audit). The first-boot
+# entrypoint runs `composer install --no-dev --optimize-autoloader`
+# which takes 30-90s on a 1-vCPU box; before the install completes
+# supervisord's frankenphp program isn't started, so the
+# healthcheck flaps "unhealthy" for that whole window. 120s
+# absorbs the slowest realistic first-boot path (full install
+# from cold cache + the entrypoint's other artisan commands)
+# while still surfacing actual brokenness within ~5 min on a
+# steady-state restart. `restart: unless-stopped` doesn't
+# restart on UNHEALTHY anyway — this is purely operator-facing
+# (`docker compose ps panel` showing "unhealthy" mid-deploy
+# panics no one).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD curl -fsS http://127.0.0.1:9000/up >/dev/null \
         || exit 1
 

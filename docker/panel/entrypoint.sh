@@ -13,6 +13,21 @@ set -euo pipefail
 
 cd /var/www/html
 
+# Clear the entrypoint-complete sentinel before doing any work.
+# Pre-fix: the v0.0.27 sentinel comment claimed "/tmp is tmpfs in
+# this container, so the sentinel auto-clears on restart." That
+# claim is FALSE — /tmp lives in the writable layer, NOT a tmpfs
+# mount (no `tmpfs:` declaration in docker-compose.yml or the
+# Dockerfile). On `docker compose restart panel` the sentinel
+# survives, and any concurrent `install.sh` waiter that polls
+# the sentinel returns "complete" before the new entrypoint run
+# has actually finished its work — operator races. Removing the
+# sentinel UP FRONT (vs. only at the end) flips the contract:
+# absence-of-sentinel ALWAYS means "entrypoint in progress or
+# crashed"; presence-of-sentinel ALWAYS means "this run finished
+# cleanly." Round-7 audit fix.
+rm -f /tmp/cool-tunnel/entrypoint-complete
+
 # Make sure composer can write the home dir.
 export COMPOSER_HOME=/tmp/composer
 mkdir -p "$COMPOSER_HOME" storage/framework/{cache,sessions,views} storage/logs bootstrap/cache
@@ -166,6 +181,18 @@ php artisan filament:assets --no-interaction || true
 
 php artisan config:cache  --no-interaction || true
 php artisan route:cache   --no-interaction || true
+
+# Clear stale Blade-compiled views before re-baking the cache.
+# Pre-fix `view:cache` only re-rendered templates it discovered;
+# orphan compiled-view files from removed Blade templates (or
+# from a prior PHP-version era — e.g., upgrading PHP 8.3 → 8.4
+# in the FrankenPHP swap) survived in storage/framework/views/.
+# Under Octane's per-worker container reuse, a stale compiled
+# view that references a service binding from the FPM era could
+# resolve at request time against the new container. Low actual
+# risk (Filament 3 + Livewire 3 are Octane-clean, no custom
+# bindings observed) but free hygiene. Round-7 audit follow-up.
+rm -rf storage/framework/views/* 2>/dev/null || true
 php artisan view:cache    --no-interaction || true
 
 # Render the initial Caddyfile + sing-box config from the DB so both
@@ -181,8 +208,12 @@ php artisan singbox:render   --no-interaction || true
 # previously ran its own `migrate` immediately after
 # `vendor/autoload.php` appeared, which raced this entrypoint's
 # migrate above and crashed with "Table 'cache' already exists".
-# /tmp is tmpfs in this container, so the sentinel auto-clears on
-# restart and the next first-boot run waits cleanly.
+#
+# The sentinel is `rm -f`'d at the TOP of this script (see the
+# round-7-audit comment near line 14). Absence-of-sentinel ==
+# "entrypoint in progress or crashed"; presence == "this run
+# finished cleanly." Don't rely on /tmp being tmpfs — it isn't,
+# in this container.
 mkdir -p /tmp/cool-tunnel
 : >/tmp/cool-tunnel/entrypoint-complete
 
