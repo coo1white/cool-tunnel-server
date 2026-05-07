@@ -299,8 +299,14 @@ step "Start db + redis"
 compose up -d db redis
 ok "db + redis containers started"
 
+# Round-16 hint: the most likely "MariaDB never healthy" causes
+# are stale volume from a prior install (DB_PASSWORD rotated since
+# the volume was seeded → `Access denied for user 'root'@...`),
+# or a CPU-starved VPS that hasn't finished initdb. Both surface
+# loudly in `docker compose logs db`.
 # shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
-wait_for "MariaDB healthcheck" 30 2 \
+WAIT_FOR_HINT="docker compose logs --tail=80 db   # most common: stale volume from a prior install (DB_PASSWORD changed since volume init) — re-run install.sh and answer 'y' to the wipe prompt; or a CPU-starved VPS still running initdb — give it another minute and re-run" \
+    wait_for "MariaDB healthcheck" 30 2 \
     bash -c '[[ "$(docker inspect -f "{{.State.Health.Status}}" ct-db 2>/dev/null)" == "healthy" ]]'
 
 # ---------- Bring up panel + run migrations ------------------------
@@ -327,8 +333,14 @@ compose up -d panel
 warn "panel entrypoint is running 'composer install' on first boot;"
 warn "this takes ~30-90s on a small VPS. Watch progress with:"
 warn "    docker compose logs -f --tail=80 panel"
+# Round-16 hint: the entrypoint can stall at composer install (slow
+# VPS / network-blocked packagist), key:generate (already-generated
+# is fine), or migrate (DB connectivity / pending-migrations). The
+# panel's logs show the current step — if a 90×5s = 7.5 min wait
+# wasn't enough, the operator can see WHICH step is stuck.
 # shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
-wait_for "panel entrypoint setup complete (sentinel)" 90 5 \
+WAIT_FOR_HINT="docker compose logs --tail=120 panel   # the entrypoint progresses through composer install (~30-90s) → key:generate → migrate → cache build → render — find the last step printed and chase that one. Most common stuck-step on a fresh box: composer install (slow network or packagist blocked); on an upgrade: migrate (pending schema change failed)" \
+    wait_for "panel entrypoint setup complete (sentinel)" 90 5 \
     bash -c 'docker compose exec -T panel test -f /tmp/cool-tunnel/entrypoint-complete'
 
 # Verify the entrypoint's migrate actually applied cleanly. The
@@ -450,11 +462,18 @@ apex_cert_path="/data/caddy/certificates/${ca_folder}/${DOMAIN:-proxy.example.co
 panel_cert_path="/data/caddy/certificates/${ca_folder}/${PANEL_DOMAIN:-panel.proxy.example.com}/${PANEL_DOMAIN:-panel.proxy.example.com}.crt"
 
 step "Wait for Caddy to obtain both TLS certificates (up to 90 s)"
+# Round-16 error-message-UX: a 90-s silent wait followed by
+# "never came up" leaves the operator stuck — the four likely
+# causes (DNS, port 80, Caddy crash, Let's Encrypt rate-limit)
+# are operationally distinct but all look identical from the
+# install script. Surface them as the actionable hint so the
+# operator's first move is the right one.
+caddy_acme_hint="docker compose logs --tail=120 caddy   # then check, in order:  (1) DNS A records for \$DOMAIN + \$PANEL_DOMAIN point at this server's public IP;  (2) cloud-firewall TCP/80 inbound is open (the pre-flight above warned if not);  (3) Caddy didn't crash-loop;  (4) Let's Encrypt rate limit not hit (https://letsencrypt.org/docs/rate-limits/) — switch to staging via ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory in .env if you've been retrying"
 # shellcheck disable=SC2016  # vars must expand inside the bash -c, not now
-wait_for "Caddy cert (apex) at ${apex_cert_path}" 45 2 \
+WAIT_FOR_HINT="$caddy_acme_hint" wait_for "Caddy cert (apex) at ${apex_cert_path}" 45 2 \
     bash -c "docker compose exec -T caddy test -f \"$apex_cert_path\""
 # shellcheck disable=SC2016
-wait_for "Caddy cert (panel) at ${panel_cert_path}" 45 2 \
+WAIT_FOR_HINT="$caddy_acme_hint" wait_for "Caddy cert (panel) at ${panel_cert_path}" 45 2 \
     bash -c "docker compose exec -T caddy test -f \"$panel_cert_path\""
 
 # ---------- Start sing-box + haproxy (now that the certs exist) ---
