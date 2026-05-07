@@ -48,7 +48,7 @@ fi
 # proxy_accounts.password_cleartext_encrypted row and signs every
 # subscription manifest; leaking it recovers all tenant cleartext.
 # (R2-1, docs/audits/2026-05-04T06-31-58Z.md.)
-env_mode=$(stat -c '%a' .env)
+env_mode=$(file_mode_octal .env)
 # Last octal digit is the "other" rwx bits; >= 4 means any reader on
 # the host filesystem can pull APP_KEY out of .env. Extract the
 # trailing character of the mode string rather than arithmetic on
@@ -88,7 +88,11 @@ if [[ -z "${PANEL_DOMAIN:-}" ]]; then
         warn "PANEL_DOMAIN not set in .env — defaulting to ${derived}"
         warn "(R1-1 / R1-2 added a public admin panel at this name in v0.0.33)"
         if grep -qE '^PANEL_DOMAIN=' .env; then
-            sed -i "s|^PANEL_DOMAIN=.*|PANEL_DOMAIN=${derived}|" .env
+            # Round-21 cross-platform: explicit `.bak` suffix + cleanup
+            # works on both GNU sed (Linux) and BSD sed (macOS). The
+            # bare `sed -i ...` form silently breaks on BSD.
+            sed -i.bak "s|^PANEL_DOMAIN=.*|PANEL_DOMAIN=${derived}|" .env \
+                && rm -f .env.bak
         else
             printf '\nPANEL_DOMAIN=%s\n' "${derived}" >> .env
         fi
@@ -139,7 +143,9 @@ if [[ -z "${CT_CLASH_SECRET_SEED:-}" ]]; then
     seed=$(openssl rand -hex 32)
     # Replace the placeholder line if present, otherwise append.
     if grep -qE '^CT_CLASH_SECRET_SEED=' .env; then
-        sed -i "s|^CT_CLASH_SECRET_SEED=.*|CT_CLASH_SECRET_SEED=${seed}|" .env
+        # Round-21 cross-platform: see PANEL_DOMAIN sed call above.
+        sed -i.bak "s|^CT_CLASH_SECRET_SEED=.*|CT_CLASH_SECRET_SEED=${seed}|" .env \
+            && rm -f .env.bak
     else
         printf '\nCT_CLASH_SECRET_SEED=%s\n' "${seed}" >> .env
     fi

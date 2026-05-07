@@ -147,6 +147,22 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+- `scripts/lib.sh` and `scripts/install.sh` — round-21 cross-
+  platform portability for the operator-facing install script.
+  Three GNU-coreutils-only commands (`stat -c '%a'`, two `sed
+  -i` calls without an explicit backup suffix) silently broke
+  on BSD/macOS hosts — confusing for a developer trying to
+  install or test the project from a non-Linux workstation
+  (the deployment target stays Linux, but the install script
+  itself can run as a sanity check). Added `file_mode_octal`
+  helper in `lib.sh` that probes GNU's `-c '%a'` first and
+  falls back to BSD's `-f '%OLp'`. Replaced both bare `sed -i`
+  calls with the `sed -i.bak ... && rm -f file.bak` form,
+  which is bytewise-identical-output on GNU and BSD. Smoke-
+  tested on macOS: `file_mode_octal` returns the expected
+  octal, `sed -i.bak` rewrites in place, both behave the same
+  as the existing `pin-images.sh` and `update.sh` callsites
+  that already used the portable form.
 - `docs/architecture.md`, `docker-compose.yml`,
   `docker/haproxy/Dockerfile`, `README.md` — round-19 docs-vs-
   code drift fixes:
