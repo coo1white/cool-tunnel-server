@@ -50,6 +50,7 @@ $resolvePanelDomain = function (): string {
     if ($domain !== '') {
         return "panel.{$domain}";
     }
+
     return '';
 };
 

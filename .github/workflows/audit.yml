@@ -173,15 +173,43 @@ jobs:
           workspace_v=$(awk -F'"' '/^version[[:space:]]*=/ {print $2; exit}' core/Cargo.toml)
           echo "workspace version: $workspace_v"
 
+          # ct-server-core / ct-protocol manifest versions track the
+          # workspace `version` in core/Cargo.toml — they're the
+          # in-tree Rust crates. `make set-version` updates them in
+          # lockstep.
+          #
+          # The panel is a separate component with its own release
+          # cadence. Its version lives in panel/config/cool-tunnel.php
+          # AND manifests/panel.upstream.json (cross-checked by
+          # ct:version's Cycle 2 drift probe). It does NOT track the
+          # Rust workspace — pre-v0.0.56 this loop forced equality,
+          # which broke the moment panel and Rust intentionally
+          # diverged (v0.0.39 panel + 0.0.31 workspace). The panel-
+          # specific drift check below replaces the workspace-equality
+          # rule for panel.upstream.json.
           for f in manifests/ct-server-core.upstream.json \
-                   manifests/ct-protocol.upstream.json \
-                   manifests/panel.upstream.json; do
+                   manifests/ct-protocol.upstream.json; do
               v=$(jq -r .version "$f")
               if [[ "$v" != "$workspace_v" ]]; then
                   echo "::error file=$f::manifest version $v does not match workspace $workspace_v"
                   exit 1
               fi
           done
+
+          # Panel: manifests/panel.upstream.json::version must equal
+          # panel/config/cool-tunnel.php::version (the runtime source
+          # of truth that ct:version artisan command prints, and what
+          # the Cycle 2 / v0.0.39 drift probe matches against).
+          # `make set-version` updates both in lockstep; this guard
+          # catches any future drift between the two panel-side
+          # surfaces.
+          panel_manifest_v=$(jq -r .version manifests/panel.upstream.json)
+          panel_config_v=$(awk -F"'" "/'version'[[:space:]]*=>/ {print \$4; exit}" panel/config/cool-tunnel.php)
+          if [[ "$panel_manifest_v" != "$panel_config_v" ]]; then
+              echo "::error::panel manifest version $panel_manifest_v does not match panel/config/cool-tunnel.php version $panel_config_v"
+              exit 1
+          fi
+          echo "panel version: $panel_manifest_v (manifest = config)"
 
           # Caddy / sing-box / mariadb / redis pins must match the FROM
           # / image: tags in the Dockerfiles + compose file.
@@ -210,7 +238,26 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      # actions/dependency-review-action requires GitHub Advanced
+      # Security or a public repository for the dependency-graph API
+      # to be available. This repo is private without GHAS, so the
+      # action hard-errors with "Dependency review is not supported
+      # on this repository." That's a repo-config state, not a
+      # code-level signal we can act on — and `cargo audit` (RustSec)
+      # + `cargo deny` (license / source registry) + `composer audit`
+      # already provide the equivalent vuln/license gate for the
+      # actual code paths.
+      #
+      # Step-level continue-on-error makes the action's failure
+      # report as success at the step level, which propagates to the
+      # job's overall conclusion. (Job-level continue-on-error has
+      # different semantics: the WORKFLOW continues but the job
+      # itself still reports as failed.) The error message is still
+      # visible in the run log if a maintainer wants to inspect.
+      # If GHAS is later enabled, drop this flag to restore strict
+      # mode. (v0.0.56.)
       - uses: actions/dependency-review-action@v4
+        continue-on-error: true
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
@@ -544,15 +591,18 @@ jobs:
               echo "::error file=$tpl::log.level must be warn or higher (no per-connection logging)"
               fail=1
           fi
-          # external_controller (TCP) is bound to 0.0.0.0:9090 inside
-          # the sing-box container — intentional, used by the panel
-          # over ct-net for hot reload. Required: bound to that
-          # docker-internal address only (any other host:port could
-          # be a misconfiguration that ends up listening publicly).
-          # The host-exposure cross-check on docker-compose.yml's
-          # ports: block is below.
-          if ! grep -qE '"external_controller"\s*:\s*"0\.0\.0\.0:9090"' "$tpl"; then
-              echo "::error file=$tpl::clash_api.external_controller must be \"0.0.0.0:9090\" (docker-internal interface)"
+          # external_controller (TCP) is bound to {{ .ClashListen }}
+          # inside the sing-box container — the renderer fills this
+          # from CT_CLASH_LISTEN (defaults to 172.30.0.10:9090, the
+          # ct-clash management network's static IP). The template
+          # is tested against the LITERAL Go-template binding here;
+          # the rendered config is validated separately by ci.yml's
+          # `templates` job, which substitutes a concrete value.
+          # Pre-v0.0.13 the template hardcoded 0.0.0.0:9090; that
+          # changed when ct-clash isolation landed (H3 in 2026-05-05
+          # audit). This rule was stale until v0.0.56 caught up.
+          if ! grep -qE '"external_controller"\s*:\s*"\{\{[[:space:]]*\.ClashListen[[:space:]]*\}\}"' "$tpl"; then
+              echo "::error file=$tpl::clash_api.external_controller must be templated as {{ .ClashListen }} (filled from CT_CLASH_LISTEN at render time)"
               fail=1
           fi
           # The bearer secret must be templated, not a static literal.
@@ -637,21 +687,31 @@ jobs:
           set -euo pipefail
           tpl=caddy/Caddyfile.tpl
           fail=0
+          # All three rules below check OPERATIVE Caddyfile lines, not
+          # commentary. The Caddyfile keeps a hashed-comment history
+          # of past forms (e.g. `# The previous \`respond "managed"\``)
+          # explaining why the present form was chosen — invaluable
+          # context for future maintainers, but the regexes here would
+          # naively match those commented-out historical strings and
+          # flag them as live regressions. v0.0.56 anchors the checks
+          # to non-comment lines via `grep -v '^\s*#'` upstream of the
+          # regex test.
+          non_comments=$(grep -vE '^\s*#' "$tpl")
           # The :8443 ghost site must NOT respond with a recognisable
           # string ("managed", "ok", "alive"). Empty body + 444 is the
           # contract.
-          if grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"' "$tpl"; then
+          if echo "$non_comments" | grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"'; then
               echo "::error file=$tpl:::8443 ghost site must not respond with a recognisable string (use empty + 444)"
               fail=1
           fi
           # tls1.2 must not be in the ghost site's protocols list.
-          if grep -qE 'protocols\s+tls1\.2' "$tpl"; then
+          if echo "$non_comments" | grep -qE 'protocols\s+tls1\.2'; then
               echo "::error file=$tpl::Caddy protocols list must not include tls1.2 on the ghost site"
               fail=1
           fi
           # cert_failed must NOT append to a file in /data — that's a
           # forensic trail. Log to stderr instead.
-          if grep -qE 'cert_failed.*>>\s*/data' "$tpl"; then
+          if echo "$non_comments" | grep -qE 'cert_failed.*>>\s*/data'; then
               echo "::error file=$tpl::cert_failed event must log to stderr, not append to a file in /data"
               fail=1
           fi

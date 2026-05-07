@@ -36,6 +36,7 @@ use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
 use crate::{admin, singbox, Result};
 use redis::Client;
 use serde::{Deserialize, Serialize};
+use sqlx::MySqlPool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -60,7 +61,7 @@ pub enum RevocationMessage {
 /// must not take the daemon down.
 pub fn spawn(
     redis_url: String,
-    database_url: Option<String>,
+    pool: MySqlPool,
     template: String,
     output: String,
     admin_url: String,
@@ -76,12 +77,7 @@ pub fn spawn(
         let mut backoff_ms = 250_u64;
         loop {
             match run_subscriber(
-                &redis_url,
-                &database_url,
-                &template,
-                &output,
-                &admin_url,
-                &coalescer,
+                &redis_url, &pool, &template, &output, &admin_url, &coalescer,
             )
             .await
             {
@@ -101,7 +97,7 @@ pub fn spawn(
 
 async fn run_subscriber(
     redis_url: &str,
-    database_url: &Option<String>,
+    pool: &MySqlPool,
     template: &str,
     output: &str,
     admin_url: &str,
@@ -145,11 +141,11 @@ async fn run_subscriber(
                 // up our state when it runs.
             }
             Decision::FireNow | Decision::FireNowAndScheduleFlush => {
-                fire_reload(database_url, template, output, admin_url, "leading").await;
+                fire_reload(pool, template, output, admin_url, "leading").await;
                 if matches!(decision, Decision::FireNowAndScheduleFlush) {
                     schedule_flush(
                         coalescer.clone(),
-                        database_url.clone(),
+                        pool.clone(),
                         template.to_owned(),
                         output.to_owned(),
                         admin_url.to_owned(),
@@ -165,21 +161,21 @@ async fn run_subscriber(
 /// logged but never propagated — a failed reload must not kill the
 /// subscriber loop, since the next event will retry the work.
 async fn fire_reload(
-    database_url: &Option<String>,
+    pool: &MySqlPool,
     template: &str,
     output: &str,
     admin_url: &str,
     edge: &'static str,
 ) {
     let started = Instant::now();
-    if let Err(e) = singbox::render(database_url, template, output, false, false).await {
+    if let Err(e) = singbox::render(pool, template, output, false, false).await {
         tracing::warn!(error = %e, edge, "render failed during revocation");
         return;
     }
-    // Re-derive the clash bearer from ServerConfig on every fire.
-    // Cheap (~1ms DB hit) and means a rotation of the secret's
-    // deterministic input propagates without a daemon restart.
-    let secret = match singbox::current_clash_secret(database_url).await {
+    // Clash bearer is now derived purely from CT_CLASH_SECRET_SEED
+    // env (no DB round-trip — see singbox::current_clash_secret).
+    // Comment kept abbreviated; rotation propagates via env, not DB.
+    let secret = match singbox::current_clash_secret().await {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(error = %e, edge, "could not load clash secret; skipping reload");
@@ -201,7 +197,7 @@ async fn fire_reload(
 /// happened to end exactly at the leading edge.
 fn schedule_flush(
     coalescer: Arc<Mutex<Coalescer>>,
-    database_url: Option<String>,
+    pool: MySqlPool,
     template: String,
     output: String,
     admin_url: String,
@@ -213,7 +209,7 @@ fn schedule_flush(
             g.on_flush(Instant::now())
         };
         if needs_flush {
-            fire_reload(&database_url, &template, &output, &admin_url, "trailing").await;
+            fire_reload(&pool, &template, &output, &admin_url, "trailing").await;
         } else {
             tracing::debug!("trailing flush skipped — no suppressed events");
         }
