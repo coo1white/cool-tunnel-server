@@ -109,8 +109,9 @@ see [`docs/installation-debian.md`](./docs/installation-debian.md).
 | Container | Job |
 | --- | --- |
 | **`panel`** | Laravel + Filament admin you log into. Where you add accounts, set quotas, pick the cover website. |
-| **`sing-box`** | The actual proxy. Listens on `:443`, speaks NaiveProxy. Reads the config the panel renders for it. |
-| **`caddy`** | Gets the TLS certificate from Let's Encrypt. Hands it to sing-box via a shared volume. |
+| **`haproxy`** | TCP-mode SNI router on `:443`. Sniffs each TLS ClientHello's SNI without decrypting it, then forwards raw bytes — apex SNI → sing-box (proxy), panel-subdomain SNI → caddy (panel reverse-proxy). Added in v0.0.33 so sing-box and the panel can share `:443` without a TLS-terminating front door. |
+| **`sing-box`** | The actual proxy. Listens on the container's `:443` (no host port — haproxy fronts it), speaks NaiveProxy. Reads the config the panel renders for it. |
+| **`caddy`** | Gets the TLS certificate from Let's Encrypt. Hands it to sing-box via a shared volume. Also reverse-proxies the panel-subdomain on `:8444` → panel's FrankenPHP. |
 | **`db`** | MariaDB. Stores accounts, settings, traffic counters. |
 | **`redis`** | Cache + the bus that pushes "this account was just disabled" messages to sing-box within ~100 ms. |
 
