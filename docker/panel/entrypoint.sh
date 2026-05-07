@@ -114,7 +114,31 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-php artisan migrate --force --no-interaction || true
+# Capture migrate exit code. Pre-fix this was `... || true`,
+# which masked partial-migration failures: if migration N+1
+# blew up after migration N+0 had committed, the schema was
+# half-applied, the entrypoint continued, supervisord brought
+# FrankenPHP up, /up returned 200, the docker healthcheck went
+# green, and every panel request to a column that didn't exist
+# yet 500'd. Operator saw "container healthy, panel broken"
+# with no obvious diagnostic. Round-6 ops audit fix.
+#
+# Failure handling: write a sentinel file the operator can
+# inspect (`docker compose exec panel cat /tmp/cool-tunnel/
+# migrate-failed`), surface a loud stderr line, and DO continue
+# the boot — a crashing entrypoint creates a worse failure mode
+# (supervisord never starts; container restart-loops without
+# even the diagnostic). The sentinel is the operator-facing
+# signal.
+mkdir -p /tmp/cool-tunnel
+rm -f /tmp/cool-tunnel/migrate-failed
+if ! php artisan migrate --force --no-interaction; then
+    rc=$?
+    echo "[entrypoint] WARN: migrate exited with code $rc — schema may be half-applied" >&2
+    echo "[entrypoint] WARN: panel will boot, but model queries may 500 on missing columns" >&2
+    echo "[entrypoint] WARN: inspect: docker compose logs panel | grep 'WARN:'" >&2
+    date -u +'%Y-%m-%dT%H:%M:%SZ' > /tmp/cool-tunnel/migrate-failed
+fi
 
 # Seed the singleton ServerConfig row + the default cover-site
 # template. Both paths are idempotent (ServerConfig::current() is

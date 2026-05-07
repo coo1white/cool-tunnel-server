@@ -276,6 +276,20 @@ services:
     image: cool-tunnel-server-panel:latest
     container_name: ct-panel
     restart: unless-stopped
+    # init + stop_grace_period — round-6 ops audit follow-up.
+    # The panel container runs supervisord as PID 1, which forks
+    # FrankenPHP, queue worker, scheduler, and the ct-server-core
+    # daemon. Without `init: true` PID 1 IS supervisord, and
+    # supervisord doesn't reap zombie children from the crashed
+    # PHP worker subprocesses cleanly under sustained restart-
+    # loop scenarios — over time the process table fills.
+    # Docker's tini-as-init pattern handles SIGCHLD reaping for
+    # us. `stop_grace_period: 30s` gives supervisord's
+    # stopwaitsecs=20 (per-program in supervisord.conf) headroom
+    # to drain Octane workers cleanly before compose escalates
+    # to SIGKILL on container stop / restart.
+    init: true
+    stop_grace_period: 30s
     # cap_drop ALL (from x-svc-hardening) is too aggressive for
     # this container — supervisord starts as root and PHP-FPM
     # forks worker processes that setuid() to the `www-data`

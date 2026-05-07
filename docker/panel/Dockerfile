@@ -50,9 +50,21 @@ FROM dunglas/frankenphp:1-php8.4-alpine
 # fails with `couldn't exec /usr/local/bin/frankenphp: EPERM`.
 # This container listens on :9000 (non-privileged) so the cap
 # is unused; stripping it restores exec while preserving the
-# hardening posture. Caught on the operator's real VPS deploy
-# of v0.0.58 (the FrankenPHP swap chain).
+# hardening posture.
+#
+# Post-strip assert: if a future base-image bump moves the
+# binary or changes its caps, `setcap -r` silently no-ops on a
+# missing path, the EPERM resurfaces, and the operator sees
+# the v0.0.58-class FATAL crash again. The `getcap` check
+# below fails the build LOUDLY when caps remain, surfacing
+# the regression at build time instead of at deploy time.
+# (Round-6 ops audit follow-up.)
 RUN setcap -r /usr/local/bin/frankenphp \
+    && remaining=$(getcap /usr/local/bin/frankenphp || true) \
+    && if [ -n "$remaining" ]; then \
+           echo "::error:: setcap -r failed: caps remain: $remaining" >&2; \
+           exit 1; \
+       fi \
     && /usr/local/bin/frankenphp version
 
 ARG COMPOSER_VERSION=2.7.7
