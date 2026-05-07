@@ -231,6 +231,29 @@ prompt_secret() {
     printf "%s" "$secret"
 }
 
+# ---------- Portable filesystem helpers ----------------------------
+
+# file_mode_octal <path>
+#
+# Print the file's mode as an octal string (e.g. `0600`, `644`).
+# Portable across GNU coreutils (`stat -c '%a'`) and BSD/macOS
+# (`stat -f '%OLp'`). Round-21 cross-platform audit: install.sh
+# previously used `stat -c '%a'` directly, which fails on macOS
+# (and any BSD) with `stat: illegal option -- c` — confusing for
+# a developer trying to run install.sh outside Linux for testing.
+# Same invariant on output (octal digits) regardless of host
+# coreutils flavour.
+file_mode_octal() {
+    local path="$1"
+    if stat -c '%a' "$path" 2>/dev/null; then
+        return 0
+    fi
+    if stat -f '%OLp' "$path" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 # ---------- Docker helpers -----------------------------------------
 
 # require_docker
