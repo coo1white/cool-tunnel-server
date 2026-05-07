@@ -293,21 +293,24 @@ services:
       - SETGID
       - DAC_OVERRIDE
       - FOWNER
-    # 1 GB-VPS sizing (v0.0.22). The panel is the largest service —
-    # PHP-FPM master + 4 ondemand workers (v0.0.17) at ~30-50 MiB
-    # each, plus nginx, supervisord, the queue worker, the
-    # scheduler loop, and the ct-server-core daemon. Measured idle
-    # is ~110 MiB; under load with all 4 FPM workers active and a
-    # bulk-action job processing, peak measured ~250 MiB. 320 MiB
-    # gives a 30 % headroom for opcache touching its 64 MiB cap.
-    # Lower mem_limit below this and the queue worker OOM-kills
-    # under bulk-delete fan-out, leaving the panel half-functional.
+    # 1 GB-VPS sizing (post-FrankenPHP-runtime-swap). Pre-swap the
+    # panel ran nginx + php-fpm + 4 ondemand FPM workers, with
+    # measured idle at ~110 MiB and peak ~250 MiB. Post-swap it
+    # runs FrankenPHP (one supervisor process holding `OCTANE_WORKERS`
+    # PHP workers — default `auto` = one per CPU on the operator's
+    # box) plus the queue worker, scheduler, and ct-server-core
+    # daemon. On a 1 vCPU / 1 GB VPS the steady state is ~150 MiB;
+    # on a 4-CPU box `auto` resolves to 4 workers and tracks the
+    # prior FPM steady state. 320 MiB still gives ~30 % headroom
+    # for opcache touching its 64 MiB cap; raise to 512 MiB if you
+    # bump OCTANE_WORKERS past 4.
     mem_limit: 320m
-    # FPM ondemand caps to PHP_FPM_MAX_CHILDREN (default 4 in
-    # v0.0.17) + master + scheduler + queue + ct-core daemon +
-    # nginx workers + supervisord + opcache cleanup threads. 256
-    # process slots is generous and bounds any future fork-bomb
-    # path.
+    # Octane wraps each PHP worker in a long-lived process; the
+    # supervisord process tree is now (1) frankenphp/octane parent
+    # + N PHP workers + (2) queue worker + (3) scheduler + (4)
+    # ct-core daemon + opcache cleanup threads. 256 process slots
+    # is generous; raise alongside OCTANE_WORKERS if you
+    # significantly grow the worker pool.
     pids_limit: 256
     env_file:
       - .env

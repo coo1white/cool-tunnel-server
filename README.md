@@ -165,14 +165,15 @@ normal HTTPS website as possible:
   to the cover site too — there is no failure mode that returns a
   4xx/5xx that would identify the host as a proxy. Verified
   end-to-end on every release.
-- **No engine-fingerprint headers**. `Server: Caddy` stripped on
-  Caddy's `:80` redirect; `X-Powered-By` disabled via PHP
-  `expose_php = Off`; nginx `server_tokens off`. None of the wire
-  responses say "Caddy", "PHP", "nginx", or "Cool Tunnel".
+- **No engine-fingerprint headers**. `Server: Caddy` stripped at
+  both the apex Caddy and the panel's in-process FrankenPHP/Caddy;
+  `X-Powered-By` disabled via PHP `expose_php = Off`. None of the
+  wire responses say "Caddy", "PHP", "FrankenPHP", or "Cool
+  Tunnel".
 - **No per-connection logs**. Sing-box logs at `warn` level only, so
   there's no "alice connected from 1.2.3.4 at 12:34" trail on disk.
-  Subscription HMAC tokens are masked in the panel's nginx access
-  log so they don't persist on disk.
+  The panel's Caddy access log skips `/api/v1/subscription/*`
+  entirely so subscription HMAC tokens never persist on disk.
 - **DNS over HTTPS** for the proxy's own DNS lookups. Your ISP
   can't see what you're resolving.
 - **Three-network docker isolation**. The `ct-data` and `ct-clash`

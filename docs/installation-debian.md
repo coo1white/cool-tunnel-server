@@ -453,10 +453,8 @@ more RAM and want bigger caps:
 
 | Knob | Default | Effect | Raise to |
 | --- | --- | --- | --- |
-| `PHP_FPM_PM_MODE` | `ondemand` | workers spawn on request, exit on idle | `dynamic` for warm pool on ≥2 GB |
-| `PHP_FPM_MAX_CHILDREN` | `4` | upper bound on concurrent FPM workers (~30-50 MiB each) | 8-16 on ≥2 GB |
-| `PHP_FPM_IDLE_TIMEOUT` | `60s` | seconds an idle worker survives before exit | leave |
-| `PHP_FPM_MAX_REQUESTS` | `500` | requests per worker before respawn (memory hygiene) | leave |
+| `OCTANE_WORKERS` | `auto` | one worker per CPU; each holds a long-lived Laravel boot (~30-50 MiB) | fixed `4` on ≥2 GB if `auto` resolves higher than you want |
+| `OCTANE_MAX_REQUESTS` | `500` | requests per worker before respawn (bounds vendor memory leakage under long-lived workers) | leave |
 
 The MariaDB tuning lives in `docker-compose.yml` (`db.command:`
 flags: `innodb-buffer-pool-size=64M`, `performance-schema=OFF`,
@@ -496,8 +494,10 @@ something like:
 
 ```
 ct-db        ~ 95-100 MiB    (mariadb, performance_schema OFF)
-ct-panel     ~100-110 MiB    (nginx + php-fpm master + ct-server-core daemon
-                             + queue:work; FPM workers spawn on request)
+ct-panel     ~150-180 MiB    (frankenphp/octane parent + N PHP workers
+                             + ct-server-core daemon + queue:work +
+                             scheduler; workers hold Laravel boot in
+                             memory across requests)
 ct-singbox   ~ 10-15 MiB
 ct-caddy     ~ 15-20 MiB
 ct-redis     ~  9-12 MiB
@@ -506,10 +506,10 @@ TOTAL        ~ 230-260 MiB  → ~760 MiB free on a 1 GB box
 ```
 
 Under moderate load (10-20 active proxy users + admin browsing in
-a tab) the panel container climbs toward 200-300 MiB as FPM
-workers spawn; total stack peaks around 400-500 MiB. The
-`R-panel-1` queue refactor caps growth from bulk-delete admin
-actions at ~600 MiB.
+a tab) the panel container climbs toward 220-300 MiB as Octane
+workers serve concurrent requests from their long-lived Laravel
+boot; total stack peaks around 400-500 MiB. The `R-panel-1` queue
+refactor caps growth from bulk-delete admin actions at ~600 MiB.
 
 ---
 

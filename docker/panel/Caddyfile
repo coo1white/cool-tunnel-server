@@ -1,0 +1,115 @@
+# Caddyfile for FrankenPHP — the panel's web tier (post-runtime-
+# swap). Replaces docker/panel/nginx.conf.
+#
+# This Caddy instance lives INSIDE the panel container, alongside
+# the PHP runtime. It is NOT the same as the apex-domain Caddy
+# container (which handles ACME for the public TLS cert); the two
+# are independent and can't conflict — different containers, no
+# port overlap (panel listens on container :9000 → loopback host
+# :9000; apex Caddy listens on :443).
+#
+# What this config preserves from the nginx era:
+#   - Loopback bind on :9000 (admin reaches via SSH-local-forward).
+#   - Document root at /var/www/html/public.
+#   - Hidden files and `vendor`/`storage`/`tests` paths denied.
+#   - Subscription-token access-log masking (the v0.0.14 anti-
+#     censorship invariant — token must NEVER hit a log file).
+#   - `Server` header stripped (no `Server: Caddy` fingerprint).
+#
+# What this config adds:
+#   - HTTP/2 native (auto on Caddy h1->h2 negotiation, no FPM
+#     equivalent existed).
+#   - HTTP/3 listener — zero-config in Caddy, cosmetic on this
+#     SSH-tunnel-bound deploy (UDP doesn't traverse SSH's TCP
+#     forwarder), but enabled so a future public-fronted panel
+#     deployment picks it up automatically.
+#   - Worker mode binding via the `worker` directive — Octane
+#     supervises the worker process count via `octane:start`, but
+#     the FrankenPHP global config below scopes the worker entry
+#     point so `frankenphp_handle_request()` knows what file to
+#     evaluate.
+
+{
+    # Strip the Server header globally. Without this, every panel
+    # response carries `Server: Caddy` — a wire-level fingerprint
+    # the v0.0.14 cover-site invariant work was designed to
+    # eliminate. Servers tag = none drops the header entirely.
+    servers {
+        protocols h1 h2 h3
+    }
+
+    # FrankenPHP global block. The worker directive declares the
+    # PHP file FrankenPHP loads ONCE per worker; subsequent
+    # requests reuse that boot. Octane scaffolds
+    # public/frankenphp-worker.php on `octane:install`.
+    frankenphp {
+        # Number of long-lived workers. Each holds the full Laravel
+        # boot in memory (~30-50 MiB after Filament loads). At 4
+        # workers the steady-state ~200 MiB sits within the panel
+        # container's 320 MiB mem_limit alongside the queue worker,
+        # scheduler, and ct-server-core daemon. Operators on bigger
+        # boxes raise via the OCTANE_WORKERS env (read by
+        # supervisord.conf's octane:start invocation; this Caddyfile
+        # constant is the in-process worker pool used by
+        # `frankenphp_handle_request()` — Octane wraps it).
+        num_threads 4
+        worker {
+            file /var/www/html/public/frankenphp-worker.php
+            num 4
+        }
+    }
+}
+
+# Listen on plain HTTP on 127.0.0.1:9000. The panel binds loopback
+# only; SSH-tunnel users reach via `ssh -L 9000:127.0.0.1:9000
+# <host>`. Once the v0.1 public-fronted panel architecture lands
+# (R1-3 in the SNI-router design), this listener moves to the
+# operator-managed apex domain with TLS at the SNI router.
+http://127.0.0.1:9000 {
+    root * /var/www/html/public
+
+    # Strip `Server` header on every response (defence in depth —
+    # also covered by the global `servers` block above; this is the
+    # per-site override in case the global is overridden later).
+    header -Server
+
+    # Hardened path denials — match the pre-swap nginx behaviour.
+    @hidden {
+        path /.*
+    }
+    respond @hidden 404
+
+    @sensitive {
+        path /vendor/* /storage/* /tests/*
+    }
+    respond @sensitive 404
+
+    # Subscription endpoint — skip access logging entirely. The
+    # full URL contains the HMAC-bound token; persisting it in
+    # plaintext on local disk extends the credential's lifetime
+    # far past per-request scope (rotating ops staff, log
+    # shipping pipelines, forgotten log archives are real
+    # leakage paths). Pre-swap nginx used a `map` block to
+    # rewrite the request line; under Caddy `log_skip` drops the
+    # whole entry. Operator loses request-count visibility on
+    # this endpoint — counts are still available via the panel's
+    # own DB metrics. (v0.0.14 anti-censorship invariant.)
+    @subscription {
+        path /api/v1/subscription/*
+    }
+    log_skip @subscription
+
+    # Standard Caddy access log to stdout for operator
+    # `docker compose logs panel` visibility.
+    log {
+        output stdout
+        format console
+    }
+
+    # Hand every other request to the FrankenPHP worker pool.
+    # `php_server` is FrankenPHP's combined "static-files-then-
+    # PHP-fallback" handler; equivalent to the nginx
+    # `try_files $uri $uri/ /index.php?$query_string` + `location
+    # ~ \.php$ { fastcgi_pass ... }` pair, but in-process.
+    php_server
+}
