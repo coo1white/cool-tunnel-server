@@ -14,6 +14,26 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+- `core/ct-protocol/src/subscription.rs` — round-13 added
+  `SubscriptionManifestV1::check_freshness(now: u64) -> FreshnessCheck`
+  and the public constant `FRESHNESS_WINDOW_SECONDS = 7 days`.
+  Pre-this the `issued_at` doc claimed "Clients refuse manifests
+  older than 7 days as a freshness guard" but no implementation
+  existed in the crate. The first client to follow that promise
+  would either invent its own check (drift between
+  implementations) or skip it (silent contract violation). The
+  function is `no_std`-compatible, takes `now` as a parameter
+  (testable + portable), and returns one of four variants that
+  let a client surface a specific error: `IssuedInFuture`,
+  `StaleByIssuedAt`, `ExpiredByExpiresAt`, or `Fresh`.
+- 5 Rust tests pin every freshness branch + the boundary at
+  exactly `FRESHNESS_WINDOW_SECONDS`.
+- `panel/tests/Feature/SubscriptionContractTest.php` — round-13
+  added `manifest_issued_at_and_expires_at_are_exactly_30_days_apart`
+  which asserts the manifest's `expires_at - issued_at` equals
+  EXACTLY 30 days. A non-30-day delta means the controller is
+  calling `time()` twice and racing the second boundary —
+  exactly the bug the fix below addresses.
 - `panel/tests/Feature/SubscriptionObservabilityTest.php` — round-12
   pins which subscription fall-throughs MUST log and which MUST
   stay silent. Critical contract: the disabled-account and
@@ -87,6 +107,20 @@ before relying on a version bump as a compatibility signal.
 
 ### Fixed
 
+- `panel/app/Http/Controllers/SubscriptionController.php` — capture
+  wall-clock ONCE per manifest emit and reuse for both `issued_at`
+  and `expires_at`. Pre-fix the controller called `time()` twice
+  on adjacent lines; an extremely rare second-boundary race could
+  land `issued_at = N` and `expires_at = N + 1 + 30 days`,
+  producing a manifest where `expires_at - issued_at = 2592001`
+  instead of the intended 2592000. A pedantic future client that
+  validates the delta would reject; less paranoid clients would
+  silently get a one-second-longer window than intended. Also
+  introduced `MANIFEST_TTL_SECONDS = 30 days` as a named constant
+  with a comment cross-referencing
+  `ct-protocol::SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS`
+  so a future bump is forced to consider the spec-side bound.
+  (Round-13 time-and-clock audit.)
 - `panel/app/Http/Controllers/SubscriptionController.php` — three
   silent fall-through paths now emit panel-side logs proportionate
   to operator-action-needed-ness:

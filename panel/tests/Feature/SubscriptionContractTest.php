@@ -207,6 +207,63 @@ class SubscriptionContractTest extends TestCase
     }
 
     #[Test]
+    public function manifest_issued_at_and_expires_at_are_exactly_30_days_apart(): void
+    {
+        // Round-13 time-and-clock: pre-fix the controller called
+        // `time()` twice on adjacent lines for issued_at and
+        // expires_at, which under a sub-second second-boundary
+        // race could land issued_at = N and expires_at = N+1 + 30
+        // days — an off-by-one window. Now both share a single
+        // captured `$now`. This test pins:
+        //   1. expires_at - issued_at == EXACTLY 30 days
+        //   2. issued_at <= the test's wall clock (reasonable
+        //      sanity bound)
+        //
+        // Anchors against the Rust spec's
+        // FRESHNESS_WINDOW_SECONDS = 7 days: the server-issued
+        // expiry is 30 days but client-side replay-resistance
+        // cuts in at 7 days. If a future change pushes
+        // MANIFEST_TTL_SECONDS above 30 days, this test fails
+        // first — at which point the FRESHNESS_WINDOW_SECONDS
+        // bound on the client side becomes the binding constraint
+        // and the operator should know.
+        $this->seedActiveCover();
+        $account = ProxyAccount::factory()->create();
+        $account->setCleartextPassword('s3cr3t');
+        $account->save();
+
+        $before = time();
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $after = time();
+        $this->assertSame(200, $response->status());
+
+        $decoded = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertIsInt($decoded['issued_at']);
+        $this->assertIsInt($decoded['expires_at']);
+
+        $this->assertGreaterThanOrEqual(
+            $before,
+            $decoded['issued_at'],
+            'issued_at must be >= the pre-request wall clock',
+        );
+        $this->assertLessThanOrEqual(
+            $after,
+            $decoded['issued_at'],
+            'issued_at must be <= the post-request wall clock',
+        );
+
+        $thirtyDays = 60 * 60 * 24 * 30;
+        $this->assertSame(
+            $thirtyDays,
+            $decoded['expires_at'] - $decoded['issued_at'],
+            'expires_at - issued_at must be EXACTLY 30 days; '
+            .'a non-30-day delta means the controller is calling time() '
+            .'twice and racing the second boundary',
+        );
+    }
+
+    #[Test]
     public function manifest_with_empty_cleartext_falls_through_to_cover_site(): void
     {
         // A row whose cleartext column is empty (or whose
