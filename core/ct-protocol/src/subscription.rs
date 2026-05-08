@@ -269,7 +269,7 @@ mod tests {
             issued_at: 1000,
             expires_at: 2000,
             note: None,                                   // omitted on the wire
-            signature: Some("deadbeef".repeat(8).into()), // 64-hex-char placeholder
+            signature: Some("deadbeef".repeat(8)), // 64-hex-char placeholder
         };
 
         // Server-side: build the canonical the way the PHP
