@@ -52,8 +52,24 @@ and agree that:
 
 ## Licence and no-warranty
 
-This software is **proprietary**, copyright (c) 2026 the Cool Tunnel Server contributors,
-all rights reserved. See [LICENSE](./LICENSE).
+This software is licensed under the **GNU Affero General Public
+License v3.0 or later (AGPL-3.0-or-later)**, copyright (c) 2026
+the Cool Tunnel Server contributors. See [LICENSE](./LICENSE) for the full terms.
+
+Two AGPL clauses worth highlighting before you deploy:
+
+- **Source-availability on network use** (AGPL § 13). If you
+  modify this software and run a modified version as a service
+  that other people interact with over a network, you must offer
+  those users the corresponding modified source under the same
+  AGPL terms. Stock unmodified deployments don't trigger this —
+  you can run the upstream code without any source-distribution
+  obligation. Modifying it AND running it as a service does.
+- **No warranty** (AGPL §§ 15–16). The software is provided
+  "AS IS", without warranty of any kind. The non-legal practical
+  guidance in this disclaimer's "Operator responsibility" section
+  above is not a substitute for the formal warranty disclaimer
+  in the LICENSE file.
 
 The third-party open-source components this stack builds and runs
 (Caddy, NaiveProxy, Laravel, Filament, predis/predis, the SQLx /

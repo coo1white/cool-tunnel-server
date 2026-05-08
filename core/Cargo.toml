@@ -29,10 +29,13 @@ edition       = "2021"
 # core/rust-toolchain.toml::channel and the FROM lines in
 # docker/core/Dockerfile.
 rust-version  = "1.88"
-# Proprietary; the LICENSE file at the repo root is authoritative.
-# We use license-file (not license) so we don't assert an SPDX id
-# that misrepresents the terms.
-license-file  = "../LICENSE"
+# AGPL-3.0-or-later — strict copyleft. Anyone who modifies this
+# code AND runs it as a network service (this repo's primary use
+# case) must publish the source of their modifications under the
+# same terms. Closes the SaaS loophole that GPL-3.0 leaves open.
+# Same license as Mastodon, Nextcloud, Pleroma, BookStack, etc.
+# The LICENSE file at the repo root holds the verbatim text.
+license       = "AGPL-3.0-or-later"
 repository    = "https://github.com/coo1white/cool-tunnel-server"
 authors       = ["the Cool Tunnel Server contributors"]
 publish       = false

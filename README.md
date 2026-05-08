@@ -263,12 +263,26 @@ against any other NaiveProxy-protocol server you set up elsewhere.
 
 ## License
 
-Proprietary — (c) 2026 the Cool Tunnel Server contributors. All Rights Reserved. See
-[LICENSE](./LICENSE).
+**AGPL-3.0-or-later** — (c) 2026 the Cool Tunnel Server contributors. See
+[LICENSE](./LICENSE) for the full GNU Affero General Public License
+v3.0 text.
+
+The AGPL is a strict copyleft license. Two implications worth
+calling out for this specific project shape:
+
+1. **If you modify Cool Tunnel Server and run it as a network
+   service** (which is the only way anyone runs it — it's a proxy
+   server), you must publish your modifications under the same
+   terms and make the source available to your users. This closes
+   the SaaS loophole that GPL-3.0 leaves open.
+2. **Distribution OR network use of a modified version triggers
+   the source-availability requirement.** Same trigger as
+   Mastodon, Nextcloud, Pleroma, BookStack — the standard choice
+   for self-hosted services that want to stay open.
 
 Bundled upstream components (Caddy, sing-box, Laravel, Filament,
-MariaDB, Redis, etc.) ship under their own permissive / GPL licenses
-— see [NOTICE](./NOTICE) and
+MariaDB, Redis, etc.) ship under their own permissive / GPL
+licenses — see [NOTICE](./NOTICE) and
 [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
 
 Read the [Disclaimer](./Disclaimer.md) before deploying.

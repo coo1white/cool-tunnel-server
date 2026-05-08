@@ -105,7 +105,7 @@ cool-tunnel-server/
 ├── .gitignore                           target/, vendor/, .env, etc.
 ├── .dockerignore                        keeps build contexts small + secrets out
 │
-├── LICENSE                              proprietary (c) 2026 the Cool Tunnel Server contributors
+├── LICENSE                              AGPL-3.0-or-later (c) 2026 the Cool Tunnel Server contributors
 ├── NOTICE                               bundled-software attribution
 ├── THIRD_PARTY_LICENSES.md              full list incl. sing-box GPL-3
 ├── Disclaimer.md                        operator responsibility
