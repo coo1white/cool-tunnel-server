@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// ct-server-core — CLI entry point.
-//
-// Subcommand dispatch only. Each subcommand lives in its own module so
-// the heavy lifting (DB queries, admin API calls, parsing) is testable
-// in isolation.
+//! ct-server-core — CLI entry point.
+//!
+//! Subcommand dispatch only. Each subcommand lives in its own module so
+//! the heavy lifting (DB queries, admin API calls, parsing) is testable
+//! in isolation.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

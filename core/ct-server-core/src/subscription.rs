@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// SubscriptionManifestV1 emitter — reads a single proxy_account +
-// server_config from the DB and prints the JSON manifest that any
-// platform's client can fetch via /api/v1/subscription.
-//
-// Signing: the panel takes the JSON we emit, computes an
-// HMAC-SHA-256 over the canonical body (with `signature` set to
-// null), splices the hex digest into the body's `signature`
-// field, and serves the result. There are NO project-identifying
-// custom HTTP headers on the response (anti-fingerprinting). We
-// don't sign here — keeping signing in the panel keeps the secret
-// out of the Rust process, which is good defense-in-depth.
+//! SubscriptionManifestV1 emitter — reads a single proxy_account +
+//! server_config from the DB and prints the JSON manifest that any
+//! platform's client can fetch via /api/v1/subscription.
+//!
+//! Signing: the panel takes the JSON we emit, computes an
+//! HMAC-SHA-256 over the canonical body (with `signature` set to
+//! null), splices the hex digest into the body's `signature`
+//! field, and serves the result. There are NO project-identifying
+//! custom HTTP headers on the response (anti-fingerprinting). We
+//! don't sign here — keeping signing in the panel keeps the secret
+//! out of the Rust process, which is good defense-in-depth.
 
 use crate::{db, Error, Result};
 use ct_protocol::{

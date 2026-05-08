@@ -1,37 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Prometheus-text metrics scraper + traffic_logs writer.
-//
-// HONEST STATE (post-v0.0.2 sing-box switch): the metric names this
-// parser looks for — `caddy_forwardproxy_bytes_total{user="...",
-// direction="..."}` — are emitted by the unmaintained
-// klzgrad/forwardproxy plugin. Sing-box does NOT emit them on its
-// clash-API endpoint; sing-box's per-connection traffic stats live
-// at the streaming `/traffic` and `/connections` endpoints, which
-// don't fit a one-shot Prometheus scrape model.
-//
-// Net effect: `traffic:rollup` runs every minute (per
-// console.php's scheduler), the scrape returns zero matching
-// metrics, and `traffic_logs` doesn't move. The Filament traffic
-// stats widget shows "0 bytes" until we either:
-//
-//   1. Switch to a clash-API streaming consumer that aggregates
-//      per-username byte counters in the daemon's RAM and flushes
-//      to traffic_logs every N seconds, OR
-//   2. Wait for sing-box upstream to add a Prometheus-shaped
-//      per-user `naive_bytes_total` (there's an open issue), OR
-//   3. Patch sing-box ourselves to emit a Prometheus endpoint that
-//      matches what we parse here.
-//
-// Until then the legacy parser is preserved (it's exercised by
-// unit tests and may be useful again if/when sing-box's metric
-// surface lands in Prometheus shape) but `collect()` early-returns
-// with a one-line tracing::info on every call so the operator
-// knows traffic numbers in the panel are not authoritative yet.
-//
-// Counter semantics (kept here as historical reference): bytes_total
-// is monotonically increasing within the lifetime of the proxy
-// process; we clamp deltas to >= 0 so a process restart doesn't
-// underflow.
+//! Prometheus-text metrics scraper + traffic_logs writer.
+//!
+//! HONEST STATE (post-v0.0.2 sing-box switch): the metric names this
+//! parser looks for — `caddy_forwardproxy_bytes_total{user="...",
+//! direction="..."}` — are emitted by the unmaintained
+//! klzgrad/forwardproxy plugin. Sing-box does NOT emit them on its
+//! clash-API endpoint; sing-box's per-connection traffic stats live
+//! at the streaming `/traffic` and `/connections` endpoints, which
+//! don't fit a one-shot Prometheus scrape model.
+//!
+//! Net effect: `traffic:rollup` runs every minute (per
+//! console.php's scheduler), the scrape returns zero matching
+//! metrics, and `traffic_logs` doesn't move. The Filament traffic
+//! stats widget shows "0 bytes" until we either:
+//!
+//!   1. Switch to a clash-API streaming consumer that aggregates
+//!      per-username byte counters in the daemon's RAM and flushes
+//!      to traffic_logs every N seconds, OR
+//!   2. Wait for sing-box upstream to add a Prometheus-shaped
+//!      per-user `naive_bytes_total` (there's an open issue), OR
+//!   3. Patch sing-box ourselves to emit a Prometheus endpoint that
+//!      matches what we parse here.
+//!
+//! Until then the legacy parser is preserved (it's exercised by
+//! unit tests and may be useful again if/when sing-box's metric
+//! surface lands in Prometheus shape) but `collect()` early-returns
+//! with a one-line tracing::info on every call so the operator
+//! knows traffic numbers in the panel are not authoritative yet.
+//!
+//! Counter semantics (kept here as historical reference): bytes_total
+//! is monotonically increasing within the lifetime of the proxy
+//! process; we clamp deltas to >= 0 so a process restart doesn't
+//! underflow.
 
 use crate::{admin::ClashAdmin, db, Result};
 use chrono::Utc;

@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// sing-box config rendering — the heart of what makes proxy account
-// changes visible to the running server.
-//
-// Reads template (sing-box/config.json.tpl) + DB; substitutes
-// placeholders; serialises the JSON; writes atomically; returns the
-// SHA-256 of the new file.
-//
-// Atomic write is mandatory: a partial config.json would either fail
-// `sing-box check` (best case) or load with missing users (worst
-// case — a security regression). We write to a tmp file in the same
-// directory, fsync it, then rename — POSIX-atomic on the same
-// filesystem.
-//
-// Cleartext password handling: sing-box's `naive` inbound checks the
-// basic_auth password as cleartext (not bcrypt), so the panel
-// persists the cleartext encrypted with Laravel's Crypt and decrypts
-// at the DB-read boundary (see db.rs). The Rust core never sees the
-// encrypted form.
+//! sing-box config rendering — the heart of what makes proxy account
+//! changes visible to the running server.
+//!
+//! Reads template (sing-box/config.json.tpl) + DB; substitutes
+//! placeholders; serialises the JSON; writes atomically; returns the
+//! SHA-256 of the new file.
+//!
+//! Atomic write is mandatory: a partial config.json would either fail
+//! `sing-box check` (best case) or load with missing users (worst
+//! case — a security regression). We write to a tmp file in the same
+//! directory, fsync it, then rename — POSIX-atomic on the same
+//! filesystem.
+//!
+//! Cleartext password handling: sing-box's `naive` inbound checks the
+//! basic_auth password as cleartext (not bcrypt), so the panel
+//! persists the cleartext encrypted with Laravel's Crypt and decrypts
+//! at the DB-read boundary (see db.rs). The Rust core never sees the
+//! encrypted form.
 
 use crate::db;
 use crate::domain::{ProxyAccount, ServerConfig};
@@ -242,14 +242,18 @@ async fn render_to_string(
 /// and the official caddy image sets `XDG_DATA_HOME=/data`, so
 /// inside the caddy container the cert lands at:
 ///
-///   /data/caddy/certificates/<ca-folder>/<domain>/<domain>.crt
+/// ```text
+/// /data/caddy/certificates/<ca-folder>/<domain>/<domain>.crt
+/// ```
 ///
 /// The `caddy_data` named volume's root is therefore the directory
 /// caddy writes to (i.e. it contains a top-level `caddy/` subdir).
 /// We mount `caddy_data` at `/data/caddy` in the sing-box container,
 /// so from sing-box's perspective the cert is at:
 ///
-///   /data/caddy/caddy/certificates/<ca-folder>/<domain>/<domain>.crt
+/// ```text
+/// /data/caddy/caddy/certificates/<ca-folder>/<domain>/<domain>.crt
+/// ```
 ///
 /// (The double `caddy/` is the volume's own subdir surfacing under
 /// the chosen mount point, not a typo.) `<ca-folder>` is derived

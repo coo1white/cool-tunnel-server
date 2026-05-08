@@ -22,6 +22,80 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.66] — 2026-05-09 — Documentation surface: `//!` pivot + CONTRIBUTING.md
+
+Surfaces the existing module rationale (the *Immutable Ballast*
+in `//` "WHY" blocks) into `cargo doc`-rendered HTML, and codifies
+the testing / spawn-cardinality / lock-choice patterns so future
+contributors match them without spelunking. **No code change. No
+runtime delta.** v0.0.65 release content unaffected.
+
+### Changed
+
+- **18 modules in `core/ct-server-core/src/` migrated their
+  top-of-file rationale block from `//` to `//!`.** Pre-v0.0.66
+  the design rationale comments at the top of each module (why
+  the 100 ms Coalescer window, why `MAX_CONCURRENT_HANDLERS = 16`,
+  why a daemon vs one-shot CLI, etc.) were written as regular `//`
+  comments — load-bearing per the **Immutable Ballast** principle
+  but invisible to `cargo doc`. The mechanical pivot: keep the
+  SPDX header line as `//`, convert the next contiguous comment
+  block to `//!` (inner doc comments). Now `cargo doc --open`
+  surfaces every module's rationale on its landing page.
+
+  Already-`//!` modules (`caddy/mod.rs`, `haproxy/mod.rs`,
+  `template.rs`, `util/debounce.rs`) were untouched.
+
+- **5 doc-comment angle-bracket placeholders rewrapped.** Lines
+  like `path=<path>`, `panel.<DOMAIN>`, `<ca-folder>/<domain>`
+  used to render fine when the surrounding block was `//`
+  (rustdoc didn't parse `//`); after the `//!` pivot rustdoc
+  reads them as markdown and treats raw `<` as opening HTML
+  tags. Wrapped each placeholder in fenced code blocks
+  (` ```text `) or inline backticks so rustdoc no longer warns
+  on "unclosed HTML tag". Affected files: `admin.rs`,
+  `laravel_crypt.rs`, `singbox/mod.rs`, `util/domain.rs`.
+
+### Added
+
+- **`CONTRIBUTING.md`.** Codifies the patterns the codebase
+  already follows so a future contributor extends the project
+  without first reverse-engineering the conventions:
+
+  - Documentation patterns (`//!` for module rationale, `///`
+    for items, why constant thresholds carry their *reason* not
+    just their value).
+  - Testing patterns (`#[cfg(test)] #[allow(...)]` lint-floor
+    escape, `#[test]` vs `#[tokio::test]`, when to pin
+    `flavor = "multi_thread"`, stress-tests-as-adversarial-load,
+    one-occurrence-first-fix vs second-sighting-codified-cycle).
+  - Async patterns post-v0.0.65 (`std::sync::Mutex` default,
+    `tokio::sync::Mutex` only for genuine cross-`.await` need;
+    `tokio::spawn` cardinality bound mandatory).
+  - Commit/PR flow.
+  - Explicit "what this is NOT": not a style guide
+    (`cargo fmt` + `pint` are the style guides), not a complete
+    reference (`LTSC.md`/`AUDIT.md`/`RELEASE.md` are).
+
+### Fixed
+
+- **`util/debounce.rs`** — replaced an unresolved
+  `[FireNowSchedule]` doc-link reference (no such type — vestige
+  of an intermediate name during development) with explicit
+  links to the actual `Decision::FireNow`,
+  `Decision::FireNowAndScheduleFlush`, `Decision::Suppress`
+  variants. `cargo doc` warning count: 12 → 0.
+
+### Not changed
+
+Wire format, sing-box config rendering, ct-server-core runtime
+behaviour, manifest schema, container layout, audit cycles
+31–43, panel UI / behaviour, all previous CI gates. All 100
+workspace tests still pass; `cargo doc --no-deps` is now warning-
+free.
+
+---
+
 ## [0.0.65] — 2026-05-09 — Async hardening: zero blocking-syscall floor + zero leak posture
 
 Audit-driven hardening of the `ct-server-core` async path and error
@@ -6783,7 +6857,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.65...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.66...HEAD
+[0.0.66]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.65...v0.0.66
 [0.0.65]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.64...v0.0.65
 [0.0.64]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.63...v0.0.64
 [0.0.63]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.62...v0.0.63

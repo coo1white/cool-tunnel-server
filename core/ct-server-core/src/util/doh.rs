@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// DoH (DNS-over-HTTPS) resolution helpers — RFC 1035 wire-format
-// query construction and a single-shot probe used by both the
-// component verifier (`components::verify_via_doh`) and the self-
-// probe canary (`canary::probe`).
-//
-// Both callers need the same primitive — "given a hostname and a
-// DoH endpoint, did the resolver return ≥1 answer?" — and the
-// pre-cleanup code path duplicated the wire-format builder, the
-// reqwest call, the ANCOUNT extraction, and the censorship-
-// intercept error string across the two modules. Lifting both into
-// `util::doh` collapses the duplication and keeps the wire-format
-// + ANCOUNT semantics in one place; future RFC 1035 fixes (CNAME
-// chasing, EDNS, etc.) only need to land here.
-//
-// The probe is deliberately ANCOUNT-only and does NOT extract the
-// resolved IP. Callers that need the IP would parse the answer
-// section; today nobody does, and the reachability tests
-// (canary's "TCP-connect to docker-internal haproxy" + the
-// component verifier's "DoH endpoint OK") work fine without it.
+//! DoH (DNS-over-HTTPS) resolution helpers — RFC 1035 wire-format
+//! query construction and a single-shot probe used by both the
+//! component verifier (`components::verify_via_doh`) and the self-
+//! probe canary (`canary::probe`).
+//!
+//! Both callers need the same primitive — "given a hostname and a
+//! DoH endpoint, did the resolver return ≥1 answer?" — and the
+//! pre-cleanup code path duplicated the wire-format builder, the
+//! reqwest call, the ANCOUNT extraction, and the censorship-
+//! intercept error string across the two modules. Lifting both into
+//! `util::doh` collapses the duplication and keeps the wire-format
+//! + ANCOUNT semantics in one place; future RFC 1035 fixes (CNAME
+//! chasing, EDNS, etc.) only need to land here.
+//!
+//! The probe is deliberately ANCOUNT-only and does NOT extract the
+//! resolved IP. Callers that need the IP would parse the answer
+//! section; today nobody does, and the reachability tests
+//! (canary's "TCP-connect to docker-internal haproxy" + the
+//! component verifier's "DoH endpoint OK") work fine without it.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use std::time::Duration;

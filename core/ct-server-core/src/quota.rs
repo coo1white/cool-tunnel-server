@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Expiry enforcer. Disables proxy_accounts whose expires_at is in
-// the past.
-//
-// Per-byte quota enforcement (used_bytes >= quota_bytes) is a v0.1
-// roadmap item: until metrics::collect emits per-user traffic counts
-// from sing-box, used_bytes never increments and any "over quota"
-// branch is dead code. (R3-2 + R4-4, docs/audits/2026-05-04T06-31-58Z.md.)
-// When per-user metrics land, re-introduce the
-// `(quota_bytes IS NOT NULL AND used_bytes >= quota_bytes)` predicate
-// here and the `over_quota` arm in the disable loop.
-//
-// If any account changed state, re-render the sing-box config and
-// hot-reload via the clash API so the new `users` array (with the
-// disabled accounts removed) takes effect immediately.
-//
-// Robustness: SELECT-the-candidates and the per-row UPDATEs run
-// inside a single transaction. Without that, an operator
-// re-enabling an account in the panel between our SELECT and the
-// matching UPDATE would have their re-enable silently overwritten
-// by our concurrent disable. The transaction is short (typically
-// 0-3 rows) so it doesn't hold locks for any perceivable time.
+//! Expiry enforcer. Disables proxy_accounts whose expires_at is in
+//! the past.
+//!
+//! Per-byte quota enforcement (used_bytes >= quota_bytes) is a v0.1
+//! roadmap item: until metrics::collect emits per-user traffic counts
+//! from sing-box, used_bytes never increments and any "over quota"
+//! branch is dead code. (R3-2 + R4-4, docs/audits/2026-05-04T06-31-58Z.md.)
+//! When per-user metrics land, re-introduce the
+//! `(quota_bytes IS NOT NULL AND used_bytes >= quota_bytes)` predicate
+//! here and the `over_quota` arm in the disable loop.
+//!
+//! If any account changed state, re-render the sing-box config and
+//! hot-reload via the clash API so the new `users` array (with the
+//! disabled accounts removed) takes effect immediately.
+//!
+//! Robustness: SELECT-the-candidates and the per-row UPDATEs run
+//! inside a single transaction. Without that, an operator
+//! re-enabling an account in the panel between our SELECT and the
+//! matching UPDATE would have their re-enable silently overwritten
+//! by our concurrent disable. The transaction is short (typically
+//! 0-3 rows) so it doesn't hold locks for any perceivable time.
 
 use crate::{admin, singbox, Result};
 use chrono::Utc;
