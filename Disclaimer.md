@@ -52,25 +52,38 @@ and agree that:
 
 ## Licence and no-warranty
 
-This software is licensed under the **GNU Affero General Public
-License v3.0 or later (AGPL-3.0-or-later)**, copyright © 2026 the
-Cool Tunnel Server contributors. See [LICENSE](./LICENSE) for the
-full terms.
+This software is licensed under the **[PolyForm Noncommercial
+License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)**,
+copyright © 2026 the Cool Tunnel Server contributors. See
+[LICENSE](./LICENSE) for the full verbatim text.
 
-Two AGPL clauses worth highlighting before you deploy:
+Three PolyForm Noncommercial clauses worth highlighting before
+you deploy:
 
-- **Source-availability on network use** (AGPL § 13). If you
-  modify this software and run a modified version as a service
-  that other people interact with over a network, you must offer
-  those users the corresponding modified source under the same
-  AGPL terms. Stock unmodified deployments don't trigger this —
-  you can run the upstream code without any source-distribution
-  obligation. Modifying it AND running it as a service does.
-- **No warranty** (AGPL §§ 15–16). The software is provided
-  "AS IS", without warranty of any kind. The non-legal practical
-  guidance in this disclaimer's "Operator responsibility" section
-  above is not a substitute for the formal warranty disclaimer
-  in the LICENSE file.
+- **Non-commercial use only** (PolyForm § 2). You may use this
+  software for any purpose **except commercial use**. Commercial
+  use means any use you receive money or anything else of value
+  for — selling the software, hosting it as a paid service,
+  bundling it into a paid product, etc. If you want to use this
+  software commercially, contact the copyright holder for a
+  separate written license.
+- **Personal and non-commercial entity use is permitted.**
+  Individuals running this on their own VPS for their own use,
+  research projects, academic study, non-profits, and similar
+  uses are explicitly fine.
+- **No warranty, no liability** (PolyForm § 5). The software is
+  provided "AS IS, AS AVAILABLE, WITHOUT ANY WARRANTY". The
+  non-legal practical guidance in this disclaimer's "Operator
+  responsibility" section above is not a substitute for the
+  formal warranty disclaimer in the LICENSE file. The
+  contributors are not liable for any damages, claims, or legal
+  consequences arising from your deployment, your users'
+  activities, or any third party's use of this software.
+
+Versions tagged before this license change (v0.0.58, v0.0.59,
+v0.0.60) remain available under AGPL-3.0-or-later for anyone
+who downloaded them; the new license applies from v0.0.61
+onward.
 
 The third-party open-source components this stack builds and runs
 (Caddy, NaiveProxy, Laravel, Filament, predis/predis, the SQLx /

@@ -2,7 +2,7 @@
 
 > A self-hosted, censorship-resistant proxy server for Linux VPS — looks like normal HTTPS on the wire, runs in Docker, comes with a web admin panel.
 
-[![License: AGPL-3.0-or-later](https://img.shields.io/github/license/coo1white/cool-tunnel-server)](./LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/coo1white/cool-tunnel-server?label=release)](https://github.com/coo1white/cool-tunnel-server/releases)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
@@ -360,13 +360,18 @@ The version increment is fast (0.0.X today) and operator-driven — each release
 
 ## License
 
-**AGPL-3.0-or-later** — © 2026 the Cool Tunnel Server contributors. See [LICENSE](./LICENSE) for the full GNU Affero General Public License v3.0 text.
+**[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)** — © 2026 the Cool Tunnel Server contributors. See [LICENSE](./LICENSE) for the full verbatim text.
 
-The AGPL is a strict copyleft license. Two implications worth calling out for this specific project shape:
+This is a **source-available, non-commercial-use** license drafted by Heather Meeker. It explicitly:
 
-1. **If you modify Cool Tunnel Server and run it as a network service** (which is the only way anyone runs it — it's a proxy server), you must publish your modifications under the same terms and make the source available to your users. This closes the SaaS loophole that GPL-3.0 leaves open.
-2. **Distribution OR network use of a modified version triggers the source-availability requirement.** Same trigger as Mastodon, Nextcloud, Pleroma, BookStack — the standard choice for self-hosted services that want to stay open.
+- ✅ **Permits** personal use, non-commercial use, research, education, and use by individuals or non-commercial entities.
+- ❌ **Prohibits** commercial use — selling the software, hosting it as a paid service, bundling it into a paid product, or any use the licensee receives money or anything else of value for. **Commercial use requires a separate written license from the copyright holder.**
+- 🛡️ **Disclaims all warranties** in the strongest terms (§ 5: "AS IS, AS AVAILABLE, WITHOUT ANY WARRANTY"). The contributors are not liable for any damages, claims, or legal consequences arising from your deployment, your users' activities, or any third party's use of this software.
 
-Bundled upstream components (Caddy, sing-box, Laravel, Filament, MariaDB, Redis, etc.) ship under their own permissive / GPL licenses — see [NOTICE](./NOTICE) and [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
+If you want to use Cool Tunnel Server commercially (resell hosted instances, embed in a paid product, run it as a paid service for users you charge), you need a commercial license — open an issue and we'll talk.
+
+> **Why this license, not AGPL?** AGPL-3.0 (the previous license, in effect for v0.0.58 → v0.0.60) closes the SaaS loophole but still permits commercial use. PolyForm Noncommercial goes further: it reserves all commercial use to the copyright holder. Same shape used by Ory's commercial line and several other source-available enterprise tools. Versions tagged before this license change (v0.0.58, v0.0.59, v0.0.60) remain available under AGPL-3.0-or-later for anyone who downloaded them; the new license applies to v0.0.61 onward.
+
+Bundled upstream components (Caddy, sing-box, Laravel, Filament, MariaDB, Redis, etc.) ship under their own permissive / GPL licenses unaffected by this change — see [NOTICE](./NOTICE) and [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
 
 Read the [Disclaimer](./Disclaimer.md) before deploying.
