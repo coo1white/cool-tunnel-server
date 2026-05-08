@@ -22,6 +22,76 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.68] — 2026-05-09 — Hotfix: PANEL_DOMAIN ordering in v0.0.54 .env auto-migration
+
+A pre-v0.0.68 `make update` run on a pre-v0.0.33 .env appended
+`PANEL_DOMAIN=` to file-end. docker compose's `.env` parser
+interpolates `${VAR}` references top-down, so any line above the
+appended PANEL_DOMAIN that referenced `${PANEL_DOMAIN}` —
+canonically `APP_URL=https://${PANEL_DOMAIN}/admin` at
+`.env.example:52` — substituted to empty. The result was a chain of
+failures invisible to `component check` but very visible to anyone
+hitting the panel:
+
+- Three `The "PANEL_DOMAIN" variable is not set. Defaulting to a
+  blank string.` warnings on every `docker compose ...` invocation
+  (one per substitution pass).
+- The panel container booted with `APP_URL=https:///admin`
+  (well-formed except for the missing host).
+- Filament's redirect URLs and Livewire's origin-check middleware
+  used the malformed `APP_URL`; every form submit returned 419
+  PAGE EXPIRED.
+
+`env_file:` injection was unaffected (it doesn't depend on file
+order), which is why `printenv PANEL_DOMAIN` inside the panel
+container reported the correct value the whole time — masking the
+compose-level interpolation failure during diagnosis.
+
+### Fixed
+
+- **`scripts/update.sh` — phase 1.** `>> .env` replaced with an
+  `awk` insert immediately after the `^DOMAIN=` line. Compose's
+  interpolator now resolves `${PANEL_DOMAIN}` correctly on the
+  first pass for every operator running `make update` from a
+  pre-v0.0.33 .env going forward.
+- **`scripts/update.sh` — phase 2 (new).** Detects an
+  already-misplaced `PANEL_DOMAIN=` line (sits AFTER a non-comment
+  `${PANEL_DOMAIN}` reference) and relocates it under
+  `^DOMAIN=`. Rescues operators upgrading from a pre-v0.0.68 build
+  whose .env was already poisoned by the buggy migration.
+  Comments are excluded from the reference scan so
+  `.env.example`'s documentation block — which legitimately
+  references `${PANEL_DOMAIN}` above the canonical definition —
+  doesn't trip a false positive on a fresh-from-template .env.
+
+### Notes
+
+- Both phases are no-ops on already-canonical .env files.
+- `install.sh` and `.env.example` already place PANEL_DOMAIN above
+  APP_URL — only the `make update` migration path needed the fix.
+- No code-logic changes outside `scripts/update.sh`. The
+  Cargo / manifest / panel-config version bumps are the standard
+  `make set-version` set, not new behaviour.
+
+### Operator update
+
+```sh
+cd /path/to/cool-tunnel-server
+git fetch --tags
+git checkout main && git pull --ff-only
+./scripts/update.sh
+docker compose up -d --force-recreate panel   # pick up corrected APP_URL
+docker compose exec -T panel php artisan config:clear
+```
+
+The `--force-recreate` is needed because pre-v0.0.68 the panel
+already booted with the broken `APP_URL=https:///admin`; recreating
+the container re-reads `.env` after phase 2 has reordered it, and
+`config:clear` drops any cached compiled config that captured the
+broken value.
+
+---
+
 ## [0.0.67] — 2026-05-09 — Internal-health metrics + logging discipline (R-1 + R-2)
 
 Two narrow operator-observability items shipped together with an
