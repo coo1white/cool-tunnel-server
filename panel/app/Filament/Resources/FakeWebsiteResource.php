@@ -10,6 +10,7 @@ use App\Filament\Resources\FakeWebsiteResource\Pages;
 use App\Models\FakeWebsite;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -69,6 +70,29 @@ class FakeWebsiteResource extends Resource
             ])
             ->defaultSort('is_active', 'desc')
             ->actions([
+                // Direct "Activate" action — pre-v0.0.64 operators had
+                // to Edit → toggle is_active → Save to swap cover sites.
+                // The single-active invariant is enforced atomically
+                // by FakeWebsite::booted (lockForUpdate transaction in
+                // the saved hook, v0.0.16); this action just sets
+                // is_active = true and lets the model handle the swap.
+                // Visible only on rows that aren't already active.
+                Tables\Actions\Action::make('activate')
+                    ->label('Activate')
+                    ->icon('heroicon-o-check-circle')
+                    ->color('success')
+                    ->visible(fn (FakeWebsite $record): bool => ! $record->is_active)
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (FakeWebsite $record): string => "Activate '{$record->name}'?")
+                    ->modalDescription('This deactivates the currently-active cover site (if any) and switches the apex domain to render this one. Render + reload happen via the saved-hook chain.')
+                    ->action(function (FakeWebsite $record): void {
+                        $record->is_active = true;
+                        $record->save();
+                        Notification::make()
+                            ->title("'{$record->name}' is now the active cover site")
+                            ->success()
+                            ->send();
+                    }),
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
             ]);
