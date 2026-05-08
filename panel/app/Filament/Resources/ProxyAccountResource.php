@@ -11,6 +11,7 @@ use App\Models\ProxyAccount;
 use App\Services\PasswordGenerator;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Notifications\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
@@ -69,10 +70,17 @@ class ProxyAccountResource extends Resource
                         ->suffix('bytes')
                         ->helperText('Leave blank for unlimited. 1 GiB = 1073741824. Quota enforcement runs once per minute via the scheduler.'),
 
+                    // No `->minDate(now())` here — applying it on edit
+                    // blocks the operator from saving an unmodified
+                    // expired account (the existing past timestamp
+                    // fails the rule), which means they can't change
+                    // the label / quota of an already-expired account
+                    // without also re-issuing a future expires_at.
+                    // The helperText documents the past-date behaviour;
+                    // operator intent stands.
                     Forms\Components\DateTimePicker::make('expires_at')
                         ->helperText('Leave blank to never expire. Past dates immediately disable the account.')
-                        ->seconds(false)
-                        ->minDate(now()),
+                        ->seconds(false),
                 ])->columns(2),
 
             Forms\Components\Placeholder::make('password_note')
@@ -172,11 +180,31 @@ class ProxyAccountResource extends Resource
 
                             return;
                         }
+                        // The "Copy URL" action wires an Alpine `x-on:click`
+                        // that calls `navigator.clipboard.writeText()` with
+                        // the URL safely JS-encoded via json_encode (handles
+                        // quotes / unicode / line breaks). On secure
+                        // contexts (HTTPS / localhost) this copies in one
+                        // click. On non-secure contexts the API is
+                        // unavailable and the click is a silent no-op —
+                        // the URL stays visible in the notification body
+                        // for manual selection, preserving the
+                        // pre-v0.0.64 behaviour as a fallback.
+                        $jsUrl = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                         Notification::make()
                             ->title('Subscription URL — import in the app')
                             ->body($url)
                             ->success()
                             ->persistent()
+                            ->actions([
+                                Action::make('copy')
+                                    ->label('Copy URL')
+                                    ->icon('heroicon-o-clipboard')
+                                    ->color('gray')
+                                    ->extraAttributes([
+                                        'x-on:click' => "navigator.clipboard?.writeText({$jsUrl})",
+                                    ]),
+                            ])
                             ->send();
                     }),
                 Tables\Actions\DeleteAction::make(),
