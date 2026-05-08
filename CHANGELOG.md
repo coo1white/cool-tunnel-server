@@ -22,6 +22,34 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.62] — 2026-05-08 — CI: tag ↔ panel-config version-sync gate
+
+Narrow CI hardening release. No runtime behaviour change; no
+operator action required to upgrade.
+
+### Added
+
+- **Tag ↔ `panel/config/cool-tunnel.php` version-sync gate.** New
+  GitHub Actions job triggered on `v*` tag pushes. Strips the
+  leading `v` (so `v0.0.62` → `0.0.62`) and asserts the resulting
+  version equals the `'version' => '...'` line in
+  `panel/config/cool-tunnel.php` — the field `php artisan
+  ct:version` prints and the component-check matcher consumes.
+  Catches the upstream half of the drift class brushed past at
+  the v0.0.61 release-cut: source was correct that time (a stale
+  local container masked the live-image PHP), but the symmetric
+  upstream failure mode — `make set-version` skipped, or a
+  future history rewrite dropping the bump — would silently
+  ship a tag whose source disagrees.
+
+  Scope is intentionally narrow: `manifests/*.upstream.json` and
+  `core/Cargo.toml` are bumped atomically by `make set-version`
+  and re-verified at runtime by the component-check probes, so
+  the workflow doesn't redo their work. Extend if a future
+  incident shows otherwise.
+
+---
+
 ## [0.0.61] — 2026-05-08 — License relicense: AGPL-3.0-or-later → PolyForm Noncommercial 1.0.0
 
 Operator-visible license change. **Read this before pulling.**
