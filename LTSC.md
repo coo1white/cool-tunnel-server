@@ -5,8 +5,8 @@
 > releases — and the **boundaries** of what we deliberately do
 > NOT promise.
 >
-> **Current baseline (2026-05-08):** server `v0.0.62`,
-> macOS client `v2.0.25` (separate repo —
+> **Current baseline (2026-05-09):** server `v0.0.65`,
+> macOS client `v2.0.26` (separate repo —
 > see [`docs/cross-platform-clients.md`](docs/cross-platform-clients.md)).
 
 ## What LTSC means here
@@ -94,8 +94,8 @@ separately. CI catches forever what hand-audit discovers.
 
 ## 2026 milestones
 
-Two cross-cutting policies that constrain what the codebase
-will tolerate, codified during the 2026 release arc.
+Cross-cutting policies that constrain what the codebase will
+tolerate, codified during the 2026 release arc.
 
 ### Immutable Ballast
 
@@ -142,6 +142,54 @@ v0.0.62.
 
 `unsafe_code = "deny"` (`[workspace.lints.rust]`) is the
 adjacent floor for memory safety, same enforcement model.
+
+### Zero blocking-syscall floor
+
+The async path of `ct-server-core` is structurally guaranteed
+not to leak blocking syscalls into the tokio runtime. Sweep
+across `core/ct-server-core/src/` (v0.0.65 audit, codified
+in this milestone) confirms:
+
+| Probe | Source result |
+| --- | --- |
+| `std::fs::*` | **0 hits** — all file I/O routes through `tokio::fs` |
+| `std::process::Command` | **0 hits** — no sync subprocess in async path |
+| `std::thread::sleep` | **0 hits** — only `tokio::time::sleep` |
+| `std::sync::Mutex` | **Bounded** — used only where the lock guard's `!Send` property is the *intended* compile-time guarantee against `.await`-while-held (e.g. the Coalescer in `redis_bridge`). Async-aware `tokio::sync::Mutex` is reserved for sites that genuinely cross await points. |
+| `block_on` | **1 hit** — `main.rs:339`, the top-of-runtime entry. Any nested usage is structurally wrong and would be caught in code review. |
+
+**Why the floor matters.** A blocking syscall on a tokio
+worker thread parks the thread, starves every other task
+sharing it, and inflates p99 latency for everything in the
+runtime. The sweep is the audit-time check; the floor is the
+norm we recheck every release. First codified in v0.0.65's
+async hardening; the daemon's per-request timeout (T-2) is
+the runtime tripwire, the semaphore (T-1) is the
+backpressure, and the Coalescer's `std::sync::Mutex`
+migration (T-4) makes the cross-`.await` violation a
+**compile error** rather than a runtime regression.
+
+### Zero leak (bounded-spawn) posture
+
+Every `tokio::spawn` site in production code is bounded by a
+known cardinality. v0.0.65 audit enumerated three
+production sites with their bound:
+
+| Site | Cardinality | Bound |
+| --- | --- | --- |
+| `daemon.rs::serve` per-client handler | 1 per accepted Unix-socket connection | `MAX_CONCURRENT_HANDLERS = 16` permits via `tokio::sync::Semaphore`; the 17th accept blocks. |
+| `redis_bridge.rs::spawn` subscriber | 1 per process lifetime | Singular |
+| `redis_bridge.rs::schedule_flush` trailing flush | 1 per Coalescer leading-edge admit | `FlushTracker.flush_handle.is_finished()` check makes it single-flight; defense-in-depth against a future Coalescer state-machine regression |
+
+**Why the floor matters.** Unbounded spawn under hostile or
+buggy load is a slow OOM in disguise — the runtime accepts
+work faster than it completes, the task heap grows, and
+eventually the process is killed. Bounded spawn turns the
+failure mode into honest backpressure: clients see slower
+accept, the daemon stays alive. Codified at v0.0.65 (T-1 +
+T-3); future spawn sites must declare their cardinality
+bound at the call site or in the surrounding module
+docstring.
 
 ## Boundaries
 
