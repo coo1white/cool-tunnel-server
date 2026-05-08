@@ -11,6 +11,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 // R-panel-1 (2026-05-05 audit) — pre-fix, ProxyAccount::booted ran
 // SingBoxConfigGenerator::renderToFile() and SingBoxReloader::reload()
@@ -120,5 +122,39 @@ class ReloadSingBoxJob implements ShouldQueue
         if ($hash !== null) {
             $reloader->reload();
         }
+    }
+
+    /**
+     * Round-30 queue-retry-semantics audit. Pre-this, when 3
+     * retries exhausted (e.g. ct-server-core hung repeatedly,
+     * sing-box clash-API unreachable for >15 s, db-connection
+     * collapsed mid-render), the job landed in `failed_jobs`
+     * with NO panel-side log. The operator's symptom would be
+     * "I deleted account X but my client still connects" —
+     * with no diagnostic surface other than `php artisan
+     * queue:failed` from the container shell.
+     *
+     * The Redis fast-path keeps the credential revoked even when
+     * this slow-path fails, so this is NOT a security-impacting
+     * bug today. But it leaves the panel state and the running
+     * sing-box config diverged: the next ServerConfig save (or
+     * the every-5-min `singbox:render --if-changed --reload`
+     * scheduled command) is the next chance to reconcile, and
+     * neither tells the operator they're carrying drift.
+     *
+     * Critical-level log so dashboard alarms fire on this. The
+     * exception class + message are logged so the operator can
+     * grep `singbox.reload.job_failed` and see whether to chase
+     * the daemon, the clash-API, or the DB.
+     */
+    public function failed(Throwable $e): void
+    {
+        Log::critical('singbox.reload.job_failed', [
+            'tries' => $this->tries,
+            'err' => $e->getMessage(),
+            'type' => get_class($e),
+            'note' => 'all retries exhausted; sing-box config + DB may be out of sync. '
+                .'Redis fast-path already revoked credentials; this is the slow-path drift.',
+        ]);
     }
 }
