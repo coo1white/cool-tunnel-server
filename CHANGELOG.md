@@ -22,6 +22,82 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.59] — 2026-05-08 — Hotfix: panel Caddyfile volume-shadow → 502 from /admin
+
+Single-bug emergency hotfix on top of v0.0.58. Caught when v0.0.58
+deployed to production and the panel returned 502 from
+`https://panel.<domain>/admin`. The audit loop didn't catch this
+because none of its lenses exercised the live HTTP-from-the-edge
+path through the SNI router → caddy:8444 → panel:9000 chain.
+
+### The bug
+
+`docker-compose.yml:419` mounts `caddy_etc:/etc/caddy` into the
+panel container so the panel-side `ct-server-core caddyfile
+render` can write the rendered ACME Caddyfile that the dedicated
+`ct-caddy` container reads. That mount SHADOWS anything baked
+into the panel image at `/etc/caddy/`.
+
+`docker/panel/Dockerfile:183` baked the panel-internal Caddyfile
+(the FrankenPHP-worker-on-:9000 config) at exactly that path.
+Result: at boot time, the panel's FrankenPHP would
+`run --config /etc/caddy/Caddyfile` and load... the ACME-issuer
+Caddyfile (binding :80, trying to ACME the operator's external
+domains, NOT routing to the FrankenPHP worker).
+
+End-to-end symptom: panel container was "Up but unhealthy",
+nothing answered on `127.0.0.1:9000` from inside the container,
+caddy:8444 → panel:9000 hop returned `Connection refused`,
+operator's browser saw HTTP 502.
+
+### The fix
+
+Two-line change. Bake the panel's own Caddyfile at
+`/etc/caddy-panel/Caddyfile` (NOT volume-mounted, so the
+`caddy_etc` overlay can't shadow it), and point supervisord's
+`frankenphp run --config` at the new path.
+
+The two configs now live at separate paths:
+- `/etc/caddy/Caddyfile` (volume-mounted, written by panel,
+  read by ct-caddy) — the ACME + auto-HTTPS config for
+  operator domains
+- `/etc/caddy-panel/Caddyfile` (image-baked, panel-only) —
+  the FrankenPHP worker + :9000 listener for the Filament app
+
+Inline comments in both edited files explain the shadow mechanism
+so a future "consolidate the paths" refactor doesn't re-introduce
+the regression.
+
+### Why this slipped past the audit
+
+The bug was latent since the FrankenPHP swap (v0.0.58 PR #7-#12).
+Round-5 caught the URL::forceScheme leak and the
+`http://127.0.0.1:9000` listen-address bind in the panel
+Caddyfile, but didn't notice the panel Caddyfile was being
+SHADOWED by the volume-mounted ACME Caddyfile entirely. The
+listen-address fix only matters if the panel Caddyfile is
+actually loaded — which it wasn't.
+
+The 30-round audit loop then ran 30 fresh lenses without ever
+testing the "browser → public-domain → SNI router → caddy:8444 →
+panel:9000" end-to-end path, because the project's test suite
+covers the path layer-by-layer (route regex, controller logic,
+HMAC canonicalisation, etc.) but doesn't have an integration
+test that boots the docker-compose stack and curls the public
+URL. That's a future-round audit-loop scope item.
+
+### Operator update path
+
+Same as v0.0.58 — `git pull && ./scripts/update.sh`. The
+existing update script picks up the Dockerfile + supervisord.conf
+changes, rebuilds the panel image, and recreates the panel
+container. The /etc/caddy-panel/ directory is created
+automatically by the COPY in the Dockerfile.
+
+---
+
+
+
 ## [0.0.58] — 2026-05-08 — FrankenPHP runtime swap, AGPL-3.0-or-later relicense, and 30-round audit-loop hardening
 
 The largest single release since v0.0.33 (the SNI-router split).

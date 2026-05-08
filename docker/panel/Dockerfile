@@ -180,7 +180,24 @@ COPY php-hardening.ini /usr/local/etc/php/conf.d/php-hardening.ini
 # defines the listening port, document root, worker-mode binding,
 # anti-fingerprint header suppression, and access-log behaviour
 # (subscription token masking).
-COPY Caddyfile        /etc/caddy/Caddyfile
+# Hotfix: bake the panel-internal Caddyfile at a NON-volume-mounted
+# path. docker-compose.yml mounts `caddy_etc:/etc/caddy` into this
+# container so `ct-server-core caddyfile render` (run by the panel)
+# can write the rendered ACME Caddyfile that the dedicated `ct-caddy`
+# container reads. That mount SHADOWS any file the Dockerfile bakes
+# at /etc/caddy/, so the panel-internal FrankenPHP would load the
+# ACME Caddyfile instead of its own — that file binds :80 and tries
+# to ACME the operator's external domains; it does NOT listen on
+# :9000 or hand requests to FrankenPHP's worker. Result: panel
+# returns 502 from caddy:8444 → panel:9000.
+#
+# Fix: bake to /etc/caddy-panel/ (NOT volume-mounted), and point
+# supervisord's frankenphp --config at the new path. The
+# /etc/caddy/Caddyfile written by the panel's CaddyfileGenerator
+# stays in place for the dedicated ct-caddy container; the panel's
+# own Caddy reads its own file. Two configs, two paths, no
+# overlap. (post-v0.0.58 hotfix.)
+COPY Caddyfile        /etc/caddy-panel/Caddyfile
 COPY supervisord.conf /etc/supervisord.conf
 COPY entrypoint.sh    /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
