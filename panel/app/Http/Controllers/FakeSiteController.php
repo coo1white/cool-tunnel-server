@@ -133,6 +133,15 @@ class FakeSiteController extends Controller
             return;
         }
 
+        // RateLimiter ordering note (round-26 cohesion audit): this is
+        // HIT-THEN-CHECK, deliberately distinct from the CHECK-THEN-HIT
+        // pattern in SubscriptionController. With max=PROBE_ALARM_RATE_PER_MIN
+        // (30), the 30th cover-site fall-through inside the decay
+        // window triggers the alarm — it counts itself BEFORE the
+        // threshold check. SubscriptionController instead checks
+        // before hitting (so the 60th request passes and the 61st is
+        // blocked). Don't unify the two — see SubscriptionController
+        // for the rationale; round-26 boundary test pins both shapes.
         $key = 'probe:'.$ip;
         RateLimiter::hit($key, self::PROBE_DECAY_SEC);
 
