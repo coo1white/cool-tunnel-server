@@ -141,9 +141,12 @@ impl<K: Eq + Hash> Default for Debouncer<K> {
 
 // =====================================================================
 
-/// Decision returned by [`Coalescer::admit`]. Tells the caller what to
-/// do *now*; the caller is responsible for honouring [`FireNowSchedule`]
-/// (run an action immediately, optionally schedule the trailing flush).
+/// Decision returned by [`Coalescer::admit`]. Tells the caller what
+/// to do with each event: fire immediately
+/// ([`Decision::FireNow`] or [`Decision::FireNowAndScheduleFlush`])
+/// or suppress ([`Decision::Suppress`]). The caller is responsible
+/// for running the action and (when applicable) scheduling the
+/// trailing flush — the Coalescer is pure state, no I/O.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     /// Fire the action now. No trailing flush is needed — this is the

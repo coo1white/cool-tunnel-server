@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Component verifier — server side.
-//
-// Reads a directory of *.upstream.json manifests, runs each
-// component's verify command, prints a `ComponentStatusV1` for each.
-//
-// Mirrors the macOS client's NaiveBinaryResolver pattern: pin the
-// expected version + hash, verify before trusting, refuse to use a
-// component that fails its check.
+//! Component verifier — server side.
+//!
+//! Reads a directory of *.upstream.json manifests, runs each
+//! component's verify command, prints a `ComponentStatusV1` for each.
+//!
+//! Mirrors the macOS client's NaiveBinaryResolver pattern: pin the
+//! expected version + hash, verify before trusting, refuse to use a
+//! component that fails its check.
 
 use crate::util::doh;
 use crate::{db, Result};
