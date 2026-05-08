@@ -273,3 +273,38 @@ require_docker() {
 compose() {
     docker compose "$@"
 }
+
+# compose_project_name
+#
+# Print the docker-compose project name docker-compose itself will
+# use for THIS working directory. Honours `COMPOSE_PROJECT_NAME`
+# env override + any `name:` field in compose files; falls back to
+# directory basename otherwise (which is docker-compose's default).
+#
+# Round-24 operator-workflow audit: backup.sh + restore.sh
+# previously hardcoded `cool-tunnel-server_caddy_data` as the
+# volume name, assuming the project name is exactly
+# `cool-tunnel-server`. An operator running parallel deployments
+# (e.g. `/opt/ct-prod/` and `/opt/ct-staging/`) would get
+# different project names per deployment, but both backup/restore
+# scripts would still target `cool-tunnel-server_caddy_data` —
+# silently overwriting one deployment's ACME certs with the
+# other's on restore. This helper sources the truth from
+# docker-compose itself.
+#
+# Requires `compose ps` to work (i.e. valid compose files in the
+# CWD). Caller should `require_docker` first.
+compose_project_name() {
+    local name
+    name=$(docker compose config --format json 2>/dev/null \
+        | jq -r '.name // empty' 2>/dev/null) || true
+    if [[ -z "$name" ]]; then
+        # Fallback: docker-compose's default project-name rule is
+        # the basename of the project directory, lowercased and
+        # stripped of any non-alphanumeric chars (cf. compose v2
+        # docs). Most repo dirs match the rule already; the
+        # transform here is a defensive cleanup.
+        name="$(basename "$(pwd)" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')"
+    fi
+    printf '%s\n' "$name"
+}
