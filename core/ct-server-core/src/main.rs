@@ -340,8 +340,130 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
+            let chain = format_error_chain(&e);
+            if !chain.is_empty() {
+                eprint!("{chain}");
+            }
             ExitCode::from(1)
         }
+    }
+}
+
+/// Walk the `source()` chain on a top-level error and format each
+/// underlying cause as an indented "caused by ({depth}): ..." line
+/// with a trailing newline. Pure function so it can be unit-tested
+/// without capturing stderr.
+///
+/// Round-28 Rust-error audit: pre-this `main` printed only
+/// `error: {e}` (the outermost `Display` text), so an operator
+/// hitting e.g. `error: could not render Caddyfile` had no idea
+/// whether the underlying cause was `reqwest::Error (connection
+/// refused)`, `sqlx::Error (table not found)`, `redis::RedisError
+/// (auth required)`, or a stringified `Error::msg(...)`. Walking
+/// the chain surfaces the originating type and message so the
+/// panel-side log + the operator's `docker compose logs` both
+/// carry actionable context.
+fn format_error_chain(e: &crate::Error) -> String {
+    use std::error::Error as _;
+    // Skip the first source() — our Error wrapper always returns
+    // `Some(&self.0)` (the boxed inner error), and Error::Display
+    // delegates to self.0.fmt, so source[0] always trivially echoes
+    // the outermost message. The actually-different cause starts
+    // at source[1] (e.g. sqlx::Error wrapping a tokio::IoError, or
+    // reqwest::Error wrapping a hyper::Error).
+    let mut out = String::new();
+    let mut current: Option<&(dyn std::error::Error)> = e.source().and_then(|s| s.source());
+    let mut depth = 1;
+    while let Some(err) = current {
+        out.push_str(&format!("       caused by ({depth}): {err}\n"));
+        current = err.source();
+        depth += 1;
+        if depth > 16 {
+            // Defensive: bound the walk so a pathological cyclic
+            // source chain (shouldn't be possible with our
+            // explicit From impls, but defence-in-depth) can't
+            // spin forever on the user's terminal.
+            out.push_str(&format!("       (chain truncated at {depth} levels)\n"));
+            break;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod main_tests {
+    use super::*;
+    use std::error::Error as StdError;
+    use std::fmt;
+
+    // A 2-level chained error for testing — outer.source() returns
+    // Some(inner). Real-world equivalents: sqlx::Error wrapping
+    // a tokio::IoError, reqwest::Error wrapping a hyper error.
+    #[derive(Debug)]
+    struct NestedErr {
+        msg: &'static str,
+        inner: std::io::Error,
+    }
+    impl fmt::Display for NestedErr {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.msg)
+        }
+    }
+    impl StdError for NestedErr {
+        fn source(&self) -> Option<&(dyn StdError + 'static)> {
+            Some(&self.inner)
+        }
+    }
+
+    #[test]
+    fn format_error_chain_walks_nested_source() {
+        // The real value of the chain walk: surface the underlying
+        // cause when an outer error wraps an inner one. Operator
+        // sees `error: connection pool drained` plus a
+        // "caused by (1): connection refused" line below.
+        let nested = NestedErr {
+            msg: "connection pool drained",
+            inner: std::io::Error::other("connection refused"),
+        };
+        let e = crate::Error(Box::new(nested));
+        let chain = format_error_chain(&e);
+        assert!(
+            chain.contains("connection refused"),
+            "inner io message must surface: got {chain:?}"
+        );
+        assert!(
+            chain.starts_with("       caused by (1): connection refused"),
+            "depth-1 label + indent: got {chain:?}"
+        );
+    }
+
+    #[test]
+    fn format_error_chain_is_empty_for_terminal_msg_error() {
+        // Error::msg constructs a StringError with no nested
+        // source. Outer Error::Display already prints the msg, so
+        // the chain has nothing to add — pin that we don't echo
+        // the same message a second time as a "caused by".
+        let e = crate::Error::msg("something broke");
+        let chain = format_error_chain(&e);
+        assert_eq!(chain, "", "msg-only errors print nothing in the chain");
+    }
+
+    #[test]
+    fn format_error_chain_is_empty_for_one_level_io_error() {
+        // The Error wrapper's Display delegates to the wrapped
+        // io::Error's Display, so the operator already sees
+        // "error: file not found" on the first line. The wrapper-
+        // skip in format_error_chain prevents echoing the SAME
+        // text as a "caused by (1):" — pin that.
+        let io = std::io::Error::other("file not found");
+        let e: crate::Error = io.into();
+        let chain = format_error_chain(&e);
+        assert_eq!(
+            chain, "",
+            "1-level errors must not produce a redundant 'caused by' \
+             that just repeats the outer message: got {chain:?}",
+        );
     }
 }
 
