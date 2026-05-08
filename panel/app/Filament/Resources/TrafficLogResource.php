@@ -9,6 +9,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\TrafficLogResource\Pages;
 use App\Models\TrafficLog;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Select;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Filters\Filter;
@@ -52,6 +53,38 @@ class TrafficLogResource extends Resource
             ->filters([
                 Filter::make('day_range')
                     ->form([
+                        // Quick-pick preset that pre-fills `from`/`to`
+                        // reactively. Pre-v0.0.64 operators had to date-
+                        // pick both bounds for the queries they run 90% of
+                        // the time (today / last week / this month). The
+                        // `dehydrated(false)` keeps the preset out of the
+                        // query payload — only `from`/`to` reach
+                        // ->query() below, so the presence-or-absence of
+                        // a preset doesn't change query semantics.
+                        Select::make('preset')
+                            ->label('Quick range')
+                            ->options([
+                                'today' => 'Today',
+                                'yesterday' => 'Yesterday',
+                                'last_7' => 'Last 7 days',
+                                'last_30' => 'Last 30 days',
+                                'this_month' => 'This month',
+                            ])
+                            ->placeholder('Custom range')
+                            ->live()
+                            ->dehydrated(false)
+                            ->afterStateUpdated(function ($state, callable $set): void {
+                                [$from, $to] = match ($state) {
+                                    'today' => [today(), today()],
+                                    'yesterday' => [today()->subDay(), today()->subDay()],
+                                    'last_7' => [today()->subDays(6), today()],
+                                    'last_30' => [today()->subDays(29), today()],
+                                    'this_month' => [today()->startOfMonth(), today()],
+                                    default => [null, null],
+                                };
+                                $set('from', $from?->toDateString());
+                                $set('to', $to?->toDateString());
+                            }),
                         DatePicker::make('from')->label('From'),
                         DatePicker::make('to')->label('To'),
                     ])

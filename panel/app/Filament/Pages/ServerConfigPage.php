@@ -67,7 +67,22 @@ class ServerConfigPage extends Page implements HasForms
                                 'regex' => 'Must be a valid FQDN (e.g. proxy.example.com) — no spaces, no `{` `}` `"`, no newlines.',
                             ]),
                         TextInput::make('acme_email')->required()->email(),
-                        TextInput::make('acme_directory')->required()->url(),
+                        // `datalist` provides browser-native autocomplete
+                        // suggestions for the two well-known Let's Encrypt
+                        // endpoints while leaving the field free-text so
+                        // operators with a private ACME (Step CA, Smallstep,
+                        // self-hosted Boulder, etc.) can still paste their
+                        // own URL. Pre-v0.0.64 this was bare TextInput;
+                        // common typo surface — silent ACME failure on
+                        // first cert renewal, ~2 months after install.
+                        TextInput::make('acme_directory')
+                            ->required()
+                            ->url()
+                            ->datalist([
+                                'https://acme-v02.api.letsencrypt.org/directory',
+                                'https://acme-staging-v02.api.letsencrypt.org/directory',
+                            ])
+                            ->helperText('Pick from the dropdown or paste a custom ACME URL. LE production issues real (rate-limited) certs; LE staging issues throwaway certs for testing.'),
                     ])->columns(3),
 
                 Section::make('Anti-tracking')
