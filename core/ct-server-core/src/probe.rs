@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Active anti-tracking probe.
-//
-// We dial *through* the configured proxy and hit a small JSON
-// endpoint that echoes the request headers it received. If
-// hide_ip / hide_via are working, the response should NOT contain
-// X-Forwarded-For, Forwarded, X-Real-IP, or Via headers seen from
-// the client side.
-//
-// Transport: a packaged `naive` client binary (klzgrad/naiveproxy)
-// is spawned as a child process bound to a free port on
-// 127.0.0.1, and reqwest dials through it as an HTTP CONNECT
-// proxy. This is required because sing-box's `naive` inbound
-// enforces a padding extension on CONNECT; vanilla reqwest is
-// dropped at the inbound with `missing naive padding` (R4-3 in
-// docs/audits/2026-05-04T06-31-58Z.md). Shelling out to the
-// upstream reference client is the lowest-risk way to speak the
-// padding correctly without re-implementing it in Rust. The
-// binary is pinned in docker/panel/Dockerfile (ARG NAIVE_VERSION
-// + ARG NAIVE_SHA256) and verified by manifests/naiveproxy-client
-// .upstream.json.
-//
-// The probe is best-effort — it doesn't tell you whether a
-// censorship system can fingerprint your TLS handshake, only
-// whether the configured Caddy mitigations are *actually* on the
-// wire.
+//! Active anti-tracking probe.
+//!
+//! We dial *through* the configured proxy and hit a small JSON
+//! endpoint that echoes the request headers it received. If
+//! hide_ip / hide_via are working, the response should NOT contain
+//! X-Forwarded-For, Forwarded, X-Real-IP, or Via headers seen from
+//! the client side.
+//!
+//! Transport: a packaged `naive` client binary (klzgrad/naiveproxy)
+//! is spawned as a child process bound to a free port on
+//! 127.0.0.1, and reqwest dials through it as an HTTP CONNECT
+//! proxy. This is required because sing-box's `naive` inbound
+//! enforces a padding extension on CONNECT; vanilla reqwest is
+//! dropped at the inbound with `missing naive padding` (R4-3 in
+//! docs/audits/2026-05-04T06-31-58Z.md). Shelling out to the
+//! upstream reference client is the lowest-risk way to speak the
+//! padding correctly without re-implementing it in Rust. The
+//! binary is pinned in docker/panel/Dockerfile (ARG NAIVE_VERSION
+//! + ARG NAIVE_SHA256) and verified by manifests/naiveproxy-client
+//! .upstream.json.
+//!
+//! The probe is best-effort — it doesn't tell you whether a
+//! censorship system can fingerprint your TLS handshake, only
+//! whether the configured Caddy mitigations are *actually* on the
+//! wire.
 
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};

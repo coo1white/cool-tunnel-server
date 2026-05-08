@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Validated value types shared across modules.
-//
-// Mirrors the structure of the macOS client's `core/src/domain/`:
-// constructor-validated structs whose invariants the rest of the
-// codebase can rely on without re-checking.
+//! Validated value types shared across modules.
+//!
+//! Mirrors the structure of the macOS client's `core/src/domain/`:
+//! constructor-validated structs whose invariants the rest of the
+//! codebase can rely on without re-checking.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

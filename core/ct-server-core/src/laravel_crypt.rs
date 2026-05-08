@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Laravel-compatible AES-256-GCM decryption.
-//
-// Laravel 11's `Crypt::encryptString($plain)` produces:
-//   base64( JSON {"iv":"<b64-12B>","value":"<b64-ct>","tag":"<b64-16B>","mac":""} )
-// using the key derived from `base64:` + APP_KEY (the part after the
-// `base64:` prefix is base64 of the 32-byte AES-256 key).
-//
-// On the panel side, ProxyAccount::setCleartextPassword() calls
-// Crypt::encryptString. Here we reverse that — used by db.rs when
-// hydrating active_proxy_accounts() so the rendered sing-box config
-// has the cleartext sing-box needs.
-//
-// This impl only supports the modern AES-256-GCM mode Laravel 11
-// defaults to. Older AES-256-CBC (Laravel ≤ 10) is not handled here
-// and will return an InvalidPayload error — the panel runs Laravel 11
-// per composer.json so this is fine.
+//! Laravel-compatible AES-256-GCM decryption.
+//!
+//! Laravel 11's `Crypt::encryptString($plain)` produces:
+//!
+//! ```text
+//! base64( JSON {"iv":"<b64-12B>","value":"<b64-ct>","tag":"<b64-16B>","mac":""} )
+//! ```
+//!
+//! using the key derived from `base64:` + APP_KEY (the part after the
+//! `base64:` prefix is base64 of the 32-byte AES-256 key).
+//!
+//! On the panel side, ProxyAccount::setCleartextPassword() calls
+//! Crypt::encryptString. Here we reverse that — used by db.rs when
+//! hydrating active_proxy_accounts() so the rendered sing-box config
+//! has the cleartext sing-box needs.
+//!
+//! This impl only supports the modern AES-256-GCM mode Laravel 11
+//! defaults to. Older AES-256-CBC (Laravel ≤ 10) is not handled here
+//! and will return an InvalidPayload error — the panel runs Laravel 11
+//! per composer.json so this is fine.
 
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};

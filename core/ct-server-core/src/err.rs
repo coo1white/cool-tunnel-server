@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Single error type so we don't pull `anyhow` (heavier than we need).
-//
-// Shape: opaque tuple wrapper around `Box<dyn Error + Send + Sync>`.
-// Deliberately not an enum — the v0.0.65 hardening pass evaluated
-// rewriting this as a `#[non_exhaustive] enum` with per-variant
-// `#[source]` derives (the "thiserror shape"). Verdict: not yet
-// worth the churn. No call site in this crate matches on inner
-// type; every consumer uses `?` or `e.to_string()`. The opaque
-// wrapper preserves the `source()` chain (verified by
-// `format_error_chain` in `main.rs` walking up to depth 16) and
-// keeps the type surface small. Revisit if a caller surfaces a
-// real need to discriminate by inner type — at that point a
-// `Kind` accessor or full enum rewrite are both on the table.
-//
-// We can't write a blanket `impl<E: Error> From<E> for Error` — that
-// conflicts with std's reflexive `impl<T> From<T> for T`. Instead we
-// explicitly enumerate the error types we actually wrap. The list
-// reads like a dependency map of the crate, which is fine: the
-// compiler tells us when to add a new line.
+//! Single error type so we don't pull `anyhow` (heavier than we need).
+//!
+//! Shape: opaque tuple wrapper around `Box<dyn Error + Send + Sync>`.
+//! Deliberately not an enum — the v0.0.65 hardening pass evaluated
+//! rewriting this as a `#[non_exhaustive] enum` with per-variant
+//! `#[source]` derives (the "thiserror shape"). Verdict: not yet
+//! worth the churn. No call site in this crate matches on inner
+//! type; every consumer uses `?` or `e.to_string()`. The opaque
+//! wrapper preserves the `source()` chain (verified by
+//! `format_error_chain` in `main.rs` walking up to depth 16) and
+//! keeps the type surface small. Revisit if a caller surfaces a
+//! real need to discriminate by inner type — at that point a
+//! `Kind` accessor or full enum rewrite are both on the table.
+//!
+//! We can't write a blanket `impl<E: Error> From<E> for Error` — that
+//! conflicts with std's reflexive `impl<T> From<T> for T`. Instead we
+//! explicitly enumerate the error types we actually wrap. The list
+//! reads like a dependency map of the crate, which is fine: the
+//! compiler tells us when to add a new line.
 
 use std::fmt;
 

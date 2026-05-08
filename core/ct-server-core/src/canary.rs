@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Self-probe canary — early-warning surface for "this VPS is
-// becoming unreachable from its own network position."
-//
-// Runs every 5 minutes via Laravel's scheduler. Each invocation:
-//   1. Reads ServerConfig.{domain, doh_resolver}.
-//   2. DoH-resolves `domain` IN A through the operator's chosen
-//      resolver (shared `util::doh` helper). Asserts ≥1 answer.
-//   3. TCP-connects to docker-internal `haproxy:443` (the SNI
-//      router's listening port).
-//   4. Atomically appends the result to
-//      `server_configs.self_probe_history` (JSON column, trimmed
-//      to the last MAX_HISTORY entries via `JSON_ARRAY_APPEND`).
-//   5. Propagates the failure (if any) so the scheduler's
-//      `onFailure` hook fires and a `schedule.failed` log line
-//      surfaces alongside the recorded history entry.
-//
-// Operator surface today: `ct-server-core canary status` reads the
-// recorded history. A panel banner widget that surfaces the same
-// state in the dashboard UI without polling the CLI is a v0.0.58
-// follow-up; this column / wire shape is the contract that widget
-// will read.
+//! Self-probe canary — early-warning surface for "this VPS is
+//! becoming unreachable from its own network position."
+//!
+//! Runs every 5 minutes via Laravel's scheduler. Each invocation:
+//!   1. Reads ServerConfig.{domain, doh_resolver}.
+//!   2. DoH-resolves `domain` IN A through the operator's chosen
+//!      resolver (shared `util::doh` helper). Asserts ≥1 answer.
+//!   3. TCP-connects to docker-internal `haproxy:443` (the SNI
+//!      router's listening port).
+//!   4. Atomically appends the result to
+//!      `server_configs.self_probe_history` (JSON column, trimmed
+//!      to the last MAX_HISTORY entries via `JSON_ARRAY_APPEND`).
+//!   5. Propagates the failure (if any) so the scheduler's
+//!      `onFailure` hook fires and a `schedule.failed` log line
+//!      surfaces alongside the recorded history entry.
+//!
+//! Operator surface today: `ct-server-core canary status` reads the
+//! recorded history. A panel banner widget that surfaces the same
+//! state in the dashboard UI without polling the CLI is a v0.0.58
+//! follow-up; this column / wire shape is the contract that widget
+//! will read.
 
 use crate::util::doh;
 use crate::{db, Error, Result};

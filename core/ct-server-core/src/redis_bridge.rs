@@ -1,58 +1,58 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Redis revocation bridge.
-//
-// Wire shape: Filament panel calls
-// Redis::publish('cool_tunnel:revocations', json) on every save /
-// delete of a ProxyAccount; this end is a long-lived async subscriber
-// that re-renders Caddyfile and POSTs /load to Caddy's admin socket
-// on receipt.
-//
-// End-to-end latency from Filament save to new-auth-blocked is
-// dominated by Caddyfile render (~30 ms) + admin-socket reload
-// (~30 ms). Pub/sub itself is sub-millisecond.
-//
-// Burst handling — bulk Filament actions (e.g. an admin disabling 50
-// accounts in one click) can fire dozens of revocation messages per
-// second. Without coalescing this would queue dozens of redundant
-// reload calls. We use a leading-edge throttle with a trailing flush
-// (`util::debounce::Coalescer`):
-//
-//   - first event in a quiet period → fire reload immediately
-//   - further events in the same window → suppress
-//   - if anything was suppressed, fire one more reload at
-//     last_fired + window (the trailing flush)
-//
-// Net effect: a burst of N events collapses to 2 reloads (leading +
-// trailing), regardless of N. The trailing flush is what guarantees
-// the *last* DB state is reflected in Caddy — without it, a save
-// arriving 1 ms after the leading edge would be silently held back.
-//
-// Limit: existing in-flight HTTP/2 CONNECT tunnels are not severed —
-// Caddy doesn't expose per-user connection enumeration on
-// forward_proxy. New auth attempts fail; idle tunnels die when the
-// underlying TCP closes. Per-request hard severing needs a
-// forwardproxy plugin patch (v0.1 roadmap).
-//
-// v0.0.65 hardening:
-//   - T-3: `FlushTracker` bundles the Coalescer with the in-flight
-//     trailing-flush task handle. `schedule_flush` is now single-
-//     flight: if a previous flush task is still pending, we don't
-//     spawn another. Defense-in-depth — the Coalescer state machine
-//     is correct (verified by the burst-collapse stress tests in
-//     util/debounce.rs), so today FireNowAndScheduleFlush only fires
-//     when the previous flush task has already completed and called
-//     on_flush. But the spawn used to be unconditional; if a future
-//     Coalescer regression returns FireNowAndScheduleFlush twice
-//     without an intervening on_flush, this guard collapses the leak
-//     into "one flush at a time, latest state wins."
-//   - T-4: the Coalescer lock migrates from `tokio::sync::Mutex` to
-//     `std::sync::Mutex`. Both critical sections were already brief
-//     and never spanned an `.await` (pre-v0.0.65 comment confirmed
-//     this). Migration buys two things: lower lock overhead (no
-//     async cooperative-yield), and the *compile-time* guarantee
-//     that we never accidentally hold the lock across an `.await` —
-//     `std::sync::MutexGuard` is `!Send`, so any future regression
-//     trying to do so fails to compile.
+//! Redis revocation bridge.
+//!
+//! Wire shape: Filament panel calls
+//! Redis::publish('cool_tunnel:revocations', json) on every save /
+//! delete of a ProxyAccount; this end is a long-lived async subscriber
+//! that re-renders Caddyfile and POSTs /load to Caddy's admin socket
+//! on receipt.
+//!
+//! End-to-end latency from Filament save to new-auth-blocked is
+//! dominated by Caddyfile render (~30 ms) + admin-socket reload
+//! (~30 ms). Pub/sub itself is sub-millisecond.
+//!
+//! Burst handling — bulk Filament actions (e.g. an admin disabling 50
+//! accounts in one click) can fire dozens of revocation messages per
+//! second. Without coalescing this would queue dozens of redundant
+//! reload calls. We use a leading-edge throttle with a trailing flush
+//! (`util::debounce::Coalescer`):
+//!
+//!   - first event in a quiet period → fire reload immediately
+//!   - further events in the same window → suppress
+//!   - if anything was suppressed, fire one more reload at
+//!     last_fired + window (the trailing flush)
+//!
+//! Net effect: a burst of N events collapses to 2 reloads (leading +
+//! trailing), regardless of N. The trailing flush is what guarantees
+//! the *last* DB state is reflected in Caddy — without it, a save
+//! arriving 1 ms after the leading edge would be silently held back.
+//!
+//! Limit: existing in-flight HTTP/2 CONNECT tunnels are not severed —
+//! Caddy doesn't expose per-user connection enumeration on
+//! forward_proxy. New auth attempts fail; idle tunnels die when the
+//! underlying TCP closes. Per-request hard severing needs a
+//! forwardproxy plugin patch (v0.1 roadmap).
+//!
+//! v0.0.65 hardening:
+//!   - T-3: `FlushTracker` bundles the Coalescer with the in-flight
+//!     trailing-flush task handle. `schedule_flush` is now single-
+//!     flight: if a previous flush task is still pending, we don't
+//!     spawn another. Defense-in-depth — the Coalescer state machine
+//!     is correct (verified by the burst-collapse stress tests in
+//!     util/debounce.rs), so today FireNowAndScheduleFlush only fires
+//!     when the previous flush task has already completed and called
+//!     on_flush. But the spawn used to be unconditional; if a future
+//!     Coalescer regression returns FireNowAndScheduleFlush twice
+//!     without an intervening on_flush, this guard collapses the leak
+//!     into "one flush at a time, latest state wins."
+//!   - T-4: the Coalescer lock migrates from `tokio::sync::Mutex` to
+//!     `std::sync::Mutex`. Both critical sections were already brief
+//!     and never spanned an `.await` (pre-v0.0.65 comment confirmed
+//!     this). Migration buys two things: lower lock overhead (no
+//!     async cooperative-yield), and the *compile-time* guarantee
+//!     that we never accidentally hold the lock across an `.await` —
+//!     `std::sync::MutexGuard` is `!Send`, so any future regression
+//!     trying to do so fails to compile.
 
 use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
 use crate::{admin, singbox, Result};

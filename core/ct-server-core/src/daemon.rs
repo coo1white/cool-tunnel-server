@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Long-running daemon. Listens on a unix socket and accepts
-// `WireRequestV1` JSON-per-line, replies with `WireResponseV1`.
-//
-// Why a daemon at all (vs. one-shot CLI invocations)? The DB pool
-// stays warm, which makes per-request latency roughly 5x lower —
-// that matters for the "save in Filament → reload visible" cycle the
-// admin clicks through dozens of times.
-//
-// Pool lifecycle (post-perf/share-db-pool refactor): `serve()`
-// constructs ONE `MySqlPool` at startup and holds it for the
-// process lifetime; every `handle()` invocation borrows it. Pre-
-// refactor, every wire request opened a fresh pool via
-// `db::connect()` — the daemon docstring claimed "the DB pool stays
-// warm" but the code defeated it, paying ~30-50 ms of TCP+auth
-// handshake per request. The shared pool restores the docstring's
-// promise: the panel's "save → reload" round-trip drops by that
-// same handshake cost.
+//! Long-running daemon. Listens on a unix socket and accepts
+//! `WireRequestV1` JSON-per-line, replies with `WireResponseV1`.
+//!
+//! Why a daemon at all (vs. one-shot CLI invocations)? The DB pool
+//! stays warm, which makes per-request latency roughly 5x lower —
+//! that matters for the "save in Filament → reload visible" cycle the
+//! admin clicks through dozens of times.
+//!
+//! Pool lifecycle (post-perf/share-db-pool refactor): `serve()`
+//! constructs ONE `MySqlPool` at startup and holds it for the
+//! process lifetime; every `handle()` invocation borrows it. Pre-
+//! refactor, every wire request opened a fresh pool via
+//! `db::connect()` — the daemon docstring claimed "the DB pool stays
+//! warm" but the code defeated it, paying ~30-50 ms of TCP+auth
+//! handshake per request. The shared pool restores the docstring's
+//! promise: the panel's "save → reload" round-trip drops by that
+//! same handshake cost.
 
 use crate::{admin, metrics, singbox, Error, Result};
 use ct_protocol::{WireRequestV1, WireResponseV1};
