@@ -32,15 +32,35 @@
 // forward_proxy. New auth attempts fail; idle tunnels die when the
 // underlying TCP closes. Per-request hard severing needs a
 // forwardproxy plugin patch (v0.1 roadmap).
+//
+// v0.0.65 hardening:
+//   - T-3: `FlushTracker` bundles the Coalescer with the in-flight
+//     trailing-flush task handle. `schedule_flush` is now single-
+//     flight: if a previous flush task is still pending, we don't
+//     spawn another. Defense-in-depth — the Coalescer state machine
+//     is correct (verified by the burst-collapse stress tests in
+//     util/debounce.rs), so today FireNowAndScheduleFlush only fires
+//     when the previous flush task has already completed and called
+//     on_flush. But the spawn used to be unconditional; if a future
+//     Coalescer regression returns FireNowAndScheduleFlush twice
+//     without an intervening on_flush, this guard collapses the leak
+//     into "one flush at a time, latest state wins."
+//   - T-4: the Coalescer lock migrates from `tokio::sync::Mutex` to
+//     `std::sync::Mutex`. Both critical sections were already brief
+//     and never spanned an `.await` (pre-v0.0.65 comment confirmed
+//     this). Migration buys two things: lower lock overhead (no
+//     async cooperative-yield), and the *compile-time* guarantee
+//     that we never accidentally hold the lock across an `.await` —
+//     `std::sync::MutexGuard` is `!Send`, so any future regression
+//     trying to do so fails to compile.
 
 use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
 use crate::{admin, singbox, Result};
 use redis::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 pub const REVOCATION_CHANNEL: &str = "cool_tunnel:revocations";
@@ -56,6 +76,33 @@ pub enum RevocationMessage {
     Resync,
 }
 
+/// Bundles the Coalescer with the in-flight trailing-flush task
+/// handle so [`schedule_flush`] is single-flight. See module docs
+/// (v0.0.65 T-3).
+struct FlushTracker {
+    coalescer: Coalescer,
+    /// `Some(h)` if a trailing-flush task is currently scheduled
+    /// (sleeping its window or running its on_flush + reload).
+    /// `h.is_finished()` flips to true when the spawned closure
+    /// returns; we read that flag rather than `await`ing the handle
+    /// (which would block the subscriber loop).
+    flush_handle: Option<JoinHandle<()>>,
+}
+
+/// Lock the FlushTracker mutex, recovering from poison.
+///
+/// Poison happens iff a previous lock-holder panicked while holding
+/// the lock. The whole crate is `panic = "deny"` (workspace lints),
+/// so the only path to poisoning is a tokio runtime-level panic
+/// during scheduler internals — extremely rare. If it ever happens,
+/// the safest action is to take the inner state and continue
+/// (rather than propagate the poison and kill the subscriber loop).
+/// `clippy::unwrap_used` is satisfied — `unwrap_or_else` is not
+/// `unwrap`.
+fn lock_tracker(t: &Mutex<FlushTracker>) -> std::sync::MutexGuard<'_, FlushTracker> {
+    t.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// Spawn the subscriber. Returns immediately; the actual loop runs
 /// on its own tokio task. Errors during the loop are logged and the
 /// subscriber reconnects with exponential backoff — Redis being down
@@ -68,19 +115,20 @@ pub fn spawn(
     admin_url: String,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // The coalescer is shared between the subscriber loop (which
-        // calls `admit`) and the trailing-flush task (which calls
-        // `on_flush`). A `tokio::sync::Mutex` is fine — both touch it
-        // briefly and never across an `.await` that depends on the
-        // other side.
-        let coalescer: Arc<Mutex<Coalescer>> = Arc::new(Mutex::new(Coalescer::new(DEFAULT_WINDOW)));
+        // FlushTracker is shared between the subscriber loop (which
+        // calls `coalescer.admit`) and the trailing-flush task
+        // (which calls `coalescer.on_flush`). std::sync::Mutex is
+        // sufficient: every critical section is brief and never
+        // crosses an `.await` — and the !Send MutexGuard now
+        // *enforces* that at compile time. (T-4, v0.0.65.)
+        let tracker: Arc<Mutex<FlushTracker>> = Arc::new(Mutex::new(FlushTracker {
+            coalescer: Coalescer::new(DEFAULT_WINDOW),
+            flush_handle: None,
+        }));
 
         let mut backoff_ms = 250_u64;
         loop {
-            match run_subscriber(
-                &redis_url, &pool, &template, &output, &admin_url, &coalescer,
-            )
-            .await
+            match run_subscriber(&redis_url, &pool, &template, &output, &admin_url, &tracker).await
             {
                 Ok(()) => {
                     tracing::warn!("redis subscriber exited cleanly; restarting");
@@ -102,7 +150,7 @@ async fn run_subscriber(
     template: &str,
     output: &str,
     admin_url: &str,
-    coalescer: &Arc<Mutex<Coalescer>>,
+    tracker: &Arc<Mutex<FlushTracker>>,
 ) -> Result<()> {
     let client = Client::open(redis_url)?;
     let mut pubsub = client.get_async_pubsub().await?;
@@ -133,7 +181,13 @@ async fn run_subscriber(
 
         // Decide via the coalescer whether this event fires a reload
         // *now* and whether we need to schedule a trailing flush.
-        let decision = coalescer.lock().await.admit(Instant::now());
+        // The lock guard from std::sync::Mutex is !Send, so it
+        // cannot survive across the `.await` below — that's the
+        // T-4 compile-time guarantee in action.
+        let decision = {
+            let mut g = lock_tracker(tracker);
+            g.coalescer.admit(Instant::now())
+        };
 
         match decision {
             Decision::Suppress => {
@@ -145,7 +199,7 @@ async fn run_subscriber(
                 fire_reload(pool, template, output, admin_url, "leading").await;
                 if matches!(decision, Decision::FireNowAndScheduleFlush) {
                     schedule_flush(
-                        coalescer.clone(),
+                        tracker.clone(),
                         pool.clone(),
                         template.to_owned(),
                         output.to_owned(),
@@ -192,22 +246,34 @@ async fn fire_reload(
     tracing::info!(edge, elapsed_ms, "sing-box reload applied");
 }
 
-/// Wait one window, then run the trailing flush. The flush itself
-/// only runs the reload if something was suppressed during the
-/// window — `Coalescer::on_flush` returns false when the burst
-/// happened to end exactly at the leading edge.
+/// Schedule a trailing flush at `now + DEFAULT_WINDOW`, single-flight.
+///
+/// If a previous flush task is still pending (its `is_finished()` is
+/// false), we return without spawning. The pending task's eventual
+/// `on_flush` will pick up the latest Coalescer state — last-writer-
+/// wins is the operator-intent semantic. (T-3, v0.0.65.)
 fn schedule_flush(
-    coalescer: Arc<Mutex<Coalescer>>,
+    tracker: Arc<Mutex<FlushTracker>>,
     pool: MySqlPool,
     template: String,
     output: String,
     admin_url: String,
 ) {
-    tokio::spawn(async move {
+    let mut g = lock_tracker(&tracker);
+    if g.flush_handle.as_ref().is_some_and(|h| !h.is_finished()) {
+        // Defense-in-depth: previous flush task hasn't completed.
+        // The Coalescer's state machine should already prevent the
+        // caller from getting here, but if a regression slips, this
+        // collapses the leak rather than spawning unboundedly.
+        tracing::debug!("trailing flush already in flight; skipping spawn");
+        return;
+    }
+    let tracker_for_task = Arc::clone(&tracker);
+    let handle = tokio::spawn(async move {
         tokio::time::sleep(DEFAULT_WINDOW).await;
         let needs_flush = {
-            let mut g = coalescer.lock().await;
-            g.on_flush(Instant::now())
+            let mut g = lock_tracker(&tracker_for_task);
+            g.coalescer.on_flush(Instant::now())
         };
         if needs_flush {
             fire_reload(&pool, &template, &output, &admin_url, "trailing").await;
@@ -215,6 +281,7 @@ fn schedule_flush(
             tracing::debug!("trailing flush skipped — no suppressed events");
         }
     });
+    g.flush_handle = Some(handle);
 }
 
 /// Helper to advance a `redis::aio::PubSubStream` without pulling in
@@ -280,5 +347,77 @@ mod tests {
             fires += 1;
         }
         assert_eq!(fires, 2, "trailing flush adds one more — total 2");
+    }
+
+    /// T-3 single-flight: if `schedule_flush` is called twice in
+    /// rapid succession (simulating a Coalescer-state regression
+    /// that returns FireNowAndScheduleFlush back-to-back), only the
+    /// first call spawns. The second call sees an unfinished handle
+    /// and returns without spawning.
+    ///
+    /// Asserts on the in-tracker handle identity rather than fire
+    /// count — this is a state-machine property, not a behaviour-
+    /// under-load test (the existing `burst_collapses_to_two_fires`
+    /// covers that side).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn schedule_flush_is_single_flight_under_repeated_calls() {
+        // Build a tracker whose Coalescer is freshly constructed
+        // (no last_fired). We don't need a working pool / admin URL
+        // because the spawned task only fires fire_reload IF
+        // on_flush returns true — and we'll inspect handle state
+        // before either of those run.
+        let tracker: Arc<Mutex<FlushTracker>> = Arc::new(Mutex::new(FlushTracker {
+            coalescer: Coalescer::new(Duration::from_millis(500)),
+            flush_handle: None,
+        }));
+
+        // We can't drive the real `schedule_flush` here without a
+        // pool / admin / etc. — substitute a tiny in-test version
+        // that mirrors its single-flight check.
+        fn schedule_flush_test(tracker: Arc<Mutex<FlushTracker>>) {
+            let mut g = lock_tracker(&tracker);
+            if g.flush_handle.as_ref().is_some_and(|h| !h.is_finished()) {
+                return;
+            }
+            let handle = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            });
+            g.flush_handle = Some(handle);
+        }
+
+        schedule_flush_test(tracker.clone());
+        let first_id = {
+            let g = lock_tracker(&tracker);
+            g.flush_handle
+                .as_ref()
+                .expect("first call spawned a task")
+                .id()
+        };
+
+        // Second call while first is still sleeping — must not spawn.
+        schedule_flush_test(tracker.clone());
+        let second_id = {
+            let g = lock_tracker(&tracker);
+            g.flush_handle.as_ref().expect("handle still present").id()
+        };
+        assert_eq!(first_id, second_id, "second call must not have spawned");
+
+        // Wait for the first task to finish.
+        let join = {
+            let mut g = lock_tracker(&tracker);
+            g.flush_handle.take().expect("handle present")
+        };
+        join.await.expect("task completes");
+
+        // Now schedule_flush_test should spawn again (previous is finished).
+        schedule_flush_test(tracker.clone());
+        let third_id = {
+            let g = lock_tracker(&tracker);
+            g.flush_handle
+                .as_ref()
+                .expect("third call spawned a fresh task")
+                .id()
+        };
+        assert_ne!(third_id, first_id, "post-completion call spawns fresh");
     }
 }
