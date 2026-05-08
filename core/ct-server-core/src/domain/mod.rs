@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Validated value types shared across modules.
 //
 // Mirrors the structure of the macOS client's `core/src/domain/`:

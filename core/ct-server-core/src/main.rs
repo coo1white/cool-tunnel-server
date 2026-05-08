@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // ct-server-core — CLI entry point.
 //
 // Subcommand dispatch only. Each subcommand lives in its own module so

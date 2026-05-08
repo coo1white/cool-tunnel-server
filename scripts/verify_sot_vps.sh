@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # verify_sot_vps.sh — VPS-side cross-language SoT validator. Same
 # fixture matrix as scripts/verify_sot.sh, but invokes both
 # implementations via `docker compose exec` against the running

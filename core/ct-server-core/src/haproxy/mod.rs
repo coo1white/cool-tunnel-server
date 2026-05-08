@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! HAProxy SNI-router config rendering.
 //!
 //! HAProxy in this stack is a TCP/SSL-passthrough router on :443:

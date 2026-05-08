@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # verify_sot.sh — Cycle 3 / v0.0.55 cross-language SoT validator.
 #
 # The "panel hostname" derivation lives in TWO implementations:

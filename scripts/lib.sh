@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # scripts/lib.sh — shared helpers, sourced by every install / update /
 # backup / late-night-comeback script.
 #

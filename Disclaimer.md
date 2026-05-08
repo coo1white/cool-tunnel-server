@@ -52,38 +52,40 @@ and agree that:
 
 ## Licence and no-warranty
 
-This software is licensed under the **[PolyForm Noncommercial
-License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)**,
-copyright © 2026 the Cool Tunnel Server contributors. See
-[LICENSE](./LICENSE) for the full verbatim text.
+This software is licensed under the **[GNU Affero General Public
+License v3.0 only (AGPL-3.0-only)](https://www.gnu.org/licenses/agpl-3.0.txt)**,
+Copyright (C) 2026 coolwhite LLC. See [LICENSE](./LICENSE) for
+the full verbatim text.
 
-Three PolyForm Noncommercial clauses worth highlighting before
-you deploy:
+> *This project belongs to the community. coolwhite LLC chooses
+> transparency over profit, and freedom over control.*
 
-- **Non-commercial use only** (PolyForm § 2). You may use this
-  software for any purpose **except commercial use**. Commercial
-  use means any use you receive money or anything else of value
-  for — selling the software, hosting it as a paid service,
-  bundling it into a paid product, etc. If you want to use this
-  software commercially, contact the copyright holder for a
-  separate written license.
-- **Personal and non-commercial entity use is permitted.**
-  Individuals running this on their own VPS for their own use,
-  research projects, academic study, non-profits, and similar
-  uses are explicitly fine.
-- **No warranty, no liability** (PolyForm § 5). The software is
-  provided "AS IS, AS AVAILABLE, WITHOUT ANY WARRANTY". The
-  non-legal practical guidance in this disclaimer's "Operator
-  responsibility" section above is not a substitute for the
-  formal warranty disclaimer in the LICENSE file. The
-  contributors are not liable for any damages, claims, or legal
-  consequences arising from your deployment, your users'
-  activities, or any third party's use of this software.
+Three AGPL-3.0-only clauses worth highlighting before you deploy:
 
-Versions tagged before this license change (v0.0.58, v0.0.59,
-v0.0.60) remain available under AGPL-3.0-or-later for anyone
-who downloaded them; the new license applies from v0.0.61
-onward.
+- **Copyleft** (AGPL §§ 2 / 5). You may use, modify, host, and
+  redistribute this software for any purpose, commercial or
+  otherwise. Modifications and derivative works MUST be
+  distributed under AGPL-3.0-only.
+- **Network-source-disclosure** (AGPL § 13 — the "A" in AGPL).
+  If you operate a modified version of this software as a network
+  service (e.g. a paid proxy hosted for users), you MUST make the
+  modified source code available to those users. This closes the
+  SaaS loophole left open by vanilla GPL-3.
+- **No warranty, no liability** (AGPL §§ 15–16). The software is
+  provided "AS IS" without any warranty. The non-legal practical
+  guidance in this disclaimer's "Operator responsibility" section
+  above is not a substitute for the formal warranty disclaimer in
+  the LICENSE file. coolwhite LLC and contributors are not liable
+  for any damages, claims, or legal consequences arising from your
+  deployment, your users' activities, or any third party's use of
+  this software.
+
+Versions tagged before this license change retain their original
+licenses for anyone who downloaded them:
+
+- **v0.0.58, v0.0.59, v0.0.60** — AGPL-3.0-or-later
+- **v0.0.61, v0.0.62** — PolyForm Noncommercial 1.0.0
+- **v0.0.63 onward** — AGPL-3.0-only, Copyright (C) 2026 coolwhite LLC
 
 The third-party open-source components this stack builds and runs
 (Caddy, NaiveProxy, Laravel, Filament, predis/predis, the SQLx /

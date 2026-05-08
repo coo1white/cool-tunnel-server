@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # late-night-comeback.sh — pre-launch readiness gate.
 #
 # Eleven checks. Pass ≥ 82% (nine) to ship. Structural checks 1–4

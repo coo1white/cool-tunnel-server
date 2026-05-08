@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # entrypoint for the panel container — first-boot install + boot.
 #
 # Post-runtime-swap layout: nginx + php-fpm decommissioned. The

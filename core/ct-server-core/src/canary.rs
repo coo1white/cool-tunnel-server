@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Self-probe canary — early-warning surface for "this VPS is
 // becoming unreachable from its own network position."
 //

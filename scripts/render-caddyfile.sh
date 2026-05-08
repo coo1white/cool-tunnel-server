@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # render-caddyfile.sh — one-shot render of /etc/caddy/Caddyfile
 # from the panel database, executed inside the panel container.
 # v0.0.4+ Caddy is the ACME provider only; sing-box reads the

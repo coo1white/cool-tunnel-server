@@ -22,6 +22,95 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.63] — 2026-05-08 — Lighthouse pivot: AGPL-3.0-only relicense + coolwhite LLC stewardship
+
+> *This project belongs to the community. coolwhite LLC chooses
+> transparency over profit, and freedom over control.*
+
+**Era shift.** The project transitions from
+"Self-Protective / Restrictive" (PolyForm Noncommercial 1.0.0,
+v0.0.61–v0.0.62) to **"Corporate Open-Source Stewardship"**
+under coolwhite LLC. Same code, different posture: anyone may
+use, modify, host, and redistribute — provided modifications
+flow back under the same terms.
+
+### License
+
+- **AGPL-3.0-only** (deliberately not "or-later" — version pin
+  avoids forced adoption of a future GPL revision whose terms
+  haven't been reviewed by coolwhite LLC).
+- **AGPL** (not vanilla GPL): closes the SaaS loophole. A hosted
+  paid-proxy operator running modified Cool Tunnel Server source
+  MUST publish their modifications under AGPL-3.0-only (§ 13).
+
+### Copyright
+
+- **Holder: coolwhite LLC** — formal corporate identity, spelled
+  with letters. Distinct from the prior `coo1white` GitHub
+  handle (numeric `1`), which remains the namespace for
+  repository URLs and operator-facing references.
+- All necessary copyright assignments are in place per
+  coolwhite LLC.
+- Past releases retain their licensing for anyone who downloaded
+  them; this is a forward-only switch (see § Forward-only
+  switch).
+
+### What changed in-tree
+
+- `LICENSE` — replaced verbatim with AGPL-3.0-only text from
+  gnu.org (661 lines).
+- `core/Cargo.toml` (workspace) + 2 crate manifests:
+  `license = "AGPL-3.0-only"` (back in SPDX, no more
+  `license-file` workaround). `authors = ["coolwhite LLC"]`.
+- `panel/composer.json`: `"license": "AGPL-3.0-only"`.
+- `core/deny.toml`: comment updated; `[licenses.private]
+  ignore = true` retained for `publish = false` workspace
+  members. Allow-list unchanged.
+- `manifests/{ct-protocol,ct-server-core,panel}.upstream.json`:
+  `note` fields rewritten.
+- `README.md`, `NOTICE`, `Disclaimer.md`, `STRUCTURE.md`,
+  `THIRD_PARTY_LICENSES.md`: license badge / sections / GPL-3
+  interaction note rewritten for AGPL + LLC stewardship. The
+  community-stewardship statement appears in `README.md`,
+  `NOTICE`, and this changelog block.
+- **SPDX headers across 142 source files**: every `.rs` (27),
+  non-blade `.php` (85), `.sh` (20), `Dockerfile*` (5),
+  `.github/workflows/*.yml` (3), and our two `.tpl` files
+  (caddy + haproxy) now carries
+  `SPDX-License-Identifier: AGPL-3.0-only`. The sing-box
+  `config.json.tpl` is JSON and has no comment syntax — left
+  untouched.
+
+### What's not changing
+
+- Stack composition (sing-box GPL-3, Laravel MIT, Filament MIT,
+  etc. unaffected — AGPL-3 is GPL-3-compatible).
+- Operator-facing UX (no runtime behaviour change; same
+  containers, same panel, same config files).
+- Component drift detection, SoT enforcement, all CI / audit
+  cycles 31–43 — unchanged from v0.0.62.
+- macOS GUI client (separate repo `coo1white/cool-tunnel`,
+  target version v2.0.25 per `LTSC.md § Current baseline`) —
+  scheduled for matching AGPL-3.0-only relicense in its own
+  repo.
+
+### Forward-only switch
+
+Versions tagged before this change retain their original
+licenses for anyone who downloaded them:
+
+| Version range | License |
+| --- | --- |
+| v0.0.58 / v0.0.59 / v0.0.60 | AGPL-3.0-or-later |
+| v0.0.61 / v0.0.62 | PolyForm Noncommercial 1.0.0 |
+| **v0.0.63 onward** | **AGPL-3.0-only, Copyright (C) 2026 coolwhite LLC** |
+
+Retroactive relicense would require every downstream's consent
+and is intentionally out of scope. The "lighthouse" applies
+prospectively.
+
+---
+
 ## [0.0.62] — 2026-05-08 — CI: tag ↔ panel-config version-sync gate
 
 Narrow CI hardening release. No runtime behaviour change; no
@@ -6490,7 +6579,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.62...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.63...HEAD
+[0.0.63]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.62...v0.0.63
 [0.0.62]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.61...v0.0.62
 [0.0.61]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.60...v0.0.61
 [0.0.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.10...v0.0.11

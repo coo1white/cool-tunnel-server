@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // SubscriptionManifestV1 emitter — reads a single proxy_account +
 // server_config from the DB and prints the JSON manifest that any
 // platform's client can fetch via /api/v1/subscription.

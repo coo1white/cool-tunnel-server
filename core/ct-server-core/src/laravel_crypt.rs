@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Laravel-compatible AES-256-GCM decryption.
 //
 // Laravel 11's `Crypt::encryptString($plain)` produces:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Expiry enforcer. Disables proxy_accounts whose expires_at is in
 // the past.
 //

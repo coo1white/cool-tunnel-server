@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // sing-box clash API client (HTTP over the docker-internal network).
 //
 // sing-box exposes its management API in clash-style at

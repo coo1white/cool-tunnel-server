@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // `naive+https://user:pass@host:port` URL parser + serializer.
 //
 // This is the *single* place any Cool Tunnel client should turn a

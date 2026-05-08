@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # install.sh — first-time bootstrap for Cool Tunnel Server.
 #
 # Run from the repo root after editing .env. Idempotent: safe to

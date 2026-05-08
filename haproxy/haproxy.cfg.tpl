@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Cool Tunnel Server — HAProxy SNI router.
 #
 # What this HAProxy does:

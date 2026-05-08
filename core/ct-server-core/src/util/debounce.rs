@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Per-key fixed-window debouncer + leading-edge throttle with
 //! trailing flush. Used by [`crate::redis_bridge`] to collapse a
 //! burst of revocation messages — bulk Filament saves can fire

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # update.sh — pull a new release, rebuild, run component check, swap in.
 #
 # Safe to run on a live server. We bring up the new images alongside

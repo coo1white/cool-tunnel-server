@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # render-haproxy.sh — one-shot render of /usr/local/etc/haproxy/haproxy.cfg
 # from the panel database + PANEL_DOMAIN env var, executed inside
 # the panel container. Mirrors render-caddyfile.sh / render-singbox.sh.

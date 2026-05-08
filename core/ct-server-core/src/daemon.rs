@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Long-running daemon. Listens on a unix socket and accepts
 // `WireRequestV1` JSON-per-line, replies with `WireResponseV1`.
 //

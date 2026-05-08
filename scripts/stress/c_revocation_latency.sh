@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # c_revocation_latency.sh — measure ms from "operator clicks
 # Disable" to "the user is removed from sing-box's loaded config"
 # via the Redis revocation bus + clash-API hot-reload.

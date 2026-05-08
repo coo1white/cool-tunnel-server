@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Component verifier — server side.
 //
 // Reads a directory of *.upstream.json manifests, runs each

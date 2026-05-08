@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Caddyfile rendering — produces the file Caddy reads at boot.
 //!
 //! Caddy in this stack is **ACME-only**: stock binary, no plugins.

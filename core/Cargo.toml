@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version       = "0.0.62"
+version       = "0.0.63"
 edition       = "2021"
 # 1.85 introduced edition2024 (needed by clap_lex 1.1); some sqlx
 # transitives (icu_*) further require 1.86; v0.0.49's cargo-chef
@@ -29,16 +29,18 @@ edition       = "2021"
 # core/rust-toolchain.toml::channel and the FROM lines in
 # docker/core/Dockerfile.
 rust-version  = "1.88"
-# PolyForm Noncommercial 1.0.0 — source-available, non-commercial
-# use only. Commercial use (selling, hosting as a paid service,
-# bundling into a paid product) requires a separate written
-# license from the copyright holder. NOT in SPDX yet, so we use
-# `license-file` instead of `license` (cargo-deny picks this up
-# via [licenses.private] ignore = true on `publish = false`
-# workspace members). Verbatim license text at the repo root.
-license-file  = "../LICENSE"
+# GNU Affero General Public License v3.0 ONLY — copyleft with the
+# network-source-disclosure clause (§ 13). Anyone running modified
+# Cool Tunnel Server source as a network service (e.g. a paid proxy)
+# MUST distribute their modifications under AGPL-3.0-only. Pinned to
+# "-only" (not "-or-later") so a future GPL revision can't be forced
+# on derivatives without coolwhite LLC's review. AGPL-3.0-only IS in
+# SPDX, so the expression is honored directly — no `license-file`
+# workaround needed. cargo-deny still skips workspace crates via
+# [licenses.private] ignore = true since `publish = false`.
+license       = "AGPL-3.0-only"
 repository    = "https://github.com/coo1white/cool-tunnel-server"
-authors       = ["coo1white"]
+authors       = ["coolwhite LLC"]
 publish       = false
 
 [workspace.lints.rust]

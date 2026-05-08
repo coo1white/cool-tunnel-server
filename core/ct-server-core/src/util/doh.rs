@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // DoH (DNS-over-HTTPS) resolution helpers — RFC 1035 wire-format
 // query construction and a single-shot probe used by both the
 // component verifier (`components::verify_via_doh`) and the self-

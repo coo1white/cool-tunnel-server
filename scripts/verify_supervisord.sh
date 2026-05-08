@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # verify_supervisord.sh — pin the round-6 lifecycle invariants on
 # docker/panel/supervisord.conf.
 #

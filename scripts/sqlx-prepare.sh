@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # sqlx-prepare.sh — regenerate core/.sqlx/ query metadata from the
 # live schema.
 #

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # backup.sh — snapshot db + .env + Caddy ACME state into one tarball.
 #
 # Drops a timestamped file in ./backups/. ACME state lives in the

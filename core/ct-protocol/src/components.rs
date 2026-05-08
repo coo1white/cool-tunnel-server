@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Component-as-machine-part model.
 //
 // Every replaceable piece of the Cool Tunnel stack — Rust core,

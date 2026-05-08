@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Redis revocation bridge.
 //
 // Wire shape: Filament panel calls

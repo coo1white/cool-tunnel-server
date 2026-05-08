@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+# SPDX-License-Identifier: AGPL-3.0-only
 #
 # Cool Tunnel Server — Caddy ACME-only image.
 #

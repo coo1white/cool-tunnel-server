@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: AGPL-3.0-only
 
 declare(strict_types=1);
 
@@ -62,5 +63,5 @@ return [
         'ACME_DIRECTORY',
         'https://acme-v02.api.letsencrypt.org/directory'
     ),
-    'version' => '0.0.62',
+    'version' => '0.0.63',
 ];

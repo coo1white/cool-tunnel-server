@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Active anti-tracking probe.
 //
 // We dial *through* the configured proxy and hit a small JSON

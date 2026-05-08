@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Scheduled LTSC audit workflow.
 #
 # The first 30 audit cycles in v0.0.6 / v0.0.7 were run by hand.
