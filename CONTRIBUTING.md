@@ -181,6 +181,61 @@ If a spawn's cardinality cannot be bounded, it doesn't ship.
 
 ---
 
+## Logging discipline (post-v0.0.67)
+
+The codebase uses `tracing` with `EnvFilter` (`RUST_LOG=…`).
+Defaults: `info` level on stderr, structured fields preferred
+over format strings. Three rules:
+
+| Rule | Why |
+|---|---|
+| **`info!` and above must NOT carry per-user identifiers** (`username`, `account_id`, `email`, IP addresses, subscription tokens). Demote to `debug!` if the field is operationally useful, or omit. | The published LTSC posture promises no per-user analytics surface. `info!` lines are the operator-visible default; PII at that level violates the promise even if the operator is the only consumer of their own logs. |
+| **`warn!` and `error!` describe operator-actionable failures** — what broke, what to check next. Use these for: render failures, reload failures, subscriber reconnects, semaphore saturation events. | Operators reading `docker compose logs` need actionable signal, not narrative. Reserve these levels for "something went wrong, here's the diagnostic." |
+| **`debug!` is the verbose investigation channel.** Per-user identifiers, decoded payloads, decision-trace events go here. Off by default; opt-in via `RUST_LOG=ct_server_core::module=debug`. | Operators investigating a specific incident enable debug for the relevant module only. The signal-to-noise ratio at info-level stays usable. |
+
+The audit pattern: `grep -rn "tracing::info!" core/ct-server-core/src/`
+must produce zero matches that include `username`, `account =`,
+`email`, `password`, `subscription_token`, or any IP-shaped
+field. The v0.0.67 hardening pass demoted two such sites
+(`db.rs::disable_account` and `quota.rs::enforce`); future
+contributions follow the same discipline.
+
+If a new event genuinely needs to be info-level AND carry
+per-user data (rare; usually a sign the wrong abstraction is
+being logged), surface the question in code review and document
+the exception inline. The default answer is "demote to debug."
+
+---
+
+## Internal-health metrics (post-v0.0.67)
+
+Operator-internal-health counters are exposed via an optional
+Prometheus text-format `/metrics` endpoint (`ct-server-core
+--metrics-bind <addr>`, default off). The boundary against
+user-tracking is documented in
+[`LTSC.md § Internal-health observability vs user analytics`](./LTSC.md).
+
+Rules for adding a new counter:
+
+| Allowed | Not allowed |
+|---|---|
+| Per-process state (uptime, restart count) | Per-user state (per-username connection count) |
+| Per-subsystem state (semaphore saturation, pool utilization) | Per-account labels (`{account="alice"}`) |
+| Operator-actionable rates (Coalescer fires/sec, subscriber restarts/sec) | Per-destination labels (`{target_host="example.com"}`) |
+| Whole-process counters with low-cardinality labels (`edge="leading\|trailing"`) | High-cardinality labels (`{request_id="..."}`) |
+
+Implementation pattern: add a counter field to
+`internal_metrics::MetricsRegistry`, expose an increment helper
+(`note_*`), call it from the producer site. The render function
+adds a `# HELP` + `# TYPE` directive and the value line.
+
+If a proposed counter would identify a specific user, even
+indirectly via labels — it's not a metric, it's an audit log
+entry. Send it to `tracing::debug!` (per the logging
+discipline above) and document why.
+
+---
+
 ## Commit + PR flow
 
 - Branch off `main`. Naming: `feat/v0.0.X-...`, `fix/...`,

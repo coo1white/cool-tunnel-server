@@ -258,7 +258,13 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
 /// UPDATE atomicity.
 #[allow(dead_code)]
 pub async fn disable_account(pool: &MySqlPool, id: i64, reason: &str) -> Result<()> {
-    tracing::info!(account = id, reason, "disabling account");
+    // R-2 (v0.0.67): demoted from info! → debug! per CONTRIBUTING.md
+    // logging discipline. The `account` field carries an account ID,
+    // which is operator-visible PII; surfacing it at info-level
+    // would violate the "no per-user identifiers in info-and-above
+    // logs" rule. Operators investigating disable events can
+    // `RUST_LOG=ct_server_core::db=debug` to see this trail.
+    tracing::debug!(account = id, reason, "disabling account");
     let id_u: u64 = id.max(0) as u64;
     sqlx::query!(
         r#"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?"#,

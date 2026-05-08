@@ -17,6 +17,7 @@ mod db;
 mod domain;
 mod err;
 mod haproxy;
+mod internal_metrics;
 mod laravel_crypt;
 mod metrics;
 mod probe;
@@ -148,6 +149,19 @@ enum Cmd {
         /// (default) skips the subscriber — single-host dev only.
         #[arg(long, env = "REDIS_URL", default_value = "")]
         redis_url: String,
+        /// Bind address for the operator-internal-health
+        /// `/metrics` endpoint (Prometheus text-format). Empty
+        /// (default) → endpoint disabled. Recommended single-
+        /// container value: `127.0.0.1:9292` (ct-server-core
+        /// runs inside the panel container alongside FrankenPHP;
+        /// `docker compose exec ct-panel curl
+        /// http://127.0.0.1:9292/metrics` reaches it). Per
+        /// LTSC.md § Internal-health observability vs user
+        /// analytics, this surface is operator-internal-health
+        /// only — never per-user data, never a public port.
+        /// (v0.0.67.)
+        #[arg(long, env = "CT_METRICS_BIND", default_value = "")]
+        metrics_bind: String,
     },
     /// Emit a SubscriptionManifestV1 to stdout for `account_id`.
     Subscription {
@@ -556,7 +570,11 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 probe::anti_tracking(&target, via.as_deref()).await
             }
         },
-        Cmd::Daemon { socket, redis_url } => {
+        Cmd::Daemon {
+            socket,
+            redis_url,
+            metrics_bind,
+        } => {
             // Build the shared pool ONCE here. Both the wire-handler
             // serve loop and the redis_bridge subscriber share it,
             // so neither path pays per-request connection setup.
@@ -567,6 +585,31 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 max_connections = 4,
                 "ct-server-core: shared DB pool ready (lifted from per-request)"
             );
+
+            // T-1 semaphore lifted from `daemon::serve` to here
+            // (v0.0.67) so the optional internal_metrics registry can
+            // read `available_permits()` for the
+            // `ct_daemon_handler_permits_used` gauge without a
+            // duplicate construction site.
+            let permits =
+                std::sync::Arc::new(tokio::sync::Semaphore::new(daemon::MAX_CONCURRENT_HANDLERS));
+
+            // Optional internal-metrics endpoint. Off by default;
+            // operator opts in via --metrics-bind / CT_METRICS_BIND.
+            // Per LTSC.md, operator-internal-health only — never
+            // per-user data.
+            let metrics_registry = if metrics_bind.trim().is_empty() {
+                None
+            } else {
+                let r = internal_metrics::MetricsRegistry::new(
+                    permits.clone(),
+                    daemon::MAX_CONCURRENT_HANDLERS,
+                    pool.clone(),
+                );
+                internal_metrics::spawn(metrics_bind.clone(), r.clone());
+                Some(r)
+            };
+
             if !redis_url.is_empty() {
                 redis_bridge::spawn(
                     redis_url,
@@ -574,11 +617,20 @@ async fn dispatch(cli: Cli) -> Result<()> {
                     cli.template.clone(),
                     cli.output.clone(),
                     cli.admin_url.clone(),
+                    metrics_registry.clone(),
                 );
             } else {
                 tracing::warn!("REDIS_URL empty — running without revocation subscriber");
             }
-            daemon::serve(&socket, pool, &cli.template, &cli.output, &cli.admin_url).await
+            daemon::serve(
+                &socket,
+                pool,
+                &cli.template,
+                &cli.output,
+                &cli.admin_url,
+                permits,
+            )
+            .await
         }
         Cmd::Subscription { account_id } => {
             let pool = db::connect(&cli.database_url).await?;
