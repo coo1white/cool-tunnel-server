@@ -6490,7 +6490,10 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.62...HEAD
+[0.0.62]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.61...v0.0.62
+[0.0.61]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.60...v0.0.61
+[0.0.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.10...v0.0.11
 [0.0.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.8...v0.0.9
