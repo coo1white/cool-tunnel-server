@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # LTSC CI gate.
 #
 # Runs on every push and pull-request. Replicates exactly what

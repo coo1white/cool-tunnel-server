@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Single error type so we don't pull `anyhow` (heavier than we need).
 //
 // We can't write a blanket `impl<E: Error> From<E> for Error` — that

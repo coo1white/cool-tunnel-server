@@ -105,7 +105,7 @@ cool-tunnel-server/
 ├── .gitignore                           target/, vendor/, .env, etc.
 ├── .dockerignore                        keeps build contexts small + secrets out
 │
-├── LICENSE                              PolyForm Noncommercial 1.0.0 © 2026 the Cool Tunnel Server contributors
+├── LICENSE                              AGPL-3.0-only — Copyright (C) 2026 coolwhite LLC
 ├── NOTICE                               bundled-software attribution
 ├── THIRD_PARTY_LICENSES.md              full list incl. sing-box GPL-3
 ├── Disclaimer.md                        operator responsibility

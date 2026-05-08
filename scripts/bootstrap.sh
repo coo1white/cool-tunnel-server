@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # scripts/bootstrap.sh — one-line bootstrap for Cool Tunnel Server.
 #
 # Designed to be the curl|bash target referenced in README.md. Walks

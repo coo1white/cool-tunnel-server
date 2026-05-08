@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+# SPDX-License-Identifier: AGPL-3.0-only
 #
 # sing-box (https://github.com/SagerNet/sing-box) — actively-maintained
 # Go reimplementation of the NaiveProxy server protocol with multi-user

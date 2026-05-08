@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // JSON wire types for the panel ↔ ct-server-core daemon channel.
 //
 // Same shape as the macOS client's Request/Response/Event split, so

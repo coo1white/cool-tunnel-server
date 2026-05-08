@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # sbom.sh — produce CycloneDX SBOMs for everything that goes into a
 # release artefact. Output lands in `sbom/`. Each release uploads
 # these to GitHub.

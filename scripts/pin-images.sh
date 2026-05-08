@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # pin-images.sh — resolve docker base-image tags to digests and
 # update the Dockerfiles in place. LTSC reproducibility — the tag
 # `caddy:2.8.4-alpine` can drift if Docker Hub republishes the tag,

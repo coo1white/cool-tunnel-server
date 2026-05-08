@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+# SPDX-License-Identifier: AGPL-3.0-only
 #
 # Build the ct-server-core Rust binary. This image isn't run as a
 # service; it's used by docker-compose's build stage to extract the

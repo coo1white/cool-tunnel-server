@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # restore.sh — bring a fresh box up from a `backup.sh` tarball.
 #
 # Companion to scripts/backup.sh. Pre-v0.0.15 the project shipped a

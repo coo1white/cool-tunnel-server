@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Shared SQLx pool and DB queries.
 //
 // COMPILE-TIME SQL TYPE CHECKING (v0.0.11+).

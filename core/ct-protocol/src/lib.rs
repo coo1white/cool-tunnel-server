@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // ct-protocol — shared types every Cool Tunnel client / server agrees on.
 //
 // Conventions:

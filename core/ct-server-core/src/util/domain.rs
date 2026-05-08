@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Cycle 3 / v0.0.55 — Single source of truth for the panel hostname.
 //
 // The "panel hostname" (panel.<base> per the v0.0.33 SNI router

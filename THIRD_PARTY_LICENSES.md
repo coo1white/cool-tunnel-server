@@ -1,35 +1,33 @@
 # Third-Party Licences
 
-This file lists the licences of every third-party component the Cool
-Tunnel Server stack builds, runs, or links against. The original code
-in this repository is **PolyForm Noncommercial 1.0.0** (see
-[LICENSE](./LICENSE)); the components below are under their own
-upstream terms, and those terms must be preserved in any
-redistribution of the resulting stack (including private
-redistribution to a single collaborator).
+This file lists the licences of every third-party component the
+Cool Tunnel Server stack builds, runs, or links against. The
+original code in this repository is **AGPL-3.0-only**, Copyright
+(C) 2026 coolwhite LLC (see [LICENSE](./LICENSE)); the components
+below are under their own upstream terms, and those terms must
+be preserved in any redistribution of the resulting stack.
 
 If you redistribute the running images, you ship every licence in
 this list along with them. The cleanest way is to preserve this file
 plus [NOTICE](./NOTICE) plus the per-image `/usr/share/doc/`
 directories that come pre-populated by Debian / Alpine.
 
-> **GPL-3 + PolyForm Noncommercial interaction.** sing-box (the
-> proxy server) is GPL-3.0; our own code is PolyForm Noncommercial
-> 1.0.0. We bundle sing-box as a separate process / image —
-> *not* statically linked with our code — so its GPL-3 scope stays
-> contained to its own image. If you ever modify sing-box's
-> source, you must distribute your modified source under GPL-3.0
-> (we ship it unmodified and pin the upstream tag in
-> `manifests/sing-box.upstream.json`).
+> **AGPL-3 + GPL-3 interaction.** sing-box (the proxy server) is
+> GPL-3.0; our own code is AGPL-3.0-only. AGPL-3 is GPL-3-
+> compatible — they can be combined. We still bundle sing-box as
+> a separate process / image (not statically linked) so its GPL-3
+> scope stays contained to its own image. If you ever modify
+> sing-box's source, you must distribute your modified source
+> under GPL-3.0 (we ship it unmodified and pin the upstream tag
+> in `manifests/sing-box.upstream.json`).
 >
-> **Note on commercial redistribution.** PolyForm Noncommercial
-> prohibits commercial use of OUR code (the panel + the Rust
-> core); it does not prohibit you from running the upstream
-> permissive / GPL components (Caddy, Laravel, MariaDB, Redis,
-> sing-box) commercially on their own. But the integrated stack
-> as shipped here cannot be sold or hosted as a paid service
-> without a separate commercial license — contact the copyright
-> holder if that's what you want.
+> **Network-source-disclosure (AGPL § 13).** If you operate a
+> modified version of Cool Tunnel Server as a network service
+> (e.g. a paid proxy hosted for users), AGPL § 13 requires you
+> to make the modified source code available to those users.
+> Pin the upstream tag and offer the source URL. Running the
+> stock images unmodified means you're redistributing our source
+> unmodified — already satisfied by linking to this repository.
 
 ## Top-level upstream licences
 

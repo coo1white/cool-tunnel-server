@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Prometheus-text metrics scraper + traffic_logs writer.
 //
 // HONEST STATE (post-v0.0.2 sing-box switch): the metric names this

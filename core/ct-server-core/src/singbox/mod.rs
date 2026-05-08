@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // sing-box config rendering — the heart of what makes proxy account
 // changes visible to the running server.
 //

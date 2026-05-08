@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // SubscriptionManifestV1 — the JSON the server emits at
 // GET /api/v1/subscription/<token> when a client wants to
 // configure itself from a single URL.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # run-all.sh — release-gate stress test orchestrator.
 #
 # Runs every stress test in scripts/stress/[a-h]_*.sh against the

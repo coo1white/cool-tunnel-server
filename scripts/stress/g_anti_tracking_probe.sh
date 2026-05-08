@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # g_anti_tracking_probe.sh — verify the anti-tracking guarantees
 # (hide_ip, hide_via, probe_resistance) actually work end-to-end
 # against a public echo endpoint.

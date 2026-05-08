@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Tiny Go-template-style renderer.
 //!
 //! We render `sing-box/config.json.tpl` from a small set of named
