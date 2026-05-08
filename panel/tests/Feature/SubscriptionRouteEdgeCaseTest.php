@@ -101,8 +101,8 @@ class SubscriptionRouteEdgeCaseTest extends TestCase
             $sub->getContent(),
             "body bytes must match cover for token=`{$token}` — "
             ."either the route regex now accepts characters it shouldn't, "
-            ."or the exception handler scope shrunk and a Laravel-branded "
-            ."error page is leaking instead of falling through to cover-site",
+            .'or the exception handler scope shrunk and a Laravel-branded '
+            .'error page is leaking instead of falling through to cover-site',
         );
     }
 
