@@ -20,8 +20,10 @@ It's the backend for the [Cool Tunnel macOS client](https://github.com/coo1white
 - [What you need before you start](#what-you-need-before-you-start)
 - [Quick start](#quick-start)
 - [What's running](#whats-running)
+- [System architecture](#system-architecture)
 - [Adding your first proxy user](#adding-your-first-proxy-user)
 - [Anti-tracking — what the server hides](#anti-tracking--what-the-server-hides)
+- [QA checklist — verify your install](#qa-checklist--verify-your-install)
 - [Common operations](#common-operations)
 - [Repo layout](#repo-layout)
 - [Things going wrong?](#things-going-wrong)
@@ -56,30 +58,63 @@ It's the backend for the [Cool Tunnel macOS client](https://github.com/coo1white
 
 ## Quick start
 
-On a fresh Debian VPS as `root`:
+On a fresh Debian/Ubuntu VPS as `root`. Pick whichever install pattern matches your trust model.
+
+### Pattern A — One-line install (fastest)
 
 ```bash
-# 1. Install Docker (skip if already installed via your VPS image).
-#    Full apt-key + apt-source recipe + recovery from
-#    docker.io / docker-ce conflict is in
-#    docs/installation-debian.md § 5.
+curl -sSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
+```
+
+Installs Docker (Compose v2), clones the repo to `/opt/cool-tunnel-server`, seeds `.env` from `.env.example` with auto-generated random passwords for DB / Redis / panel admin, then prints the next-step instructions (edit `.env` to set `DOMAIN` + `ACME_EMAIL`, then run `./scripts/install.sh`).
+
+**Fully unattended** (CI / Terraform / Ansible — pre-fills `DOMAIN` + `ACME_EMAIL` and chains straight into the 8-step bootstrap):
+
+```bash
+DOMAIN=proxy.example.com \
+ACME_EMAIL=ops@example.com \
+AUTO_INSTALL=1 \
+  bash <(curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh)
+```
+
+### Pattern B — Verify before running (recommended for security-conscious operators)
+
+This is a privacy / anti-censorship tool — your audience cares about supply-chain integrity. The same script, but reviewed first:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh
+less bootstrap.sh                # read it
+sha256sum bootstrap.sh           # cross-check against the SHA on the GitHub release page
+bash bootstrap.sh
+```
+
+### Pattern C — Manual three-step (no remote scripts at all)
+
+```bash
 apt update && apt install -y git curl jq dnsutils apache2-utils \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
-
-# 2. Clone + configure.
-git clone https://github.com/coo1white/cool-tunnel-server.git
-cd cool-tunnel-server
-cp .env.example .env
-$EDITOR .env                     # set DOMAIN, ACME_EMAIL, passwords
-
-# 3. Bootstrap. 8 numbered steps; ↳ try: hints on every failure.
+git clone https://github.com/coo1white/cool-tunnel-server.git /opt/cool-tunnel-server
+cd /opt/cool-tunnel-server && cp .env.example .env && $EDITOR .env
 ./scripts/install.sh
+```
+
+If you don't already have Docker's official apt repo configured, the full key + sources recipe is in [`docs/installation-debian.md`](./docs/installation-debian.md) § 5.
+
+### After bootstrap
+
+Whichever pattern you used, the next steps are the same:
+
+```bash
+cd /opt/cool-tunnel-server
+$EDITOR .env                     # set DOMAIN, PANEL_DOMAIN, ACME_EMAIL,
+                                 # DB_PASSWORD, DB_ROOT_PASSWORD, REDIS_PASSWORD
+./scripts/install.sh             # 8 numbered steps; ↳ try: hints on every failure
 ```
 
 When `install.sh` finishes, your panel is at `https://panel.<your-domain>/admin`. First boot takes 1–3 minutes (Docker images build, Let's Encrypt issues a cert).
 
-If something fails, the script prints exactly what's wrong and the next command to run. Most common gotchas:
+Most common gotchas if it fails:
 
 - **DNS hasn't propagated** → `dig +short A your-domain.com` should return your VPS IP. Wait 5 minutes if not.
 - **Port 80 blocked** → `ufw allow 80/tcp` and check your provider's firewall.
@@ -103,6 +138,62 @@ For the full step-by-step (DNS, firewall, BBR tuning, SSH hardening), see [`docs
 That's the operator-visible surface. Internal plumbing — the Rust `ct-server-core` binary doing config rendering / clash-API hot-reload / metrics scraping — runs inside the panel container. Architecture deep-dive: [`docs/architecture.md`](./docs/architecture.md).
 
 > **Deploying for use from inside the Great Firewall of China?** Read [`docs/going-to-china.md`](./docs/going-to-china.md) end-to-end before you travel. It covers the DoH-resolver default switch, the self-probe canary, the active-probing detector, and a "when something stops working" runbook tuned for that threat model.
+
+---
+
+## System architecture
+
+The panel container runs three coordinated layers in one image. Splitting them lets each one do what it's good at without paying the cost the others would impose.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  PANEL CONTAINER (single image, three runtimes)                 │
+│                                                                 │
+│   Filament 3 (PHP) ──┐                                          │
+│   Livewire 3        │  HTTP request                             │
+│                     ▼                                           │
+│           ┌───────────────────┐                                 │
+│           │ FrankenPHP worker │ ← long-lived; framework boot    │
+│           │   (Caddy + PHP)   │   paid ONCE per worker, reused  │
+│           └─────────┬─────────┘   across ~500 requests          │
+│                     │ Symfony\Process exec                      │
+│                     ▼                                           │
+│           ┌───────────────────┐                                 │
+│           │  ct-server-core   │ ← Rust subprocess; renders      │
+│           │      (Rust)       │   sing-box config + Caddyfile,  │
+│           └─────────┬─────────┘   talks to clash-API,           │
+│                     │              scrapes Prometheus           │
+└─────────────────────┼───────────────────────────────────────────┘
+                      │ Unix socket / clash-API HTTP
+                      ▼
+                 sing-box / haproxy / caddy / db / redis
+```
+
+### Why FrankenPHP worker mode
+
+The panel sits behind a Filament admin UI. Every "Save" button click renders a Caddyfile, regenerates a sing-box config, and hot-reloads the proxy via the clash-API — three subprocesses + DB writes per click. Under classic PHP-FPM, every request paid the **Laravel + Filament boot cost (~30–50 ms)** before doing any real work.
+
+FrankenPHP's worker mode keeps the framework booted in long-lived PHP processes (`worker num 4` in our `Caddyfile`). The boot is paid ONCE per worker, then the worker handles ~500 requests before recycling (`MAX_REQUESTS=500` in `supervisord.conf`). Per-request latency drops by the boot cost. Persistent DB connections under worker mode are an additional win — no TCP+auth handshake per request.
+
+### Why a Rust subprocess for the hot path
+
+PHP is a comfortable place to write the admin UI; it is a hostile place to:
+
+- atomic-write `config.json` with `fsync()` and SHA-256 deduplication
+- subscribe to a Redis pub/sub channel with leading-edge + trailing-flush coalescing (≤ 2 reloads per 100 ms burst)
+- speak the sing-box clash-API (HTTP PUT with bearer derived from APP_KEY)
+- scrape Prometheus metrics and roll them into per-account byte counters
+
+`ct-server-core` (Rust, statically linked, ~8 MB binary) handles all four. PHP shells out via `Symfony\Process`; the boundary contract is **CLI args + JSON on stdout + structured stderr**. Every JSON-output field name PHP reads is pinned by Rust-side tests so a future rename fails CI before deployment.
+
+### Where everything lives
+
+- `panel/app/Services/CtServerCore.php` — the single PHP→Rust gateway (one method per Rust subcommand)
+- `core/ct-server-core/src/main.rs` — Rust CLI entry point, walks the `Error::source()` chain on top-level errors so the operator sees the underlying cause
+- `docker/panel/Caddyfile` — FrankenPHP worker config (kept at `/etc/caddy-panel/` so the operator-facing ACME Caddyfile in the volume-mounted `/etc/caddy/` doesn't shadow it; lesson from v0.0.59 hotfix)
+- `docker/panel/supervisord.conf` — runs FrankenPHP, the queue worker, the scheduler, and the ct-server-core daemon as four separate programs with uniform graceful-shutdown invariants
+
+Deeper walkthrough: [`docs/architecture.md`](./docs/architecture.md).
 
 ---
 
@@ -135,6 +226,44 @@ Out of the box, the proxy is configured to look as much like a normal HTTPS webs
 - **Three-network Docker isolation**. The `ct-data` and `ct-clash` internal-only docker networks isolate the database and management plane respectively — a compromised Caddy can't reach the clash-API; a compromised database can't phone home.
 
 You can toggle the panel-side anti-tracking flags in **Server config** in the panel.
+
+---
+
+## QA checklist — verify your install
+
+Walk through this on the running stack after `install.sh` finishes. Each item checks a different layer of the three-layer architecture (UI → PHP/FrankenPHP → Rust). If any check fails, paste the symptom into a GitHub issue with `docker compose logs --tail=80 panel` attached.
+
+### Layer 1 — operator-side checks (run from the VPS shell)
+
+- [ ] **Stack is healthy.** `docker compose ps` shows all six services `Up` and `healthy` (panel may say `health: starting` for the first ~120 s — round-7 grace period).
+- [ ] **Pre-launch readiness.** `LNC_TEST_PROXY_URL='https://alice:<password>@<your-domain>:443' ./scripts/late-night-comeback.sh` returns ≥ 9 / 11. The four "structural" checks (DNS, ports, ACME, UFW) cap your score at 7 if any fails.
+- [ ] **Component drift detector all-OK.** `docker compose exec panel ct-server-core component check --manifests /srv/manifests` shows 11 × `OK`. Any `NG` row names the version mismatch and the next step.
+- [ ] **Panel responds inside the docker bridge.** `docker compose exec caddy sh -c 'wget -qO- http://panel:9000/up'` returns Laravel's `<dialog>...Application up...</dialog>` HTML.
+
+### Layer 2 — PHP / FrankenPHP boundary
+
+- [ ] **Login page loads.** Browser → `https://panel.<your-domain>/admin` shows the Filament login. TLS cert is valid (no browser warning).
+- [ ] **First admin can log in.** Use the credentials you created with `ct:make-admin`. Successful login redirects to the dashboard.
+- [ ] **Login throttle works.** Five failed logins from the same IP within a minute lock you out with a generic "Too many attempts" message — same shape as a wrong-password error (no info leak; round-25).
+- [ ] **Lost-password recovery works.** From the VPS shell: `docker compose exec panel php artisan ct:make-admin --force --email=you@example.com --password=newpassword` → log in with the new password.
+
+### Layer 3 — Filament UI → Rust subprocess
+
+- [ ] **Create a proxy account.** Proxy accounts → New. Save. The success toast shows the cleartext password ONCE — copy it now.
+- [ ] **Subscription URL action works.** From the proxy account row, click the link icon. The URL it shows should match the format `https://panel.<your-domain>/api/v1/subscription/<base64-url-token>`.
+- [ ] **Regenerate password works** (known limitation: no debounce — round-15 flagged this; **don't double-click** the button under network latency or you'll generate two passwords and only see the second).
+- [ ] **Server config save renders + reloads.** Server config → change the cover-site slug → Save. Background: this triggers ct-server-core to re-render Caddyfile + sing-box config + hot-reload via clash-API. Within ~5 s `docker compose logs --tail=20 panel` should show a `sing-box reloaded via clash API` line.
+- [ ] **Active fake-site swap works.** Cover sites → activate a different one → save. Round-27 invariant: only one site can be active at a time. The previously-active row should flip to inactive automatically.
+- [ ] **Components page renders without "0 OK / 0 NG".** Components page → loads with all 11 components shown. A blank "0 OK / 0 NG" page means the panel can't shell out to ct-server-core (round-12 added the `component.check.failed` log).
+
+### Layer 4 — end-to-end proxy traffic
+
+- [ ] **Client connects through the proxy.** Configure your Cool Tunnel macOS client (or any NaiveProxy client) with `naive+https://<user>:<password>@<your-domain>:443`. A real website loads.
+- [ ] **Cover-site invariant holds.** Without the client, `curl -sI https://<your-domain>/api/v1/subscription/garbage-token` returns the same `Content-Type` and `ETag` as `curl -sI https://<your-domain>/random-path`. A probe can't distinguish a real subscription URL from a random one.
+- [ ] **Traffic counter increments.** Browse a few MB through the proxy, wait 60 s for the `traffic:rollup` scheduler tick, refresh the proxy account row in Filament — `Used` bytes increased.
+- [ ] **Quota enforcement works.** Set the account's `Quota bytes` to 1, save. Within 60 minutes (the `quota:enforce` schedule), the account flips to disabled and the client stops connecting.
+
+If all 18 boxes tick, the install is solid. The first three layers are usually fine after `install.sh` completes; the proxy-traffic block is the actual end-to-end smoke test.
 
 ---
 
@@ -187,7 +316,7 @@ cool-tunnel-server/
 ├── haproxy/            haproxy.cfg template (SNI router)
 ├── docker/             Per-service Dockerfiles
 ├── manifests/          Pinned versions of every component
-├── scripts/            install.sh, update.sh, backup.sh, restore.sh, late-night-comeback.sh
+├── scripts/            bootstrap.sh, install.sh, update.sh, backup.sh, restore.sh, late-night-comeback.sh
 ├── docs/               Deeper guides — installation, architecture, going-to-china
 └── docker-compose.yml  Brings up the whole stack
 ```
@@ -231,7 +360,7 @@ The version increment is fast (0.0.X today) and operator-driven — each release
 
 ## License
 
-**AGPL-3.0-or-later** — (c) 2026 the Cool Tunnel Server contributors. See [LICENSE](./LICENSE) for the full GNU Affero General Public License v3.0 text.
+**AGPL-3.0-or-later** — © 2026 the Cool Tunnel Server contributors. See [LICENSE](./LICENSE) for the full GNU Affero General Public License v3.0 text.
 
 The AGPL is a strict copyleft license. Two implications worth calling out for this specific project shape:
 
