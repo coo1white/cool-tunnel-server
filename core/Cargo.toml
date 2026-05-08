@@ -37,7 +37,7 @@ rust-version  = "1.88"
 # The LICENSE file at the repo root holds the verbatim text.
 license       = "AGPL-3.0-or-later"
 repository    = "https://github.com/coo1white/cool-tunnel-server"
-authors       = ["Nick (Bai Yuhang)"]
+authors       = ["coo1white"]
 publish       = false
 
 [workspace.lints.rust]
