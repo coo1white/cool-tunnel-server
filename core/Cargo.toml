@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version       = "0.0.60"
+version       = "0.0.61"
 edition       = "2021"
 # 1.85 introduced edition2024 (needed by clap_lex 1.1); some sqlx
 # transitives (icu_*) further require 1.86; v0.0.49's cargo-chef
@@ -29,13 +29,14 @@ edition       = "2021"
 # core/rust-toolchain.toml::channel and the FROM lines in
 # docker/core/Dockerfile.
 rust-version  = "1.88"
-# AGPL-3.0-or-later — strict copyleft. Anyone who modifies this
-# code AND runs it as a network service (this repo's primary use
-# case) must publish the source of their modifications under the
-# same terms. Closes the SaaS loophole that GPL-3.0 leaves open.
-# Same license as Mastodon, Nextcloud, Pleroma, BookStack, etc.
-# The LICENSE file at the repo root holds the verbatim text.
-license       = "AGPL-3.0-or-later"
+# PolyForm Noncommercial 1.0.0 — source-available, non-commercial
+# use only. Commercial use (selling, hosting as a paid service,
+# bundling into a paid product) requires a separate written
+# license from the copyright holder. NOT in SPDX yet, so we use
+# `license-file` instead of `license` (cargo-deny picks this up
+# via [licenses.private] ignore = true on `publish = false`
+# workspace members). Verbatim license text at the repo root.
+license-file  = "../LICENSE"
 repository    = "https://github.com/coo1white/cool-tunnel-server"
 authors       = ["coo1white"]
 publish       = false

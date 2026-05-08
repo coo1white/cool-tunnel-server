@@ -3,11 +3,11 @@ name        = "ct-protocol"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
-license.workspace      = true
+license-file.workspace = true
 repository.workspace   = true
 authors.workspace      = true
 publish.workspace      = true
-description = "Cool Tunnel wire format and client/server shared types. no_std-friendly. Used by the server and by every platform's client (current macOS, future iOS/Android/Windows/Linux desktop). AGPL-3.0-or-later; see ../../LICENSE."
+description = "Cool Tunnel wire format and client/server shared types. no_std-friendly. Used by the server and by every platform's client (current macOS, future iOS/Android/Windows/Linux desktop). PolyForm Noncommercial 1.0.0; see ../../LICENSE. Commercial use requires a separate license."
 readme      = "README.md"
 
 [features]
