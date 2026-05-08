@@ -14,6 +14,172 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Security
+
+---
+
+## [0.0.58] — 2026-05-08 — FrankenPHP runtime swap, AGPL-3.0-or-later relicense, and 30-round audit-loop hardening
+
+The largest single release since v0.0.33 (the SNI-router split).
+Three substantive narratives compressed into one tag:
+
+  1. **Runtime swap** — panel container moved from PHP-FPM +
+     nginx to FrankenPHP + Laravel Octane (worker mode). PHP
+     8.3 → 8.4. Filament admin "Save → reload" round-trips drop
+     by the framework boot cost (~30-50 ms each) because the
+     boot is paid once per worker instead of once per request.
+     Five operator-blocking deploy-time bugs in the swap chain
+     caught and fixed across PRs #7-#12.
+  2. **License switch** — proprietary "All Rights Reserved" →
+     AGPL-3.0-or-later. The strictest OSI-approved copyleft;
+     same license as Mastodon, Nextcloud, BookStack. Closes the
+     SaaS loophole that GPL-3.0 leaves open: anyone modifying
+     this code AND running it as a network service must publish
+     their modifications under the same terms. Stock unmodified
+     deployments don't trigger anything.
+  3. **30-round audit loop** — a focused multi-pass code review
+     where each round picked a fresh lens. 12 production-bug
+     fixes + 7 regression-anchor PRs + several process /
+     observability / dep-hygiene closures. Highlights below.
+
+### The audit loop in one paragraph each
+
+- **Round 10 — client contract.** SubscriptionController now
+  falls through to cover-site (instead of emitting a manifest
+  with `password: ""`) when `getCleartextPassword()` returns
+  null — the failure mode that pre-v0.0.5 rows or APP_KEY
+  rotation produced silently. Plus a regression test anchoring
+  that the literal `{{CLEARTEXT_PLACEHOLDER}}` string from the
+  Rust core's CLI emitter never leaks into the HTTP path.
+- **Round 11 — data integrity.** The HMAC canonical form the
+  PHP server signs now matches what a Rust client following
+  the documented spec would produce on
+  deserialise + signature=None + re-serialise. Pre-fix the
+  panel emitted `"signature":null` and `"note":null` literals
+  in the canonical, which serde's `skip_serializing_if =
+  Option::is_none` would NOT round-trip — every Rust-client
+  HMAC verification would fail on a manifest the panel signed
+  correctly. Pinned by tests on both sides.
+- **Round 12 — observability.** Three subscription fall-
+  throughs (disabled account, decrypt-failed cleartext,
+  unknown token) now log proportionate to operator-action-
+  needed-ness without amplifying probe traffic. Caddyfile and
+  sing-box render-failure log severity bumped ERROR → CRITICAL
+  (the surrounding model save SUCCEEDS in the UI but old
+  config stays live; CRITICAL is the right level). Component-
+  check silently-empty-page bug fixed.
+- **Round 13 — time-and-clock.** The "clients refuse manifests
+  older than 7 days" freshness check the Rust spec promised
+  now actually exists in the crate
+  (`SubscriptionManifestV1::check_freshness`, with a
+  FreshnessCheck enum distinguishing IssuedInFuture /
+  StaleByIssuedAt / ExpiredByExpiresAt / Fresh). Plus a single
+  `$now = time()` capture in the PHP controller (was racing the
+  UTC second boundary with two `time()` calls).
+- **Round 14 — input boundary.** Cross-encoder UTF-8 +
+  forward-slash invariants pinned with tests on both Rust and
+  PHP sides. A future PHP / serde_json default-flag flip would
+  silently break HMAC verification on every non-ASCII password
+  (Chinese, Japanese, Korean — common in Asia).
+- **Rounds 15, 17, 20, 22, 26, 27 — regression anchors.**
+  Six PRs adding tests that pin invariants holding today but
+  not previously protected: subscription-token determinism,
+  every JSON-output field name PHP reads from Rust pinned by
+  Rust-side tests, the route-regex + exception-handler chain
+  that protects cover-site for malformed tokens, supervisord
+  graceful-shutdown invariants drift detector, the off-by-one
+  semantic difference between SubscriptionController's
+  CHECK-THEN-HIT and FakeSiteController's HIT-THEN-CHECK
+  RateLimiter idioms, FakeWebsite::saved single-active
+  contract.
+- **Round 16 — error-message UX.** `wait_for` in
+  scripts/lib.sh now picks up an optional `WAIT_FOR_HINT` env
+  var threaded through to die's actionable hint. Three
+  install.sh sites where a 90-second silent timeout previously
+  left the operator stuck (Caddy ACME, MariaDB healthcheck,
+  panel entrypoint sentinel) now surface the diagnostic
+  next-step.
+- **Round 18 — dep hygiene.** ARM64 naive tarball SHA256 was
+  empty (silent skip of supply-chain verification on
+  Graviton / Apple Silicon / arm64 VPS). Pinned. Plus
+  scripts/pin-images.sh's stale Dockerfile mappings refreshed
+  (rust:1.86 → 1.88, php:8.3-fpm → frankenphp, added haproxy)
+  and hardened to fail loud on a no-match instead of silently
+  no-op'ing the operator's `make pin-images`.
+- **Round 19 — docs vs code.** clash-API listener address
+  doc in architecture.md, panel-runtime "nginx" references in
+  docker-compose.yml + haproxy/Dockerfile, README services
+  table missing haproxy — three concrete factual claims
+  corrected to match the current implementation.
+- **Round 21 — cross-platform.** install.sh's `stat -c '%a'`
+  + two `sed -i ""` callsites are GNU-coreutils-only and
+  silently break on macOS/BSD. Added `file_mode_octal`
+  helper in lib.sh that probes GNU-then-BSD; converted the
+  sed calls to the portable `-i.bak` form.
+- **Round 23 — composer audit in make ci.** Was running in
+  the GitHub Actions workflow but not in local `make ci`;
+  operator running `make ci` locally got "PASS" while the
+  remote could surface a CVE. Closed.
+- **Round 24 — operator workflow.** Backup/restore scripts
+  hardcoded `cool-tunnel-server_caddy_data` as the volume
+  name, breaking parallel deployments at different
+  directories. New `compose_project_name()` helper in lib.sh
+  asks docker-compose itself. Plus the GETTING_STARTED.md
+  readiness-score doc drift fixed (8/10 → 9/11).
+- **Round 25 — admin auth.** `ct:make-admin --force` now
+  resets the password on an existing email (lost-password
+  recovery path; pre-this the only option was raw DB
+  UPDATE). Plus structured `Log::notice('admin.created' |
+  'admin.password_reset')` for audit trail and a
+  QueryException-clean exit on a UNIQUE-constraint race.
+- **Round 28 — Rust error reporting.** `main.rs` now walks
+  `source()` chain on a top-level error so the operator sees
+  the underlying cause (`reqwest::Error("connection refused")`)
+  instead of just the outermost message
+  (`error: could not load server config`).
+- **Round 29 — env-var contract.** OCTANE_SERVER and
+  SESSION_LIFETIME documented in .env.example. The OCTANE_-
+  SERVER default in panel/config/octane.php was 'roadrunner'
+  — production doesn't hit it (supervisord runs frankenphp
+  directly), but a developer running `octane:start` locally
+  would get the wrong server.
+- **Round 30 — queue retry observability.** ReloadSingBoxJob's
+  `failed()` handler emits `Log::critical('singbox.reload.job_failed')`
+  when 3 retries exhaust. Pre-this the operator got nothing —
+  the failed_jobs row sat in the DB silently and panel state
+  diverged from running sing-box config. The Redis fast-path
+  keeps credential revocation effective regardless, so this
+  alarms as "config drift" not "security incident".
+
+### Changed
+
+- License: **proprietary → AGPL-3.0-or-later** across LICENSE,
+  Cargo workspace, composer.json, README, Disclaimer.md,
+  THIRD_PARTY_LICENSES.md, STRUCTURE.md, deny.toml, and the
+  three project-owned upstream-manifest notes.
+- `panel/composer.json` PHP runtime requirement effectively
+  pinned to 8.4 (FrankenPHP base image carries it; composer
+  constraint stays `^8.2` for the dev-tools floor).
+- Test counts: panel 23 → 63 (+40), ct-server-core 88 → 100,
+  ct-protocol 2 → 23 (+21).
+
+### Security
+
+- `docker/panel/Dockerfile` — `NAIVE_SHA256_ARM64` was empty
+  (silent skip of supply-chain verification on arm64 builds).
+  Now pinned to the verified hash for the same release tag as
+  AMD64.
+
+---
+
+
+
+### Added
+
 - `scripts/verify_supervisord.sh` and `make verify-supervisord` —
   round-22 process-lifecycle drift detector. Pins the round-6
   supervisord graceful-shutdown invariants
