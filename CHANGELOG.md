@@ -22,6 +22,114 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.65] — 2026-05-09 — Async hardening: zero blocking-syscall floor + zero leak posture
+
+Audit-driven hardening of the `ct-server-core` async path and error
+substrate. No protocol / wire / schema change. Three hardening items
+on the daemon ↔ panel boundary, one on the Coalescer (defense-in-
+depth), one on the Coalescer mutex (compile-time safety upgrade),
+three on the error type (operator diagnostic clarity).
+
+### Changed
+
+- **`daemon.rs::serve` — accept loop is now semaphore-bounded**
+  (T-1). `MAX_CONCURRENT_HANDLERS = 16` (2× FrankenPHP worker
+  count). Each accept acquires a permit before spawning the
+  handler; the 17th simultaneous connection blocks at
+  `acquire_owned().await` until a handler completes. Pre-fix the
+  spawn was unconditional, so a buggy or hostile client opening
+  connections in a loop could drive unbounded handler-task growth.
+  Unix socket's `0o660` perms still gate access at the container-
+  user layer; this is defense-in-depth.
+
+- **`daemon.rs::handle_client` — per-request line-read timeout**
+  (T-2). `READ_TIMEOUT = 30 s`. A client that opens a connection
+  and stalls mid-request (network partition, suspended process,
+  malicious holding pattern) is closed cleanly with a
+  `read_timeout` error response. Without this, the stalled handler
+  would hold its T-1 semaphore permit indefinitely.
+
+- **`redis_bridge.rs` — Coalescer lock migrated `tokio::sync::Mutex`
+  → `std::sync::Mutex`** (T-4). Both critical sections were already
+  brief and never crossed `.await` (pre-v0.0.65 comment confirmed).
+  Migration buys two things: lower lock overhead (no async
+  cooperative-yield), and the **compile-time** guarantee that we
+  never accidentally hold the lock across an `.await` —
+  `std::sync::MutexGuard` is `!Send`, so any future regression
+  trying to do so fails to compile. Poison handling via
+  `unwrap_or_else(|p| p.into_inner())`; the whole crate is
+  `panic = "deny"` so poisoning is structurally improbable, and
+  recovery is safer than killing the subscriber loop.
+
+- **`redis_bridge.rs::schedule_flush` — single-flight via
+  `FlushTracker`** (T-3). The Coalescer is now wrapped in a
+  `FlushTracker` that also carries the in-flight trailing-flush
+  `JoinHandle`. If a previous flush task is still pending
+  (`!h.is_finished()`), `schedule_flush` returns without spawning
+  a new one. The Coalescer state machine should already prevent
+  this case, so this is defense-in-depth — a future state-machine
+  regression that returns `FireNowAndScheduleFlush` twice without
+  an intervening `on_flush` collapses into "one flush at a time,
+  latest state wins" instead of unbounded spawn.
+
+### Added (`err.rs` hardening, all backwards-compatible)
+
+- **`Error::context(msg, source)`** (E-3). Wraps a source error
+  with a custom operator-facing message. Both surface in the
+  source-chain walk (the outer message via `Display`, the source
+  via `source()`). Pre-v0.0.65 the only way to get this shape was
+  to declare a private wrapper struct per call site; now it's a
+  one-liner. Carries `#[track_caller]`.
+
+- **`Error::msg` carries call-site `file:line`** (E-2). The
+  constructor is now `#[track_caller]` and appends
+  ` (at <file>:<line>)` to the message body. Operators reading
+  `error: ...` lines now see *where* the error was raised in
+  addition to *what* went wrong. No call-site change required.
+
+- **`Error::inner()` accessor** (E-1). The inner boxed `dyn Error`
+  is now read-accessible via a typed accessor. The field itself is
+  tightened from `pub` to `pub(crate)` — the previous `pub` made
+  the boxed inner type part of the public API surface, blocking
+  any future repr change. No external caller construction sites in
+  this crate, so the migration is no-op.
+
+### Audit posture codified
+
+- Sweep across `core/ct-server-core/src/` confirms **zero**
+  `std::fs::*`, `std::process::Command`, `std::thread::sleep`, or
+  `std::sync::Mutex` outside post-T-4 sites. The single `block_on`
+  is at `main.rs:339` (correct top-of-runtime placement). All file
+  I/O routes through `tokio::fs`. `LTSC.md § 2026 milestones` will
+  carry an addendum codifying the **Zero blocking-syscall floor**
+  + **Zero leak (bounded-spawn) posture** as a follow-up
+  documentation commit on `main`.
+
+### Tests
+
+- New: `err.rs` — `error_msg_carries_call_site_in_display`,
+  `error_context_preserves_source_chain`,
+  `error_inner_returns_boxed_dyn`.
+- New: `redis_bridge.rs` —
+  `schedule_flush_is_single_flight_under_repeated_calls` (T-3
+  state-machine property check; spawns one task, asserts a second
+  rapid call coalesces, asserts a third post-completion call
+  spawns a fresh task).
+- Updated: `util::debounce::tests::coalescer_concurrent_admits_collapse_correctly`
+  migrated to `std::sync::Mutex` to mirror the new production
+  pattern; behaviour-property unchanged (64 tasks × 1000 events
+  still collapse to ≤ 2 fires per window).
+- Total: **100 tests pass** locally (`cargo test --workspace
+  --locked`).
+
+### Not changed
+
+Wire format, sing-box config rendering, manifest schema, container
+layout, panel UI / behaviour, all 13 audit cycles. v0.0.64 release
+content unaffected.
+
+---
+
 ## [0.0.64] — 2026-05-08 — Filament panel UX cluster
 
 Targeted UX sweep across the Filament admin surface. One real
@@ -6675,7 +6783,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.64...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.65...HEAD
+[0.0.65]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.64...v0.0.65
 [0.0.64]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.63...v0.0.64
 [0.0.63]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.62...v0.0.63
 [0.0.62]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.61...v0.0.62
