@@ -22,6 +22,43 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.64] — 2026-05-08 — UI/UX: APP_KEY misconfiguration now visible from `Regenerate password`
+
+Single-action UX fix in the Filament panel. No protocol or
+infrastructure change; existing deployments can update without
+operator action beyond `git pull && ./scripts/update.sh`.
+
+### Fixed
+
+- **`ProxyAccountResource::regenerate_password` now surfaces a
+  warning when `APP_KEY` is unset.** Pre-fix symptom: the operator
+  clicked *Regenerate password*; the success notification fired
+  showing the new cleartext, but the `Subscription URL (import in
+  the app):` block silently dropped out of the body — no
+  diagnostic. The sister action `show_subscription_url` already
+  handled the same misconfiguration with a clear danger
+  notification (*"APP_KEY is not configured. Run php artisan
+  key:generate and restart the panel."*), but only operators who
+  thought to click that specific action would ever see it.
+
+  The fix fires a follow-up persistent warning notification with
+  the same diagnostic copy any time `subscriptionUrl()` returns
+  `null` — same recovery path as the URL action, same persistent
+  style, same wording. The success notification still shows the
+  cleartext password (the regen itself worked correctly); the
+  warning explains why subscription URLs are not appearing.
+
+### Audit cycle
+
+Catches a pattern the existing audit suite did not have a
+codified gate for: *"a sister action surfaces an error condition
+that this action silently swallows."* No change to the audit
+suite this release — single-occurrence fix landed first; if a
+second instance surfaces in a future round-N review, that's the
+trigger to add a codified check.
+
+---
+
 ## [0.0.63] — 2026-05-08 — Lighthouse pivot: AGPL-3.0-only relicense + coolwhite LLC stewardship
 
 > *This project belongs to the community. coolwhite LLC chooses
