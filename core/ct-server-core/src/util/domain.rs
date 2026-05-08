@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Cycle 3 / v0.0.55 — Single source of truth for the panel hostname.
-//
-// The "panel hostname" (panel.<base> per the v0.0.33 SNI router
-// design) was hardcoded in at least 6 places across panel/ and core/
-// before Cycle 3, with each callsite re-implementing the
-// PANEL_DOMAIN-or-fallback-to-panel.<DOMAIN> derivation. v0.0.51,
-// v0.0.53, and v0.0.54 each fixed one site; this module collapses
-// the derivation into a single function that all in-tree Rust
-// callers (haproxy renderer, caddy renderer, CLI helpers) and PHP
-// callers (via panel/config/cool-tunnel.php::panel_domain, mirrored
-// shape) read from.
-//
-// Cross-language symmetry: the PHP fallback in
-// panel/config/cool-tunnel.php uses identical logic. CI guard
-// scripts/verify_sot.sh runs both and asserts byte-equality on
-// fixture envs.
-//
-// Fail-fast on empty env (per the operator directive): if both
-// PANEL_DOMAIN and DOMAIN are unset/empty, return an error rather
-// than silently producing "panel." (which would route to nothing
-// and surface as a render-time fail).
+//! Cycle 3 / v0.0.55 — Single source of truth for the panel hostname.
+//!
+//! The "panel hostname" (`panel.<base>` per the v0.0.33 SNI router
+//! design) was hardcoded in at least 6 places across panel/ and core/
+//! before Cycle 3, with each callsite re-implementing the
+//! `PANEL_DOMAIN`-or-fallback-to-`panel.<DOMAIN>` derivation. v0.0.51,
+//! v0.0.53, and v0.0.54 each fixed one site; this module collapses
+//! the derivation into a single function that all in-tree Rust
+//! callers (haproxy renderer, caddy renderer, CLI helpers) and PHP
+//! callers (via panel/config/cool-tunnel.php::panel_domain, mirrored
+//! shape) read from.
+//!
+//! Cross-language symmetry: the PHP fallback in
+//! panel/config/cool-tunnel.php uses identical logic. CI guard
+//! scripts/verify_sot.sh runs both and asserts byte-equality on
+//! fixture envs.
+//!
+//! Fail-fast on empty env (per the operator directive): if both
+//! PANEL_DOMAIN and DOMAIN are unset/empty, return an error rather
+//! than silently producing "panel." (which would route to nothing
+//! and surface as a render-time fail).
 
 use crate::{Error, Result};
 

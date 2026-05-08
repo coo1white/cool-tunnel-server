@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Shared SQLx pool and DB queries.
-//
-// COMPILE-TIME SQL TYPE CHECKING (v0.0.11+).
-//
-// All queries below use `sqlx::query!()` / `sqlx::query_as!()`,
-// which inspect the live schema during `cargo sqlx prepare` and
-// embed the result in `core/.sqlx/*.json`. The build then uses
-// `SQLX_OFFLINE=true` to validate every query against that
-// frozen metadata at `cargo check` time. Schema regressions
-// (column dropped, retyped, renamed) fail the build, never
-// production. See `docs/sqlx-offline.md` and the
-// `make sqlx-prepare` target.
-//
-// Type-mapping notes:
-//   - Laravel `\$table->id()` / `\$table->foreignId()` →
-//     `BIGINT UNSIGNED` → sqlx returns `u64`. We cast to `i64`
-//     at the struct boundary; primary-key IDs in any plausible
-//     deployment are nowhere near 2^63 so the cast is lossless.
-//   - Laravel `\$table->boolean()` → `TINYINT(1)` → sqlx returns
-//     `i8`. We compare `!= 0` for the bool field.
-//   - Laravel `\$table->timestamp()->nullable()` → with chrono
-//     feature, sqlx returns `Option<chrono::DateTime<chrono::Utc>>`.
+//! Shared SQLx pool and DB queries.
+//!
+//! COMPILE-TIME SQL TYPE CHECKING (v0.0.11+).
+//!
+//! All queries below use `sqlx::query!()` / `sqlx::query_as!()`,
+//! which inspect the live schema during `cargo sqlx prepare` and
+//! embed the result in `core/.sqlx/*.json`. The build then uses
+//! `SQLX_OFFLINE=true` to validate every query against that
+//! frozen metadata at `cargo check` time. Schema regressions
+//! (column dropped, retyped, renamed) fail the build, never
+//! production. See `docs/sqlx-offline.md` and the
+//! `make sqlx-prepare` target.
+//!
+//! Type-mapping notes:
+//!   - Laravel `\$table->id()` / `\$table->foreignId()` →
+//!     `BIGINT UNSIGNED` → sqlx returns `u64`. We cast to `i64`
+//!     at the struct boundary; primary-key IDs in any plausible
+//!     deployment are nowhere near 2^63 so the cast is lossless.
+//!   - Laravel `\$table->boolean()` → `TINYINT(1)` → sqlx returns
+//!     `i8`. We compare `!= 0` for the bool field.
+//!   - Laravel `\$table->timestamp()->nullable()` → with chrono
+//!     feature, sqlx returns `Option<chrono::DateTime<chrono::Utc>>`.
 
 use crate::domain::{ProxyAccount, ServerConfig};
 use crate::Result;

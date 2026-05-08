@@ -1,39 +1,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// sing-box clash API client (HTTP over the docker-internal network).
-//
-// sing-box exposes its management API in clash-style at
-// `experimental.clash_api.external_controller`. We pin that to
-// `0.0.0.0:9090` inside the ct-singbox container; the docker-compose
-// `ports:` map for sing-box does NOT publish 9090 to the host, so
-// the listener is reachable only from peers on the `ct-net` docker
-// network (i.e. the panel) and is not addressable from the public
-// internet.
-//
-// Auth: clash API supports a static `secret` field in its config;
-// clients pass it as `Authorization: Bearer <secret>`. The secret is
-// derived deterministically from ServerConfig (see
-// `singbox::clash_secret`) so the panel + the daemon agree without
-// a separate secret-distribution step.
-//
-// Endpoints we use:
-//   PUT /configs?force=true&path=<path>   — reload from a file on disk
-//   GET /configs                          — current loaded config
-//   GET /metrics                          — kept for the legacy
-//                                           Prometheus path; today
-//                                           returns no matching
-//                                           samples (see metrics.rs).
-//
-// The clash spec also has POST /configs (with body) but reload-from-
-// path keeps the actual config bytes off the wire and lets sing-box
-// validate from disk — same path our atomic-write lands at.
-//
-// Why we held an `external_controller_unix` field for so long: that
-// name never existed in upstream sing-box. The pre-1.13 JSON decoder
-// silently ignored unknown fields, so the unix socket was never
-// bound and admin::reload always took the docker-compose-restart
-// fallback (~1s). 1.13 made unknown fields hard errors, which
-// surfaced the bug — and forced this rewrite onto the upstream-
-// supported `external_controller` (TCP, docker-internal-only).
+//! sing-box clash API client (HTTP over the docker-internal network).
+//!
+//! sing-box exposes its management API in clash-style at
+//! `experimental.clash_api.external_controller`. We pin that to
+//! `0.0.0.0:9090` inside the ct-singbox container; the docker-compose
+//! `ports:` map for sing-box does NOT publish 9090 to the host, so
+//! the listener is reachable only from peers on the `ct-net` docker
+//! network (i.e. the panel) and is not addressable from the public
+//! internet.
+//!
+//! Auth: clash API supports a static `secret` field in its config;
+//! clients pass it as `Authorization: Bearer <secret>`. The secret is
+//! derived deterministically from ServerConfig (see
+//! `singbox::clash_secret`) so the panel + the daemon agree without
+//! a separate secret-distribution step.
+//!
+//! Endpoints we use:
+//!
+//! ```text
+//! PUT /configs?force=true&path=<path>   — reload from a file on disk
+//! GET /configs                          — current loaded config
+//! GET /metrics                          — kept for the legacy
+//!                                         Prometheus path; today
+//!                                         returns no matching
+//!                                         samples (see metrics.rs).
+//! ```
+//!
+//! The clash spec also has POST /configs (with body) but reload-from-
+//! path keeps the actual config bytes off the wire and lets sing-box
+//! validate from disk — same path our atomic-write lands at.
+//!
+//! Why we held an `external_controller_unix` field for so long: that
+//! name never existed in upstream sing-box. The pre-1.13 JSON decoder
+//! silently ignored unknown fields, so the unix socket was never
+//! bound and admin::reload always took the docker-compose-restart
+//! fallback (~1s). 1.13 made unknown fields hard errors, which
+//! surfaced the bug — and forced this rewrite onto the upstream-
+//! supported `external_controller` (TCP, docker-internal-only).
 
 use crate::{Error, Result};
 use reqwest::Client;
