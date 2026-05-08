@@ -103,6 +103,22 @@ class SubscriptionController extends Controller
         // returns the same cover-site bytes as a vanilla unknown-
         // path probe. (M-panel-2 + the H1 throttle's anti-enum
         // refinement, both 2026-05-05 audit hotfixes.)
+        // RateLimiter ordering note (round-26 cohesion audit): this is
+        // CHECK-THEN-HIT, deliberately distinct from the HIT-THEN-CHECK
+        // pattern used in FakeSiteController::maybeAlarmOnRapidFall-
+        // Through. The semantic difference matters and is intentional:
+        //
+        //   - CHECK-THEN-HIT (here): with max=60, requests 1..60
+        //     succeed; the 61st is blocked. Standard "60 requests per
+        //     minute cap" semantics.
+        //   - HIT-THEN-CHECK (FakeSite probe alarm): with max=30, the
+        //     30th request triggers the alarm — it counts itself
+        //     before the threshold check.
+        //
+        // Don't "normalise" them. A future PR that aligns the two
+        // patterns will silently shift one off-by-one in the wrong
+        // direction. The boundary is pinned by
+        // SubscriptionRateLimiterBoundaryTest.
         $rlKey = 'subscription:'.(string) $request->ip();
         if (RateLimiter::tooManyAttempts($rlKey, self::RATE_LIMIT_PER_MINUTE)) {
             return (new FakeSiteController)->show($request);
