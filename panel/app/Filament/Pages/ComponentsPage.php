@@ -41,7 +41,25 @@ class ComponentsPage extends Page
                 ->icon('heroicon-o-arrow-path')
                 ->action(function () {
                     $this->refreshRows(useCache: false);
-                    Notification::make()->title('Component check refreshed')->success()->send();
+                    // Surface the NG count in the notification — the
+                    // pre-v0.0.64 generic "Component check refreshed"
+                    // didn't tell the operator whether anything had
+                    // actually flipped to NG. Operators were having to
+                    // scan the table after every recheck.
+                    $ng = (int) ($this->summary['ng'] ?? 0);
+                    $total = (int) ($this->summary['total'] ?? 0);
+                    if ($ng > 0) {
+                        Notification::make()
+                            ->title("Refreshed: {$ng} of {$total} NG")
+                            ->body('Scroll to the highlighted rows for the diagnostic message.')
+                            ->danger()
+                            ->send();
+                    } else {
+                        Notification::make()
+                            ->title("Refreshed: all {$total} OK")
+                            ->success()
+                            ->send();
+                    }
                 }),
         ];
     }
