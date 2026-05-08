@@ -53,8 +53,9 @@ and agree that:
 ## Licence and no-warranty
 
 This software is licensed under the **GNU Affero General Public
-License v3.0 or later (AGPL-3.0-or-later)**, copyright (c) 2026
-Nick (Bai Yuhang). See [LICENSE](./LICENSE) for the full terms.
+License v3.0 or later (AGPL-3.0-or-later)**, copyright © 2026 the
+Cool Tunnel Server contributors. See [LICENSE](./LICENSE) for the
+full terms.
 
 Two AGPL clauses worth highlighting before you deploy:
 
