@@ -89,17 +89,21 @@ ok "db.sql imported"
 # ---------- Stage 4 — restore caddy_data volume -------------------
 
 step "Restore caddy_data volume from caddy_data.tgz"
+# Round-24: derive the project-prefixed volume name from
+# docker-compose itself (see backup.sh for the parallel-
+# deployment rationale).
+caddy_data_volume="$(compose_project_name)_caddy_data"
 # Volume must already exist (compose up -d above created it
 # via the panel/caddy services even though they're not running).
 # If for some reason the volume isn't present, create explicitly.
-docker volume inspect cool-tunnel-server_caddy_data >/dev/null 2>&1 \
-    || docker volume create cool-tunnel-server_caddy_data >/dev/null
+docker volume inspect "$caddy_data_volume" >/dev/null 2>&1 \
+    || docker volume create "$caddy_data_volume" >/dev/null
 docker run --rm \
-    -v cool-tunnel-server_caddy_data:/data \
+    -v "${caddy_data_volume}:/data" \
     -v "$PWD/tmp/restore":/in:ro \
     alpine \
     sh -c 'cd /data && tar xzf /in/caddy_data.tgz'
-ok "caddy_data restored (ACME certs + private keys)"
+ok "caddy_data restored (ACME certs + private keys, into ${caddy_data_volume})"
 
 # ---------- Stage 5 — bring up the rest of the stack --------------
 
