@@ -37,7 +37,7 @@ help: ## list available targets
 # ---------- CI gate (exactly what GitHub Actions runs) ------------
 
 .PHONY: ci
-ci: rust-fmt-check rust-clippy rust-test php-syntax shellcheck manifests-jq verify-sot verify-supervisord ## full local CI gate
+ci: rust-fmt-check rust-clippy rust-test php-syntax composer-audit shellcheck manifests-jq verify-sot verify-supervisord ## full local CI gate
 
 # Cycle 3 / v0.0.55 — cross-language SoT parity guard. Runs both
 # the PHP and Rust panel-hostname resolvers against fixture envs and
@@ -152,6 +152,24 @@ php-syntax: ## php -l on every panel/**/*.php
 	done < <(find app database/migrations database/seeders config bootstrap routes \
 		-name '*.php' -type f -print0)
 	@echo "    php-syntax: clean"
+
+# Round 23 — match the GitHub Actions audit workflow's `composer
+# audit` job so an operator running `make ci` locally sees the
+# same vuln check (was a silent gap pre-this; the workflow caught
+# CVEs that local make ci would have missed). Skips gracefully if
+# composer / vendor isn't present so docker-only hosts still get
+# `make ci` exit 0.
+.PHONY: composer-audit
+composer-audit: ## composer security audit on the panel deps (matches GH Actions audit.yml)
+	@if ! command -v composer >/dev/null 2>&1; then \
+		echo "    composer-audit: SKIP (composer not on PATH; run on a host with composer to enable)"; \
+		exit 0; \
+	fi; \
+	if [ ! -f panel/composer.lock ]; then \
+		echo "    composer-audit: SKIP (panel/composer.lock missing)"; \
+		exit 0; \
+	fi; \
+	cd panel && composer audit --no-interaction --no-cache
 
 .PHONY: shellcheck
 shellcheck: ## shellcheck all scripts and entrypoints (severity=warning — style/info are non-blocking)
