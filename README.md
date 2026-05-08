@@ -70,6 +70,29 @@ A release ships only when this matrix is green.
 
 ---
 
+## 🧱 2026 milestones — codified posture
+
+Five cross-cutting policies the codebase will not silently retreat
+from. Each one is enforced by compile-time discipline, an audit
+cycle, or a structural type-system invariant — not by code-review
+attention alone. Every operator deploying this stack inherits these
+guarantees.
+
+| Milestone | Enforcement mechanism | Codified |
+|---|---|---|
+| **Immutable Ballast** — long rationale comments encoding incident provenance are load-bearing; deletion requires tracing the referenced version through `CHANGELOG.md`. | Code-review rule + the `//` and `//!` blocks above every threshold and decision in source. | v0.0.62 |
+| **Zero `unwrap()` floor** — every fallible operation has a typed error path; production-failure-as-panic cannot land. | Workspace clippy lints (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` → `deny`); `unsafe_code = "deny"` adjacent. | v0.0.10 / codified v0.0.62 |
+| **Zero blocking-syscall floor** — async path is structurally clean; `std::sync::MutexGuard`'s `!Send` is the compile-time tripwire against `.await`-while-held. | Source sweep (zero `std::fs::*`, `std::process::Command`, `std::thread::sleep` outside test code) + `std::sync::Mutex` guard semantics. | v0.0.65 |
+| **Zero leak (bounded-spawn) posture** — every `tokio::spawn` site declares a cardinality bound; daemon-accept semaphore + Coalescer single-flight handle-check are the structural tripwires. | Per-spawn semaphore / handle-check / per-process singleton. New spawn sites must declare their bound in source. | v0.0.65 |
+| **Internal-health vs user analytics** — operator-internal metrics endpoint is opt-in and bound to docker-internal addresses; per-user analytics surface remains a deliberate no-op. | LTSC carve-out + `internal_metrics.rs` design (counters hand-enumerated; per-user labels structurally impossible to slip in without a visible module edit). | v0.0.67 |
+
+Full text and rationale: [`LTSC.md § 2026 milestones`](./LTSC.md).
+Current baseline as of this README: server **`v0.0.67`**, macOS
+client **`v2.0.26+`** (separate repo,
+[`coo1white/cool-tunnel`](https://github.com/coo1white/cool-tunnel)).
+
+---
+
 ## Protocol is Truth
 
 | Property | Mechanism |
@@ -260,7 +283,19 @@ docker compose exec panel php artisan ct:make-admin --force \
 
 # Full local CI gate
 make ci
+
+# Optional: scrape the operator-internal-health /metrics endpoint
+# (opt-in via CT_METRICS_BIND in .env; default OFF — see LTSC.md
+# § Internal-health observability vs user analytics for the
+# scope and posture). Once set, e.g. CT_METRICS_BIND=127.0.0.1:9292:
+docker compose exec ct-panel curl -s http://127.0.0.1:9292/metrics
 ```
+
+The `/metrics` endpoint exposes only operator-internal-health
+counters (semaphore saturation, DB-pool utilization, restart
+counts, Coalescer fire rate, process uptime). It carries **zero
+per-user data, ever** — that surface remains a deliberate no-op
+per the v0.0.7 anti-tracking pass and the v0.0.67 LTSC carve-out.
 
 ---
 
