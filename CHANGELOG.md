@@ -22,6 +22,55 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.60] — 2026-05-08 — Hotfix: FrankenPHP `num_threads (4) must be greater than the number of worker threads (4)`
+
+Second emergency hotfix in the v0.0.58 chain. The v0.0.59 hotfix
+unshadowed the panel-internal Caddyfile (so FrankenPHP finally
+loaded its INTENDED config), which exposed a latent FrankenPHP
+config validation error — the panel now boot-loops with:
+
+    Error: loading initial config: loading new config: frankenphp
+      app module: start: num_threads (4) must be greater than the
+      number of worker threads (4)
+
+`docker/panel/Caddyfile` had `num_threads 4` matching `worker
+num 4`. FrankenPHP requires `num_threads` to be STRICTLY greater
+than the worker count — the worker pool consumes all N threads
+and the in-process Caddy needs at least one spare to handle
+incoming requests / ACME maintenance / admin endpoint traffic.
+
+The error was latent through the entire FrankenPHP-swap era
+because the v0.0.59 Caddyfile-shadow bug meant FrankenPHP loaded
+the ACME-issuer Caddyfile (no `frankenphp` block at all) — the
+worker validation never ran, frankenphp's worker mode was
+effectively disabled, and requests were served by ad-hoc PHP
+fork-per-request (slow, but functional).
+
+### Fix
+
+`docker/panel/Caddyfile`: `num_threads 4` → `num_threads 8`. 4
+worker threads + 4 headroom for the in-process Caddy + ACME
+maintenance + admin endpoint. Bumps to 12-16 are sensible on
+bigger boxes alongside `worker num` increases (ratio ≥ 2:1 is
+safe).
+
+The inline comment now documents the strictly-greater
+requirement so a future operator tweaking `worker num` doesn't
+re-introduce the same boot-loop.
+
+### Operator update
+
+```sh
+cd /path/to/cool-tunnel-server
+git fetch --tags
+git checkout main && git pull --ff-only
+./scripts/update.sh
+```
+
+---
+
+
+
 ## [0.0.59] — 2026-05-08 — Hotfix: panel Caddyfile volume-shadow → 502 from /admin
 
 Single-bug emergency hotfix on top of v0.0.58. Caught when v0.0.58
