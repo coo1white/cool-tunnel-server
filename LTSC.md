@@ -191,6 +191,39 @@ T-3); future spawn sites must declare their cardinality
 bound at the call site or in the surrounding module
 docstring.
 
+### Internal-health observability vs user analytics
+
+The codebase distinguishes two categories of metric. They are
+**not interchangeable**; conflating them is a posture-breaking
+regression even if the implementation looks "internal."
+
+| Category | Posture | Surface |
+| --- | --- | --- |
+| **Per-user analytics** (e.g. who connected, when, to what destination, with what subscription token) | **Deliberately not collected.** `core/ct-server-core/src/metrics.rs` remains an honest no-op (per v0.0.7 anti-tracking pass). The cover-site invariant + audit cycle 40 codify the wire-side promise; this carve-out codifies the data-side promise. | None. Operator who wants per-user counters under `coolwhite LLC` stewardship would have to fork — and AGPL § 13 then requires them to publish the modification. |
+| **Operator-internal-health** (e.g. semaphore saturation, DB-pool utilization, restart counts, Coalescer fire rate) | **Operator-visible, internal-net only, never per-user data.** Optional `/metrics` endpoint exposes Prometheus text-format counters bound to a docker-internal address — never a public port. Off by default; operator opts in via `--metrics-bind` / `CT_METRICS_BIND`. | `ct-server-core --metrics-bind 127.0.0.1:9292`; reachable from inside the panel container via `docker compose exec ct-panel curl`. Codified at v0.0.67 (R-1). |
+
+**Rule: a counter that identifies a specific user — even
+indirectly via labels (`{username="alice"}`, `{account_id="42"}`,
+`{target_host="..."}`, `{request_id="..."}`) — is not a metric.
+It's an audit-log entry, and it must go to
+`tracing::debug!` per `CONTRIBUTING.md § Logging discipline`,
+not to the `/metrics` endpoint.**
+
+The two categories are structurally separable:
+- Per-user analytics has zero collection surface anywhere in the
+  binary; the existing `metrics.rs` no-op is the structural
+  enforcement.
+- Internal-health metrics live in `internal_metrics.rs` (added
+  v0.0.67); the registry's counter set is hand-enumerated at
+  module level so a future contribution adding a per-user label
+  is impossible to slip in without an explicit module edit
+  visible at code review.
+
+The audit cycles 40 (anti-tracking config) + 33 (composer audit)
+already cover the wire-format and dependency-side anti-tracking
+floor. The metrics-side carve-out above extends that to the
+operator-observable surface.
+
 ## Boundaries
 
 Three things the codebase is NOT trying to be:

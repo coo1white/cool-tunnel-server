@@ -42,7 +42,12 @@ const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
 /// driving unbounded handler-task spawn. (T-1, v0.0.65 — defense-in-
 /// depth; the Unix socket's 0o660 perms already gate access at the
 /// container-user layer.)
-const MAX_CONCURRENT_HANDLERS: usize = 16;
+///
+/// Pub since v0.0.67: `main.rs` reads this constant when constructing
+/// the shared `Arc<Semaphore>` it passes into both `serve` and the
+/// `internal_metrics::MetricsRegistry` (so the metrics endpoint can
+/// publish `ct_daemon_handler_permits_total`).
+pub const MAX_CONCURRENT_HANDLERS: usize = 16;
 
 /// Per-request line-read timeout. A connected client that sends part
 /// of a request and stalls (network partition, suspended process,
@@ -58,6 +63,7 @@ pub async fn serve(
     template: &str,
     output: &str,
     admin_url: &str,
+    permits: Arc<Semaphore>,
 ) -> Result<()> {
     // Ensure parent dir exists; remove any stale socket file.
     if let Some(dir) = Path::new(socket_path).parent() {
@@ -91,7 +97,11 @@ pub async fn serve(
     // completes — that's the backpressure signal we want
     // (clients see slower accept under saturation, the daemon
     // doesn't OOM).
-    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_HANDLERS));
+    //
+    // The semaphore itself is constructed in `main.rs` (v0.0.67) so
+    // `internal_metrics::MetricsRegistry` can read its
+    // `available_permits()` for the `ct_daemon_handler_permits_used`
+    // gauge without a duplicate construction site.
 
     // Graceful shutdown: stop accepting new connections on
     // SIGINT / SIGTERM, drop the listener so its socket file is

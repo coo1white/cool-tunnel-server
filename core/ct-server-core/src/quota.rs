@@ -52,7 +52,10 @@ pub async fn enforce(
 
     let mut disabled = 0_usize;
     for row in &to_disable {
-        tracing::info!(account = %row.username, reason = "expired", "disabling at {}", Utc::now());
+        // R-2 (v0.0.67): demoted from info! → debug! per CONTRIBUTING.md
+        // logging discipline. `username` is per-user PII; info-and-above
+        // logs must not carry user identifiers.
+        tracing::debug!(account = %row.username, reason = "expired", "disabling at {}", Utc::now());
         sqlx::query!(
             r#"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?"#,
             row.id,
