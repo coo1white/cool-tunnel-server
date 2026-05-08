@@ -22,40 +22,99 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
-## [0.0.64] — 2026-05-08 — UI/UX: APP_KEY misconfiguration now visible from `Regenerate password`
+## [0.0.64] — 2026-05-08 — Filament panel UX cluster
 
-Single-action UX fix in the Filament panel. No protocol or
-infrastructure change; existing deployments can update without
-operator action beyond `git pull && ./scripts/update.sh`.
+Targeted UX sweep across the Filament admin surface. One real
+bug fix, several UX wins, one APP_KEY-disclosure follow-up.
+No protocol / wire / schema change; existing deployments update
+with `git pull && ./scripts/update.sh`.
 
 ### Fixed
 
-- **`ProxyAccountResource::regenerate_password` now surfaces a
-  warning when `APP_KEY` is unset.** Pre-fix symptom: the operator
-  clicked *Regenerate password*; the success notification fired
-  showing the new cleartext, but the `Subscription URL (import in
-  the app):` block silently dropped out of the body — no
-  diagnostic. The sister action `show_subscription_url` already
-  handled the same misconfiguration with a clear danger
-  notification (*"APP_KEY is not configured. Run php artisan
-  key:generate and restart the panel."*), but only operators who
-  thought to click that specific action would ever see it.
+- **`ProxyAccountResource::form` — operator can now edit accounts
+  whose `expires_at` is already past.** Pre-v0.0.64 the form
+  carried `->minDate(now())` on the expires_at field, which
+  caused the unmodified expired timestamp to fail the validation
+  rule on save — operators could not update labels / quotas /
+  enabled-state on already-expired accounts without also pushing
+  expires_at into the future. Removed; the helperText already
+  documents that past dates immediately disable the account, and
+  that's the documented operator-intent surface.
 
-  The fix fires a follow-up persistent warning notification with
-  the same diagnostic copy any time `subscriptionUrl()` returns
-  `null` — same recovery path as the URL action, same persistent
-  style, same wording. The success notification still shows the
-  cleartext password (the regen itself worked correctly); the
-  warning explains why subscription URLs are not appearing.
+- **`ProxyAccountResource::regenerate_password` now surfaces a
+  warning when `APP_KEY` is unset.** Pre-fix symptom: the
+  operator clicked *Regenerate password*; the success
+  notification fired showing the new cleartext, but the
+  `Subscription URL (import in the app):` block silently dropped
+  out of the body — no diagnostic. The sister action
+  `show_subscription_url` already handled the same
+  misconfiguration with a clear danger notification (*"APP_KEY
+  is not configured. Run php artisan key:generate and restart
+  the panel."*), but only operators who thought to click that
+  specific action would see it. The fix fires a follow-up
+  persistent warning with the same diagnostic copy any time
+  `subscriptionUrl()` returns `null` — same recovery path, same
+  wording.
+
+### Changed
+
+- **`ComponentsPage` re-check action surfaces NG count.** The
+  generic "Component check refreshed" notification didn't tell
+  the operator whether the recheck had flipped anything from
+  OK to NG. New copy: `"Refreshed: N of M NG"` with a danger
+  tone when N > 0; `"Refreshed: all M OK"` (success) when
+  clean.
+
+- **`ServerConfigPage::form::acme_directory` gets autocomplete
+  suggestions.** Bare `TextInput` pre-v0.0.64; common typo
+  surface with silent failure deferred ~2 months until first
+  cert renewal. Now an HTML5 `datalist` offers the two
+  well-known Let's Encrypt endpoints (production / staging)
+  while leaving the field free-text for operators with a
+  private ACME (Step CA, Smallstep, etc.).
+
+- **`TrafficLogResource::table` `day_range` filter gets quick-
+  pick presets.** New `Select::make('preset')` reactively pre-
+  fills `from`/`to` for: Today / Yesterday / Last 7 days / Last
+  30 days / This month. The free-form date pickers stay for
+  custom ranges. The preset itself is `dehydrated(false)` —
+  query semantics unchanged.
+
+### Added
+
+- **`FakeWebsiteResource::table` direct "Activate" row
+  action.** Pre-v0.0.64 swapping cover sites required Edit →
+  toggle is_active → Save. The action sets `is_active = true`
+  and lets `FakeWebsite::booted` (the v0.0.16 lockForUpdate
+  saved-hook) handle the atomic swap. Visible only on rows
+  that aren't already active.
+
+- **`ProxyAccountResource::actions` subscription-URL copy-to-
+  clipboard button.** Notification body still shows the URL as
+  text (fallback for non-secure contexts where the Clipboard
+  API is unavailable); the new "Copy URL" action wires an
+  Alpine `x-on:click` that calls
+  `navigator.clipboard.writeText()` with the URL safely
+  JS-encoded via `json_encode`.
 
 ### Audit cycle
 
-Catches a pattern the existing audit suite did not have a
-codified gate for: *"a sister action surfaces an error condition
-that this action silently swallows."* No change to the audit
-suite this release — single-occurrence fix landed first; if a
-second instance surfaces in a future round-N review, that's the
-trigger to add a codified check.
+The APP_KEY-disclosure fix catches a pattern the existing audit
+suite did not have a codified gate for: *"a sister action
+surfaces an error condition that this action silently
+swallows."* No change to the audit suite this release —
+single-occurrence fix landed first; if a second instance
+surfaces in a future round-N review, that's the trigger to add
+a codified check.
+
+### Not changed
+
+Wire format, sing-box config rendering, ct-server-core, manifest
+schema, container layout, audit cycles 31–43, all CI gates
+including the v0.0.62 tag-version-check. Backend behaviour of
+all six panel surfaces — these are purely presentational /
+interaction changes against the same underlying models and
+services.
 
 ---
 
@@ -6616,7 +6675,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.63...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.64...HEAD
+[0.0.64]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.63...v0.0.64
 [0.0.63]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.62...v0.0.63
 [0.0.62]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.61...v0.0.62
 [0.0.61]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.60...v0.0.61
