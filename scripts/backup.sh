@@ -67,15 +67,21 @@ if compose ps -q caddy 2>/dev/null | grep -q .; then
     caddy_was_running=true
     compose stop caddy >/dev/null
 fi
+# Round-24: derive the project-prefixed volume name from
+# docker-compose itself instead of hardcoding "cool-tunnel-
+# server_caddy_data" — operators running parallel deployments
+# at /opt/ct-prod/ and /opt/ct-staging/ get different project
+# names, and the hardcode would target the wrong volume.
+caddy_data_volume="$(compose_project_name)_caddy_data"
 docker run --rm \
-    -v cool-tunnel-server_caddy_data:/data:ro \
+    -v "${caddy_data_volume}:/data:ro" \
     -v "$PWD/tmp":/out \
     alpine \
     sh -c 'cd /data && tar czf /out/caddy_data.tgz .'
 if [[ "$caddy_was_running" == true ]]; then
     compose start caddy >/dev/null
 fi
-ok "caddy_data.tgz written"
+ok "caddy_data.tgz written (from volume ${caddy_data_volume})"
 
 step "Bundle into ${out}"
 # haproxy/haproxy.cfg.tpl added in round 9 — pre-fix backup
