@@ -137,6 +137,25 @@ class ProxyAccountResource extends Resource
                             ->success()
                             ->persistent()
                             ->send();
+
+                        // Follow-up warning when APP_KEY is unset — the
+                        // password generated fine but the subscription
+                        // URL silently dropped out of the success body.
+                        // Pre-fix the operator had no signal that
+                        // sub-URLs were unavailable; symptom was "the
+                        // sister `show_subscription_url` action shows
+                        // the same APP_KEY error, but only if I click
+                        // it specifically." Same diagnostic copy as
+                        // `show_subscription_url` keeps the recovery
+                        // path consistent across both actions.
+                        if ($subUrl === null) {
+                            Notification::make()
+                                ->title('Subscription URL not generated')
+                                ->body('APP_KEY is not configured. Run php artisan key:generate and restart the panel to enable subscription URLs.')
+                                ->warning()
+                                ->persistent()
+                                ->send();
+                        }
                     }),
                 Tables\Actions\Action::make('show_subscription_url')
                     ->label('Subscription URL')
