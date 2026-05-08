@@ -21,8 +21,11 @@ use crate::{admin, metrics, singbox, Error, Result};
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use sqlx::MySqlPool;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Semaphore;
 
 /// Max bytes per request line (JSON-per-line protocol). A
 /// well-formed request is well under 1 KiB; 1 MiB is generous and
@@ -30,6 +33,24 @@ use tokio::net::{UnixListener, UnixStream};
 /// without newlines (we'd otherwise grow the read buffer
 /// unboundedly).
 const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
+
+/// Concurrent-handler cap. The panel is the only legitimate client of
+/// this socket and runs FrankenPHP with `worker num 4` (default in
+/// docker/panel/Caddyfile). 8 → 16 ceiling; 16 chosen to leave
+/// headroom for the queue + scheduler + the components.md probe also
+/// shelling out, while still preventing a misbehaving client from
+/// driving unbounded handler-task spawn. (T-1, v0.0.65 — defense-in-
+/// depth; the Unix socket's 0o660 perms already gate access at the
+/// container-user layer.)
+const MAX_CONCURRENT_HANDLERS: usize = 16;
+
+/// Per-request line-read timeout. A connected client that sends part
+/// of a request and stalls (network partition, suspended process,
+/// malicious holding pattern) would otherwise keep the handler task
+/// — and the semaphore permit — alive indefinitely. 30 s is generous
+/// (panel requests complete in tens of ms); this is a poison-pill
+/// detector, not a perf knob. (T-2, v0.0.65.)
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn serve(
     socket_path: &str,
@@ -52,11 +73,25 @@ pub async fn serve(
     .await
     .ok();
 
-    tracing::info!(path = socket_path, "ct-server-core daemon listening");
+    tracing::info!(
+        path = socket_path,
+        max_concurrent_handlers = MAX_CONCURRENT_HANDLERS,
+        read_timeout_s = READ_TIMEOUT.as_secs(),
+        "ct-server-core daemon listening"
+    );
 
     let template = template.to_owned();
     let output = output.to_owned();
     let admin_url = admin_url.to_owned();
+
+    // Concurrent-handler permit cap (T-1, v0.0.65). Each accept
+    // acquires one permit before spawning its handler task; the
+    // permit drops when the handler exits. The 17th simultaneous
+    // connection blocks at `acquire_owned().await` until a handler
+    // completes — that's the backpressure signal we want
+    // (clients see slower accept under saturation, the daemon
+    // doesn't OOM).
+    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_HANDLERS));
 
     // Graceful shutdown: stop accepting new connections on
     // SIGINT / SIGTERM, drop the listener so its socket file is
@@ -66,6 +101,24 @@ pub async fn serve(
     tokio::pin!(shutdown);
 
     loop {
+        // Acquire a permit BEFORE the accept call. If the cap is
+        // reached, accept won't run until a handler completes —
+        // which is the point. Holding the permit across .await is
+        // fine: tokio::sync::Semaphore is async-aware (unlike the
+        // Coalescer's std::sync::Mutex; different tool, different
+        // need).
+        let permit = match Arc::clone(&permits).acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => {
+                // Semaphore::close was called somewhere. The only
+                // path to that today is if `permits` is dropped
+                // while a permit await is pending — not in our
+                // control flow. Treat as a fatal invariant break.
+                return Err(Error::msg(
+                    "daemon semaphore closed unexpectedly; bailing out of accept loop",
+                ));
+            }
+        };
         tokio::select! {
             _ = &mut shutdown => {
                 tracing::info!(path = socket_path, "ct-server-core daemon shutting down");
@@ -83,6 +136,11 @@ pub async fn serve(
                 let output = output.clone();
                 let admin_url = admin_url.clone();
                 tokio::spawn(async move {
+                    // Permit is held by the spawned task; dropped
+                    // when this closure returns (handler exit or
+                    // error path). A new permit becomes available
+                    // for the next accept.
+                    let _permit = permit;
                     if let Err(e) =
                         handle_client(stream, &pool, &template, &output, &admin_url).await
                     {
@@ -128,7 +186,33 @@ async fn handle_client(
     let mut rd = BufReader::with_capacity(8 * 1024, rd);
     loop {
         let mut buf = Vec::with_capacity(256);
-        let n = rd.read_until(b'\n', &mut buf).await?;
+        // Per-request read timeout (T-2, v0.0.65). A stalled client
+        // (network partition, suspended process, hostile holding
+        // pattern) would otherwise keep this handler — and the
+        // T-1 semaphore permit — alive indefinitely. 30 s is well
+        // above any legitimate request latency; treat any read that
+        // takes longer as a poison pill and close the connection.
+        let n = match tokio::time::timeout(READ_TIMEOUT, rd.read_until(b'\n', &mut buf)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_elapsed) => {
+                tracing::warn!(
+                    timeout_s = READ_TIMEOUT.as_secs(),
+                    "client read timeout — closing connection"
+                );
+                // Best-effort error response; ignore write failure
+                // (the stalled client likely can't read it anyway).
+                let resp = WireResponseV1::Error {
+                    code: "read_timeout".into(),
+                    message: format!(
+                        "no request line within {} seconds; closing",
+                        READ_TIMEOUT.as_secs()
+                    ),
+                };
+                let _ = send(&mut wr, &resp).await;
+                return Ok(());
+            }
+        };
         if n == 0 {
             break; // EOF
         }
