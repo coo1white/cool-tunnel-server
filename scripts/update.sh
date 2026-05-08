@@ -28,24 +28,70 @@ git pull --ff-only \
 # every Filament form submit because the browser's Origin header
 # (panel.<base>) doesn't match the configured app URL host (apex).
 #
-# Fixed idempotently — both checks are no-ops on already-canonical
+# Fixed idempotently — every check is a no-op on already-canonical
 # .env files. Mirrors install.sh's first-bootstrap PANEL_DOMAIN logic
 # for the upgrade path that never re-runs install.sh, and additionally
 # corrects the legacy APP_URL=${DOMAIN} → ${PANEL_DOMAIN} substitution
 # install.sh never handled.
-step "Auto-migrate legacy .env (v0.0.54 — PANEL_DOMAIN + APP_URL hostname)"
+#
+# v0.0.68 — canonical placement of the inserted PANEL_DOMAIN line.
+# Pre-v0.0.68 the backfill used `>> .env`, leaving PANEL_DOMAIN at
+# file-end. docker compose's `.env` parser interpolates ${VAR}
+# references top-down; with .env.example's canonical
+# `APP_URL=https://${PANEL_DOMAIN}/admin` (line 52) appearing far
+# above the appended PANEL_DOMAIN definition, every
+# `docker compose ...` invocation warned
+#     The "PANEL_DOMAIN" variable is not set. Defaulting to a blank
+#     string.
+# (three times per call — once per substitution pass) and the panel
+# container booted with APP_URL=https:///admin. Filament/Livewire then
+# emitted broken redirect URLs and 419'd on every form submit. Phase 1
+# now inserts directly after the DOMAIN= line; phase 2 relocates an
+# already-misplaced PANEL_DOMAIN for operators upgrading from a
+# pre-v0.0.68 build that already ran the buggy migration. Both phases
+# are idempotent on already-canonical .env files.
+step "Auto-migrate legacy .env (PANEL_DOMAIN canonical placement + APP_URL hostname)"
 LEGACY_DOMAIN=$(grep -E '^DOMAIN=' .env | head -n1 | cut -d= -f2- | tr -d '"')
+
+# Phase 1 — backfill PANEL_DOMAIN immediately after DOMAIN= when missing.
 if ! grep -qE '^PANEL_DOMAIN=' .env; then
     if [ -n "${LEGACY_DOMAIN:-}" ]; then
         derived="panel.${LEGACY_DOMAIN}"
-        printf '\n# v0.0.54 auto-migration — PANEL_DOMAIN added (was missing in pre-v0.0.33 .env)\nPANEL_DOMAIN=%s\n' "$derived" >> .env
-        ok "added PANEL_DOMAIN=${derived} to .env"
+        awk -v val="$derived" '
+            { print }
+            /^DOMAIN=/ && !inserted {
+                print "# v0.0.54 auto-migration — PANEL_DOMAIN added (was missing in pre-v0.0.33 .env)"
+                print "PANEL_DOMAIN=" val
+                inserted = 1
+            }
+        ' .env > .env.tmp && mv .env.tmp .env
+        ok "added PANEL_DOMAIN=${derived} after DOMAIN= in .env"
     else
         warn "DOMAIN missing in .env — cannot auto-derive PANEL_DOMAIN; manual fix required"
     fi
 else
     ok "PANEL_DOMAIN already present in .env"
 fi
+
+# Phase 2 — relocate PANEL_DOMAIN if it sits AFTER any non-comment line
+# that interpolates ${PANEL_DOMAIN}. Catches operators upgrading from
+# the pre-v0.0.68 buggy migration. Comments are excluded so the
+# canonical .env.example header block (which references ${PANEL_DOMAIN}
+# above the definition for documentation purposes) doesn't trip a
+# false positive on a fresh-from-template .env.
+panel_line=$(awk '/^PANEL_DOMAIN=/{print NR; exit}' .env)
+ref_line=$(awk '!/^[[:space:]]*#/ && /\$\{PANEL_DOMAIN\}/{print NR; exit}' .env)
+if [ -n "${panel_line:-}" ] && [ -n "${ref_line:-}" ] && [ "$panel_line" -gt "$ref_line" ]; then
+    panel_val=$(awk -F= '/^PANEL_DOMAIN=/{sub("^[^=]*=",""); print; exit}' .env)
+    awk -v val="$panel_val" '
+        /^PANEL_DOMAIN=/ { next }
+        { print }
+        /^DOMAIN=/ && !inserted { print "PANEL_DOMAIN=" val; inserted = 1 }
+    ' .env > .env.tmp && mv .env.tmp .env
+    ok "relocated PANEL_DOMAIN to precede \${PANEL_DOMAIN} reference (was line ${panel_line}, ref at line ${ref_line})"
+fi
+
+# APP_URL ${DOMAIN} → ${PANEL_DOMAIN} correction.
 if grep -qE '^APP_URL=https?://\$\{DOMAIN\}' .env; then
     # shellcheck disable=SC2016
     # ^ literal ${PANEL_DOMAIN} on purpose — phpdotenv expands it at PHP
