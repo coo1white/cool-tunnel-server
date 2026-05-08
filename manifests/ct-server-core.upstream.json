@@ -8,5 +8,5 @@
         "expect_stdout_contains": "ct-server-core",
         "expect_zero_exit": true
     },
-    "note": "Proprietary. The Rust engine that the Filament panel shells out to for sing-box config generation, clash-API hot-reload, metrics scraping, quota enforcement, anti-tracking probes, and burst coalescing. Bumping this is a normal release."
+    "note": "AGPL-3.0-or-later. The Rust engine that the Filament panel shells out to for sing-box config generation, clash-API hot-reload, metrics scraping, quota enforcement, anti-tracking probes, and burst coalescing. Bumping this is a normal release."
 }
