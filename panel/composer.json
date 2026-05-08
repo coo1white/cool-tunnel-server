@@ -2,7 +2,7 @@
     "name": "coo1white/cool-tunnel-server-panel",
     "type": "project",
     "description": "Cool Tunnel Server admin panel — Laravel 11 + Filament 3. PolyForm Noncommercial 1.0.0; see ../LICENSE. Commercial use requires a separate license.",
-    "license": "Other",
+    "license": "PolyForm-Noncommercial-1.0.0",
     "require": {
         "php": "^8.2",
         "filament/filament": "^3.2",
