@@ -1,4 +1,5 @@
 <?php
+
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use Laravel\Octane\Contracts\OperationTerminated;
