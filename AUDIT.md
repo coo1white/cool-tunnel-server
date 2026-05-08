@@ -1,21 +1,46 @@
 # Audit policy
 
-This project has run four 50-cycle LTSC audits to date: v0.0.6 /
-v0.0.7 (general code), v0.0.8 (UI / UX), v0.0.9
-(anti-network-tracking), and v0.0.10 (code-robustness design).
-The first 30 cycles of each pass are performed by hand and
-surface real findings (see `CHANGELOG.md`). Cycles 31–50 are
-codified as recurring machine-run checks: this is the **only**
+The project ran a series of focused **50-cycle LTSC audits**
+between v0.0.6 and v0.0.11, codifying recurring machine-run
+checks at cycle indices 31–43. The first 30 cycles of each
+pass are performed by hand and surface real findings (see
+`CHANGELOG.md`); cycles 31–50 ride in `audit.yml` so the
+checks fire automatically, weekly and on-PR. This is the only
 scalable way to keep an LTSC project honest across releases.
 
-Each pass adds a few more cycles to the codified set as new
-classes of regression are discovered. v0.0.7 codified seven
-checks (cycles 31–37); v0.0.8 added two more (cycles 38–39) for
-PHP style and Blade asset-link validation; v0.0.9 added the
-anti-tracking config smell-test (cycle 40); v0.0.10 added the
-PSR-4 filename-vs-class lint (cycle 41) and PHPStan
-undefined-method analysis (cycle 42), both directly motivated by
-showstopper bugs that v0.0.10's hand-audit found.
+Each pre-v0.0.12 pass added cycles to the codified set:
+
+| Pass | Axis | New cycles codified |
+| --- | --- | --- |
+| v0.0.6 / v0.0.7 | Initial structural + deep code review | 31–37 (cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, dependency-review, stale-docs) |
+| v0.0.8 | UI / UX layout | 38 (php-style), 39 (blade-asset-links) |
+| v0.0.9 | Anti-network-tracking | 40 (anti-tracking-config) |
+| v0.0.10 | Code-robustness design | 41 (php-psr4), 42 (phpstan) |
+| v0.0.11 | Compile-time SQL safety | 43 (sqlx-offline-check) |
+
+The `unwrap_used = "deny"` clippy floor (v0.0.10) is enforced
+at compile time by `core/Cargo.toml`, not by an audit cycle —
+see `LTSC.md § Zero unwrap() floor`.
+
+**Post-v0.0.12 the audit pattern shifted from per-version
+hand-passes to continuous automation.** No new LTSC cycles
+have been codified at indices 44–50 (kept as forward
+placeholders). Three "Cycle N" sub-projects extended the
+audit surface separately, with their own numbering (NOT the
+LTSC 31–50 series):
+
+| Sub-project | Versions | What it codified |
+| --- | --- | --- |
+| Cycle 1 — `VerifySpecV1` | v0.0.34–v0.0.38 | Manifest verify spec; verify commands run inside the panel container; `expect_no_version_line` opt-out for probes whose target has no parseable version line |
+| Cycle 2 — drift detection | v0.0.39–v0.0.43 | Real drift detection across every non-Rust component: panel (`ct:version`), redis (`INFO Server`), mariadb (`SELECT VERSION()`), sing-box (authenticated clash-API `/version`), haproxy (UNIX stats socket) |
+| Cycle 3 — panel-hostname SoT | v0.0.55–v0.0.56 | Single source of truth for the panel hostname; PHP ↔ Rust parity asserted by `scripts/verify_sot.sh` against fixture envs |
+
+Hand-passes still happen as needed — notably the **30-round
+audit-loop hardening** that accompanied the v0.0.58
+FrankenPHP runtime swap — without claiming a new LTSC cycle
+index. v0.0.62 introduced a release-time gate
+(`.github/workflows/tag-version.yml`) outside the LTSC
+numbering; see § Release-time gates below.
 
 ## Where each cycle lives
 
@@ -40,6 +65,19 @@ showstopper bugs that v0.0.10's hand-audit found.
 | **42** — PHPStan level-5 (undefined-method, type errors) | `audit.yml` job `phpstan` | **weekly** + on every PR touching `panel/app/**` |
 | **43** — sqlx offline metadata staleness (every `query!()` call has matching `.sqlx/` JSON) | `audit.yml` job `sqlx-offline-check` | **weekly** + on every PR touching `core/` or `panel/database/migrations/` |
 | 44–50 | placeholders for future codified checks | — |
+
+## Release-time gates
+
+Separate from the weekly LTSC audit cycles, these workflows
+fire on tag pushes (`refs/tags/v*`) only:
+
+| Gate | Workflow | What it asserts | First-gated tag |
+| --- | --- | --- | --- |
+| `tag-version-check` | `.github/workflows/tag-version.yml` | The bare tag version (`v0.0.62` → `0.0.62`) equals the `'version' => '...'` line in `panel/config/cool-tunnel.php` (the field `php artisan ct:version` prints and the component-check matcher consumes). Refuses tags whose source disagrees. | v0.0.62 |
+
+Release-time gates fire once per tag (not weekly) and refuse
+the tag (not just flag a regression on main) — intentionally
+outside the LTSC cycle 31–50 numbering.
 
 ## What's scheduled vs. on-demand
 

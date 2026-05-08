@@ -4,6 +4,10 @@
 > This file is the **contract** an operator can rely on across
 > releases — and the **boundaries** of what we deliberately do
 > NOT promise.
+>
+> **Current baseline (2026-05-08):** server `v0.0.62`,
+> macOS client `v2.0.25` (separate repo —
+> see [`docs/cross-platform-clients.md`](docs/cross-platform-clients.md)).
 
 ## What LTSC means here
 
@@ -46,23 +50,98 @@ A pinned, reproducible, minor-version-stable stack:
 
 ## Audit rhythm
 
-Each minor version (v0.0.X) runs a focused 50-cycle LTSC audit
-on one **axis**:
+Pre-v0.0.12, each minor version ran a focused 50-cycle LTSC
+audit on one **axis**, codifying cycles 31–43 between six
+versions:
 
-| Version | Axis | Codified into CI | Cycles |
+| Version | Axis | Codified into CI | LTSC cycles |
 | --- | --- | --- | --- |
 | v0.0.6 | Initial structural review | one-shot | 1–5 |
 | v0.0.7 | Deep code review | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, dependency-review, stale-docs | 31–37 |
-| v0.0.8 | UI/UX layout | php-style, blade-asset-links | 38–39 |
+| v0.0.8 | UI / UX layout | php-style, blade-asset-links | 38–39 |
 | v0.0.9 | Anti-network-tracking | anti-tracking-config | 40 |
-| v0.0.10 | Code-robustness design | php-psr4, phpstan | 41–42 |
-| v0.0.11 | Compile-time SQL safety | sqlx-offline-check + sing-box config validate | 43 + ci.yml `template:` job |
-| v0.0.12 | Poka-yoke + release-gate | TBD: directory-mount templates, force-rerender, smoke-up | 44–48 |
+| v0.0.10 | Code-robustness design | php-psr4, phpstan; `unwrap_used = deny` clippy floor (compile-time, not an audit cycle) | 41–42 |
+| v0.0.11 | Compile-time SQL safety | sqlx-offline-check; ci.yml `templates:` job | 43 |
+
+**Post-v0.0.12 the model shifted from per-version hand-passes
+to continuous automation.** `audit.yml` runs cycles 31–43
+weekly (cron `17 8 * * 1`) and on every PR that touches
+relevant paths. No new LTSC cycle indices have been
+codified — 44–50 remain forward placeholders.
+
+Three "Cycle N" sub-projects extended the audit surface with
+**independent** numbering (NOT the LTSC 31–50 series):
+
+| Sub-project | Versions | What it codified |
+| --- | --- | --- |
+| Cycle 1 — `VerifySpecV1` | v0.0.34–v0.0.38 | Manifest verify spec; verify commands run inside the panel container; `expect_no_version_line` opt-out for probes whose target has no parseable version line |
+| Cycle 2 — drift detection | v0.0.39–v0.0.43 | Real drift detection across every non-Rust component: panel (`ct:version`), redis (`INFO Server`), mariadb (`SELECT VERSION()`), sing-box (authenticated clash-API `/version`), haproxy (UNIX stats socket) |
+| Cycle 3 — panel-hostname SoT | v0.0.55–v0.0.56 | Single source of truth for the panel hostname; PHP ↔ Rust parity asserted by `scripts/verify_sot.sh` against fixture envs |
+
+Hand-passes still occur — notably the **30-round audit-loop
+hardening** that accompanied the v0.0.58 FrankenPHP runtime
+swap — without claiming a new LTSC cycle index. v0.0.62
+introduced a release-time gate
+(`.github/workflows/tag-version.yml`) that asserts at
+tag-push time that the bare `v*` version equals
+`panel/config/cool-tunnel.php::version`, refusing tags whose
+source disagrees. See `AUDIT.md § Release-time gates`.
 
 The pattern: cycles 1–30 are hand-audit (real findings, real
-fixes); cycles 31–50 are codified into `audit.yml`. Hand-audit
-discovers what's worth catching; CI catches it forever. New
-discoveries in future hand-passes append to the codified set.
+fixes); cycles 31–50 are codified into `audit.yml`; "Cycle N"
+sub-projects and release-time gates extend the surface
+separately. CI catches forever what hand-audit discovers.
+
+## 2026 milestones
+
+Two cross-cutting policies that constrain what the codebase
+will tolerate, codified during the 2026 release arc.
+
+### Immutable Ballast
+
+A comment longer than three lines in this codebase is
+**load-bearing**, not removable cruft. The verbose `// Why:`
+blocks in `core/deny.toml::ignore[]` (RUSTSEC-2023-0071 is
+inapplicable because MariaDB 11 defaults to
+`mysql_native_password`), the deferred-fail-fast explanation
+on `panel/config/cool-tunnel.php::$resolvePanelDomain`
+(Laravel bootstrap loads config unconditionally for phpunit
+and larastan), the provenance markers on every related
+declaration (`Cycle 2 / v0.0.39`, `R1-1 / R1-2`,
+`low-mem-server pass`) — these encode incident provenance
+and prevent re-debate at the next audit cycle.
+
+**Rule.** Before deleting a comment longer than three lines,
+trace its referenced version (`v0.0.X`) through
+`CHANGELOG.md` and confirm the incident is no longer
+relevant. If you can't confirm, the comment stays.
+
+The principle was implicit through the v0.0.6–v0.0.61 arc;
+named and codified during the v0.0.62 lean-and-clean audit
+pass. Future de-watering operates against this rule
+explicitly.
+
+### Zero `unwrap()` floor
+
+The Rust workspace forbids panicking patterns at compile
+time via `core/Cargo.toml`'s clippy lints:
+
+| Lint | Level | Catches |
+| --- | --- | --- |
+| `unwrap_used` | deny | Any `.unwrap()` (use `?` or explicit `match`) |
+| `expect_used` | deny | Any `.expect("…")` |
+| `panic` | deny | Direct `panic!()` invocations |
+| `todo` | deny | `todo!()` placeholders |
+| `unimplemented` | deny | `unimplemented!()` placeholders |
+
+Every fallible operation has a typed error path. A
+production-failure-as-panic regression cannot land — the
+compiler refuses it. First codified in v0.0.10's
+code-robustness pass; remains the workspace floor as of
+v0.0.62.
+
+`unsafe_code = "deny"` (`[workspace.lints.rust]`) is the
+adjacent floor for memory safety, same enforcement model.
 
 ## Boundaries
 
