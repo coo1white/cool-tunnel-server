@@ -437,15 +437,22 @@ mod tests {
     }
 
     /// Concurrent stress: the way `redis_bridge` actually uses the
-    /// Coalescer is `Arc<tokio::sync::Mutex<Coalescer>>` shared
+    /// Coalescer is `Arc<std::sync::Mutex<Coalescer>>` shared
     /// between many tasks (each pubsub message). This test simulates
     /// 64 tokio tasks racing to admit 1,000 events each into the same
     /// coalescer and verifies the FireNow* count is ≤ 2 per window
     /// regardless of contention.
+    ///
+    /// The `std::sync::Mutex` choice (T-4, v0.0.65) is what the
+    /// production code uses: every critical section is brief
+    /// (Coalescer::admit is a constant-time state-machine check)
+    /// and never crosses an `.await`. The non-`Send` `MutexGuard`
+    /// makes accidental cross-await holding a compile error — that
+    /// is the point of this migration. The resulting block scopes
+    /// below are deliberately tight.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn coalescer_concurrent_admits_collapse_correctly() {
-        use std::sync::Arc;
-        use tokio::sync::Mutex;
+        use std::sync::{Arc, Mutex};
 
         let coalescer = Arc::new(Mutex::new(Coalescer::new(Duration::from_millis(100))));
         let fires = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -462,7 +469,14 @@ mod tests {
                         + Duration::from_nanos(
                             (u64::from(task) * 1_000 + u64::from(i)) * 50_000_000 / (64 * 1_000),
                         );
-                    let decision = coalescer.lock().await.admit(now);
+                    // Tight block scope: lock briefly, drop guard
+                    // before any `.await` (there are none here, but
+                    // the !Send guard makes that the structural
+                    // requirement).
+                    let decision = {
+                        let mut g = coalescer.lock().unwrap_or_else(|p| p.into_inner());
+                        g.admit(now)
+                    };
                     if matches!(
                         decision,
                         Decision::FireNow | Decision::FireNowAndScheduleFlush
@@ -476,11 +490,11 @@ mod tests {
             h.await.unwrap();
         }
 
-        // Trailing flush.
-        let trailing = coalescer
-            .lock()
-            .await
-            .on_flush(t0 + Duration::from_millis(100));
+        // Trailing flush — same tight-scope discipline.
+        let trailing = {
+            let mut g = coalescer.lock().unwrap_or_else(|p| p.into_inner());
+            g.on_flush(t0 + Duration::from_millis(100))
+        };
         let total = fires.load(std::sync::atomic::Ordering::SeqCst) + usize::from(trailing);
 
         // 64 × 1000 = 64,000 events into one window. Under any
