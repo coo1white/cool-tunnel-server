@@ -83,13 +83,13 @@ allow = [
 # Anything not on `allow` is denied by default.
 confidence-threshold = 0.93   # cargo-deny's default; bump if false-positives.
 
-# Our own workspace crates declare `license = "AGPL-3.0-or-later"`
-# (an SPDX expression cargo-deny recognises directly), so the
-# `private.ignore = true` stanza is no longer load-bearing — but
-# we keep it set for `publish = false` crates as a belt-and-
-# braces guard against a future workspace member that forgets to
-# declare a license. Third-party deps still go through the full
-# licence check.
+# Our own workspace crates declare `license-file = "../LICENSE"`
+# (PolyForm Noncommercial 1.0.0 — not in SPDX, so cargo-deny would
+# reject them as `unlicensed` without this stanza). `publish =
+# false` in [workspace.package] is the canonical declaration that
+# these never reach a public registry; this tells cargo-deny to
+# honour it. Third-party deps still go through the full licence
+# check on the [licenses] allow-list above.
 [licenses.private]
 ignore = true
 

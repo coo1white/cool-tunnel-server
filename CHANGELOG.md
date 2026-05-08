@@ -22,6 +22,80 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.61] — 2026-05-08 — License relicense: AGPL-3.0-or-later → PolyForm Noncommercial 1.0.0
+
+Operator-visible license change. **Read this before pulling.**
+
+### What changed
+
+The project's own code (the panel's PHP, the Rust core, the
+shared `ct-protocol` crate) is now licensed under the
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/),
+not AGPL-3.0-or-later as in v0.0.58 → v0.0.60.
+
+PolyForm Noncommercial is a **source-available, non-commercial-
+use** license drafted by Heather Meeker. It:
+
+- ✅ **Permits** personal use, non-commercial use, research,
+  education, and use by individuals or non-commercial entities.
+- ❌ **Prohibits** commercial use — selling the software,
+  hosting it as a paid service, bundling it into a paid product.
+  Commercial use requires a separate written license from the
+  copyright holder.
+- 🛡️ Disclaims all warranties in PolyForm § 5 ("AS IS, AS
+  AVAILABLE, WITHOUT ANY WARRANTY") — stronger language than
+  AGPL §§ 15–16.
+
+### Why the change
+
+AGPL-3.0 closed the SaaS loophole (modify + run as a service →
+publish your modifications) but still permitted commercial use.
+PolyForm Noncommercial reserves all commercial use to the
+copyright holder, matching the project's actual position: this
+is a personal / community tool, not a commercial product.
+
+### What this means for existing deployments
+
+- **Versions tagged before this change (v0.0.58, v0.0.59,
+  v0.0.60) remain available under AGPL-3.0-or-later** for
+  anyone who downloaded them under that license. The new
+  license applies from v0.0.61 onward.
+- **Stock unmodified deployments by individuals on their own
+  VPS — fine.** That's the canonical use case PolyForm
+  Noncommercial permits explicitly.
+- **Paid service / SaaS / commercial bundling — not permitted
+  without a separate license.**
+
+### Bundled upstream components — unaffected
+
+Caddy (Apache-2.0), sing-box (GPL-3.0), Laravel (MIT), Filament
+(MIT), MariaDB (GPL-2.0), Redis (BSD-3 / SSPL post-7.4), and
+the rest of the third-party stack ship under their own
+licenses unchanged. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md)
+for the full list.
+
+### Files updated
+
+- `LICENSE` — verbatim PolyForm Noncommercial 1.0.0 plain-text
+- `core/Cargo.toml` (workspace.package) — `license` →
+  `license-file` (PolyForm not in SPDX; cargo-deny picks this
+  up via `[licenses.private] ignore = true`)
+- `core/{ct-protocol,ct-server-core}/Cargo.toml` — flipped to
+  `license-file.workspace`; descriptions updated
+- `core/deny.toml` — comment updated
+- `panel/composer.json` — `"license": "Other"`
+- `README.md`, `Disclaimer.md`, `THIRD_PARTY_LICENSES.md`,
+  `STRUCTURE.md` — PolyForm-specific guidance
+- `manifests/{ct-protocol,ct-server-core,panel}.upstream.json`
+  — note fields swapped
+
+### Verification
+
+- `make ci` — all 9 sub-targets green.
+- LICENSE byte-equal to the official polyformproject.org text.
+
+---
+
 ## [0.0.60] — 2026-05-08 — Hotfix: FrankenPHP `num_threads (4) must be greater than the number of worker threads (4)`
 
 Second emergency hotfix in the v0.0.58 chain. The v0.0.59 hotfix
