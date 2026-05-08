@@ -22,6 +22,112 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.67] — 2026-05-09 — Internal-health metrics + logging discipline (R-1 + R-2)
+
+Two narrow operator-observability items shipped together with an
+explicit posture carve-out so the LTSC anti-tracking promise stays
+honest. **No per-user analytics surface.** Optional, off by default.
+
+### Added
+
+- **`/metrics` endpoint (R-1).** New module
+  `core/ct-server-core/src/internal_metrics.rs` exposes a
+  Prometheus text-format endpoint on a configurable docker-
+  internal bind address. **Operator-internal-health only**:
+  - `ct_daemon_handler_permits_used` / `_total` (T-1 semaphore
+    saturation gauge)
+  - `ct_db_pool_connections_in_use` (sqlx pool gauge)
+  - `ct_redis_subscriber_restarts_total` (counter)
+  - `ct_coalescer_fires_total{edge="leading|trailing"}`
+    (counter, two series)
+  - `ct_process_uptime_seconds` (gauge — reset detector)
+
+  Off by default. Opt-in via `--metrics-bind <addr>` /
+  `CT_METRICS_BIND` env. Recommended single-container value:
+  `127.0.0.1:9292` (ct-server-core runs inside the panel
+  container alongside FrankenPHP; operator scrapes via
+  `docker compose exec ct-panel curl http://127.0.0.1:9292/metrics`).
+
+  HTTP serving is hand-rolled minimal HTTP/1.1 (~80 LOC of
+  `tokio::net::TcpListener` + `AsyncRead`/`AsyncWrite`) — no
+  `axum` / `hyper` deps reintroduced; the v0.0.50 low-mem
+  build floor stays intact.
+
+### Changed
+
+- **T-1 daemon semaphore lifted from `daemon::serve` to
+  `main.rs`** (v0.0.65 → v0.0.67). The `Arc<Semaphore>` is now
+  constructed in the `Cmd::Daemon` arm and shared with both
+  `daemon::serve` and `internal_metrics::MetricsRegistry` (so the
+  `permits_used` gauge reads the live semaphore without
+  duplication). Behavioural-equivalent change for `daemon::serve`.
+
+- **`redis_bridge::spawn` accepts `Option<Arc<MetricsRegistry>>`.**
+  When present, increments the restart counter on every
+  reconnect-after-error and the fire counter on every successful
+  reload, labeled by edge. When absent (default), zero overhead.
+
+### Logging discipline (R-2)
+
+- **Two `info!` calls demoted to `debug!`** to remove per-user
+  PII from default-level logs:
+  - `db.rs::disable_account` was logging `account = id`
+  - `quota.rs::enforce` was logging `account = %row.username`
+
+  Both fields are operator-visible PII. Operators investigating
+  account-disable events can opt in via
+  `RUST_LOG=ct_server_core::db=debug,ct_server_core::quota=debug`.
+
+- **`CONTRIBUTING.md § Logging discipline`** codifies the rule:
+  `info!` and above must not carry per-user identifiers
+  (`username`, `account_id`, `email`, IP, subscription tokens).
+  `warn!`/`error!` for operator-actionable failures. `debug!`
+  for verbose investigation including PII-bearing fields.
+
+- **`CONTRIBUTING.md § Internal-health metrics`** documents the
+  rules for adding a new counter: per-process / per-subsystem
+  state OK; per-user labels NOT OK (those are audit-log entries
+  that go to `debug!` instead).
+
+### Documentation
+
+- **`LTSC.md § Internal-health observability vs user analytics`**
+  is the new structural carve-out. Explicitly distinguishes
+  per-user analytics (still deliberately not collected) from
+  operator-internal-health (optional, internal-only, never
+  per-user data). Anchors the v0.0.7 anti-tracking promise
+  against the new metrics surface.
+
+### Tests
+
+- New: `internal_metrics::tests::unknown_edge_is_silently_ignored`
+  — registry is observability-only, never crashes the producer
+  on an unknown edge label.
+- New: `internal_metrics::tests::render_format_smoke` — the
+  Prometheus text format requires `# HELP` + `# TYPE` directives
+  for every metric; this asserts the format-string source
+  contains them all.
+- Total: **102 tests pass** (`cargo test --workspace --locked`).
+
+### Not changed
+
+- Wire format, sing-box config rendering, manifest schema,
+  container layout.
+- Per-user analytics surface remains a deliberate no-op
+  (`core/ct-server-core/src/metrics.rs`).
+- All previous CI gates (cycles 31–43 + tag-version-check).
+- Operator-facing UX: the panel UI and behaviour are unchanged.
+
+### Known follow-up
+
+The `metrics_bind` flag is wired but not yet auto-set in
+`docker-compose.yml` / `.env.example`. Operators wanting the
+endpoint enabled by default in their deploy can set
+`CT_METRICS_BIND=127.0.0.1:9292` in `.env`; a docker-compose
+default is a separate small commit if/when wanted.
+
+---
+
 ## [0.0.66] — 2026-05-09 — Documentation surface: `//!` pivot + CONTRIBUTING.md
 
 Surfaces the existing module rationale (the *Immutable Ballast*
@@ -6857,7 +6963,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.66...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.67...HEAD
+[0.0.67]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.66...v0.0.67
 [0.0.66]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.65...v0.0.66
 [0.0.65]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.64...v0.0.65
 [0.0.64]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.63...v0.0.64

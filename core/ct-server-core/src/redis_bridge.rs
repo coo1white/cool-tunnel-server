@@ -54,6 +54,7 @@
 //!     `std::sync::MutexGuard` is `!Send`, so any future regression
 //!     trying to do so fails to compile.
 
+use crate::internal_metrics::MetricsRegistry;
 use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
 use crate::{admin, singbox, Result};
 use redis::Client;
@@ -107,12 +108,18 @@ fn lock_tracker(t: &Mutex<FlushTracker>) -> std::sync::MutexGuard<'_, FlushTrack
 /// on its own tokio task. Errors during the loop are logged and the
 /// subscriber reconnects with exponential backoff — Redis being down
 /// must not take the daemon down.
+///
+/// The optional `metrics` registry (v0.0.67) is incremented on every
+/// reconnect-after-error and on every successful reload-fire. None
+/// when the operator hasn't enabled the `--metrics-bind` endpoint —
+/// no observability cost in that case.
 pub fn spawn(
     redis_url: String,
     pool: MySqlPool,
     template: String,
     output: String,
     admin_url: String,
+    metrics: Option<Arc<MetricsRegistry>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         // FlushTracker is shared between the subscriber loop (which
@@ -128,7 +135,16 @@ pub fn spawn(
 
         let mut backoff_ms = 250_u64;
         loop {
-            match run_subscriber(&redis_url, &pool, &template, &output, &admin_url, &tracker).await
+            match run_subscriber(
+                &redis_url,
+                &pool,
+                &template,
+                &output,
+                &admin_url,
+                &tracker,
+                metrics.as_ref(),
+            )
+            .await
             {
                 Ok(()) => {
                     tracing::warn!("redis subscriber exited cleanly; restarting");
@@ -136,6 +152,9 @@ pub fn spawn(
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, backoff_ms, "redis subscriber error; backing off");
+                    if let Some(m) = &metrics {
+                        m.note_redis_subscriber_restart();
+                    }
                     tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                     backoff_ms = (backoff_ms * 2).min(30_000);
                 }
@@ -151,6 +170,7 @@ async fn run_subscriber(
     output: &str,
     admin_url: &str,
     tracker: &Arc<Mutex<FlushTracker>>,
+    metrics: Option<&Arc<MetricsRegistry>>,
 ) -> Result<()> {
     let client = Client::open(redis_url)?;
     let mut pubsub = client.get_async_pubsub().await?;
@@ -196,7 +216,7 @@ async fn run_subscriber(
                 // up our state when it runs.
             }
             Decision::FireNow | Decision::FireNowAndScheduleFlush => {
-                fire_reload(pool, template, output, admin_url, "leading").await;
+                fire_reload(pool, template, output, admin_url, "leading", metrics).await;
                 if matches!(decision, Decision::FireNowAndScheduleFlush) {
                     schedule_flush(
                         tracker.clone(),
@@ -204,6 +224,7 @@ async fn run_subscriber(
                         template.to_owned(),
                         output.to_owned(),
                         admin_url.to_owned(),
+                        metrics.map(Arc::clone),
                     );
                 }
             }
@@ -215,12 +236,18 @@ async fn run_subscriber(
 /// Run one sing-box render + clash-API reload cycle. Errors are
 /// logged but never propagated — a failed reload must not kill the
 /// subscriber loop, since the next event will retry the work.
+///
+/// The `metrics` registry (v0.0.67) is incremented on the *successful*
+/// reload-applied path only. Failed reloads count as zero fires
+/// because the operator's view should be "how often did sing-box
+/// actually pick up new state", not "how often did we try and fail."
 async fn fire_reload(
     pool: &MySqlPool,
     template: &str,
     output: &str,
     admin_url: &str,
     edge: &'static str,
+    metrics: Option<&Arc<MetricsRegistry>>,
 ) {
     let started = Instant::now();
     if let Err(e) = singbox::render(pool, template, output, false, false).await {
@@ -244,6 +271,9 @@ async fn fire_reload(
     }
     let elapsed_ms = started.elapsed().as_millis() as u64;
     tracing::info!(edge, elapsed_ms, "sing-box reload applied");
+    if let Some(m) = metrics {
+        m.note_coalescer_fire(edge);
+    }
 }
 
 /// Schedule a trailing flush at `now + DEFAULT_WINDOW`, single-flight.
@@ -258,6 +288,7 @@ fn schedule_flush(
     template: String,
     output: String,
     admin_url: String,
+    metrics: Option<Arc<MetricsRegistry>>,
 ) {
     let mut g = lock_tracker(&tracker);
     if g.flush_handle.as_ref().is_some_and(|h| !h.is_finished()) {
@@ -276,7 +307,15 @@ fn schedule_flush(
             g.coalescer.on_flush(Instant::now())
         };
         if needs_flush {
-            fire_reload(&pool, &template, &output, &admin_url, "trailing").await;
+            fire_reload(
+                &pool,
+                &template,
+                &output,
+                &admin_url,
+                "trailing",
+                metrics.as_ref(),
+            )
+            .await;
         } else {
             tracing::debug!("trailing flush skipped — no suppressed events");
         }
