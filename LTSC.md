@@ -5,7 +5,7 @@
 > releases — and the **boundaries** of what we deliberately do
 > NOT promise.
 >
-> **Current baseline (2026-05-09):** server `v0.0.65`,
+> **Current baseline (2026-05-09):** server `v0.0.69`,
 > macOS client `v2.0.26` (separate repo —
 > see [`docs/cross-platform-clients.md`](docs/cross-platform-clients.md)).
 
@@ -37,6 +37,8 @@ A pinned, reproducible, minor-version-stable stack:
 | Schema↔code | A migration that retypes a column without `make sqlx-prepare` fails at `cargo check` | `cycle 43` sqlx-offline-check |
 | Build reproducibility | Same commit + same `.env` → byte-identical images | pinned base images, locked Cargo.lock + composer.lock + .sqlx/ |
 | API stability | `WireRequestV1` / `SubscriptionManifestV1` / `ComponentManifestV1` are append-only within a major | type tags `V1` are load-bearing; breaking → `V2` side-by-side |
+| Daemon network boundary | Every Unix-socket request is bounded by max frame bytes, read timeout, and typed error mapping; malformed peers reset the connection, not the process | `core/ct-server-core/src/frame.rs`, `err.rs`, `daemon.rs`; Rust tests |
+| Daemon state truth | One connection follows one FSM branch; invalid predecessor observations hard-reset the connection | `core/ct-server-core/src/daemon_fsm.rs`; `docs/daemon-fsm.md` |
 
 ## What we explicitly do NOT promise
 
@@ -200,7 +202,7 @@ regression even if the implementation looks "internal."
 | Category | Posture | Surface |
 | --- | --- | --- |
 | **Per-user analytics** (e.g. who connected, when, to what destination, with what subscription token) | **Deliberately not collected.** `core/ct-server-core/src/metrics.rs` remains an honest no-op (per v0.0.7 anti-tracking pass). The cover-site invariant + audit cycle 40 codify the wire-side promise; this carve-out codifies the data-side promise. | None. Operator who wants per-user counters under `coolwhite LLC` stewardship would have to fork — and AGPL § 13 then requires them to publish the modification. |
-| **Operator-internal-health** (e.g. semaphore saturation, DB-pool utilization, restart counts, Coalescer fire rate) | **Operator-visible, internal-net only, never per-user data.** Optional `/metrics` endpoint exposes Prometheus text-format counters bound to a docker-internal address — never a public port. Off by default; operator opts in via `--metrics-bind` / `CT_METRICS_BIND`. | `ct-server-core --metrics-bind 127.0.0.1:9292`; reachable from inside the panel container via `docker compose exec ct-panel curl`. Codified at v0.0.67 (R-1). |
+| **Operator-internal-health** (e.g. semaphore saturation, DB-pool utilization, restart counts, Coalescer fire rate) | **Operator-visible, internal-net only, never per-user data.** Optional `/metrics` endpoint exposes Prometheus text-format counters bound to a docker-internal address — never a public port. Off by default; operator opts in via `--metrics-bind` / `CT_METRICS_BIND`. | `ct-server-core --metrics-bind 127.0.0.1:9292`; reachable from inside the panel container via `docker compose exec panel curl`. Codified at v0.0.67 (R-1). |
 
 **Rule: a counter that identifies a specific user — even
 indirectly via labels (`{username="alice"}`, `{account_id="42"}`,
@@ -223,6 +225,59 @@ The audit cycles 40 (anti-tracking config) + 33 (composer audit)
 already cover the wire-format and dependency-side anti-tracking
 floor. The metrics-side carve-out above extends that to the
 operator-observable surface.
+
+### Bounded frame discipline
+
+Every network-boundary reader in `ct-server-core` must declare a
+policy before it can consume bytes:
+
+| Policy field | Bound |
+| --- | --- |
+| `policy_name()` | Stable semantic name for logs and documentation |
+| `max_frame_len()` | Maximum complete frame bytes one peer can force into memory |
+| `read_timeout()` | Maximum time one peer can retain a handler permit while framing |
+| `max_read_chunk_len()` | Maximum bytes requested from Tokio in one read |
+
+The daemon JSON-line protocol and internal HTTP metrics reader use
+`BytesMut` buffers that are retained per connection and split when a
+complete frame lands. This avoids per-turn `Vec` churn for honest
+small requests and bounds memory retained for hostile partial frames.
+
+`FrameTooLarge`, `ReadTimeout`, incomplete frames, invalid UTF-8, and
+malformed JSON are connection-scoped recovery paths. They close or
+hard-reset the offending connection and leave the daemon process alive.
+
+Codified at v0.0.69 in `core/ct-server-core/src/frame.rs` and wired
+through `daemon.rs` plus `internal_metrics.rs`.
+
+### No-forking daemon FSM
+
+Each accepted daemon Unix-socket connection is represented by a
+deterministic finite state machine:
+
+```text
+Accepted -> ReadingFrame -> DecodingUtf8 -> DecodingJson
+         -> Dispatching -> Responding -> ProbingConstancy
+         -> ReadingFrame
+```
+
+Clean EOF moves to `Disconnected`. Protocol deviation, invalid UTF-8,
+malformed JSON, oversized frames, read timeout, incomplete frames, or
+response-write failure moves to `HardReset`.
+
+The implementation uses `AtomicU8::compare_exchange`. A transition is
+valid only when the observed state exactly matches the required
+predecessor. Any mismatch records a hard reset and stores `HardReset`
+instead of creating a second branch of truth.
+
+After each successful turn the daemon enters `ProbingConstancy`: it
+measures turn latency and frame-pressure basis points, keeps hard caps
+unchanged, and narrows the next read chunk when pressure crosses the
+50% or 80% thresholds. That initiative logic is Heng applied to the
+control plane: active pressure sensing without speculative branching.
+
+Codified at v0.0.69 in `core/ct-server-core/src/daemon_fsm.rs`; text
+diagram and retrieval anchors live in `docs/daemon-fsm.md`.
 
 ## Boundaries
 
