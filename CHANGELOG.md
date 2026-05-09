@@ -22,6 +22,104 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.69] — 2026-05-09 — Core LTS hardening: bounded frames, typed errors, observability, and daemon FSM
+
+This release promotes the Rust server core from implicit socket
+control flow to an explicitly documented, bounded, observable
+daemon boundary. The panel-facing protocol stays WireV1-compatible;
+the change is operational hardening: malformed peers get
+connection-scoped recovery, operators get trace/metric hooks, and
+future maintainers get stable contracts instead of ad hoc branches.
+
+### Added
+
+- **Bounded `BytesMut` frame readers.** New
+  `core/ct-server-core/src/frame.rs` provides reusable, capped
+  JSON-line and HTTP-header readers. The daemon and internal
+  metrics endpoint no longer rely on per-turn allocation patterns
+  or unbounded partial-frame growth.
+- **Daemon finite state machine.** New
+  `core/ct-server-core/src/daemon_fsm.rs` models each daemon
+  connection as:
+
+  ```text
+  Accepted -> ReadingFrame -> DecodingUtf8 -> DecodingJson
+           -> Dispatching -> Responding -> ProbingConstancy
+           -> ReadingFrame
+
+  Any protocol deviation -> HardReset
+  Clean EOF -> Disconnected
+  ```
+
+  Transitions use atomic compare-exchange, so any observed state
+  that does not match the required predecessor forces a hard reset
+  instead of creating a second branch of truth.
+- **Heng constancy probing.** After each successful daemon turn,
+  the server actively measures frame pressure and turn latency,
+  then narrows the next read chunk under pressure without raising
+  the hard frame cap.
+- **OTel-compatible observability.** New
+  `core/ct-server-core/src/observability.rs` centralises semantic
+  trace keys, duration conversion, capped hex dumps, and 80%
+  threshold helpers. Daemon and metrics network turns now emit
+  `otel.network.turn` spans.
+- **Prometheus metrics for bottlenecks and FSM resets.**
+  `/metrics` now includes network-turn counters, last-turn latency,
+  buffer high-water basis points, 80% threshold crossings, and
+  `ct_daemon_fsm_hard_resets_total`.
+- **Operator documentation.**
+  - `docs/daemon-fsm.md` records the text FSM diagram and
+    no-forking contract.
+  - `docs/observability-dashboard.md` provides Prometheus alert
+    rules and Grafana panel queries.
+  - `docs/ai-unit-test-generation.md` gives RAG/test-generation
+    anchors for the new typed contracts.
+
+### Changed
+
+- **Strict typed error taxonomy.** `ct-server-core` now routes
+  production failures through a documented `Error` enum with stable
+  daemon `wire_code()` values. Opaque/generic boundary errors are
+  replaced by predictable categories such as `request_too_large`,
+  `read_timeout`, `bad_request`, and dependency-specific codes.
+- **Daemon boundary fail-fast behavior.** Oversized frames,
+  incomplete frames, read timeouts, invalid UTF-8, malformed JSON,
+  invalid FSM transitions, and response-write failures are
+  connection-scoped hard resets. Valid requests whose domain
+  operation fails still return typed wire errors through the normal
+  `Responding` state.
+- **Internal metrics reader hardening.** The hand-rolled HTTP
+  metrics endpoint now uses the same bounded-frame primitives and
+  emits warning-level diagnostics only on malformed or threshold-
+  crossing input.
+- **AI-native contract surface.** New Rustdoc aliases and
+  trait-level contracts make the daemon dispatcher, frame readers,
+  metrics surface, and error taxonomy easier for automated
+  maintenance tools to retrieve and test.
+
+### Security
+
+- **Panic-free network boundary posture.** The daemon's socket
+  boundary now closes or hard-resets bad connections rather than
+  panicking or continuing through ambiguous state.
+- **Silent log strategy preserved.** Normal operation remains quiet;
+  hex/header dumps appear only on critical faults or threshold
+  crossings and are capped before formatting.
+
+### Tests
+
+- Local validation before release:
+  - `cargo fmt --check`
+  - `cargo check -p ct-server-core`
+  - `cargo clippy -p ct-server-core --all-targets -- -A clippy::pedantic`
+  - `cargo test -p ct-server-core` — 111 passed
+  - `cargo test -p ct-protocol` — 22 passed
+  - `cargo doc -p ct-server-core --no-deps`
+  - `git diff --check`
+- GitHub CI passed on PR #56 and again on `main` after merge.
+
+---
+
 ## [0.0.68] — 2026-05-09 — Hotfix: PANEL_DOMAIN ordering in v0.0.54 .env auto-migration
 
 A pre-v0.0.68 `make update` run on a pre-v0.0.33 .env appended
