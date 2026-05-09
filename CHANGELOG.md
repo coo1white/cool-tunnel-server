@@ -22,6 +22,65 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.71] — 2026-05-09 — AI-native contracts and Alpine NaiveProxy probe hardening
+
+This patch release promotes the AI-native Rust refactor and the
+NaiveProxy Alpine probe fix that landed after `v0.0.70`. The runtime
+surface is still WireV1-compatible; the work makes the server easier
+for automated maintainers to retrieve, reason about, and test while
+closing a deployed-image compatibility gap in the bundled naive client
+probe.
+
+### Added
+
+- **Contract-first Rust metadata.** Added `ct_server_core::contracts`
+  with semantic contract records, explicit recovery scopes, consensus
+  alignment principles, and retrieval aliases for AI-assisted
+  maintenance.
+- **Trait boundaries for self-healing probes.** Split anti-tracking
+  detection and canary history behavior behind narrow traits so future
+  fixes can be generated and tested against explicit module contracts
+  instead of implicit control flow.
+- **AI unit-test generation guide.** Expanded
+  `docs/ai-unit-test-generation.md` with retrieval anchors for the
+  daemon, probe, canary, and semantic-contract surfaces.
+
+### Changed
+
+- **Threshold decision logic is now documented in Rustdoc.** The Heng
+  50% adaptation and 80% bottleneck thresholds now carry explicit
+  rationale for why they preserve a fixed hard cap while allowing
+  congestion-sensitive recovery.
+- **Daemon and probe module contracts.** The daemon dispatcher,
+  anti-tracking probe, canary probe, and canary history store now expose
+  boundary contracts that state idempotency, retry posture, and failure
+  isolation expectations.
+
+### Fixed
+
+- **NaiveProxy client probe on Alpine.** The panel image now installs
+  glibc compatibility libraries before verifying the bundled naive
+  binary, and the manifest probe uses the upstream flag form expected
+  by the packaged client.
+- **Caddy ACME listener redirects.** Internal ACME listener blocks no
+  longer leak `:8443` redirect targets during probe or cover-site
+  traffic.
+- **Probe diagnostics.** Malformed naive client version JSON now emits
+  a warning instead of silently falling through to an ambiguous result.
+
+### Tests
+
+- PR #62 CI passed before merge.
+- Local pre-release validation:
+  - `cargo fmt --check`
+  - `cargo check -p ct-server-core`
+  - `cargo test -p ct-server-core` — 118 passed
+  - `cargo test -p ct-protocol` — 22 passed
+  - `SQLX_OFFLINE=true cargo clippy --release --all-targets --locked`
+  - `git diff --check`
+
+---
+
 ## [0.0.70] — 2026-05-09 — Release promotion: repository authority and strict update health gates
 
 This patch release promotes the post-`v0.0.69` operations work to an
@@ -7181,7 +7240,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.70...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.71...HEAD
+[0.0.71]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.70...v0.0.71
 [0.0.70]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.69...v0.0.70
 [0.0.69]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.68...v0.0.69
 [0.0.68]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.67...v0.0.68
