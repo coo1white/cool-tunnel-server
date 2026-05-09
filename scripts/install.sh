@@ -517,7 +517,7 @@ fi
 # ---------- Final OK/NG check --------------------------------------
 
 step "Component check (OK/NG status of every dependency)"
-compose exec -T panel ct-server-core component check --manifests /srv/manifests \
+component_check_strict /srv/manifests \
     || warn "some components reported NG - investigate before serving real users"
 
 # ---------- Done ---------------------------------------------------

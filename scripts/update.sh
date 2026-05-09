@@ -166,6 +166,19 @@ step "Bring new panel image up (entrypoint runs migrate + render)"
 # up -d haproxy` to recover.
 compose up -d panel sing-box haproxy
 
+# The panel code is bind-mounted from ./panel, while Laravel's
+# bootstrap/cache lives under that same mount and can carry a cached
+# config.php from the previous release. `compose up -d` returns after
+# the container starts, not after entrypoint.sh has re-run package
+# discovery and rebuilt config/route/view caches. Running the
+# component drift probe before the sentinel races that cache rebuild;
+# the panel row can report the prior release even though the new code
+# is present. Wait for the entrypoint contract before all post-swap
+# probes and renders.
+WAIT_FOR_HINT="docker compose logs --tail=120 panel" \
+    wait_for "panel entrypoint sentinel" 90 5 \
+    bash -c 'docker compose exec -T panel test -f /tmp/cool-tunnel/entrypoint-complete'
+
 step "Verify migrations applied (idempotent re-run)"
 compose exec -T panel php artisan migrate --force --no-interaction
 
@@ -193,7 +206,7 @@ step "Reload haproxy (SIGHUP — graceful re-exec)"
 compose kill -s HUP haproxy
 
 step "Component check (post-swap)"
-compose exec -T panel ct-server-core component check --manifests /srv/manifests \
+component_check_strict /srv/manifests \
     || die "post-swap check NG — investigate logs" \
            "docker compose logs --tail=100 panel sing-box haproxy"
 

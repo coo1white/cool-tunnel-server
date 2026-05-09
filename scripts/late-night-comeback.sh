@@ -11,6 +11,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
+# shellcheck source=lib.sh
+. scripts/lib.sh
+
 # Source .env so $DOMAIN, $REDIS_PASSWORD, etc. are available.
 if [[ -f .env ]]; then
     set -a
@@ -124,8 +127,7 @@ check_ntp() {
 
 # ---- 7. Component check OK/NG -----------------------------------
 check_components() {
-    if ! docker compose exec -T panel ct-server-core component check \
-            --manifests /srv/manifests >/tmp/lnc-components 2>&1; then
+    if ! component_check_strict /srv/manifests >/tmp/lnc-components 2>&1; then
         record 7 ng "Some components NG (see docker compose exec panel ct-server-core component check)"
         return
     fi
