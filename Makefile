@@ -92,6 +92,12 @@ lint: rust-clippy ## alias of rust-clippy
 .PHONY: test
 test: rust-test ## alias of rust-test
 
+.PHONY: build
+build: rust-build ## alias of rust-build; local Rust release build gate
+
+.PHONY: audit
+audit: ci ## local audit gate; mirrors CI plus script-level drift checks
+
 .PHONY: rust-fmt
 rust-fmt: ## cargo fmt --all
 	cd core && cargo fmt --all
@@ -198,6 +204,9 @@ install: ## first-time bootstrap (interactive)
 .PHONY: update
 update: ## pull, rebuild, run component check, swap traffic
 	./scripts/update.sh
+
+.PHONY: deploy
+deploy: update ## alias of update; deploy the latest fast-forwarded release
 
 .PHONY: backup
 backup: ## snapshot db + .env + caddy data into backups/
