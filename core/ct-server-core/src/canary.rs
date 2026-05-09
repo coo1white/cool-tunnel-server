@@ -63,7 +63,7 @@ pub async fn probe(pool: &MySqlPool) -> Result<()> {
     };
     append_history(pool, &entry).await?;
     println!("{}", serde_json::to_string(&entry)?);
-    probe_result.map_err(Error::msg)
+    probe_result.map_err(Error::probe)
 }
 
 /// Print the most recent probe entries as JSON-per-line — operator

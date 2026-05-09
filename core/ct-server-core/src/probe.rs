@@ -18,7 +18,7 @@
 //! padding correctly without re-implementing it in Rust. The
 //! binary is pinned in docker/panel/Dockerfile (ARG NAIVE_VERSION
 //! + ARG NAIVE_SHA256) and verified by manifests/naiveproxy-client
-//! .upstream.json.
+//!   `.upstream.json`.
 //!
 //! The probe is best-effort — it doesn't tell you whether a
 //! censorship system can fingerprint your TLS handshake, only
@@ -74,7 +74,7 @@ pub async fn anti_tracking(target: &str, via: Option<&str>) -> Result<()> {
         _naive_proc = None;
     }
 
-    let client = builder.build().map_err(|e| Error::msg(e.to_string()))?;
+    let client = builder.build().map_err(Error::Http)?;
 
     // 1) Reachability + header echo. Most public echo endpoints
     // (postman-echo, ifconfig.co/json) reflect headers; we use
@@ -170,7 +170,10 @@ impl NaiveLocal {
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| Error::msg(format!("spawn {NAIVE_BINARY}: {e}")))?;
+            .map_err(|source| Error::ProcessSpawn {
+                program: NAIVE_BINARY,
+                source,
+            })?;
 
         // Poll the local port until naive is bound, or until we've
         // burned NAIVE_STARTUP_TIMEOUT. If the child exits inside
@@ -180,10 +183,11 @@ impl NaiveLocal {
         let deadline = Instant::now() + NAIVE_STARTUP_TIMEOUT;
         while Instant::now() < deadline {
             if let Ok(Some(status)) = child.try_wait() {
-                return Err(Error::msg(format!(
-                    "naive client exited before binding 127.0.0.1:{port} (status={:?})",
-                    status.code()
-                )));
+                return Err(Error::ProcessExitedEarly {
+                    program: NAIVE_BINARY,
+                    code: status.code(),
+                    address: format!("127.0.0.1:{port}"),
+                });
             }
             if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
                 return Ok(Self {
@@ -193,10 +197,11 @@ impl NaiveLocal {
             }
             sleep(NAIVE_STARTUP_POLL).await;
         }
-        Err(Error::msg(format!(
-            "naive client did not bind 127.0.0.1:{port} within {:?}",
-            NAIVE_STARTUP_TIMEOUT
-        )))
+        Err(Error::ProcessStartTimeout {
+            program: NAIVE_BINARY,
+            address: format!("127.0.0.1:{port}"),
+            timeout: NAIVE_STARTUP_TIMEOUT,
+        })
     }
 
     fn proxy_url(&self) -> String {
@@ -210,11 +215,11 @@ fn pick_free_port() -> Result<u16> {
     // bind exists; in the panel container's tight environment, the
     // race is acceptably remote.
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| Error::msg(format!("probe: bind ephemeral port: {e}")))?;
+        .map_err(|source| Error::io_path("bind_ephemeral_port", "127.0.0.1:0", source))?;
     listener
         .local_addr()
         .map(|a| a.port())
-        .map_err(|e| Error::msg(format!("probe: local_addr: {e}")))
+        .map_err(|source| Error::io_path("local_addr", "127.0.0.1:0", source))
 }
 
 fn print_result(r: &ProbeResult) -> Result<()> {
@@ -241,5 +246,5 @@ fn client_no_proxy() -> Result<reqwest::Client> {
         .timeout(Duration::from_secs(10))
         .no_proxy()
         .build()
-        .map_err(|e| Error::msg(format!("probe: could not construct no-proxy client: {e}")))
+        .map_err(Error::Http)
 }

@@ -17,13 +17,20 @@
 //! promise: the panel's "save → reload" round-trip drops by that
 //! same handshake cost.
 
+use crate::daemon_fsm::{ConnectionFsm, ConnectionState, HengProfile, TransitionOutcome};
+use crate::frame::{read_delimited, FramePolicy, FrameRead, StaticDelimitedFramePolicy};
+use crate::internal_metrics::MetricsRegistry;
+use crate::observability::{
+    crosses_80pct_threshold, duration_ms_u64, otel_key, packet_header_dump,
+};
 use crate::{admin, metrics, singbox, Error, Result};
+use bytes::BytesMut;
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use sqlx::MySqlPool;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Semaphore;
 
@@ -33,6 +40,17 @@ use tokio::sync::Semaphore;
 /// without newlines (we'd otherwise grow the read buffer
 /// unboundedly).
 const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
+
+/// Maximum bytes requested from the runtime per daemon socket read.
+///
+/// # Project Decision Logic
+///
+/// 8 KiB tracks the common page-size / socket-buffer sweet spot for
+/// small control-plane messages: honest panel requests complete in
+/// one read, while hostile peers still need many scheduler turns to
+/// reach the 1 MiB hard cap. This keeps cooperative Tokio scheduling
+/// fair under contention.
+const MAX_REQUEST_READ_CHUNK_BYTES: usize = 8 * 1024;
 
 /// Concurrent-handler cap. The panel is the only legitimate client of
 /// this socket and runs FrankenPHP with `worker num 4` (default in
@@ -57,6 +75,49 @@ pub const MAX_CONCURRENT_HANDLERS: usize = 16;
 /// detector, not a perf knob. (T-2, v0.0.65.)
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Named contract for daemon JSON-line request acquisition.
+///
+/// RAG agents should retrieve this constant before changing socket
+/// behavior; it encodes the consensus alignment between operator UX
+/// (panel saves should not spuriously fail) and availability defense
+/// (one stalled peer must not retain memory or a semaphore forever).
+#[doc(alias = "daemon-rag-contract")]
+#[doc(alias = "daemon-self-healing-policy")]
+const DAEMON_FRAME_POLICY: StaticDelimitedFramePolicy = StaticDelimitedFramePolicy::new(
+    "daemon-json-line-v1",
+    b'\n',
+    MAX_REQUEST_LINE_BYTES,
+    READ_TIMEOUT,
+    MAX_REQUEST_READ_CHUNK_BYTES,
+);
+
+/// Contract-first dispatch boundary for daemon requests.
+///
+/// Implementations must be idempotent at the transport level:
+/// malformed or unsupported input returns a typed error response for
+/// that request, while the daemon keeps serving subsequent requests on
+/// the same process. Domain operations may fail fast internally, but
+/// must recover gracefully at this boundary.
+#[doc(alias = "rag-daemon-dispatch-contract")]
+#[doc(alias = "consensus-alignment-contract")]
+trait WireRequestDispatcher {
+    /// Dispatch a decoded protocol request into a protocol response.
+    async fn dispatch_wire(&self, req: WireRequestV1) -> Result<WireResponseV1>;
+}
+
+struct DaemonDispatcher<'a> {
+    pool: &'a MySqlPool,
+    template: &'a str,
+    output: &'a str,
+    admin_url: &'a str,
+}
+
+impl WireRequestDispatcher for DaemonDispatcher<'_> {
+    async fn dispatch_wire(&self, req: WireRequestV1) -> Result<WireResponseV1> {
+        handle(req, self.pool, self.template, self.output, self.admin_url).await
+    }
+}
+
 pub async fn serve(
     socket_path: &str,
     pool: MySqlPool,
@@ -64,6 +125,7 @@ pub async fn serve(
     output: &str,
     admin_url: &str,
     permits: Arc<Semaphore>,
+    metrics: Option<Arc<MetricsRegistry>>,
 ) -> Result<()> {
     // Ensure parent dir exists; remove any stale socket file.
     if let Some(dir) = Path::new(socket_path).parent() {
@@ -81,6 +143,7 @@ pub async fn serve(
 
     tracing::info!(
         path = socket_path,
+        frame_policy = DAEMON_FRAME_POLICY.policy_name(),
         max_concurrent_handlers = MAX_CONCURRENT_HANDLERS,
         read_timeout_s = READ_TIMEOUT.as_secs(),
         "ct-server-core daemon listening"
@@ -124,11 +187,22 @@ pub async fn serve(
                 // path to that today is if `permits` is dropped
                 // while a permit await is pending — not in our
                 // control flow. Treat as a fatal invariant break.
-                return Err(Error::msg(
-                    "daemon semaphore closed unexpectedly; bailing out of accept loop",
-                ));
+                return Err(Error::SemaphoreClosed {
+                    resource: "daemon handler",
+                });
             }
         };
+        if let Some(m) = &metrics {
+            let used = MAX_CONCURRENT_HANDLERS.saturating_sub(permits.available_permits());
+            m.note_daemon_permit_utilization(used, MAX_CONCURRENT_HANDLERS);
+            if crosses_80pct_threshold(used, MAX_CONCURRENT_HANDLERS) {
+                tracing::warn!(
+                    used,
+                    total = MAX_CONCURRENT_HANDLERS,
+                    "daemon handler permits crossed 80% bottleneck threshold"
+                );
+            }
+        }
         tokio::select! {
             _ = &mut shutdown => {
                 tracing::info!(path = socket_path, "ct-server-core daemon shutting down");
@@ -145,6 +219,7 @@ pub async fn serve(
                 let template = template.clone();
                 let output = output.clone();
                 let admin_url = admin_url.clone();
+                let metrics = metrics.clone();
                 tokio::spawn(async move {
                     // Permit is held by the spawned task; dropped
                     // when this closure returns (handler exit or
@@ -152,7 +227,7 @@ pub async fn serve(
                     // for the next accept.
                     let _permit = permit;
                     if let Err(e) =
-                        handle_client(stream, &pool, &template, &output, &admin_url).await
+                        handle_client(stream, &pool, &template, &output, &admin_url, metrics.as_ref()).await
                     {
                         tracing::warn!(error = %e, "client handler errored");
                     }
@@ -186,32 +261,60 @@ async fn handle_client(
     template: &str,
     output: &str,
     admin_url: &str,
+    metrics: Option<&Arc<MetricsRegistry>>,
 ) -> Result<()> {
-    let (rd, mut wr) = stream.into_split();
-    // Cap the read buffer so a misbehaving client sending an
-    // unterminated line can't make us allocate forever. The
-    // BufReader::lines() API doesn't enforce a size limit by
-    // itself; we pre-cap by reading bytes-with-limit then
-    // splitting.
-    let mut rd = BufReader::with_capacity(8 * 1024, rd);
+    let (mut rd, mut wr) = stream.into_split();
+    let fsm = ConnectionFsm::new();
+    advance_or_reset(
+        &fsm,
+        metrics,
+        ConnectionState::Accepted,
+        ConnectionState::ReadingFrame,
+    )?;
+    // One reusable request buffer per connection. `read_delimited`
+    // splits complete frames out of this buffer and leaves any bytes
+    // already read for the next frame, avoiding a new Vec allocation
+    // per request while preserving a hard size cap.
+    let mut read_buf = BytesMut::with_capacity(8 * 1024);
+    let mut heng_profile = HengProfile {
+        read_chunk_bytes: DAEMON_FRAME_POLICY.max_read_chunk_len(),
+        pressure_basis_points: 0,
+        crossed_80pct: false,
+    };
     loop {
-        let mut buf = Vec::with_capacity(256);
-        // Per-request read timeout (T-2, v0.0.65). A stalled client
-        // (network partition, suspended process, hostile holding
-        // pattern) would otherwise keep this handler — and the
-        // T-1 semaphore permit — alive indefinitely. 30 s is well
-        // above any legitimate request latency; treat any read that
-        // takes longer as a poison pill and close the connection.
-        let n = match tokio::time::timeout(READ_TIMEOUT, rd.read_until(b'\n', &mut buf)).await {
-            Ok(Ok(n)) => n,
-            Ok(Err(e)) => return Err(e.into()),
-            Err(_elapsed) => {
+        let turn_started = Instant::now();
+        tracing::trace!(
+            fsm_state = fsm.state().name(),
+            heng_read_chunk_bytes = heng_profile.read_chunk_bytes,
+            heng_pressure_basis_points = heng_profile.pressure_basis_points,
+            "daemon FSM awaiting next frame"
+        );
+        let turn_frame_policy =
+            DAEMON_FRAME_POLICY.with_max_read_chunk_len(heng_profile.read_chunk_bytes);
+        let frame = match read_delimited(&mut rd, &mut read_buf, &turn_frame_policy).await {
+            Ok(FrameRead::Complete(frame)) => {
+                advance_or_reset(
+                    &fsm,
+                    metrics,
+                    ConnectionState::ReadingFrame,
+                    ConnectionState::DecodingUtf8,
+                )?;
+                frame
+            }
+            Ok(FrameRead::Eof) => {
+                fsm.disconnect();
+                break;
+            }
+            Err(Error::ReadTimeout { .. }) => {
+                fsm_hard_reset(&fsm, metrics, "read_timeout");
                 tracing::warn!(
+                    { otel_key::NETWORK_TRANSPORT } = "unix",
+                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
+                    { otel_key::RPC_SYSTEM } = "ct-daemon",
+                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
                     timeout_s = READ_TIMEOUT.as_secs(),
-                    "client read timeout — closing connection"
+                    "client read timeout - closing connection"
                 );
-                // Best-effort error response; ignore write failure
-                // (the stalled client likely can't read it anyway).
                 let resp = WireResponseV1::Error {
                     code: "read_timeout".into(),
                     message: format!(
@@ -222,56 +325,244 @@ async fn handle_client(
                 let _ = send(&mut wr, &resp).await;
                 return Ok(());
             }
+            Err(Error::FrameTooLarge { limit }) => {
+                fsm_hard_reset(&fsm, metrics, "frame_too_large");
+                let resp = WireResponseV1::Error {
+                    code: "request_too_large".into(),
+                    message: format!("request line exceeds {limit} bytes; closing connection"),
+                };
+                tracing::warn!(
+                    { otel_key::NETWORK_TRANSPORT } = "unix",
+                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
+                    { otel_key::RPC_SYSTEM } = "ct-daemon",
+                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
+                    { otel_key::CT_BUFFER_LIMIT_BYTES } = limit,
+                    buffer_hex = %packet_header_dump(&read_buf),
+                    "daemon frame exceeded hard byte limit"
+                );
+                send(&mut wr, &resp).await?;
+                return Err(Error::FrameTooLarge { limit });
+            }
+            Err(Error::FrameIncomplete) => {
+                fsm_hard_reset(&fsm, metrics, "frame_incomplete");
+                let resp = WireResponseV1::Error {
+                    code: "incomplete_request".into(),
+                    message: "connection closed before newline-delimited request completed".into(),
+                };
+                tracing::warn!(
+                    { otel_key::NETWORK_TRANSPORT } = "unix",
+                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
+                    { otel_key::RPC_SYSTEM } = "ct-daemon",
+                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
+                    buffer_hex = %packet_header_dump(&read_buf),
+                    "daemon frame incomplete at peer close"
+                );
+                let _ = send(&mut wr, &resp).await;
+                return Ok(());
+            }
+            Err(e) => {
+                fsm_hard_reset(&fsm, metrics, "frame_read_error");
+                return Err(e);
+            }
         };
-        if n == 0 {
-            break; // EOF
-        }
-        if buf.len() > MAX_REQUEST_LINE_BYTES {
-            let resp = WireResponseV1::Error {
-                code: "request_too_large".into(),
-                message: format!(
-                    "request line exceeds {MAX_REQUEST_LINE_BYTES} bytes; closing connection"
-                ),
-            };
-            send(&mut wr, &resp).await?;
-            return Err(Error::msg("oversized request; closing"));
-        }
-        // Strip the trailing newline if present (read_until includes it).
-        if buf.last() == Some(&b'\n') {
-            buf.pop();
-        }
-        let line = match std::str::from_utf8(&buf) {
+
+        let line = match std::str::from_utf8(&frame) {
             Ok(s) => s,
             Err(e) => {
+                fsm_hard_reset(&fsm, metrics, "invalid_utf8");
                 let resp = WireResponseV1::Error {
                     code: "bad_request".into(),
                     message: format!("non-utf8 input: {e}"),
                 };
+                tracing::warn!(
+                    { otel_key::NETWORK_TRANSPORT } = "unix",
+                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
+                    { otel_key::RPC_SYSTEM } = "ct-daemon",
+                    { otel_key::ERROR_TYPE } = "utf8",
+                    frame_hex = %crate::observability::HexDump::new(&frame, 96),
+                    "daemon received non-utf8 frame"
+                );
                 send(&mut wr, &resp).await?;
-                continue;
+                return Ok(());
             }
         };
+        if let Some(m) = metrics {
+            m.note_daemon_buffer_utilization(frame.len(), MAX_REQUEST_LINE_BYTES);
+            if crosses_80pct_threshold(frame.len(), MAX_REQUEST_LINE_BYTES) {
+                tracing::warn!(
+                    { otel_key::NETWORK_TRANSPORT } = "unix",
+                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
+                    { otel_key::RPC_SYSTEM } = "ct-daemon",
+                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
+                    { otel_key::CT_BUFFER_BYTES } = frame.len(),
+                    { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_LINE_BYTES,
+                    frame_hex = %crate::observability::HexDump::new(&frame, 96),
+                    "daemon frame crossed 80% buffer threshold"
+                );
+            }
+        }
+        advance_or_reset(
+            &fsm,
+            metrics,
+            ConnectionState::DecodingUtf8,
+            ConnectionState::DecodingJson,
+        )?;
         let req: WireRequestV1 = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
+                fsm_hard_reset(&fsm, metrics, "invalid_json");
                 let resp = WireResponseV1::Error {
                     code: "bad_request".into(),
                     message: e.to_string(),
                 };
+                tracing::warn!(
+                    { otel_key::NETWORK_TRANSPORT } = "unix",
+                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
+                    { otel_key::RPC_SYSTEM } = "ct-daemon",
+                    { otel_key::ERROR_TYPE } = "json",
+                    frame_hex = %crate::observability::HexDump::new(&frame, 96),
+                    "daemon received malformed json frame"
+                );
                 send(&mut wr, &resp).await?;
-                continue;
+                return Ok(());
             }
         };
-        let resp = match handle(req, pool, template, output, admin_url).await {
+        advance_or_reset(
+            &fsm,
+            metrics,
+            ConnectionState::DecodingJson,
+            ConnectionState::Dispatching,
+        )?;
+        let method = wire_method_name(&req);
+        let span = tracing::info_span!(
+            "otel.network.turn",
+            { otel_key::NETWORK_TRANSPORT } = "unix",
+            { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
+            { otel_key::RPC_SYSTEM } = "ct-daemon",
+            { otel_key::RPC_METHOD } = method,
+            { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
+            { otel_key::CT_BUFFER_BYTES } = frame.len(),
+            { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_LINE_BYTES,
+            fsm_state = fsm.state().name(),
+            heng_read_chunk_bytes = heng_profile.read_chunk_bytes,
+            heng_pressure_basis_points = heng_profile.pressure_basis_points,
+        );
+        let _span_guard = span.enter();
+        let dispatcher = DaemonDispatcher {
+            pool,
+            template,
+            output,
+            admin_url,
+        };
+        let resp = match dispatcher.dispatch_wire(req).await {
             Ok(r) => r,
             Err(e) => WireResponseV1::Error {
-                code: "internal".into(),
+                code: e.wire_code().into(),
                 message: e.to_string(),
             },
         };
-        send(&mut wr, &resp).await?;
+        advance_or_reset(
+            &fsm,
+            metrics,
+            ConnectionState::Dispatching,
+            ConnectionState::Responding,
+        )?;
+        if let Some(m) = metrics {
+            m.note_daemon_network_turn(turn_started.elapsed());
+        }
+        tracing::trace!(
+            latency_ms = duration_ms_u64(turn_started.elapsed()),
+            "daemon network turn completed"
+        );
+        if let Err(e) = send(&mut wr, &resp).await {
+            fsm_hard_reset(&fsm, metrics, "write_response_failed");
+            return Err(e);
+        }
+        advance_or_reset(
+            &fsm,
+            metrics,
+            ConnectionState::Responding,
+            ConnectionState::ProbingConstancy,
+        )?;
+        heng_profile = fsm.probe_constancy(
+            turn_started.elapsed(),
+            frame.len(),
+            MAX_REQUEST_LINE_BYTES,
+            DAEMON_FRAME_POLICY.max_read_chunk_len(),
+        );
+        if heng_profile.crossed_80pct {
+            tracing::warn!(
+                pressure_basis_points = heng_profile.pressure_basis_points,
+                next_read_chunk_bytes = heng_profile.read_chunk_bytes,
+                "daemon Heng constancy probe crossed 80% pressure threshold"
+            );
+        }
+        advance_or_reset(
+            &fsm,
+            metrics,
+            ConnectionState::ProbingConstancy,
+            ConnectionState::ReadingFrame,
+        )?;
     }
     Ok(())
+}
+
+fn advance_or_reset(
+    fsm: &ConnectionFsm,
+    metrics: Option<&Arc<MetricsRegistry>>,
+    expected: ConnectionState,
+    next: ConnectionState,
+) -> Result<()> {
+    match fsm.advance(expected, next) {
+        TransitionOutcome::Advanced => Ok(()),
+        TransitionOutcome::HardReset {
+            expected,
+            observed,
+            requested,
+        } => {
+            if let Some(m) = metrics {
+                m.note_daemon_fsm_hard_reset();
+            }
+            tracing::warn!(
+                expected_state = expected.name(),
+                observed_state = observed.name(),
+                requested_state = requested.name(),
+                "daemon FSM invalid transition; hard reset"
+            );
+            Err(Error::BadRequest {
+                code: "fsm_hard_reset",
+                message: format!(
+                    "daemon FSM rejected transition {} -> {}; observed {}",
+                    expected.name(),
+                    requested.name(),
+                    observed.name()
+                ),
+            })
+        }
+    }
+}
+
+fn fsm_hard_reset(
+    fsm: &ConnectionFsm,
+    metrics: Option<&Arc<MetricsRegistry>>,
+    reason: &'static str,
+) {
+    fsm.hard_reset(reason);
+    if let Some(m) = metrics {
+        m.note_daemon_fsm_hard_reset();
+    }
+    tracing::warn!(reason, state = fsm.state().name(), "daemon FSM hard reset");
+}
+
+fn wire_method_name(req: &WireRequestV1) -> &'static str {
+    match req {
+        WireRequestV1::RenderCaddyfile => "render_caddyfile",
+        WireRequestV1::ReloadCaddy => "reload_caddy",
+        WireRequestV1::CollectTraffic => "collect_traffic",
+        WireRequestV1::EnforceQuota => "enforce_quota",
+        WireRequestV1::ProbeAntiTracking => "probe_anti_tracking",
+        WireRequestV1::Health => "health",
+    }
 }
 
 async fn send<W: AsyncWriteExt + Unpin>(w: &mut W, resp: &WireResponseV1) -> Result<()> {
@@ -322,9 +613,10 @@ async fn handle(
             crate::quota::enforce(pool, template, output, admin_url).await?;
             Ok(WireResponseV1::Ok)
         }
-        WireRequestV1::ProbeAntiTracking => Err(Error::msg(
-            "anti-tracking probe needs a `via` URL; use the CLI for now",
-        )),
+        WireRequestV1::ProbeAntiTracking => Err(Error::UnsupportedOperation {
+            operation: "probe_anti_tracking",
+            message: "anti-tracking probe needs a `via` URL; use the CLI for now",
+        }),
         WireRequestV1::Health => {
             // SELECT 1 borrows a connection from the shared pool;
             // no fresh TCP/auth handshake. Used by the panel's

@@ -38,14 +38,20 @@
 //! reachability is the operator's call (and would violate the
 //! LTSC carve-out).
 
-use crate::Result;
+use crate::frame::{read_http_headers, request_line, FramePolicy, StaticHttpHeaderFramePolicy};
+use crate::observability::{
+    crosses_80pct_threshold, duration_ms_u64, otel_key, packet_header_dump,
+    utilization_basis_points, HexDump, BOTTLENECK_ALERT_BASIS_POINTS,
+};
+use crate::{Error, Result};
+use bytes::BytesMut;
 use sqlx::MySqlPool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Read timeout for incoming `/metrics` requests. Above any
 /// legitimate scraper's network round-trip; if a connecting
@@ -57,6 +63,51 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// requests are well under 1 KiB; 8 KiB caps a buggy or malicious
 /// client.
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
+
+/// Maximum bytes requested from the runtime per `/metrics` header read.
+///
+/// # Project Decision Logic
+///
+/// `/metrics` requests are single-line scrapes from local operators.
+/// A 1 KiB read chunk keeps honest scrapes one-turn cheap while
+/// preventing an internal-net slowloris peer from forcing large
+/// allocation jumps before the 8 KiB hard cap trips.
+const MAX_METRICS_READ_CHUNK_BYTES: usize = 1024;
+
+/// Concurrent `/metrics` handler cap. Scrapes are cheap, but an
+/// internal-net peer that opens many slow connections should consume
+/// backpressure permits, not unlimited Tokio tasks.
+const MAX_CONCURRENT_METRICS_HANDLERS: usize = 8;
+
+/// Named contract for metrics HTTP-header acquisition.
+///
+/// RAG agents should retrieve this before changing `/metrics`
+/// behavior. The endpoint is intentionally HTTP-header-only, closes
+/// every response, and rejects request bodies; changing those facts
+/// would re-open the dependency and memory-pressure tradeoffs this
+/// module deliberately avoids.
+#[doc(alias = "metrics-rag-contract")]
+#[doc(alias = "operator-health-contract")]
+const METRICS_FRAME_POLICY: StaticHttpHeaderFramePolicy = StaticHttpHeaderFramePolicy::new(
+    "internal-metrics-http-headers-v1",
+    MAX_REQUEST_BYTES,
+    READ_TIMEOUT,
+    MAX_METRICS_READ_CHUNK_BYTES,
+);
+
+/// Contract-first surface for operator-internal health output.
+///
+/// This trait intentionally exposes only process/subsystem health.
+/// Implementations must not add per-user identifiers, usernames,
+/// tokens, account ids, or traffic samples. That absence is part of
+/// the project's consensus alignment: health observability is allowed;
+/// user analytics is not.
+#[doc(alias = "rag-metrics-contract")]
+#[doc(alias = "consensus-alignment-contract")]
+trait OperatorHealthSurface {
+    /// Render one Prometheus text-format snapshot.
+    fn render_prometheus_snapshot(&self) -> String;
+}
 
 /// Registry of operator-internal-health counters. Cloned via Arc
 /// so the HTTP server task and the producer sites (daemon,
@@ -85,6 +136,31 @@ pub struct MetricsRegistry {
     /// Process start time; uptime is `started.elapsed().as_secs()`
     /// at scrape time. A reset-detector for crash-loop diagnosis.
     started: Instant,
+    /// OTel-compatible network turn counter for daemon JSON-line
+    /// requests.
+    daemon_network_turns: AtomicU64,
+    /// OTel-compatible network turn counter for metrics HTTP scrapes.
+    metrics_network_turns: AtomicU64,
+    /// Last daemon network-turn latency in milliseconds.
+    daemon_last_turn_latency_ms: AtomicU64,
+    /// Last metrics network-turn latency in milliseconds.
+    metrics_last_turn_latency_ms: AtomicU64,
+    /// High-water buffer utilization for daemon frame reads, in
+    /// basis points (10000 = 100%).
+    daemon_buffer_utilization_high_water_bp: AtomicU64,
+    /// High-water buffer utilization for metrics header reads, in
+    /// basis points (10000 = 100%).
+    metrics_buffer_utilization_high_water_bp: AtomicU64,
+    /// Count of 80% threshold crossings by daemon buffer reads.
+    daemon_buffer_80pct_crossings: AtomicU64,
+    /// Count of 80% threshold crossings by metrics header reads.
+    metrics_buffer_80pct_crossings: AtomicU64,
+    /// Count of 80% threshold crossings by daemon handler permits.
+    daemon_permit_80pct_crossings: AtomicU64,
+    /// Count of daemon FSM hard resets. A hard reset is connection-
+    /// scoped and indicates the client deviated from the single
+    /// authoritative protocol branch.
+    daemon_fsm_hard_resets: AtomicU64,
 }
 
 impl MetricsRegistry {
@@ -102,6 +178,16 @@ impl MetricsRegistry {
             coalescer_fires_leading: AtomicU64::new(0),
             coalescer_fires_trailing: AtomicU64::new(0),
             started: Instant::now(),
+            daemon_network_turns: AtomicU64::new(0),
+            metrics_network_turns: AtomicU64::new(0),
+            daemon_last_turn_latency_ms: AtomicU64::new(0),
+            metrics_last_turn_latency_ms: AtomicU64::new(0),
+            daemon_buffer_utilization_high_water_bp: AtomicU64::new(0),
+            metrics_buffer_utilization_high_water_bp: AtomicU64::new(0),
+            daemon_buffer_80pct_crossings: AtomicU64::new(0),
+            metrics_buffer_80pct_crossings: AtomicU64::new(0),
+            daemon_permit_80pct_crossings: AtomicU64::new(0),
+            daemon_fsm_hard_resets: AtomicU64::new(0),
         })
     }
 
@@ -129,6 +215,47 @@ impl MetricsRegistry {
         }
     }
 
+    pub fn note_daemon_network_turn(&self, latency: Duration) {
+        self.daemon_network_turns.fetch_add(1, Ordering::Relaxed);
+        self.daemon_last_turn_latency_ms
+            .store(duration_ms_u64(latency), Ordering::Relaxed);
+    }
+
+    pub fn note_metrics_network_turn(&self, latency: Duration) {
+        self.metrics_network_turns.fetch_add(1, Ordering::Relaxed);
+        self.metrics_last_turn_latency_ms
+            .store(duration_ms_u64(latency), Ordering::Relaxed);
+    }
+
+    pub fn note_daemon_buffer_utilization(&self, used: usize, limit: usize) {
+        let bp = utilization_basis_points(used, limit);
+        fetch_max(&self.daemon_buffer_utilization_high_water_bp, bp);
+        if bp >= BOTTLENECK_ALERT_BASIS_POINTS {
+            self.daemon_buffer_80pct_crossings
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn note_metrics_buffer_utilization(&self, used: usize, limit: usize) {
+        let bp = utilization_basis_points(used, limit);
+        fetch_max(&self.metrics_buffer_utilization_high_water_bp, bp);
+        if bp >= BOTTLENECK_ALERT_BASIS_POINTS {
+            self.metrics_buffer_80pct_crossings
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn note_daemon_permit_utilization(&self, used: usize, limit: usize) {
+        if utilization_basis_points(used, limit) >= BOTTLENECK_ALERT_BASIS_POINTS {
+            self.daemon_permit_80pct_crossings
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn note_daemon_fsm_hard_reset(&self) {
+        self.daemon_fsm_hard_resets.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Render a snapshot of all counters in Prometheus text-format.
     /// Allocates one `String`; called once per scrape.
     fn render(&self) -> String {
@@ -147,6 +274,20 @@ impl MetricsRegistry {
         let fires_leading = self.coalescer_fires_leading.load(Ordering::Relaxed);
         let fires_trailing = self.coalescer_fires_trailing.load(Ordering::Relaxed);
         let uptime = self.started.elapsed().as_secs();
+        let daemon_turns = self.daemon_network_turns.load(Ordering::Relaxed);
+        let metrics_turns = self.metrics_network_turns.load(Ordering::Relaxed);
+        let daemon_latency = self.daemon_last_turn_latency_ms.load(Ordering::Relaxed);
+        let metrics_latency = self.metrics_last_turn_latency_ms.load(Ordering::Relaxed);
+        let daemon_buffer_bp = self
+            .daemon_buffer_utilization_high_water_bp
+            .load(Ordering::Relaxed);
+        let metrics_buffer_bp = self
+            .metrics_buffer_utilization_high_water_bp
+            .load(Ordering::Relaxed);
+        let daemon_buffer_crossings = self.daemon_buffer_80pct_crossings.load(Ordering::Relaxed);
+        let metrics_buffer_crossings = self.metrics_buffer_80pct_crossings.load(Ordering::Relaxed);
+        let daemon_permit_crossings = self.daemon_permit_80pct_crossings.load(Ordering::Relaxed);
+        let daemon_fsm_hard_resets = self.daemon_fsm_hard_resets.load(Ordering::Relaxed);
 
         format!(
             "# HELP ct_daemon_handler_permits_used T-1 semaphore permits currently in use.\n\
@@ -167,9 +308,45 @@ impl MetricsRegistry {
              ct_coalescer_fires_total{{edge=\"trailing\"}} {fires_trailing}\n\
              # HELP ct_process_uptime_seconds Seconds since process start.\n\
              # TYPE ct_process_uptime_seconds gauge\n\
-             ct_process_uptime_seconds {uptime}\n",
+             ct_process_uptime_seconds {uptime}\n\
+             # HELP otel_network_turns_total OTel-compatible network turn count by surface.\n\
+             # TYPE otel_network_turns_total counter\n\
+             otel_network_turns_total{{network_transport=\"unix\",network_protocol_name=\"json-line\",rpc_system=\"ct-daemon\"}} {daemon_turns}\n\
+             otel_network_turns_total{{network_transport=\"tcp\",network_protocol_name=\"http\",rpc_system=\"ct-internal-metrics\"}} {metrics_turns}\n\
+             # HELP otel_network_turn_latency_milliseconds Last observed network turn latency by surface.\n\
+             # TYPE otel_network_turn_latency_milliseconds gauge\n\
+             otel_network_turn_latency_milliseconds{{network_transport=\"unix\",network_protocol_name=\"json-line\",rpc_system=\"ct-daemon\"}} {daemon_latency}\n\
+             otel_network_turn_latency_milliseconds{{network_transport=\"tcp\",network_protocol_name=\"http\",rpc_system=\"ct-internal-metrics\"}} {metrics_latency}\n\
+             # HELP ct_buffer_utilization_high_water_basis_points High-water frame/header buffer utilization; 8000 means the 80 percent threshold.\n\
+             # TYPE ct_buffer_utilization_high_water_basis_points gauge\n\
+             ct_buffer_utilization_high_water_basis_points{{surface=\"daemon\"}} {daemon_buffer_bp}\n\
+             ct_buffer_utilization_high_water_basis_points{{surface=\"metrics\"}} {metrics_buffer_bp}\n\
+             # HELP ct_threshold_80pct_crossings_total Count of critical 80 percent threshold crossings by bottleneck.\n\
+             # TYPE ct_threshold_80pct_crossings_total counter\n\
+             ct_threshold_80pct_crossings_total{{surface=\"daemon\",bottleneck=\"buffer\"}} {daemon_buffer_crossings}\n\
+             ct_threshold_80pct_crossings_total{{surface=\"metrics\",bottleneck=\"buffer\"}} {metrics_buffer_crossings}\n\
+             ct_threshold_80pct_crossings_total{{surface=\"daemon\",bottleneck=\"handler_permits\"}} {daemon_permit_crossings}\n\
+             # HELP ct_daemon_fsm_hard_resets_total Connection-scoped hard resets caused by daemon FSM protocol violations or terminal transport faults.\n\
+             # TYPE ct_daemon_fsm_hard_resets_total counter\n\
+             ct_daemon_fsm_hard_resets_total {daemon_fsm_hard_resets}\n",
             total = self.daemon_permits_total,
         )
+    }
+}
+
+fn fetch_max(cell: &AtomicU64, value: u64) {
+    let mut current = cell.load(Ordering::Relaxed);
+    while value > current {
+        match cell.compare_exchange_weak(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+impl OperatorHealthSurface for MetricsRegistry {
+    fn render_prometheus_snapshot(&self) -> String {
+        self.render()
     }
 }
 
@@ -179,6 +356,7 @@ impl MetricsRegistry {
 /// visible but not fatal to the daemon.
 pub fn spawn(bind: String, registry: Arc<MetricsRegistry>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_METRICS_HANDLERS));
         let listener = match TcpListener::bind(&bind).await {
             Ok(l) => l,
             Err(e) => {
@@ -192,19 +370,28 @@ pub fn spawn(bind: String, registry: Arc<MetricsRegistry>) -> tokio::task::JoinH
         };
         tracing::info!(
             bind = %bind,
+            frame_policy = METRICS_FRAME_POLICY.policy_name(),
             "internal-metrics endpoint listening (operator-internal-health only)"
         );
         loop {
+            let permit = match Arc::clone(&permits).acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!("metrics handler semaphore closed; endpoint task exiting");
+                    return;
+                }
+            };
             match listener.accept().await {
                 Ok((stream, _peer)) => {
                     let registry = Arc::clone(&registry);
                     tokio::spawn(async move {
-                        if let Err(e) = handle_request(stream, &registry).await {
+                        if let Err(e) = handle_request(stream, &registry, permit).await {
                             tracing::debug!(error = %e, "metrics endpoint handler error");
                         }
                     });
                 }
                 Err(e) => {
+                    drop(permit);
                     tracing::warn!(error = %e, "metrics endpoint accept error");
                 }
             }
@@ -215,53 +402,100 @@ pub fn spawn(bind: String, registry: Arc<MetricsRegistry>) -> tokio::task::JoinH
 /// Read until `\r\n\r\n` (or timeout / size cap), parse the request
 /// line, route on method+path. Anything we don't explicitly support
 /// returns 404 / 405 with an empty body.
-async fn handle_request(mut stream: TcpStream, registry: &MetricsRegistry) -> Result<()> {
-    let mut buf = Vec::with_capacity(512);
-    let mut tmp = [0u8; 256];
-    let read_result = tokio::time::timeout(READ_TIMEOUT, async {
-        loop {
-            let n = stream.read(&mut tmp).await?;
-            if n == 0 {
-                return Ok::<bool, std::io::Error>(false); // EOF
-            }
-            buf.extend_from_slice(&tmp[..n]);
-            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                return Ok(true);
-            }
-            if buf.len() > MAX_REQUEST_BYTES {
-                return Ok(false); // oversize
-            }
+async fn handle_request(
+    mut stream: TcpStream,
+    registry: &MetricsRegistry,
+    _permit: OwnedSemaphorePermit,
+) -> Result<()> {
+    let mut buf = BytesMut::with_capacity(512);
+    let turn_started = Instant::now();
+    let headers = match read_http_headers(&mut stream, &mut buf, &METRICS_FRAME_POLICY).await {
+        Ok(h) => h,
+        Err(Error::FrameTooLarge { .. } | Error::FrameIncomplete | Error::ReadTimeout { .. }) => {
+            tracing::warn!(
+                { otel_key::NETWORK_TRANSPORT } = "tcp",
+                { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+                { otel_key::RPC_SYSTEM } = "ct-internal-metrics",
+                { otel_key::CT_FRAME_POLICY } = METRICS_FRAME_POLICY.policy_name(),
+                header_hex = %packet_header_dump(&buf),
+                "metrics request failed before complete headers"
+            );
+            let _ = write_response(&mut stream, 400, "text/plain", "").await;
+            return Ok(());
         }
-    })
-    .await;
-
-    let got_full_request = match read_result {
-        Ok(Ok(true)) => true,
-        Ok(Ok(false)) | Ok(Err(_)) | Err(_) => false,
+        Err(e) => return Err(e),
     };
-    if !got_full_request {
+
+    let req_line = request_line(&headers);
+    let req_str = match std::str::from_utf8(req_line) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!(
+                { otel_key::NETWORK_TRANSPORT } = "tcp",
+                { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+                { otel_key::RPC_SYSTEM } = "ct-internal-metrics",
+                { otel_key::ERROR_TYPE } = "utf8",
+                header_hex = %HexDump::new(&headers, 96),
+                "metrics request line was not utf8"
+            );
+            write_response(&mut stream, 400, "text/plain", "").await?;
+            return Ok(());
+        }
+    };
+    let mut parts = req_str.split_whitespace();
+    let Some(method) = parts.next() else {
         let _ = write_response(&mut stream, 400, "text/plain", "").await;
         return Ok(());
-    }
-
-    let req_line = buf.split(|b| *b == b'\r').next().unwrap_or(b"");
-    let req_str = std::str::from_utf8(req_line).unwrap_or("");
-    let parts: Vec<&str> = req_str.split_whitespace().collect();
-    if parts.len() < 2 {
+    };
+    let Some(path) = parts.next() else {
         write_response(&mut stream, 400, "text/plain", "").await?;
         return Ok(());
+    };
+    registry.note_metrics_buffer_utilization(headers.len(), MAX_REQUEST_BYTES);
+    if crosses_80pct_threshold(headers.len(), MAX_REQUEST_BYTES) {
+        tracing::warn!(
+            { otel_key::NETWORK_TRANSPORT } = "tcp",
+            { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+            { otel_key::RPC_SYSTEM } = "ct-internal-metrics",
+            { otel_key::HTTP_REQUEST_METHOD } = method,
+            { otel_key::URL_PATH } = path,
+            { otel_key::CT_FRAME_POLICY } = METRICS_FRAME_POLICY.policy_name(),
+            { otel_key::CT_BUFFER_BYTES } = headers.len(),
+            { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_BYTES,
+            header_hex = %HexDump::new(&headers, 96),
+            "metrics request crossed 80% header threshold"
+        );
     }
-    if parts[0] != "GET" {
+    let span = tracing::info_span!(
+        "otel.network.turn",
+        { otel_key::NETWORK_TRANSPORT } = "tcp",
+        { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+        { otel_key::RPC_SYSTEM } = "ct-internal-metrics",
+        { otel_key::HTTP_REQUEST_METHOD } = method,
+        { otel_key::URL_PATH } = path,
+        { otel_key::CT_FRAME_POLICY } = METRICS_FRAME_POLICY.policy_name(),
+        { otel_key::CT_BUFFER_BYTES } = headers.len(),
+        { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_BYTES,
+    );
+    let _span_guard = span.enter();
+    if method != "GET" {
         write_response(&mut stream, 405, "text/plain", "").await?;
+        registry.note_metrics_network_turn(turn_started.elapsed());
         return Ok(());
     }
-    if parts[1] != "/metrics" {
+    if path != "/metrics" {
         write_response(&mut stream, 404, "text/plain", "").await?;
+        registry.note_metrics_network_turn(turn_started.elapsed());
         return Ok(());
     }
 
-    let body = registry.render();
+    let body = registry.render_prometheus_snapshot();
     write_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
+    registry.note_metrics_network_turn(turn_started.elapsed());
+    tracing::trace!(
+        latency_ms = duration_ms_u64(turn_started.elapsed()),
+        "metrics network turn completed"
+    );
     Ok(())
 }
 
@@ -348,6 +582,16 @@ mod tests {
             "# TYPE ct_coalescer_fires_total counter",
             "# HELP ct_process_uptime_seconds",
             "# TYPE ct_process_uptime_seconds gauge",
+            "# HELP otel_network_turns_total",
+            "# TYPE otel_network_turns_total counter",
+            "# HELP otel_network_turn_latency_milliseconds",
+            "# TYPE otel_network_turn_latency_milliseconds gauge",
+            "# HELP ct_buffer_utilization_high_water_basis_points",
+            "# TYPE ct_buffer_utilization_high_water_basis_points gauge",
+            "# HELP ct_threshold_80pct_crossings_total",
+            "# TYPE ct_threshold_80pct_crossings_total counter",
+            "# HELP ct_daemon_fsm_hard_resets_total",
+            "# TYPE ct_daemon_fsm_hard_resets_total counter",
         ];
         // Verify each directive appears in the format-string source.
         // (A live render would need a real pool; this asserts we

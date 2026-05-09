@@ -37,7 +37,7 @@ pub fn panel_domain_from(panel_domain_env: &str, domain_env: &str) -> Result<Str
     }
     let d = domain_env.trim();
     if d.is_empty() {
-        return Err(Error::msg(
+        return Err(Error::config(
             "Both PANEL_DOMAIN and DOMAIN are unset/empty in the process environment. \
              At least one must be set. PANEL_DOMAIN takes priority; if unset, the \
              panel hostname is derived as `panel.<DOMAIN>`. See .env.example. \
