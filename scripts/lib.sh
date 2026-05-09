@@ -309,3 +309,32 @@ compose_project_name() {
     fi
     printf '%s\n' "$name"
 }
+
+# component_check_strict [<manifests-dir>]
+#
+# Run the Rust component checker and fail when any row reports NG.
+# `ct-server-core component check` intentionally exits 0 after
+# printing a mixed OK/NG table because the Filament Components page
+# and JSON callers need the full diagnostic payload. Deployment
+# scripts need stricter semantics: a visible NG row means the release
+# is not healthy enough to declare success. Keep the policy here so
+# install/update/restore/late-night checks agree on the same contract.
+component_check_strict() {
+    local manifests="${1:-/srv/manifests}"
+    local out
+    out=$(mktemp)
+
+    if ! docker compose exec -T panel ct-server-core component check \
+            --manifests "$manifests" | tee "$out"; then
+        rm -f "$out"
+        return 1
+    fi
+
+    if grep -qE '^[[:space:]]*NG[[:space:]]' "$out"; then
+        rm -f "$out"
+        return 1
+    fi
+
+    rm -f "$out"
+    return 0
+}
