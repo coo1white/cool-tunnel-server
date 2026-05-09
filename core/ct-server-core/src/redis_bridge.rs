@@ -257,7 +257,7 @@ async fn fire_reload(
     // Clash bearer is now derived purely from CT_CLASH_SECRET_SEED
     // env (no DB round-trip — see singbox::current_clash_secret).
     // Comment kept abbreviated; rotation propagates via env, not DB.
-    let secret = match singbox::current_clash_secret().await {
+    let secret = match singbox::current_clash_secret() {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(error = %e, edge, "could not load clash secret; skipping reload");

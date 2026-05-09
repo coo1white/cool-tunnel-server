@@ -74,7 +74,7 @@ pub async fn enforce(
         // If render says "unchanged" we still reload; disabling an
         // account always changes the sing-box `users` array.
         singbox::render(pool, template, output, false, false).await?;
-        let secret = singbox::current_clash_secret().await?;
+        let secret = singbox::current_clash_secret()?;
         let admin_client = admin::ClashAdmin::new(admin_url, &secret);
         if let Err(e) = admin_client.reload(output).await {
             tracing::warn!(error = %e, "reload after quota enforcement failed");

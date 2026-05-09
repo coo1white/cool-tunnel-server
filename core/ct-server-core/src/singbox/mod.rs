@@ -114,7 +114,7 @@ pub async fn render(
 }
 
 /// Derive the clash-API bearer token. Used by every reload caller
-/// (daemon / quota / redis_bridge) to construct a
+/// (daemon / quota / `redis_bridge`) to construct a
 /// [`crate::admin::ClashAdmin`] whose secret matches what the most
 /// recent `render` baked into `experimental.clash_api.secret`.
 ///
@@ -122,7 +122,7 @@ pub async fn render(
 /// is required, so this signature carries no pool. (post-R2-2;
 /// the legacy `database_url` parameter was dropped in the
 /// shared-pool refactor — it had been a stale artefact since R2-2.)
-pub async fn current_clash_secret() -> Result<String> {
+pub fn current_clash_secret() -> Result<String> {
     clash_secret()
 }
 

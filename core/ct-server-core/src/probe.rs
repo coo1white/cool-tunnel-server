@@ -31,7 +31,7 @@ use crate::contracts::{
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
 
@@ -226,7 +226,7 @@ struct NaiveLocal {
 
 impl NaiveLocal {
     async fn spawn(via_url: &str) -> Result<Self> {
-        let port = pick_free_port()?;
+        let port = pick_free_port().await?;
         let listen = format!("http://127.0.0.1:{port}");
         let (listen_arg, proxy_arg) = naive_args(&listen, via_url);
         let mut child = Command::new(NAIVE_BINARY)
@@ -284,12 +284,13 @@ fn naive_args(listen: &str, via_url: &str) -> (String, String) {
     (format!("--listen={listen}"), format!("--proxy={via_url}"))
 }
 
-fn pick_free_port() -> Result<u16> {
+async fn pick_free_port() -> Result<u16> {
     // Bind, capture the assigned port, drop the listener so naive
     // can take it. A short TOCTTOU window between drop and naive's
     // bind exists; in the panel container's tight environment, the
     // race is acceptably remote.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
         .map_err(|source| Error::io_path("bind_ephemeral_port", "127.0.0.1:0", source))?;
     listener
         .local_addr()
