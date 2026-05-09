@@ -47,12 +47,13 @@ pub async fn render(
 ) -> Result<()> {
     let cfg = db::server_config(pool).await?;
 
-    let template = fs::read_to_string(template_path).await.map_err(|e| {
-        Error::msg(format!(
-            "could not read haproxy template at `{template_path}`: {e}. \
-             Set --template / HAPROXY_CONFIG_TEMPLATE if it lives elsewhere."
-        ))
-    })?;
+    let template =
+        fs::read_to_string(template_path)
+            .await
+            .map_err(|source| Error::TemplateRead {
+                path: template_path.to_owned(),
+                source,
+            })?;
 
     // Both Domain and PanelDomain land verbatim inside an HAProxy
     // `use_backend ... if { req_ssl_sni -i <name> }` ACL test.
@@ -66,18 +67,19 @@ pub async fn render(
     // constraints HAProxy needs are a strict subset of what
     // `caddyfile_validate` already enforces (alpha-num, dots,
     // hyphens — no whitespace, quoting, or brace), so we reuse it.
-    template::caddyfile_validate("Domain", &cfg.domain).map_err(Error::msg)?;
-    template::caddyfile_validate("PanelDomain", panel_domain).map_err(Error::msg)?;
+    template::caddyfile_validate("Domain", &cfg.domain)
+        .map_err(|e| Error::validation("HAProxy Domain", e))?;
+    template::caddyfile_validate("PanelDomain", panel_domain)
+        .map_err(|e| Error::validation("HAProxy PanelDomain", e))?;
 
     let bindings = template::Bindings::new()
         .set("Domain", &cfg.domain)
         .set("PanelDomain", panel_domain)
         .into_map();
 
-    let body = template::render(&template, &bindings).map_err(|e| {
-        Error::msg(format!(
-            "could not render haproxy template `{template_path}`: {e}"
-        ))
+    let body = template::render(&template, &bindings).map_err(|source| Error::TemplateRender {
+        path: template_path.to_owned(),
+        source,
     })?;
 
     let mut hasher = Sha256::new();
@@ -124,18 +126,46 @@ pub async fn render(
 
 async fn atomic_write(path: &str, body: &str) -> Result<()> {
     let path = Path::new(path);
-    let dir = path
-        .parent()
-        .ok_or_else(|| Error::msg("haproxy output has no parent directory"))?;
-    fs::create_dir_all(dir).await.ok();
+    let dir = path.parent().ok_or_else(|| Error::MissingParent {
+        path: path.display().to_string(),
+    })?;
+    fs::create_dir_all(dir)
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: path.display().to_string(),
+            op: "create_parent_dir",
+            source,
+        })?;
 
     let tmp: PathBuf = dir.join(format!(".haproxy.tmp.{}", hex::encode(rand_bytes(4))));
     {
-        let mut f = fs::File::create(&tmp).await?;
-        f.write_all(body.as_bytes()).await?;
-        f.sync_all().await?;
+        let mut f = fs::File::create(&tmp)
+            .await
+            .map_err(|source| Error::AtomicWrite {
+                path: tmp.display().to_string(),
+                op: "create_tmp",
+                source,
+            })?;
+        f.write_all(body.as_bytes())
+            .await
+            .map_err(|source| Error::AtomicWrite {
+                path: tmp.display().to_string(),
+                op: "write_tmp",
+                source,
+            })?;
+        f.sync_all().await.map_err(|source| Error::AtomicWrite {
+            path: tmp.display().to_string(),
+            op: "sync_tmp",
+            source,
+        })?;
     }
-    fs::rename(&tmp, path).await?;
+    fs::rename(&tmp, path)
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: path.display().to_string(),
+            op: "rename",
+            source,
+        })?;
     Ok(())
 }
 

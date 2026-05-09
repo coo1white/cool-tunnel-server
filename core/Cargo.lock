@@ -417,6 +417,7 @@ version = "0.0.68"
 dependencies = [
  "aes-gcm",
  "base64",
+ "bytes",
  "chrono",
  "clap",
  "ct-protocol",

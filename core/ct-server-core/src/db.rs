@@ -223,16 +223,22 @@ const MAX_USED_BYTES_DELTA: i64 = 1 << 50; // 1 PiB
 
 pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64) -> Result<()> {
     if delta < 0 {
-        return Err(crate::Error::msg(format!(
-            "add_used_bytes: refusing negative delta {delta} for account {proxy_account_id}"
-        )));
+        return Err(crate::Error::validation(
+            "traffic delta",
+            format!(
+                "add_used_bytes: refusing negative delta {delta} for account {proxy_account_id}"
+            ),
+        ));
     }
     if delta > MAX_USED_BYTES_DELTA {
-        return Err(crate::Error::msg(format!(
-            "add_used_bytes: delta {delta} for account {proxy_account_id} \
-             exceeds {MAX_USED_BYTES_DELTA} (sane upper bound); \
-             likely a metric-source regression — refusing to apply"
-        )));
+        return Err(crate::Error::validation(
+            "traffic delta",
+            format!(
+                "add_used_bytes: delta {delta} for account {proxy_account_id} \
+                 exceeds {MAX_USED_BYTES_DELTA} (sane upper bound); \
+                 likely a metric-source regression — refusing to apply"
+            ),
+        ));
     }
     // proxy_accounts.id and used_bytes are BIGINT UNSIGNED — bind as u64.
     let d: u64 = delta as u64;

@@ -11,7 +11,7 @@
 //! intercept error string across the two modules. Lifting both into
 //! `util::doh` collapses the duplication and keeps the wire-format
 //! + ANCOUNT semantics in one place; future RFC 1035 fixes (CNAME
-//! chasing, EDNS, etc.) only need to land here.
+//!   chasing, EDNS, etc.) only need to land here.
 //!
 //! The probe is deliberately ANCOUNT-only and does NOT extract the
 //! resolved IP. Callers that need the IP would parse the answer
