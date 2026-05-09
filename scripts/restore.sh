@@ -128,7 +128,7 @@ compose up -d caddy sing-box
 sleep 5
 
 step "Component check"
-compose exec -T panel ct-server-core component check --manifests /srv/manifests \
+component_check_strict /srv/manifests \
     || warn "some components NG — investigate before serving real users"
 
 # ---------- Done --------------------------------------------------
