@@ -12,6 +12,7 @@ mod admin;
 mod caddy;
 mod canary;
 mod components;
+mod contracts;
 mod daemon;
 mod daemon_fsm;
 mod db;

@@ -17,6 +17,9 @@
 //! promise: the panel's "save → reload" round-trip drops by that
 //! same handshake cost.
 
+use crate::contracts::{
+    ContractBoundary, RecoveryScope, SemanticContract, PRINCIPLE_LOCAL_RECOVERY,
+};
 use crate::daemon_fsm::{ConnectionFsm, ConnectionState, HengProfile, TransitionOutcome};
 use crate::frame::{read_delimited, FramePolicy, FrameRead, StaticDelimitedFramePolicy};
 use crate::internal_metrics::MetricsRegistry;
@@ -91,6 +94,26 @@ const DAEMON_FRAME_POLICY: StaticDelimitedFramePolicy = StaticDelimitedFramePoli
     MAX_REQUEST_READ_CHUNK_BYTES,
 );
 
+/// Semantic contract for the daemon JSON-line transport boundary.
+///
+/// # Project Decision Logic
+///
+/// The daemon is intentionally long-lived so the DB pool stays warm. That
+/// benefit only holds if malformed or slow clients fail at connection scope
+/// instead of poisoning process state. The JSON-line policy, semaphore cap,
+/// FSM hard reset, and typed wire errors all enforce the same game-theory
+/// posture: cooperative panel requests stay cheap; non-cooperative peers lose
+/// only their own connection.
+#[doc(alias = "daemon-transport-rag-contract")]
+#[doc(alias = "daemon-consensus-contract")]
+const DAEMON_TRANSPORT_CONTRACT: SemanticContract = SemanticContract::new(
+    "daemon-json-line-transport-v1",
+    "Unix-socket JSON-line daemon transport",
+    "Keep the warm-pool daemon alive by making frame, timeout, and FSM violations connection-scoped.",
+    RecoveryScope::Connection,
+    PRINCIPLE_LOCAL_RECOVERY,
+);
+
 /// Contract-first dispatch boundary for daemon requests.
 ///
 /// Implementations must be idempotent at the transport level:
@@ -110,6 +133,12 @@ struct DaemonDispatcher<'a> {
     template: &'a str,
     output: &'a str,
     admin_url: &'a str,
+}
+
+impl ContractBoundary for DaemonDispatcher<'_> {
+    fn contract(&self) -> SemanticContract {
+        DAEMON_TRANSPORT_CONTRACT
+    }
 }
 
 impl WireRequestDispatcher for DaemonDispatcher<'_> {
@@ -454,6 +483,10 @@ async fn handle_client(
             output,
             admin_url,
         };
+        tracing::trace!(
+            contract = dispatcher.contract().id(),
+            "daemon dispatch boundary selected"
+        );
         let resp = match dispatcher.dispatch_wire(req).await {
             Ok(r) => r,
             Err(e) => WireResponseV1::Error {
@@ -625,5 +658,23 @@ async fn handle(
             sqlx::query("SELECT 1").execute(pool).await?;
             Ok(WireResponseV1::HealthOk)
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_transport_contract_is_connection_scoped() {
+        assert_eq!(
+            DAEMON_TRANSPORT_CONTRACT.id(),
+            "daemon-json-line-transport-v1"
+        );
+        assert_eq!(
+            DAEMON_TRANSPORT_CONTRACT.recovery_scope(),
+            RecoveryScope::Connection
+        );
     }
 }
