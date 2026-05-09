@@ -77,7 +77,9 @@ RUN apk add --no-cache \
         bash \
         curl \
         git \
+        gcompat \
         jq \
+        libgcc \
         socat \
         unzip \
         xz \

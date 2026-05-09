@@ -164,8 +164,9 @@ impl NaiveLocal {
     async fn spawn(via_url: &str) -> Result<Self> {
         let port = pick_free_port()?;
         let listen = format!("http://127.0.0.1:{port}");
+        let (listen_arg, proxy_arg) = naive_args(&listen, via_url);
         let mut child = Command::new(NAIVE_BINARY)
-            .args(["--listen", &listen, "--proxy", via_url])
+            .args([&listen_arg, &proxy_arg])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
@@ -209,6 +210,10 @@ impl NaiveLocal {
     }
 }
 
+fn naive_args(listen: &str, via_url: &str) -> (String, String) {
+    (format!("--listen={listen}"), format!("--proxy={via_url}"))
+}
+
 fn pick_free_port() -> Result<u16> {
     // Bind, capture the assigned port, drop the listener so naive
     // can take it. A short TOCTTOU window between drop and naive's
@@ -247,4 +252,17 @@ fn client_no_proxy() -> Result<reqwest::Client> {
         .no_proxy()
         .build()
         .map_err(Error::Http)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn naive_args_use_equals_form_expected_by_upstream_cli() {
+        let (listen, proxy) = naive_args("http://127.0.0.1:12345", "https://u:p@example.com:443");
+
+        assert_eq!(listen, "--listen=http://127.0.0.1:12345");
+        assert_eq!(proxy, "--proxy=https://u:p@example.com:443");
+    }
 }
