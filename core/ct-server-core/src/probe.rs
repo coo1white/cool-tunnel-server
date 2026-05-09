@@ -25,6 +25,9 @@
 //! whether the configured Caddy mitigations are *actually* on the
 //! wire.
 
+use crate::contracts::{
+    ContractBoundary, RecoveryScope, SemanticContract, PRINCIPLE_LOCAL_RECOVERY,
+};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -45,6 +48,55 @@ const NAIVE_STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 /// Polling interval for the readiness loop.
 const NAIVE_STARTUP_POLL: Duration = Duration::from_millis(50);
 
+/// Semantic contract for the anti-tracking probe boundary.
+///
+/// # Project Decision Logic
+///
+/// The probe is a measurement surface, not a control plane. A false positive
+/// would tell an operator that cover traffic is safe when it is not, while a
+/// false negative only asks them to investigate. Therefore this boundary
+/// favors conservative failure and typed JSON output over best-effort success.
+/// The subprocess startup cap stays short because the honest path is local
+/// process bind plus one HTTP request; anything slower is already degraded
+/// subsystem health.
+#[doc(alias = "anti-tracking-rag-contract")]
+#[doc(alias = "probe-self-healing-contract")]
+const ANTI_TRACKING_CONTRACT: SemanticContract = SemanticContract::new(
+    "anti-tracking-probe-v1",
+    "CLI anti-tracking probe through packaged naive client",
+    "Measure privacy posture conservatively; bound subprocess and HTTP waits so one failed probe cannot wedge scheduler or operator CLI.",
+    RecoveryScope::Request,
+    PRINCIPLE_LOCAL_RECOVERY,
+);
+
+/// Contract-first surface for active anti-tracking checks.
+///
+/// Implementations must return machine-readable probe results and must not
+/// mutate server config. This keeps the probe safe for scheduler use and easy
+/// for AI-generated tests to mock without spawning the upstream `naive`
+/// binary.
+#[doc(alias = "rag-anti-tracking-contract")]
+#[doc(alias = "consensus-alignment-contract")]
+trait AntiTrackingProbe: ContractBoundary {
+    /// Run one check against `target`, optionally through an upstream proxy URL.
+    async fn run(&self, target: &str, via: Option<&str>) -> Result<ProbeResult>;
+}
+
+/// Default production anti-tracking probe.
+struct NaiveAntiTrackingProbe;
+
+impl ContractBoundary for NaiveAntiTrackingProbe {
+    fn contract(&self) -> SemanticContract {
+        ANTI_TRACKING_CONTRACT
+    }
+}
+
+impl AntiTrackingProbe for NaiveAntiTrackingProbe {
+    async fn run(&self, target: &str, via: Option<&str>) -> Result<ProbeResult> {
+        run_anti_tracking_probe(target, via).await
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProbeResult {
     pub via: Option<String>,
@@ -56,6 +108,12 @@ pub struct ProbeResult {
 }
 
 pub async fn anti_tracking(target: &str, via: Option<&str>) -> Result<()> {
+    let probe = NaiveAntiTrackingProbe;
+    let result = probe.run(target, via).await?;
+    print_result(&result)
+}
+
+async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<ProbeResult> {
     // The naive subprocess is held in `_naive_proc` for its kill-
     // on-drop behaviour: when this function returns, the child is
     // killed and its sockets close. Without this, a probe failure
@@ -85,11 +143,17 @@ pub async fn anti_tracking(target: &str, via: Option<&str>) -> Result<()> {
     match client.get(target).send().await {
         Ok(resp) => {
             reachable = resp.status().is_success();
-            echoed_headers = resp.json().await.unwrap_or(serde_json::Value::Null);
+            echoed_headers = match resp.json().await {
+                Ok(json) => json,
+                Err(e) => {
+                    tracing::warn!(error = %e, "probe header echo response was not json");
+                    serde_json::Value::Null
+                }
+            };
         }
         Err(e) => {
             tracing::warn!(error = %e, "probe reachability failed");
-            return print_result(&ProbeResult {
+            return Ok(ProbeResult {
                 via: via.map(str::to_owned),
                 target: target.to_owned(),
                 reachable: false,
@@ -140,7 +204,7 @@ pub async fn anti_tracking(target: &str, via: Option<&str>) -> Result<()> {
         .map(|h| h.contains_key("Via"))
         .unwrap_or(false);
 
-    print_result(&ProbeResult {
+    Ok(ProbeResult {
         via: via.map(str::to_owned),
         target: target.to_owned(),
         reachable,
@@ -210,6 +274,12 @@ impl NaiveLocal {
     }
 }
 
+impl ContractBoundary for NaiveLocal {
+    fn contract(&self) -> SemanticContract {
+        ANTI_TRACKING_CONTRACT
+    }
+}
+
 fn naive_args(listen: &str, via_url: &str) -> (String, String) {
     (format!("--listen={listen}"), format!("--proxy={via_url}"))
 }
@@ -264,5 +334,54 @@ mod tests {
 
         assert_eq!(listen, "--listen=http://127.0.0.1:12345");
         assert_eq!(proxy, "--proxy=https://u:p@example.com:443");
+    }
+
+    struct MockAntiTrackingProbe {
+        result: ProbeResult,
+    }
+
+    impl ContractBoundary for MockAntiTrackingProbe {
+        fn contract(&self) -> SemanticContract {
+            ANTI_TRACKING_CONTRACT
+        }
+    }
+
+    impl AntiTrackingProbe for MockAntiTrackingProbe {
+        async fn run(&self, _target: &str, _via: Option<&str>) -> Result<ProbeResult> {
+            Ok(ProbeResult {
+                via: self.result.via.clone(),
+                target: self.result.target.clone(),
+                reachable: self.result.reachable,
+                hide_ip_effective: self.result.hide_ip_effective,
+                hide_via_effective: self.result.hide_via_effective,
+                probe_resistance_effective: self.result.probe_resistance_effective,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn anti_tracking_trait_is_mockable_for_ai_generated_tests() -> Result<()> {
+        let probe = MockAntiTrackingProbe {
+            result: ProbeResult {
+                via: Some("https://u:p@example.com:443".into()),
+                target: "https://ifconfig.co/json".into(),
+                reachable: true,
+                hide_ip_effective: true,
+                hide_via_effective: true,
+                probe_resistance_effective: true,
+            },
+        };
+
+        let result = probe
+            .run(
+                "https://ifconfig.co/json",
+                Some("https://u:p@example.com:443"),
+            )
+            .await?;
+
+        assert_eq!(probe.contract().id(), "anti-tracking-probe-v1");
+        assert!(result.hide_ip_effective);
+        assert!(result.probe_resistance_effective);
+        Ok(())
     }
 }

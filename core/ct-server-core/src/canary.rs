@@ -21,6 +21,10 @@
 //! follow-up; this column / wire shape is the contract that widget
 //! will read.
 
+use crate::contracts::{
+    ContractBoundary, RecoveryScope, SemanticContract, PRINCIPLE_BOUNDED_HOSTILITY,
+    PRINCIPLE_LOCAL_RECOVERY,
+};
 use crate::util::doh;
 use crate::{db, Error, Result};
 use chrono::Utc;
@@ -39,6 +43,95 @@ const MAX_HISTORY: usize = 10;
 /// TCP-connect timeout for the docker-internal haproxy probe.
 const TCP_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Semantic contract for the canary probe boundary.
+///
+/// # Project Decision Logic
+///
+/// Five minutes is the scheduler cadence, so the TCP leg must fail within one
+/// tick and leave enough time for the database history write and scheduler
+/// failure hook. The 5 second timeout is intentionally below human-perceived
+/// "still trying" time but above normal docker-internal connect latency. This
+/// makes self-healing deterministic: every run either records an `ok` entry or
+/// records a typed failure before returning `Err` for alerting.
+#[doc(alias = "canary-rag-contract")]
+#[doc(alias = "self-probe-contract")]
+const CANARY_PROBE_CONTRACT: SemanticContract = SemanticContract::new(
+    "canary-self-probe-v1",
+    "scheduled DoH plus docker-internal haproxy TCP probe",
+    "Record the canary result before propagating failure so UI, CLI, and scheduler all converge on the same observed state.",
+    RecoveryScope::Request,
+    PRINCIPLE_LOCAL_RECOVERY,
+);
+
+/// Semantic contract for the persisted canary history shape.
+///
+/// # Project Decision Logic
+///
+/// The panel only needs the recent tail to detect consecutive failures, while
+/// operators benefit from a few extra samples during incident triage. Ten
+/// entries gives that context without turning a singleton config row into an
+/// unbounded time-series store.
+#[doc(alias = "canary-history-rag-contract")]
+#[doc(alias = "bounded-history-contract")]
+const CANARY_HISTORY_CONTRACT: SemanticContract = SemanticContract::new(
+    "canary-history-json-v1",
+    "server_configs.self_probe_history JSON tail",
+    "Keep only the recent health tail: enough for panel failure detection and operator context, never unbounded row growth.",
+    RecoveryScope::Subsystem,
+    PRINCIPLE_BOUNDED_HOSTILITY,
+);
+
+/// Contract-first surface for measuring canary reachability.
+///
+/// Implementations must not write history themselves. Separating measurement
+/// from persistence lets AI-generated tests inject deterministic success and
+/// failure outcomes without a live DoH resolver or haproxy container.
+#[doc(alias = "rag-canary-probe-contract")]
+#[doc(alias = "consensus-alignment-contract")]
+trait CanaryProbe: ContractBoundary {
+    /// Return `Ok` only when both DoH resolution and TCP connectivity pass.
+    async fn check(&self, domain: &str, doh_url: &str) -> std::result::Result<(), String>;
+}
+
+/// Contract-first surface for persisting canary history.
+#[doc(alias = "rag-canary-history-contract")]
+trait CanaryHistoryStore: ContractBoundary {
+    /// Append one entry while preserving the bounded-history invariant.
+    async fn append(&self, entry: &CanaryEntry) -> Result<()>;
+}
+
+/// Production canary signal: DoH A lookup plus TCP connect to haproxy.
+struct DockerNetworkCanary;
+
+impl ContractBoundary for DockerNetworkCanary {
+    fn contract(&self) -> SemanticContract {
+        CANARY_PROBE_CONTRACT
+    }
+}
+
+impl CanaryProbe for DockerNetworkCanary {
+    async fn check(&self, domain: &str, doh_url: &str) -> std::result::Result<(), String> {
+        run_probe(domain, doh_url).await
+    }
+}
+
+/// MariaDB-backed canary history store.
+struct SqlCanaryHistory<'a> {
+    pool: &'a MySqlPool,
+}
+
+impl ContractBoundary for SqlCanaryHistory<'_> {
+    fn contract(&self) -> SemanticContract {
+        CANARY_HISTORY_CONTRACT
+    }
+}
+
+impl CanaryHistoryStore for SqlCanaryHistory<'_> {
+    async fn append(&self, entry: &CanaryEntry) -> Result<()> {
+        append_history(self.pool, entry).await
+    }
+}
+
 /// Run one canary probe, append the result to ServerConfig, and
 /// propagate the underlying probe failure (if any) so the scheduler's
 /// `onFailure` hook fires. Always writes the history entry first, so
@@ -53,7 +146,14 @@ const TCP_TIMEOUT: Duration = Duration::from_secs(5);
 /// underlying error message.
 pub async fn probe(pool: &MySqlPool) -> Result<()> {
     let cfg = db::server_config(pool).await?;
-    let probe_result = run_probe(&cfg.domain, &cfg.doh_resolver).await;
+    let canary = DockerNetworkCanary;
+    let history = SqlCanaryHistory { pool };
+    tracing::debug!(
+        probe_contract = canary.contract().id(),
+        history_contract = history.contract().id(),
+        "running canary self-probe"
+    );
+    let probe_result = canary.check(&cfg.domain, &cfg.doh_resolver).await;
     let entry = match &probe_result {
         Ok(()) => CanaryEntry::ok(),
         Err(reason) => {
@@ -61,7 +161,7 @@ pub async fn probe(pool: &MySqlPool) -> Result<()> {
             CanaryEntry::fail(reason.clone())
         }
     };
-    append_history(pool, &entry).await?;
+    history.append(&entry).await?;
     println!("{}", serde_json::to_string(&entry)?);
     probe_result.map_err(Error::probe)
 }
@@ -265,5 +365,48 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(parsed["status"], "fail");
         assert_eq!(parsed["reason"], "x");
+    }
+
+    struct MockCanaryProbe {
+        outcome: std::result::Result<(), String>,
+    }
+
+    impl ContractBoundary for MockCanaryProbe {
+        fn contract(&self) -> SemanticContract {
+            CANARY_PROBE_CONTRACT
+        }
+    }
+
+    impl CanaryProbe for MockCanaryProbe {
+        async fn check(&self, _domain: &str, _doh_url: &str) -> std::result::Result<(), String> {
+            self.outcome.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn canary_probe_trait_is_mockable_for_ai_generated_tests() {
+        let probe = MockCanaryProbe {
+            outcome: Err("DoH lookup failed: timeout".into()),
+        };
+
+        let result = probe
+            .check("example.com", "https://resolver.example/dns-query")
+            .await;
+
+        assert_eq!(probe.contract().id(), "canary-self-probe-v1");
+        assert_eq!(result, Err("DoH lookup failed: timeout".into()));
+    }
+
+    #[test]
+    fn canary_contracts_pin_history_recovery_scope() {
+        assert_eq!(
+            CANARY_PROBE_CONTRACT.recovery_scope(),
+            RecoveryScope::Request
+        );
+        assert_eq!(
+            CANARY_HISTORY_CONTRACT.recovery_scope(),
+            RecoveryScope::Subsystem
+        );
+        assert_eq!(CANARY_HISTORY_CONTRACT.id(), "canary-history-json-v1");
     }
 }
