@@ -54,6 +54,11 @@
 {
     email {{ .AcmeEmail }}
     acme_ca {{ .AcmeDirectory }}
+    # Caddy's automatic redirect routes key off the internal ACME
+    # listeners below and leak Location: https://host:8443/ on public
+    # :80. Keep automatic certificate management, but let the explicit
+    # :80 site block own redirects so the public URL stays portless.
+    auto_https disable_redirects
 
     # No `events { ... exec ... }` block: stock Caddy 2.8 does
     # not include the third-party `events.handlers.exec` module,
