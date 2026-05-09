@@ -238,6 +238,23 @@ impl ConnectionFsm {
     /// chunk inside the hard cap so a pressured connection yields more
     /// often to the runtime, while a stable connection gets the fast
     /// path.
+    ///
+    /// # Project Decision Logic
+    ///
+    /// Pressure is measured in basis points to keep alert rules and tests
+    /// integer-stable. The thresholds are intentionally asymmetric:
+    ///
+    /// - below 50% budget, an honest client keeps the full read chunk;
+    /// - at 50%, the connection is no longer pathological, but it should yield
+    ///   twice as often so other handler tasks keep progress;
+    /// - at 80%, the peer is close enough to a hard cap that we emit telemetry
+    ///   and quarter the next chunk.
+    ///
+    /// This mirrors the daemon's game-theory posture: reward cooperative
+    /// behavior with the fast path, make boundary-probing behavior more
+    /// expensive for the probing peer, and never silently lift the hard cap.
+    #[doc(alias = "heng-pressure-thresholds")]
+    #[doc(alias = "game-theory-network-thresholds")]
     #[must_use]
     pub fn probe_constancy(
         &self,

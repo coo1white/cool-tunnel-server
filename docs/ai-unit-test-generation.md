@@ -7,14 +7,30 @@ Generate tests from contracts first, not from implementation details.
 
 Use these rustdoc aliases as RAG entry points:
 
+- `ai-native-contract`: static semantic metadata in `ct-server-core::contracts`.
+- `contract-first-boundary`: trait every explicit module-boundary component implements.
+- `consensus-alignment-logic`: project-wide decision principles behind boundary tradeoffs.
 - `rag-frame-contract`: bounded network frame acquisition in `ct-server-core::frame`.
 - `daemon-rag-contract`: JSON-line daemon socket thresholds.
+- `daemon-transport-rag-contract`: connection-scoped daemon recovery contract.
+- `heng-pressure-thresholds`: 50% / 80% read-pressure tuning logic.
 - `rag-daemon-dispatch-contract`: daemon request-to-response dispatch semantics.
 - `metrics-rag-contract`: operator-health Prometheus surface.
+- `anti-tracking-rag-contract`: conservative privacy-probe boundary.
+- `rag-anti-tracking-contract`: mockable anti-tracking probe trait.
+- `canary-rag-contract`: scheduled DoH + TCP self-probe boundary.
+- `rag-canary-history-contract`: bounded canary history persistence trait.
 - `rag-error-taxonomy`: typed error variants and recovery semantics.
 - `rag-wire-error-code`: stable daemon wire error code mapping.
 
 ## Contract-First Test Plan
+
+For every type implementing `ContractBoundary`, generate tests that prove:
+
+- `contract().id()` is stable and matches the documented rustdoc alias;
+- `recovery_scope()` matches the intended blast radius (`Connection`, `Request`, or `Subsystem`);
+- the implementation can be replaced by a local mock when it performs network, process, or database I/O;
+- a failure at that boundary is translated into typed output rather than `panic!`, `unwrap`, or process exit.
 
 For every new network boundary, generate tests that prove:
 
@@ -32,6 +48,13 @@ For every new `Error` variant, generate tests that prove:
 - `wire_code()` maps the variant to a stable machine code;
 - the variant is handled at daemon boundaries without panicking.
 
+For every probe-style module, generate tests that prove:
+
+- measurement is separated from persistence or stdout formatting;
+- failed reachability emits the same machine-readable JSON keys as success;
+- subprocess or TCP startup timeouts map to request-scoped failure;
+- privacy checks fail conservatively when an echo endpoint is malformed or unreachable.
+
 For every metrics change, generate tests that prove:
 
 - Prometheus output contains `# HELP` and `# TYPE` for each metric;
@@ -48,6 +71,7 @@ AI-generated patches must preserve these invariants:
 - Operator-health observability remains separate from per-user analytics.
 - Config rendering must fail before writing or reloading partial output.
 - All network-boundary failures must be typed, recoverable, and documented.
+- Boundary traits must stay small enough that generated tests can mock them without live Docker, MariaDB, Redis, or public internet.
 
 ## Suggested Property Tests
 
@@ -58,8 +82,12 @@ space is large enough to justify them.
   `max_frame_len`, and `max_frame_len + 1`.
 - Daemon dispatch: generate every `WireRequestV1` variant and assert
   either a valid response or a typed, stable error code.
+- Heng pressure: generate pressure values around 4999, 5000, 7999,
+  and 8000 basis points and assert chunk divisor behavior.
 - Error taxonomy: generate representative variants for each `wire_code`
   bucket and assert the bucket remains unchanged.
+- Probe contracts: generate mock probe outcomes and assert stdout/persistence
+  wrappers preserve the same JSON keys on success and failure.
 
 ## Patch Review Checklist
 
