@@ -27,13 +27,15 @@ use crate::observability::{
     crosses_80pct_threshold, duration_ms_u64, otel_key, packet_header_dump,
 };
 use crate::{admin, metrics, singbox, Error, Result};
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use sqlx::MySqlPool;
+use std::future::Future;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Semaphore;
 
@@ -56,7 +58,7 @@ const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
 const MAX_REQUEST_READ_CHUNK_BYTES: usize = 8 * 1024;
 
 /// Concurrent-handler cap. The panel is the only legitimate client of
-/// this socket and runs FrankenPHP with `worker num 4` (default in
+/// this socket and runs `FrankenPHP` with `worker num 4` (default in
 /// docker/panel/Caddyfile). 8 → 16 ceiling; 16 chosen to leave
 /// headroom for the queue + scheduler + the components.md probe also
 /// shelling out, while still preventing a misbehaving client from
@@ -158,17 +160,26 @@ pub async fn serve(
 ) -> Result<()> {
     // Ensure parent dir exists; remove any stale socket file.
     if let Some(dir) = Path::new(socket_path).parent() {
-        tokio::fs::create_dir_all(dir).await.ok();
+        tokio::fs::create_dir_all(dir).await.map_err(|source| {
+            Error::io_path("create_socket_dir", dir.display().to_string(), source)
+        })?;
     }
-    let _ = tokio::fs::remove_file(socket_path).await;
+    match tokio::fs::remove_file(socket_path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(Error::io_path("remove_stale_socket", socket_path, source));
+        }
+    }
 
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = UnixListener::bind(socket_path)
+        .map_err(|source| Error::io_path("bind_unix_socket", socket_path, source))?;
     tokio::fs::set_permissions(
         socket_path,
         std::os::unix::fs::PermissionsExt::from_mode(0o660),
     )
     .await
-    .ok();
+    .map_err(|source| Error::io_path("chmod_unix_socket", socket_path, source))?;
 
     tracing::info!(
         path = socket_path,
@@ -209,16 +220,17 @@ pub async fn serve(
         // fine: tokio::sync::Semaphore is async-aware (unlike the
         // Coalescer's std::sync::Mutex; different tool, different
         // need).
-        let permit = match Arc::clone(&permits).acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => {
-                // Semaphore::close was called somewhere. The only
-                // path to that today is if `permits` is dropped
-                // while a permit await is pending — not in our
-                // control flow. Treat as a fatal invariant break.
-                return Err(Error::SemaphoreClosed {
+        let permit = tokio::select! {
+            () = &mut shutdown => {
+                tracing::info!(path = socket_path, "ct-server-core daemon shutting down");
+                drop(listener);
+                remove_socket_on_shutdown(socket_path).await;
+                return Ok(());
+            }
+            permit = Arc::clone(&permits).acquire_owned() => {
+                permit.map_err(|_| Error::SemaphoreClosed {
                     resource: "daemon handler",
-                });
+                })?
             }
         };
         if let Some(m) = &metrics {
@@ -233,14 +245,20 @@ pub async fn serve(
             }
         }
         tokio::select! {
-            _ = &mut shutdown => {
+            () = &mut shutdown => {
                 tracing::info!(path = socket_path, "ct-server-core daemon shutting down");
                 drop(listener);
-                let _ = tokio::fs::remove_file(socket_path).await;
+                remove_socket_on_shutdown(socket_path).await;
                 return Ok(());
             }
             res = listener.accept() => {
-                let (stream, _) = res?;
+                let (stream, _) = match res {
+                    Ok(pair) => pair,
+                    Err(source) => {
+                        drop(permit);
+                        return Err(Error::io_path("accept_unix_socket", socket_path, source));
+                    }
+                };
                 // MySqlPool is internally Arc'd; cloning bumps a
                 // refcount and shares the underlying connection set.
                 // No new TCP connections are opened on clone.
@@ -249,7 +267,7 @@ pub async fn serve(
                 let output = output.clone();
                 let admin_url = admin_url.clone();
                 let metrics = metrics.clone();
-                tokio::spawn(async move {
+                spawn_observed("daemon client handler", async move {
                     // Permit is held by the spawned task; dropped
                     // when this closure returns (handler exit or
                     // error path). A new permit becomes available
@@ -263,6 +281,32 @@ pub async fn serve(
                 });
             }
         }
+    }
+}
+
+fn spawn_observed<F>(task: &'static str, future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::spawn(future);
+    let monitor = tokio::spawn(async move {
+        if let Err(source) = handle.await {
+            let err = Error::TaskJoin { task, source };
+            tracing::error!(error = %err, "detached daemon task terminated abnormally");
+        }
+    });
+    drop(monitor);
+}
+
+async fn remove_socket_on_shutdown(socket_path: &str) {
+    match tokio::fs::remove_file(socket_path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(
+            path = socket_path,
+            error = %e,
+            "could not remove daemon socket during shutdown"
+        ),
     }
 }
 
@@ -305,6 +349,7 @@ async fn handle_client(
     // already read for the next frame, avoiding a new Vec allocation
     // per request while preserving a hard size cap.
     let mut read_buf = BytesMut::with_capacity(8 * 1024);
+    let mut write_buf = BytesMut::with_capacity(512);
     let mut heng_profile = HengProfile {
         read_chunk_bytes: DAEMON_FRAME_POLICY.max_read_chunk_len(),
         pressure_basis_points: 0,
@@ -351,7 +396,7 @@ async fn handle_client(
                         READ_TIMEOUT.as_secs()
                     ),
                 };
-                let _ = send(&mut wr, &resp).await;
+                let _ = send(&mut wr, &mut write_buf, &resp).await;
                 return Ok(());
             }
             Err(Error::FrameTooLarge { limit }) => {
@@ -369,7 +414,7 @@ async fn handle_client(
                     buffer_hex = %packet_header_dump(&read_buf),
                     "daemon frame exceeded hard byte limit"
                 );
-                send(&mut wr, &resp).await?;
+                send(&mut wr, &mut write_buf, &resp).await?;
                 return Err(Error::FrameTooLarge { limit });
             }
             Err(Error::FrameIncomplete) => {
@@ -386,7 +431,7 @@ async fn handle_client(
                     buffer_hex = %packet_header_dump(&read_buf),
                     "daemon frame incomplete at peer close"
                 );
-                let _ = send(&mut wr, &resp).await;
+                let _ = send(&mut wr, &mut write_buf, &resp).await;
                 return Ok(());
             }
             Err(e) => {
@@ -411,7 +456,7 @@ async fn handle_client(
                     frame_hex = %crate::observability::HexDump::new(&frame, 96),
                     "daemon received non-utf8 frame"
                 );
-                send(&mut wr, &resp).await?;
+                send(&mut wr, &mut write_buf, &resp).await?;
                 return Ok(());
             }
         };
@@ -452,7 +497,7 @@ async fn handle_client(
                     frame_hex = %crate::observability::HexDump::new(&frame, 96),
                     "daemon received malformed json frame"
                 );
-                send(&mut wr, &resp).await?;
+                send(&mut wr, &mut write_buf, &resp).await?;
                 return Ok(());
             }
         };
@@ -507,7 +552,7 @@ async fn handle_client(
             latency_ms = duration_ms_u64(turn_started.elapsed()),
             "daemon network turn completed"
         );
-        if let Err(e) = send(&mut wr, &resp).await {
+        if let Err(e) = send(&mut wr, &mut write_buf, &resp).await {
             fsm_hard_reset(&fsm, metrics, "write_response_failed");
             return Err(e);
         }
@@ -598,10 +643,18 @@ fn wire_method_name(req: &WireRequestV1) -> &'static str {
     }
 }
 
-async fn send<W: AsyncWriteExt + Unpin>(w: &mut W, resp: &WireResponseV1) -> Result<()> {
-    let mut bytes = serde_json::to_vec(resp)?;
-    bytes.push(b'\n');
-    w.write_all(&bytes).await?;
+async fn send<W: AsyncWrite + Unpin>(
+    w: &mut W,
+    buf: &mut BytesMut,
+    resp: &WireResponseV1,
+) -> Result<()> {
+    buf.clear();
+    {
+        let mut writer = (&mut *buf).writer();
+        serde_json::to_writer(&mut writer, resp)?;
+    }
+    buf.put_u8(b'\n');
+    w.write_all(&buf[..]).await?;
     w.flush().await?;
     Ok(())
 }
@@ -629,16 +682,16 @@ async fn handle(
             // sing-box via its clash API. Variant name preserved
             // for WireV1 compat.
             let started = std::time::Instant::now();
-            let secret = singbox::current_clash_secret().await?;
+            let secret = singbox::current_clash_secret()?;
             admin::ClashAdmin::new(admin_url, &secret)
                 .reload(output)
                 .await?;
             Ok(WireResponseV1::CaddyReloaded {
-                duration_ms: started.elapsed().as_millis() as u64,
+                duration_ms: duration_ms_u64(started.elapsed()),
             })
         }
         WireRequestV1::CollectTraffic => {
-            let secret = singbox::current_clash_secret().await?;
+            let secret = singbox::current_clash_secret()?;
             metrics::collect(pool, &admin::ClashAdmin::new(admin_url, &secret)).await?;
             Ok(WireResponseV1::Ok)
         }

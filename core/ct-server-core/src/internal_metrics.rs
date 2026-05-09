@@ -44,7 +44,7 @@ use crate::observability::{
     utilization_basis_points, HexDump, BOTTLENECK_ALERT_BASIS_POINTS,
 };
 use crate::{Error, Result};
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use sqlx::MySqlPool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -384,11 +384,12 @@ pub fn spawn(bind: String, registry: Arc<MetricsRegistry>) -> tokio::task::JoinH
             match listener.accept().await {
                 Ok((stream, _peer)) => {
                     let registry = Arc::clone(&registry);
-                    tokio::spawn(async move {
+                    let task = tokio::spawn(async move {
                         if let Err(e) = handle_request(stream, &registry, permit).await {
                             tracing::debug!(error = %e, "metrics endpoint handler error");
                         }
                     });
+                    drop(task);
                 }
                 Err(e) => {
                     drop(permit);
@@ -512,19 +513,34 @@ async fn write_response(
         405 => "405 Method Not Allowed",
         _ => "500 Internal Server Error",
     };
-    let response = format!(
-        "HTTP/1.1 {status}\r\n\
-         Content-Type: {content_type}\r\n\
-         Content-Length: {len}\r\n\
-         Connection: close\r\n\
-         \r\n\
-         {body}",
-        len = body.len(),
-    );
-    stream.write_all(response.as_bytes()).await?;
+    let len = body.len();
+    let mut headers = BytesMut::with_capacity(status.len() + content_type.len() + 116);
+    headers.put_slice(b"HTTP/1.1 ");
+    headers.put_slice(status.as_bytes());
+    headers.put_slice(b"\r\nContent-Type: ");
+    headers.put_slice(content_type.as_bytes());
+    headers.put_slice(b"\r\nContent-Length: ");
+    put_decimal(&mut headers, len);
+    headers.put_slice(b"\r\nConnection: close\r\n\r\n");
+    stream.write_all(&headers).await?;
+    stream.write_all(body.as_bytes()).await?;
     stream.flush().await?;
     let _ = stream.shutdown().await;
     Ok(())
+}
+
+fn put_decimal(buf: &mut BytesMut, mut value: usize) {
+    let mut tmp = [0_u8; 20];
+    let mut pos = tmp.len();
+    loop {
+        pos -= 1;
+        tmp[pos] = b"0123456789"[value % 10];
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    buf.put_slice(&tmp[pos..]);
 }
 
 #[cfg(test)]
