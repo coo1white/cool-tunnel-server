@@ -453,7 +453,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
             // (CT_CLASH_SECRET_SEED). An explicit --admin-secret /
             // SINGBOX_CLASH_SECRET still wins for ad-hoc debugging.
             let secret = if cli.admin_secret.is_empty() {
-                singbox::current_clash_secret().await?
+                singbox::current_clash_secret()?
             } else {
                 cli.admin_secret.clone()
             };
@@ -466,7 +466,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Cmd::Traffic { op } => match op {
             TrafficOp::Collect => {
                 let secret = if cli.admin_secret.is_empty() {
-                    singbox::current_clash_secret().await?
+                    singbox::current_clash_secret()?
                 } else {
                     cli.admin_secret.clone()
                 };

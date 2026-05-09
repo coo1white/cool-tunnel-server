@@ -138,6 +138,11 @@ pub enum Error {
     },
     /// Tokio semaphore was closed while the listener needed a permit.
     SemaphoreClosed { resource: &'static str },
+    /// A detached Tokio task panicked or was cancelled.
+    TaskJoin {
+        task: &'static str,
+        source: tokio::task::JoinError,
+    },
     /// Requested DB object does not exist.
     NotFound { resource: &'static str, id: String },
     /// Probe/check helpers use string-returning lower-level
@@ -227,6 +232,7 @@ impl Error {
             | Self::ProcessStartTimeout { .. } => "process_error",
             Self::Crypt(_) => "crypt_error",
             Self::SemaphoreClosed { .. } => "internal_backpressure_error",
+            Self::TaskJoin { .. } => "internal_task_error",
             Self::Io { .. } | Self::FromUtf8(_) | Self::ParseInt(_) | Self::AtomicWrite { .. } => {
                 "io_error"
             }
@@ -319,6 +325,7 @@ impl fmt::Display for Error {
             Self::SemaphoreClosed { resource } => {
                 write!(f, "{resource} semaphore closed unexpectedly")
             }
+            Self::TaskJoin { task, source } => write!(f, "{task} task failed: {source}"),
             Self::NotFound { resource, id } => write!(f, "{resource} not found: {id}"),
             Self::Probe { message } => f.write_str(message),
         }
@@ -338,6 +345,7 @@ impl std::error::Error for Error {
             Self::Redis(e) => Some(e),
             Self::Template(e) | Self::TemplateRender { source: e, .. } => Some(e),
             Self::Crypt(e) => Some(e),
+            Self::TaskJoin { source, .. } => Some(source),
             Self::AtomicWrite { source, .. } => Some(source),
             Self::ProcessSpawn { source, .. } => Some(source),
             Self::Config { .. }
@@ -444,6 +452,22 @@ mod tests {
             .wire_code(),
             "read_timeout"
         );
+    }
+
+    #[tokio::test]
+    async fn task_join_error_has_stable_wire_code_and_source() {
+        let handle = tokio::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        handle.abort();
+        let source = handle.await.expect_err("aborted task returns JoinError");
+        let err = Error::TaskJoin {
+            task: "unit-test task",
+            source,
+        };
+
+        assert_eq!(err.wire_code(), "internal_task_error");
+        assert!(err.source().is_some());
     }
 
     #[test]
