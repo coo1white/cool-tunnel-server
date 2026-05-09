@@ -22,6 +22,50 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.72] — 2026-05-09 — Rust network boundary hardening
+
+This patch release promotes the LTS hardening pass from PR #64. The
+wire protocol remains compatible with `v0.0.71`; the server-side Rust
+network boundary now uses tighter allocation discipline, explicit error
+taxonomy, and observed task lifetimes so malformed traffic or transient
+listener failures fail fast without taking down unrelated sessions.
+
+### Changed
+
+- **Daemon forwarding buffer discipline.** Listener handlers now reuse a
+  `BytesMut` serialization buffer for JSON frames and forward payloads
+  from borrowed slices, avoiding repeated short-lived heap allocations on
+  the packet path.
+- **Async listener setup.** Ephemeral probe sockets now use Tokio's
+  async `TcpListener`, and listener setup returns typed bind errors
+  instead of panicking at the network boundary.
+- **Task supervision.** Per-connection tasks are now spawned through an
+  observed join wrapper so panics and cancellations are logged as typed
+  internal task errors instead of becoming silent detached failures.
+- **Metrics response writes.** Internal metrics responses build headers
+  with `BytesMut` and stream the body separately, keeping the response
+  path allocation-bounded.
+
+### Fixed
+
+- **Shutdown-aware capacity handling.** Connection admission now treats a
+  closed semaphore as graceful shutdown instead of forcing an unwrap or
+  ambiguous transport failure.
+- **Panic-free socket boundaries.** Local daemon, remote daemon, and
+  transient probe bind failures now carry structured error codes that
+  can be surfaced predictably by operators and automation.
+
+### Tests
+
+- PR #64 CI passed before merge.
+- Local pre-release validation:
+  - `SQLX_OFFLINE=true cargo fmt --all -- --check`
+  - `SQLX_OFFLINE=true cargo test --workspace --all-targets --locked`
+    — 141 passed
+  - `SQLX_OFFLINE=true cargo clippy --all-targets --locked`
+
+---
+
 ## [0.0.71] — 2026-05-09 — AI-native contracts and Alpine NaiveProxy probe hardening
 
 This patch release promotes the AI-native Rust refactor and the
@@ -7240,7 +7284,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.71...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.72...HEAD
+[0.0.72]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.71...v0.0.72
 [0.0.71]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.70...v0.0.71
 [0.0.70]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.69...v0.0.70
 [0.0.69]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.68...v0.0.69
