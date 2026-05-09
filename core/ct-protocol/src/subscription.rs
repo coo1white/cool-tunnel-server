@@ -119,6 +119,7 @@ impl SubscriptionManifestV1 {
     /// All three must hold; the function returns the FIRST violation
     /// it finds in that order, so a client can surface the most
     /// specific error.
+    #[must_use]
     pub fn check_freshness(&self, now: u64) -> FreshnessCheck {
         if now < self.issued_at {
             return FreshnessCheck::IssuedInFuture {

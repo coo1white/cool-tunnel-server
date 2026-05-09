@@ -108,17 +108,25 @@ impl ClashAdmin {
                 );
                 return reload_via_docker_restart().await;
             }
-            Err(e) => return Err(Error::msg(format!("clash PUT /configs: {e}"))),
+            Err(e) => {
+                return Err(Error::ClashApi {
+                    op: "PUT /configs",
+                    message: e.to_string(),
+                })
+            }
         };
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::msg(format!(
-                "sing-box clash /configs failed: {status} — {body}. \
-                 Validate the rendered config first: \
-                 `docker compose exec ct-singbox sing-box check -c /etc/sing-box/config.json`"
-            )));
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("could not read error body: {e}"));
+            return Err(Error::ClashApiStatus {
+                endpoint: "PUT /configs",
+                status,
+                body,
+            });
         }
         tracing::info!(
             duration_ms = started.elapsed().as_millis() as u64,
@@ -136,17 +144,18 @@ impl ClashAdmin {
         let resp = req
             .send()
             .await
-            .map_err(|e| Error::msg(format!("clash GET /configs: {e}")))?;
+            .map_err(|e| Error::clash("GET /configs", e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(Error::msg(format!(
-                "sing-box clash /configs failed: {}",
-                resp.status()
-            )));
+            return Err(Error::ClashApiStatus {
+                endpoint: "GET /configs",
+                status: resp.status(),
+                body: String::new(),
+            });
         }
         let body = resp
             .text()
             .await
-            .map_err(|e| Error::msg(format!("clash GET /configs body: {e}")))?;
+            .map_err(|e| Error::clash("GET /configs body", e.to_string()))?;
         println!("{body}");
         Ok(())
     }
@@ -161,11 +170,11 @@ impl ClashAdmin {
         let resp = req
             .send()
             .await
-            .map_err(|e| Error::msg(format!("clash GET /metrics: {e}")))?;
+            .map_err(|e| Error::clash("GET /metrics", e.to_string()))?;
         let body = resp
             .text()
             .await
-            .map_err(|e| Error::msg(format!("clash GET /metrics body: {e}")))?;
+            .map_err(|e| Error::clash("GET /metrics body", e.to_string()))?;
         Ok(body)
     }
 
@@ -174,7 +183,7 @@ impl ClashAdmin {
             .timeout(CLASH_HTTP_TIMEOUT)
             .no_proxy()
             .build()
-            .map_err(|e| Error::msg(format!("reqwest client build: {e}")))
+            .map_err(Error::Http)
     }
 
     fn with_auth(&self, b: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -195,18 +204,16 @@ async fn reload_via_docker_restart() -> Result<()> {
             .output(),
     )
     .await
-    .map_err(|_| {
-        Error::msg(format!(
-            "docker compose restart sing-box timed out after {}s. \
-             Investigate: `docker ps` and `docker compose logs --tail=50 sing-box`.",
-            DOCKER_RESTART_TIMEOUT.as_secs(),
-        ))
+    .map_err(|_| Error::ExternalCommandTimedOut {
+        command: "docker compose restart sing-box",
+        timeout: DOCKER_RESTART_TIMEOUT,
+        hint: "Investigate: `docker ps` and `docker compose logs --tail=50 sing-box`.".to_owned(),
     })??;
     if !out.status.success() {
-        return Err(Error::msg(format!(
-            "docker compose restart sing-box failed: {}",
-            String::from_utf8_lossy(&out.stderr),
-        )));
+        return Err(Error::ExternalCommandFailed {
+            command: "docker compose restart sing-box",
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        });
     }
     tracing::warn!(
         duration_ms = started.elapsed().as_millis() as u64,

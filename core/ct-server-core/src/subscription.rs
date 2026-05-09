@@ -39,7 +39,10 @@ pub async fn emit(pool: &MySqlPool, account_id: i64) -> Result<()> {
     )
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| Error::msg(format!("no proxy_account with id={account_id}")))?;
+    .ok_or_else(|| Error::NotFound {
+        resource: "proxy_account",
+        id: account_id.to_string(),
+    })?;
 
     let username = row.username;
     // We cannot include the cleartext password in the manifest —

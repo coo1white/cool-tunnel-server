@@ -136,15 +136,19 @@ pub async fn validate(output_path: &str) -> Result<()> {
     cmd.args(["exec", "ct-singbox", "sing-box", "check", "-c", output_path]);
     let out = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output())
         .await
-        .map_err(|_| {
-            Error::msg(
-                "`sing-box check` timed out after 30s. \
-                 Is the ct-singbox container running? `docker ps`",
-            )
+        .map_err(|_| Error::ExternalCommandTimedOut {
+            command: "docker exec ct-singbox sing-box check",
+            timeout: std::time::Duration::from_secs(30),
+            hint: "`sing-box check` timed out after 30s. \
+                       Is the ct-singbox container running? `docker ps`"
+                .to_owned(),
         })??;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(Error::msg(format!("sing-box check failed: {stderr}")));
+        return Err(Error::ExternalCommandFailed {
+            command: "docker exec ct-singbox sing-box check",
+            stderr: stderr.into_owned(),
+        });
     }
     println!("sing-box config valid");
     Ok(())
@@ -155,12 +159,13 @@ async fn render_to_string(
     cfg: &ServerConfig,
     accounts: &[ProxyAccount],
 ) -> Result<String> {
-    let template = fs::read_to_string(template_path).await.map_err(|e| {
-        Error::msg(format!(
-            "could not read sing-box template at `{template_path}`: {e}. \
-             Set --template / SINGBOX_CONFIG_TEMPLATE if it lives elsewhere."
-        ))
-    })?;
+    let template =
+        fs::read_to_string(template_path)
+            .await
+            .map_err(|source| Error::TemplateRead {
+                path: template_path.to_owned(),
+                source,
+            })?;
 
     // Build the users JSON. sing-box's `naive` inbound wants an array
     // of `{"username", "password"}` cleartext pairs. Accounts whose
@@ -230,10 +235,9 @@ async fn render_to_string(
         .set("KeyPath", crate::template::json_escape(&key_path))
         .into_map();
 
-    crate::template::render(&template, &bindings).map_err(|e| {
-        Error::msg(format!(
-            "could not render sing-box template `{template_path}`: {e}"
-        ))
+    crate::template::render(&template, &bindings).map_err(|source| Error::TemplateRender {
+        path: template_path.to_owned(),
+        source,
     })
 }
 
@@ -360,7 +364,7 @@ pub(crate) fn clash_listen() -> String {
 pub(crate) fn clash_secret() -> Result<String> {
     let seed = std::env::var("CT_CLASH_SECRET_SEED").unwrap_or_default();
     if seed.is_empty() {
-        return Err(Error::msg(
+        return Err(Error::config(
             "CT_CLASH_SECRET_SEED is unset or empty. install.sh generates \
              this on first boot from /dev/urandom; if you upgraded from a \
              pre-R2-2 build, append `CT_CLASH_SECRET_SEED=$(openssl rand \
@@ -376,18 +380,46 @@ pub(crate) fn clash_secret() -> Result<String> {
 
 async fn atomic_write(path: &str, body: &str) -> Result<()> {
     let path = Path::new(path);
-    let dir = path
-        .parent()
-        .ok_or_else(|| Error::msg("sing-box output has no parent directory"))?;
-    fs::create_dir_all(dir).await.ok();
+    let dir = path.parent().ok_or_else(|| Error::MissingParent {
+        path: path.display().to_string(),
+    })?;
+    fs::create_dir_all(dir)
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: path.display().to_string(),
+            op: "create_parent_dir",
+            source,
+        })?;
 
     let tmp: PathBuf = dir.join(format!(".singbox.tmp.{}", hex::encode(rand_bytes(4))));
     {
-        let mut f = fs::File::create(&tmp).await?;
-        f.write_all(body.as_bytes()).await?;
-        f.sync_all().await?;
+        let mut f = fs::File::create(&tmp)
+            .await
+            .map_err(|source| Error::AtomicWrite {
+                path: tmp.display().to_string(),
+                op: "create_tmp",
+                source,
+            })?;
+        f.write_all(body.as_bytes())
+            .await
+            .map_err(|source| Error::AtomicWrite {
+                path: tmp.display().to_string(),
+                op: "write_tmp",
+                source,
+            })?;
+        f.sync_all().await.map_err(|source| Error::AtomicWrite {
+            path: tmp.display().to_string(),
+            op: "sync_tmp",
+            source,
+        })?;
     }
-    fs::rename(&tmp, path).await?;
+    fs::rename(&tmp, path)
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: path.display().to_string(),
+            op: "rename",
+            source,
+        })?;
 
     // fsync the PARENT DIRECTORY after the rename. POSIX rename is
     // atomic with respect to a concurrent reader, but the directory
@@ -402,8 +434,21 @@ async fn atomic_write(path: &str, body: &str) -> Result<()> {
     // to the file write itself, and only happens on actual config
     // changes (the SHA-256 dedupe at the caller short-circuits
     // unchanged renders before reaching this function).
-    let dirfile = fs::File::open(dir).await?;
-    dirfile.sync_all().await?;
+    let dirfile = fs::File::open(dir)
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: dir.display().to_string(),
+            op: "open_parent_dir",
+            source,
+        })?;
+    dirfile
+        .sync_all()
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: dir.display().to_string(),
+            op: "sync_parent_dir",
+            source,
+        })?;
 
     Ok(())
 }

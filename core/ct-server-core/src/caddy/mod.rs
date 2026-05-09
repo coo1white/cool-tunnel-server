@@ -40,12 +40,13 @@ pub async fn render(
 ) -> Result<()> {
     let cfg = db::server_config(pool).await?;
 
-    let template = fs::read_to_string(template_path).await.map_err(|e| {
-        Error::msg(format!(
-            "could not read Caddyfile template at `{template_path}`: {e}. \
-             Set --template / CADDYFILE_TEMPLATE if it lives elsewhere."
-        ))
-    })?;
+    let template =
+        fs::read_to_string(template_path)
+            .await
+            .map_err(|source| Error::TemplateRead {
+                path: template_path.to_owned(),
+                source,
+            })?;
 
     // Validate every operator-controlled binding before substituting
     // it into the Caddyfile. Caddyfile grammar treats `{` `}` as
@@ -61,10 +62,14 @@ pub async fn render(
     // has no general escape mechanism for these inside an unquoted
     // directive argument — refuse to render rather than attempt to
     // sanitise. (v0.0.16 hardening — Caddyfile-injection class.)
-    template::caddyfile_validate("Domain", &cfg.domain).map_err(Error::msg)?;
-    template::caddyfile_validate("PanelDomain", panel_domain).map_err(Error::msg)?;
-    template::caddyfile_validate("AcmeEmail", &cfg.acme_email).map_err(Error::msg)?;
-    template::caddyfile_validate("AcmeDirectory", &cfg.acme_directory).map_err(Error::msg)?;
+    template::caddyfile_validate("Domain", &cfg.domain)
+        .map_err(|e| Error::validation("Caddyfile Domain", e))?;
+    template::caddyfile_validate("PanelDomain", panel_domain)
+        .map_err(|e| Error::validation("Caddyfile PanelDomain", e))?;
+    template::caddyfile_validate("AcmeEmail", &cfg.acme_email)
+        .map_err(|e| Error::validation("Caddyfile AcmeEmail", e))?;
+    template::caddyfile_validate("AcmeDirectory", &cfg.acme_directory)
+        .map_err(|e| Error::validation("Caddyfile AcmeDirectory", e))?;
 
     let bindings = template::Bindings::new()
         .set("Domain", &cfg.domain)
@@ -73,10 +78,9 @@ pub async fn render(
         .set("AcmeDirectory", &cfg.acme_directory)
         .into_map();
 
-    let body = template::render(&template, &bindings).map_err(|e| {
-        Error::msg(format!(
-            "could not render Caddyfile template `{template_path}`: {e}"
-        ))
+    let body = template::render(&template, &bindings).map_err(|source| Error::TemplateRender {
+        path: template_path.to_owned(),
+        source,
     })?;
 
     let mut hasher = Sha256::new();
@@ -123,18 +127,46 @@ pub async fn render(
 
 async fn atomic_write(path: &str, body: &str) -> Result<()> {
     let path = Path::new(path);
-    let dir = path
-        .parent()
-        .ok_or_else(|| Error::msg("Caddyfile output has no parent directory"))?;
-    fs::create_dir_all(dir).await.ok();
+    let dir = path.parent().ok_or_else(|| Error::MissingParent {
+        path: path.display().to_string(),
+    })?;
+    fs::create_dir_all(dir)
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: path.display().to_string(),
+            op: "create_parent_dir",
+            source,
+        })?;
 
     let tmp: PathBuf = dir.join(format!(".caddy.tmp.{}", hex::encode(rand_bytes(4))));
     {
-        let mut f = fs::File::create(&tmp).await?;
-        f.write_all(body.as_bytes()).await?;
-        f.sync_all().await?;
+        let mut f = fs::File::create(&tmp)
+            .await
+            .map_err(|source| Error::AtomicWrite {
+                path: tmp.display().to_string(),
+                op: "create_tmp",
+                source,
+            })?;
+        f.write_all(body.as_bytes())
+            .await
+            .map_err(|source| Error::AtomicWrite {
+                path: tmp.display().to_string(),
+                op: "write_tmp",
+                source,
+            })?;
+        f.sync_all().await.map_err(|source| Error::AtomicWrite {
+            path: tmp.display().to_string(),
+            op: "sync_tmp",
+            source,
+        })?;
     }
-    fs::rename(&tmp, path).await?;
+    fs::rename(&tmp, path)
+        .await
+        .map_err(|source| Error::AtomicWrite {
+            path: path.display().to_string(),
+            op: "rename",
+            source,
+        })?;
     Ok(())
 }
 
