@@ -111,7 +111,7 @@ guarantees.
 | **No-forking daemon FSM** — every daemon turn has a single authoritative state transition path; deviations hard-reset the connection. | `daemon_fsm.rs` uses atomic compare-exchange transitions; invalid predecessor observations move to `HardReset`, not a second branch of truth. | v0.0.69 |
 
 Full text and rationale: [`LTSC.md § 2026 milestones`](./LTSC.md).
-Current baseline as of this README: server **`v0.0.69`**, macOS
+Current baseline as of this README: server **`v0.0.70`**, macOS
 client **`v2.0.26+`** (separate repo,
 [`coo1white/cool-tunnel`](https://github.com/coo1white/cool-tunnel)).
 

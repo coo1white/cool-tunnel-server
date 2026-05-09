@@ -22,6 +22,56 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.70] — 2026-05-09 — Release promotion: repository authority and strict update health gates
+
+This patch release promotes the post-`v0.0.69` operations work to an
+auditable GitHub release. It includes the repository-presence pass and
+the auto-update hardening verified on a live Debian VPS after the panel
+version cache drift incident.
+
+### Added
+
+- **Rule-maker repository presence.** README now documents the
+  FilamentPHP/Livewire panel, FrankenPHP Worker Mode runtime, Rust core
+  daemon, Docker orchestration, 1 GB VPS floor, and zero-user-tracking
+  posture with a Mermaid architecture diagram and operator QA checklist.
+- **LTSC-Heng license draft.** Added a draft-only restrictive covenant
+  document while preserving the active AGPL-3.0-only project license.
+- **Makefile operator aliases.** Added `make build`, `make audit`, and
+  `make deploy` aliases for the release/operator workflow.
+
+### Changed
+
+- **GitHub repository metadata.** Updated the repo description and
+  topics to match the FrankenPHP Worker Mode + Rust daemon stack.
+- **LTSC baseline.** Current server baseline is now `v0.0.70`.
+
+### Fixed
+
+- **Strict update health gate.** Deployment scripts now run
+  `component_check_strict`, preserving the full component table while
+  failing if any row reports `NG`. This closes the false-success path
+  where `ct-server-core component check` printed an unhealthy row but
+  exited zero for UI/JSON compatibility.
+- **Panel cache race during update.** `scripts/update.sh` now waits for
+  the panel entrypoint sentinel before migrations, renders, reloads, and
+  the post-swap component check. This prevents Laravel's cached
+  `cool-tunnel.version` from reporting the prior release during the
+  update window.
+
+### Tests
+
+- PR #58 CI passed before merge and `main` CI passed after merge.
+- PR #59 CI passed before merge and `main` CI passed after merge.
+- Live Debian VPS validation:
+  - `git rev-parse --short HEAD` returned `d61477f` before the release
+    bump.
+  - `php artisan ct:version` returned `Cool Tunnel Panel 0.0.69`.
+  - all 11 component rows reported `OK`.
+  - `cool-tunnel-update.service` exited `status=0/SUCCESS`.
+
+---
+
 ## [0.0.69] — 2026-05-09 — Core LTS hardening: bounded frames, typed errors, observability, and daemon FSM
 
 This release promotes the Rust server core from implicit socket
@@ -7131,7 +7181,10 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.67...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.70...HEAD
+[0.0.70]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.69...v0.0.70
+[0.0.69]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.68...v0.0.69
+[0.0.68]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.67...v0.0.68
 [0.0.67]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.66...v0.0.67
 [0.0.66]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.65...v0.0.66
 [0.0.65]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.64...v0.0.65
