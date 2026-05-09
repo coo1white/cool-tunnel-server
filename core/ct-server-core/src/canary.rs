@@ -394,7 +394,7 @@ mod tests {
             .await;
 
         assert_eq!(probe.contract().id(), "canary-self-probe-v1");
-        assert_eq!(result.unwrap_err(), "DoH lookup failed: timeout");
+        assert_eq!(result, Err("DoH lookup failed: timeout".into()));
     }
 
     #[test]

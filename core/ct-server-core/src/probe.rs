@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn anti_tracking_trait_is_mockable_for_ai_generated_tests() {
+    async fn anti_tracking_trait_is_mockable_for_ai_generated_tests() -> Result<()> {
         let probe = MockAntiTrackingProbe {
             result: ProbeResult {
                 via: Some("https://u:p@example.com:443".into()),
@@ -377,11 +377,11 @@ mod tests {
                 "https://ifconfig.co/json",
                 Some("https://u:p@example.com:443"),
             )
-            .await
-            .unwrap();
+            .await?;
 
         assert_eq!(probe.contract().id(), "anti-tracking-probe-v1");
         assert!(result.hide_ip_effective);
         assert!(result.probe_resistance_effective);
+        Ok(())
     }
 }
