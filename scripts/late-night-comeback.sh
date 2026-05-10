@@ -96,15 +96,14 @@ check_ufw() {
     local s
     s=$(ufw status 2>/dev/null)
     if echo "$s" | grep -qE '^Status:\s+active' \
-        && echo "$s" | grep -qE '443/tcp'    \
-        && echo "$s" | grep -qE '443/udp'; then
-        record 4 ok "UFW active with 443/tcp + 443/udp allowed"
+        && echo "$s" | grep -qE '443/tcp'; then
+        record 4 ok "UFW active with 443/tcp allowed"
     else
         record 4 ng "UFW rules incomplete or inactive"
     fi
 }
 
-# ---- 5. BBR + QUIC sysctl ----------------------------------------
+# ---- 5. BBR + TCP buffer sysctl ----------------------------------
 check_kernel() {
     local cc rmem
     cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)

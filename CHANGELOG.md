@@ -22,6 +22,58 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.73] — 2026-05-10 — Tunnel manifest and reload-state hardening
+
+This patch release promotes the real-metal RackNerd validation fixes
+from the `v0.0.72` rollout and the stale sing-box runtime-state fix
+from PR #65. The proxy wire protocol and subscription format are
+unchanged.
+
+### Fixed
+
+- **NaiveProxy client component check.** The bundled `naive` binary now
+  reports `naive 148.0.7778.96`; the manifest pin and stdout matcher
+  now compare against that actual version line instead of the older
+  `NaiveProxy` banner / release-suffix string. This prevents
+  `make update` from failing after an otherwise healthy `v0.0.72`
+  rebuild.
+- **TCP-only readiness gate.** `late-night-comeback.sh` no longer
+  requires `443/udp` in UFW. NaiveProxy is HTTP/2-over-TCP in this
+  stack, and advertising or requiring UDP/443 contradicts the
+  anti-fingerprinting posture already enforced by the compose file.
+- **Stale sing-box state purge.** `ct-server-core server reload` now
+  applies the Clash API reload, verifies the loaded config path when
+  sing-box reports one, then restarts the sing-box container as a
+  mandatory state-clearance barrier. This encodes the incident
+  recovery sequence directly into deployment logic: rendered truth is
+  not considered live until the process has inherited it.
+- **Credential drift guard.** New `ct-server-core guard
+  credential-lock` plus `manifests/credential-lock.upstream.json`
+  makes `db = rendered = manifest = Mac config` a component-check
+  invariant. It compares active DB username/password tuples with the
+  rendered sing-box `users` array and fails NG without printing
+  passwords.
+- **Update ordering.** `make update` now renders sing-box, asserts
+  the credential lock, reloads and purges sing-box, then runs strict
+  component checks against the post-purge runtime.
+
+### Tests
+
+- Real VPS validation on Debian 13:
+  - `ct-server-core component check --manifests /srv/manifests` reports
+    all components OK after the manifest correction.
+  - Bundled `naive` local adapter returned `http_code=204` through
+    `https://alice:<password>@cookie.coolwhite.space:443`.
+- PR #65 CI:
+  - `rust (build / test / clippy / fmt)`
+  - `manifest drift`
+  - `templates`
+  - `shellcheck`
+  - `phpstan`
+  - `cargo audit`, `cargo deny`, `composer audit`, `gitleaks`
+
+---
+
 ## [0.0.72] — 2026-05-09 — Rust network boundary hardening
 
 This patch release promotes the LTS hardening pass from PR #64. The
