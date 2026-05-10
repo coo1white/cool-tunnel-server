@@ -1,267 +1,245 @@
-# Cool Tunnel Server
-
-Cool Tunnel Server is the VPS side of
-[Cool Tunnel](https://github.com/coo1white/cool-tunnel), a macOS client
-for a self-hosted NaiveProxy tunnel.
-
-In plain English:
-
-1. You rent a small VPS.
-2. You point a domain at that VPS.
-3. This repo installs the server, admin panel, and proxy engine.
-4. You create a proxy account in the panel.
-5. You paste the subscription URL into the Cool Tunnel macOS app.
-6. Your Mac traffic exits from the VPS location.
+# Cool Tunnel Server / Panel
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-1c5cdc)](./LICENSE)
+[![LTSC-Heng Draft](https://img.shields.io/badge/license--draft-LTSC--Heng-111111)](./LTSC-HENG-LICENSE-DRAFT.md)
 [![Latest release](https://img.shields.io/github/v/release/coo1white/cool-tunnel-server?label=release)](https://github.com/coo1white/cool-tunnel-server/releases)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
 
-Read [Disclaimer.md](./Disclaimer.md) before deploying. You are
-responsible for the laws, terms of service, and network policies that
-apply to your use.
+Cool Tunnel Server is the VPS-side control plane and proxy ballast for
+[Cool Tunnel](https://github.com/coo1white/cool-tunnel). It is built for
+a 1 vCPU / 1 GB RAM Debian host and treats low memory as a hard design
+constraint, not an afterthought.
 
----
+This repository is not a hosted VPN business. It is a self-operated
+server stack: FilamentPHP for management, FrankenPHP worker-mode for the
+application runtime, Rust for deterministic core operations, and Docker
+for reproducible orchestration.
 
-## What This Is
+Read [Disclaimer.md](./Disclaimer.md) before deployment. You are
+responsible for local law, provider terms, and the traffic you route.
 
-Cool Tunnel Server is not a VPN company and not a hosted service. It is
-software you run on your own VPS.
+## System Contract
 
-It gives you:
-
-| Feature | What it means |
+| Constraint | Position |
 | --- | --- |
-| NaiveProxy on `:443` | The client connects over normal-looking HTTPS traffic. |
-| Admin panel | Create users, quotas, panel cover sites, and subscription URLs. |
-| Subscription URL | A single URL the client imports to fill in server, username, and password. |
-| Cover site fallback | Invalid panel/subscription paths return normal-looking HTML. |
-| Hot reloads | New or disabled accounts apply without restarting the whole stack. |
-| Health checks | Built-in commands tell you if DNS, ports, components, and proxy traffic work. |
+| Minimum host | Debian 11/12/13, root SSH, 1 vCPU, 1 GB RAM, ports `80/tcp` and `443/tcp`. |
+| Runtime model | FrankenPHP worker-mode with Laravel Octane. Laravel boot cost is paid once per worker. |
+| Core model | `ct-server-core` Rust binary handles rendering, probes, health checks, drift detection, and IPC-bound work. |
+| Data posture | Zero user tracking. Internal health metrics are allowed; user data collection is forbidden. |
+| Deployment posture | Idempotent shell bootstrap, Docker Compose, pinned manifests, Makefile gates. |
+| License posture | Active license: AGPL-3.0-only. Restrictive LTSC-Heng terms are drafted in [LTSC-HENG-LICENSE-DRAFT.md](./LTSC-HENG-LICENSE-DRAFT.md). |
 
-The stack is designed for a small VPS. A 1 vCPU / 1 GB RAM Debian box is
-enough for a few personal users.
+## Architecture Deep-Dive
 
----
-
-## What You Need
-
-Before you start, have these ready:
-
-| Requirement | Example |
-| --- | --- |
-| Debian VPS with root access | Debian 11, 12, or 13 |
-| Domain or subdomain | `cookie.example.com` |
-| Panel subdomain | `panel.cookie.example.com` |
-| DNS A records | both names point to the VPS IP |
-| Open firewall ports | `80/tcp` and `443/tcp` |
-| A Mac client | [Cool Tunnel macOS app](https://github.com/coo1white/cool-tunnel) |
-
-If you use Cloudflare, set these DNS records to **DNS only**. Do not use
-the orange-cloud proxy for this server.
-
-Quick DNS check from your laptop:
-
-```bash
-dig +short A cookie.example.com
-dig +short A panel.cookie.example.com
+```mermaid
+flowchart LR
+    UserTraffic["Web Traffic\nHTTPS / NaiveProxy / Panel"] --> Edge["HAProxy :443\nTCP SNI router"]
+    Edge -->|"proxy domain\nraw TLS passthrough"| Proxy["sing-box\nNaiveProxy engine"]
+    Edge -->|"panel domain\nTLS to Caddy"| Caddy["Caddy\nACME + reverse proxy"]
+    Caddy --> Worker["FrankenPHP Worker Mode\nLaravel + Filament + Livewire"]
+    Worker -->|"persistent PDO / Redis clients"| Data["MariaDB + Redis\nDocker-internal"]
+    Worker -->|"bounded IPC\nUnix socket / CLI"| Rust["ct-server-core\nRust engine"]
+    Rust -->|"render + validate"| Config["Caddyfile / haproxy.cfg\nsing-box config"]
+    Rust -->|"reload / probe"| Proxy
+    Rust -->|"optional internal only"| Metrics["Internal Health Metrics\nno user labels"]
 ```
 
-Both should print your VPS public IP.
+FrankenPHP worker-mode keeps the Laravel application resident. The panel
+does not cold-boot the framework on every request, and database/Redis
+clients are reused through the worker lifetime where the framework and
+driver allow it. This reduces request latency, allocator churn, and CPU
+spikes during Filament/Livewire interaction.
 
----
+The Rust core is the deterministic layer. PHP owns operator workflow and
+UI state; Rust owns bounded parsing, config rendering, probe execution,
+daemon IPC, and drift-sensitive checks. The design goal is zero-copy in
+the operational sense: keep data in typed structures, avoid lossy shell
+string pipelines, pass only the minimum frame over IPC, and write final
+configuration artifacts atomically.
 
-## Beginner Quick Start
+The stack is intentionally split:
 
-SSH into the VPS as `root`, then run:
+| Layer | Implementation | Duty |
+| --- | --- | --- |
+| Management UI | Laravel 11, Filament 3, Livewire, Blade | Accounts, panel settings, subscription URLs, operator controls. |
+| Application runtime | FrankenPHP + Octane worker-mode | Low boot overhead, long-lived workers, bounded recycle via `MAX_REQUESTS=500`. |
+| Engine core | Rust workspace under `core/` | Rendering, probes, component checks, reload decisions, typed IPC. |
+| Orchestration | Docker Compose, Makefile, shell scripts | Hardening, rebuilds, health checks, backups, release discipline. |
+
+## One-Click Bastion
+
+Fresh Debian VPS as `root`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
 ```
 
-Then edit the environment file:
+Unattended bootstrap with environment prefill:
+
+```bash
+DOMAIN=proxy.example.com \
+PANEL_DOMAIN=panel.proxy.example.com \
+ACME_EMAIL=ops@example.com \
+AUTO_INSTALL=1 \
+curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
+```
+
+The bootstrap path is idempotent. It installs Docker when absent,
+fast-forwards the repository under `/opt/cool-tunnel-server`, scaffolds
+`.env`, generates strong local secrets, preserves an existing `.env`,
+and can chain into `scripts/install.sh` when `AUTO_INSTALL=1`.
+
+The install path performs the heavier alignment work: build images,
+embed the Rust core into the panel image, run migrations, render
+HAProxy/Caddy/sing-box configuration, verify component pins, and start
+the services under Docker Compose hardening.
+
+## Required DNS
+
+Create DNS A records before install:
+
+```bash
+proxy.example.com        A    <VPS IPv4>
+panel.proxy.example.com  A    <VPS IPv4>
+```
+
+Cloudflare records must be **DNS only**. Do not orange-cloud the proxy
+or panel hostnames. The SNI router expects direct TCP reachability.
+
+Verify from your workstation:
+
+```bash
+dig +short A proxy.example.com
+dig +short A panel.proxy.example.com
+```
+
+## Industrial Makefile
+
+The Makefile is an operator surface, not decoration. Targets fail early
+when required tools, manifests, runtime state, or binary alignment are
+wrong. This is the **First Scold** rule: the system rejects an invalid
+environment before it mutates production state.
+
+| Command | Role |
+| --- | --- |
+| `make help` | Enumerate the available operator and developer targets. |
+| `make build` | Build the Rust workspace in release mode with offline SQLx metadata. |
+| `make deploy` | Alias of `make update`; pull, rebuild, migrate, render, verify, and reload. |
+| `make update` | Main production update path. |
+| `make audit` | Full local audit gate, equivalent to `make ci`. |
+| `make ci` | Rust fmt/clippy/test, PHP syntax, Composer audit, shellcheck, manifest checks, SoT parity, supervisord invariants. |
+| `make status` | Docker state, image state, embedded core binary presence, recent panel/sing-box errors, certificate presence. |
+| `make components` | Run `ct-server-core component check` against pinned manifests. |
+| `make readiness` | Execute `scripts/late-night-comeback.sh`, the operator launch gate. |
+| `make verify-sot-vps` | Validate panel-hostname single-source-of-truth from inside the running Docker stack. |
+| `make backup` | Snapshot database, `.env`, and Caddy ACME state. |
+| `make sbom` | Generate CycloneDX SBOMs for Cargo, Composer, and Docker surfaces. |
+
+Developer gates:
+
+```bash
+make fmt
+make lint
+make test
+make php-test
+make shellcheck
+make manifest-lockstep
+```
+
+Production operators should run:
 
 ```bash
 cd /opt/cool-tunnel-server
-nano .env
+make status
+make components
+make readiness
 ```
 
-At minimum, set:
+## QA Checklist: Operator's Eyes
 
-```dotenv
-DOMAIN=cookie.example.com
-PANEL_DOMAIN=panel.cookie.example.com
-ACME_EMAIL=you@example.com
-DB_PASSWORD=<random long password>
-DB_ROOT_PASSWORD=<different random long password>
-REDIS_PASSWORD=<different random long password>
-```
+### Worker Mode Stability Under Load
 
-Generate random passwords with:
+- [ ] Confirm FrankenPHP is the active panel runtime:
+  `docker compose exec -T panel supervisorctl status frankenphp`.
+- [ ] Confirm worker recycle guard is present:
+  `docker compose exec -T panel sh -lc 'grep -R "MAX_REQUESTS=500" /etc/supervisor* /etc/supervisord.conf 2>/dev/null || true'`.
+- [ ] Drive concurrent panel requests from the VPS or a trusted host:
+  `for i in $(seq 1 200); do curl -sk https://panel.proxy.example.com/up >/dev/null & done; wait`.
+- [ ] During the run, watch memory and restart behavior:
+  `docker stats ct-panel ct-db ct-redis ct-singbox ct-haproxy ct-caddy`.
+- [ ] Expected: no panel restart loop, no unbounded memory climb, `/up`
+  remains HTTP 200, and `make status` reports no recent fatal panel
+  errors.
 
-```bash
-openssl rand -base64 32
-```
+### Filament UI Responsiveness During Config Changes
 
-Install the stack:
+- [ ] Open `https://panel.proxy.example.com/admin`.
+- [ ] Create, disable, and re-enable a proxy account from Filament.
+- [ ] Change an anti-tracking toggle or cover-site setting.
+- [ ] In parallel, tail the internal workers:
+  `docker compose logs -f --tail=80 panel sing-box haproxy`.
+- [ ] Expected: Filament remains responsive, Livewire actions complete,
+  the Rust renderer emits deterministic config updates, and sing-box
+  reloads without a full-stack restart.
 
-```bash
-./scripts/install.sh
-```
+### Docker-Internal Health Metrics Visibility
 
-When it finishes, open:
+- [ ] Keep public ports limited to `80/tcp` and `443/tcp`:
+  `sudo ss -ltnp`.
+- [ ] Confirm no metrics port is host-published:
+  `docker compose ps` and `docker inspect ct-panel`.
+- [ ] If `CT_METRICS_BIND` is enabled, bind it only inside the panel
+  container or loopback namespace.
+- [ ] Scrape from inside the trusted Docker boundary only:
+  `docker compose exec -T panel sh -lc 'curl -fsS http://127.0.0.1:9292/metrics || true'`.
+- [ ] Expected: internal-health counters only. No usernames, account
+  IDs, target hosts, subscription tokens, request IDs, or per-user
+  destination data.
 
-```text
-https://panel.cookie.example.com/admin
-```
+## Observability Boundary
 
-The first boot can take a few minutes because Docker images are built on
-the VPS.
+Allowed:
 
----
+- Container health, restart count, memory, CPU, and process limits.
+- DB pool pressure, semaphore saturation, reload coalescer counters.
+- Component drift checks and version pin verification.
+- Synthetic anti-tracking probes initiated by the operator.
 
-## Create Your First Proxy Account
+Forbidden:
 
-In the admin panel:
+- Per-user destination logs.
+- Device identifiers.
+- Subscription token logging.
+- Request correlation IDs that identify a user.
+- Metrics labels such as `username`, `account_id`, `target_host`, or
+  equivalent identifiers.
 
-1. Open **Proxy accounts**.
-2. Click **New**.
-3. Enter a username, for example `nick`.
-4. Click **Create**.
-5. Copy the password shown in the green notification. It is shown once.
-6. Click **Subscription URL** for that account.
-7. Copy the subscription URL.
+Internal health metrics are an operator safety surface. User data
+collection is a posture violation.
 
-Paste that subscription URL into the Cool Tunnel macOS app under
-**Import from subscription URL**.
+## Smoke Tests
 
-After import, the app should show a profile like:
-
-```text
-cookie.example.com:443
-```
-
-Start the client in **Global** mode.
-
----
-
-## Confirm It Works
-
-On your Mac, with Cool Tunnel stopped:
-
-```bash
-curl -4 https://ifconfig.co/json
-```
-
-Start Cool Tunnel in **Global** mode and run it again:
-
-```bash
-curl -4 https://ifconfig.co/json
-```
-
-The second result should show the VPS IP and location.
-
-For example:
-
-```json
-{
-  "ip": "142.171.7.233",
-  "country": "United States",
-  "region_name": "California",
-  "city": "Los Angeles"
-}
-```
-
-If your goal is YouTube region/location testing, first prove the IP
-changed with `ifconfig.co`. Then test YouTube in an incognito/private
-browser window, signed out if possible, and deny browser location
-permission. YouTube may also use account region, cookies, GPS/browser
-location, and history.
-
----
-
-## Server-Side Smoke Tests
-
-Run these from the VPS in `/opt/cool-tunnel-server`.
-
-Check containers:
+Run from `/opt/cool-tunnel-server`:
 
 ```bash
 docker compose ps
+make status
+make components
+make readiness
 ```
 
-Expected: all main services are `Up` and healthy:
-
-```text
-ct-panel
-ct-haproxy
-ct-singbox
-ct-caddy
-ct-db
-ct-redis
-```
-
-Check port 443:
+Verify public routing:
 
 ```bash
 sudo ss -ltnp | grep ':443'
+nc -vz proxy.example.com 443
+nc -vz panel.proxy.example.com 443
 ```
 
-Expected: Docker is publishing `0.0.0.0:443`.
-
-Check components:
+Verify proxy behavior with a real account:
 
 ```bash
-docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
-```
-
-Expected: all components show `OK`.
-
-Run the readiness gate:
-
-```bash
-LNC_TEST_PROXY_URL='https://nick:<password>@cookie.example.com:443' \
-  ./scripts/late-night-comeback.sh
-```
-
-Expected: at least 9 of 10 checks pass. DNS, ports, ACME, and firewall
-checks are structural. If any of those fail, fix them first.
-
----
-
-## Debug The Common Failure: Import Works But Proxy Does Not
-
-If the client imports the URL but web traffic does not use the VPS,
-debug in this order.
-
-### 1. Is public `:443` reachable?
-
-Run from your laptop:
-
-```bash
-nc -vz cookie.example.com 443
-nc -vz panel.cookie.example.com 443
-```
-
-Both should succeed.
-
-If they fail, check the VPS:
-
-```bash
-cd /opt/cool-tunnel-server
-docker compose ps
-sudo ufw status
-sudo ss -ltnp | grep ':443'
-```
-
-### 2. Is the server proxy itself working?
-
-Run from the VPS:
-
-```bash
-cd /opt/cool-tunnel-server
-
 docker compose exec -T panel sh -lc '
 URL=$(php artisan tinker --execute '\''$a = \App\Models\ProxyAccount::where("username", "nick")->firstOrFail(); $d = \App\Models\ServerConfig::current()->domain; echo "https://{$a->username}:{$a->getCleartextPassword()}@{$d}:443";'\'')
 ct-server-core probe anti-tracking --via "$URL"
@@ -270,220 +248,64 @@ ct-server-core probe anti-tracking --via "$URL"
 
 Expected: JSON with `"reachable":true`.
 
-### 3. Is your Mac actually using the proxy?
-
-On the Mac:
-
-```bash
-scutil --proxy
-curl -4 https://ifconfig.co/json
-```
-
-If `ifconfig.co` does not show the VPS IP, the server is not the
-problem. The macOS client or browser is bypassing the system proxy.
-
-### 4. Are you testing the wrong URL?
-
-Do not open this directly in a browser:
-
-```text
-https://cookie.example.com
-```
-
-That is the proxy endpoint. A normal browser request is not a
-NaiveProxy `CONNECT` request, so sing-box may log:
-
-```text
-not CONNECT request
-```
-
-That log line is normal when someone visits the proxy domain directly.
-In the current SNI-router architecture, the public proxy domain is
-owned by sing-box, not the Laravel cover-site route.
-
----
-
-## Updating Later
-
-On the VPS:
-
-```bash
-cd /opt/cool-tunnel-server
-git pull --ff-only
-make update
-```
-
-`make update` rebuilds changed images, migrates the database, re-renders
-configs, runs component checks, and reloads sing-box.
-
-For the shorter install / update / fix runbook, use
-[docs/operator-runbook.md](./docs/operator-runbook.md).
-
-Useful daily commands:
-
-```bash
-make status
-make components
-make readiness
-docker compose logs -f --tail=50 panel
-docker compose logs -f --tail=50 haproxy sing-box
-```
-
----
-
-## What Is Running
+## Services
 
 | Service | Job |
 | --- | --- |
-| `haproxy` | Public `:443` SNI router. Sends proxy-domain traffic to sing-box and panel-domain traffic to Caddy. |
-| `sing-box` | The actual NaiveProxy server. |
-| `caddy` | Gets and renews TLS certificates; serves the panel backend. |
-| `panel` | Laravel + Filament admin UI and Rust daemon process. |
-| `db` | MariaDB for accounts, settings, quotas, and traffic counters. |
+| `haproxy` | Public `:443` TCP SNI router. No TLS termination. |
+| `sing-box` | NaiveProxy server for the proxy domain. |
+| `caddy` | ACME, certificate renewal, panel-domain reverse proxy. |
+| `panel` | FrankenPHP worker-mode Laravel/Filament runtime plus Rust core binary. |
+| `db` | MariaDB for configuration and account state. |
 | `redis` | Cache, queue, and revocation bus. |
 
-Simple traffic picture:
+## Project Map
 
-```mermaid
-flowchart TD
-    Mac["Cool Tunnel macOS client"] -->|"NaiveProxy over HTTPS"| HAProxy["VPS :443 HAProxy"]
-    Browser["Browser panel login"] -->|"HTTPS panel domain"| HAProxy
-    HAProxy -->|"proxy domain"| SingBox["sing-box"]
-    HAProxy -->|"panel domain"| Caddy["Caddy"]
-    Caddy --> Panel["Laravel / Filament panel"]
-    Panel --> Core["ct-server-core daemon"]
-    Core --> DB["MariaDB"]
-    Core --> Redis["Redis"]
-    Core --> SingBox
-    SingBox --> Internet["Internet"]
-```
-
-Deeper architecture notes are in [docs/architecture.md](./docs/architecture.md).
-
----
-
-## Project Layout For New Coders
-
-If you are learning the codebase, start here:
-
-| Path | What to learn there |
+| Path | Purpose |
 | --- | --- |
-| `docker-compose.yml` | Which containers exist and how they connect. |
-| `.env.example` | Every operator setting. |
-| `panel/app/Filament/` | Admin panel pages and resources. |
-| `panel/app/Models/ProxyAccount.php` | Proxy account fields, password storage, subscription URL generation. |
-| `panel/app/Http/Controllers/SubscriptionController.php` | What the client downloads from a subscription URL. |
-| `core/ct-server-core/src/` | Rust daemon and CLI used by the panel. |
-| `core/ct-protocol/src/` | Shared structs for profiles, subscriptions, and components. |
-| `sing-box/config.json.tpl` | Template for the proxy engine config. |
-| `caddy/Caddyfile.tpl` | Template for certificate and panel routing. |
-| `haproxy/haproxy.cfg.tpl` | Public `:443` SNI routing. |
-| `manifests/*.upstream.json` | Version pins and component checks. |
-| `scripts/` | Install, update, backup, restore, and readiness scripts. |
-
-Recommended reading order:
-
-1. [GETTING_STARTED.md](./GETTING_STARTED.md)
-2. [docs/architecture.md](./docs/architecture.md)
-3. [docs/components.md](./docs/components.md)
-4. [STRUCTURE.md](./STRUCTURE.md)
-5. [LTSC.md](./LTSC.md)
-
----
-
-## Makefile Cheat Sheet
-
-| Command | Use it when |
-| --- | --- |
-| `make help` | You forgot what commands exist. |
-| `make install` | First install after editing `.env`. |
-| `make update` | Pull and deploy the latest code. |
-| `make status` | Quick look at containers, images, certs, and recent errors. |
-| `make components` | Verify bundled binaries and pinned component versions. |
-| `make readiness` | Run the 10-point launch checklist. |
-| `make ci` | Run the local contributor gate before a PR. |
-| `make backup` | Snapshot DB, `.env`, and Caddy ACME state. |
-
----
-
-## QA Checklist
-
-Use this before you call a deployment done.
-
-### Layer 1: VPS Basics
-
-- [ ] `docker compose ps` shows services up and healthy.
-- [ ] `sudo ufw status` allows `80/tcp` and `443/tcp`.
-- [ ] `docker compose exec -T panel ct-server-core component check --manifests /srv/manifests` shows OK.
-
-### Layer 2: Panel
-
-- [ ] `https://panel.<domain>/admin` loads.
-- [ ] Admin login works.
-- [ ] Proxy account creation works.
-- [ ] Subscription URL action returns a URL.
-
-### Layer 3: Proxy Engine
-
-- [ ] `ct-server-core probe anti-tracking --via ...` returns `"reachable":true`.
-- [ ] `curl -4 https://ifconfig.co/json` on the Mac shows the VPS IP while the client is running.
-- [ ] Traffic counters increase in the panel after real usage.
-
-### Layer 4: Cover Site Fallback
-
-- [ ] Bad subscription URLs return the same cover-site shape as other unknown panel paths.
-- [ ] Bad subscription URLs do not reveal special errors.
-
----
-
-## Common Problems
-
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| Panel does not load | DNS, `PANEL_DOMAIN`, or `:443` issue | Check `dig`, `docker compose ps`, and `sudo ss -ltnp`. |
-| Subscription imports, but traffic fails | Proxy endpoint or Mac system proxy issue | Run the debug steps above. |
-| `not CONNECT request` in sing-box logs | Someone visited the proxy URL directly | Usually harmless. Test through the client, not a browser. |
-| `naiveproxy-client` is NG | Bundled NaiveProxy client cannot run | Run `make update`; then `make components`. |
-| ACME/cert fails | Port 80 closed or DNS wrong | Open `80/tcp`; confirm DNS points to the VPS. |
-| Docker says network pool overlaps | Local Docker subnet conflict | Change `CT_CLASH_SUBNET` and `CT_CLASH_SINGBOX_IP` in `.env`. |
-| Forgot admin password | No email reset is shipped | Run `docker compose exec panel php artisan ct:make-admin --force --email=you@example.com --password=new-password`. |
-| Build is killed on 1 GB VPS | Rust build ran out of memory | Add swap or set `CT_CORE_BUILD_PROFILE=release-small`. |
-
-Full troubleshooting:
-[docs/operator-runbook.md](./docs/operator-runbook.md), then
-[docs/installation-debian.md](./docs/installation-debian.md).
-
----
+| [docker-compose.yml](./docker-compose.yml) | Production topology, hardening, memory limits, internal networks. |
+| [.env.example](./.env.example) | Operator configuration surface. |
+| [docker/panel/](./docker/panel/) | FrankenPHP, supervisord, PHP hardening, panel image. |
+| [panel/app/Filament/](./panel/app/Filament/) | Filament admin UI. |
+| [core/ct-server-core/src/](./core/ct-server-core/src/) | Rust control engine. |
+| [core/ct-protocol/src/](./core/ct-protocol/src/) | Shared protocol and manifest structures. |
+| [sing-box/config.json.tpl](./sing-box/config.json.tpl) | Proxy engine template. |
+| [caddy/Caddyfile.tpl](./caddy/Caddyfile.tpl) | Public Caddy template rendered by the panel/core. |
+| [haproxy/haproxy.cfg.tpl](./haproxy/haproxy.cfg.tpl) | Public SNI routing template. |
+| [manifests/](./manifests/) | Version pins and component verification rules. |
+| [scripts/](./scripts/) | Bootstrap, install, update, backup, probes, stress gates. |
 
 ## License
 
-Cool Tunnel Server is licensed under **AGPL-3.0-only**.
+The active repository license is **AGPL-3.0-only**. See [LICENSE](./LICENSE).
 
-Short version:
+The LTSC-Heng restrictive license is currently a draft for legal review:
+[LTSC-HENG-LICENSE-DRAFT.md](./LTSC-HENG-LICENSE-DRAFT.md).
 
-- You may use, study, modify, and redistribute it.
-- If you run a modified version as a network service, AGPL section 13
-  requires you to provide the source for those modifications.
-- See [LICENSE](./LICENSE) for the legal text.
+The draft states the intended stricter posture:
 
-Bundled upstream components have their own licenses. See
-[NOTICE](./NOTICE) and [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
+- Software is provided **AS IS**.
+- Commercial reselling, white-labeling, paid appliance distribution, or
+  managed resale requires Sovereign Endorsement.
+- Network-operated modifications must remain source-available in the
+  AGPL-3.0 spirit.
+- 2026 milestone markers, audit markers, and LTSC provenance comments
+  must be retained unless the related behavior is removed and documented.
+- User tracking expansion is prohibited.
 
----
+Bundled upstream components retain their own licenses. See [NOTICE](./NOTICE)
+and [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
 
-## Community And Support
+## Operator References
 
-| Need | Where |
+| Document | Use |
 | --- | --- |
-| macOS client | [coo1white/cool-tunnel](https://github.com/coo1white/cool-tunnel) |
-| installation details | [docs/installation-debian.md](./docs/installation-debian.md) |
-| architecture | [docs/architecture.md](./docs/architecture.md) |
-| China travel prep | [docs/going-to-china.md](./docs/going-to-china.md) |
-| support policy | [SUPPORT.md](./SUPPORT.md) |
-| contributing | [CONTRIBUTING.md](./CONTRIBUTING.md) |
-| security | [SECURITY.md](./SECURITY.md) |
-
-Commercial deployment, review, and incident support are separate
-engagements. Open an issue tagged `enterprise:` if you need that path.
+| [GETTING_STARTED.md](./GETTING_STARTED.md) | Beginner install path. |
+| [docs/operator-runbook.md](./docs/operator-runbook.md) | Update, repair, and incident commands. |
+| [docs/architecture.md](./docs/architecture.md) | Deeper system design notes. |
+| [LTSC.md](./LTSC.md) | Long-term servicing commitments and 2026 milestones. |
+| [AUDIT.md](./AUDIT.md) | Audit cycle map and release gates. |
+| [SECURITY.md](./SECURITY.md) | Security model and reporting path. |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contributor rules and code posture. |
 
 <sub>Jurisdiction: Wyoming, USA. Steward: coolwhite LLC.</sub>

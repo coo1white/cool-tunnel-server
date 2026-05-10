@@ -7,6 +7,13 @@
 > This draft is written for legal review. It is intentionally strict,
 > but it should not be treated as legal advice or as an adopted license.
 
+## Preamble
+
+LTSC-Heng is a restrictive source-available covenant for deterministic
+infrastructure software. Its purpose is to preserve technical
+sovereignty, source constancy, and the zero user-tracking posture while
+blocking commercial resale without explicit authorization.
+
 ## 1. Definitions
 
 **Software** means Cool Tunnel Server, Cool Tunnel Panel, associated
@@ -27,6 +34,18 @@ scripts, templates, manifests, documentation, or runtime defaults.
 2026 posture references preserved in source comments, documentation,
 release notes, and operator-facing files.
 
+**User Data Collection** means collection, storage, export, sale,
+correlation, or metric labeling of usernames, account identifiers,
+subscription tokens, device identifiers, target hosts, request IDs,
+destination addresses, browsing activity, or equivalent user-identifying
+or user-behavioral data.
+
+**Internal Health Metrics** means operator-visible service health data
+that does not identify a specific user, account, device, token, request,
+or destination. Examples include process restart counts, memory pressure,
+DB pool pressure, semaphore saturation, config reload counts, queue
+depth, binary version drift, and component health status.
+
 ## 2. Permission
 
 Subject to the restrictions below, you may use, study, run, modify,
@@ -42,6 +61,11 @@ Charging for your own infrastructure, internal operations, private
 consulting, incident response, or deployment labor is permitted only
 when the Software itself is not resold, relicensed, hidden, or
 presented as proprietary.
+
+Sovereign Endorsement must be explicit, written, and scoped to a named
+party, named product or service, named territory when applicable, and a
+defined term. Silence, public availability of the repository, prior
+commercial use, or acceptance of patches does not imply endorsement.
 
 ## 4. Covenant of Constancy
 
@@ -59,7 +83,17 @@ been removed and the removal is documented in an adjacent changelog or
 release note. Removal of a marker without replacement is a license
 violation under this draft.
 
-## 5. No User Tracking Expansion
+The corresponding source must include build scripts, Dockerfiles,
+Compose files, Caddy/HAProxy/sing-box templates, manifests, migrations,
+Rust crates, PHP source, Blade/Livewire/Filament code, shell scripts,
+and local deployment patches necessary to reproduce the modified
+service.
+
+Minified, obfuscated, vendored, or generated artifacts do not satisfy
+this covenant unless the preferred source form and reproducible build
+path are provided alongside them.
+
+## 5. Zero User Tracking Boundary
 
 You may not add undisclosed user tracking, per-destination analytics,
 device identifiers, subscription-token logging, or equivalent user
@@ -69,6 +103,11 @@ Server or as a Steward-endorsed derivative.
 Operator-internal health metrics are permitted when they do not expose
 usernames, account identifiers, target hosts, subscription tokens,
 request identifiers, or equivalent user-identifying labels.
+
+Internal Health Metrics are allowed. User Data Collection is forbidden.
+The distinction is load-bearing: metrics that can identify a user,
+session, token, destination, or browsing behavior are not health metrics
+under this draft.
 
 ## 6. Attribution and Notices
 
@@ -88,6 +127,10 @@ express or implied, including but not limited to warranties of
 merchantability, fitness for a particular purpose, non-infringement,
 availability, performance, or legal suitability in any jurisdiction.
 
+No oral or written statement, documentation, issue comment, release
+note, benchmark, deployment example, or support response creates a
+warranty.
+
 ## 8. Limitation of Liability
 
 To the maximum extent permitted by law, the Steward, contributors,
@@ -96,6 +139,11 @@ damage, loss, interruption, enforcement action, legal consequence,
 data loss, service outage, or third-party harm arising from the
 Software or from any deployment, modification, redistribution, or use
 of the Software.
+
+This limitation includes direct, indirect, incidental, special,
+exemplary, punitive, and consequential damages, including lost profits,
+lost revenue, business interruption, reputational harm, provider
+suspension, network blocks, data loss, or legal/regulatory action.
 
 ## 9. Termination
 
@@ -108,7 +156,12 @@ Steward-endorsed.
 Rights may be reinstated only after the violation is cured and the
 Steward receives written notice of the cure.
 
-## 10. Conflict With Active License
+## 10. Severability
+
+If any provision of this draft is held unenforceable, the remaining
+provisions remain in effect to the maximum extent permitted by law.
+
+## 11. Conflict With Active License
 
 This draft does not override the repository's active `LICENSE` file.
 For releases currently licensed under AGPL-3.0-only, AGPL-3.0-only is

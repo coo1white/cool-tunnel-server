@@ -14,6 +14,7 @@
 #
 # Unattended mode (CI / Terraform / Ansible):
 #   DOMAIN=proxy.example.com \
+#   PANEL_DOMAIN=panel.proxy.example.com \
 #   ACME_EMAIL=ops@example.com \
 #   AUTO_INSTALL=1 \
 #   curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
@@ -22,7 +23,7 @@
 #   INSTALL_DIR (default /opt/cool-tunnel-server)
 #   REPO_URL    (default https://github.com/coo1white/cool-tunnel-server.git)
 #   BRANCH      (default main)
-#   DOMAIN, ACME_EMAIL — pre-fill .env
+#   DOMAIN, PANEL_DOMAIN, ACME_EMAIL — pre-fill .env
 #   AUTO_INSTALL=1  — chain ./scripts/install.sh after bootstrap
 #                     (only valid when DOMAIN is also set)
 
@@ -105,6 +106,10 @@ if [ ! -f .env ]; then
         sed -i "s|^DOMAIN=.*|DOMAIN=${DOMAIN}|" .env
         log "  set DOMAIN=${DOMAIN}"
     fi
+    if [ -n "${PANEL_DOMAIN:-}" ]; then
+        sed -i "s|^PANEL_DOMAIN=.*|PANEL_DOMAIN=${PANEL_DOMAIN}|" .env
+        log "  set PANEL_DOMAIN=${PANEL_DOMAIN}"
+    fi
     if [ -n "${ACME_EMAIL:-}" ]; then
         sed -i "s|^ACME_EMAIL=.*|ACME_EMAIL=${ACME_EMAIL}|" .env
         log "  set ACME_EMAIL=${ACME_EMAIL}"
@@ -128,6 +133,7 @@ NEXT
 
   2. Edit ${INSTALL_DIR}/.env — set at minimum:
        DOMAIN=          # your full domain, e.g. proxy.example.com
+       PANEL_DOMAIN=    # your panel domain, e.g. panel.proxy.example.com
        ACME_EMAIL=      # for Let's Encrypt cert issuance
 
      Random secrets for DB/Redis/admin were generated; review and
@@ -138,7 +144,7 @@ NEXT
        cd ${INSTALL_DIR}
        ./scripts/install.sh
 
-  4. Open the panel: https://panel.\${DOMAIN}/admin
+  4. Open the panel: https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
 =================================================================
 EOF
 
