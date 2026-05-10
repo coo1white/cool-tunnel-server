@@ -316,6 +316,9 @@ make update
 `make update` rebuilds changed images, migrates the database, re-renders
 configs, runs component checks, and reloads sing-box.
 
+For the shorter install / update / fix runbook, use
+[docs/operator-runbook.md](./docs/operator-runbook.md).
+
 Useful daily commands:
 
 ```bash
@@ -447,6 +450,7 @@ Use this before you call a deployment done.
 | Build is killed on 1 GB VPS | Rust build ran out of memory | Add swap or set `CT_CORE_BUILD_PROFILE=release-small`. |
 
 Full troubleshooting:
+[docs/operator-runbook.md](./docs/operator-runbook.md), then
 [docs/installation-debian.md](./docs/installation-debian.md).
 
 ---

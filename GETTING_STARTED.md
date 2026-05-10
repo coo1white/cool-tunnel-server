@@ -22,7 +22,7 @@ ends with a `↳ try:` line that's the right next step.
 | A VPS running Debian 11, 12, or 13 (1 vCPU, 1+ GB RAM) | Where the proxy lives |
 | `root` SSH access (or a sudoer) | To install Docker |
 | A real domain pointing at the VPS (`A` and ideally `AAAA` records, TTL 300, **proxy disabled** if it's behind Cloudflare) | sing-box uses Let's Encrypt to issue a real cert; ACME needs a real domain |
-| Ports 80, 443/tcp, 443/udp open at the cloud-provider firewall | Sing-box binds 80 for ACME and 443 for the proxy itself |
+| Ports 80/tcp and 443/tcp open at the cloud-provider firewall | Caddy uses 80 for ACME; HAProxy fronts 443/tcp for panel and proxy traffic |
 
 Five-minute sanity check: from your local machine,
 
@@ -66,7 +66,6 @@ What this does:
 ufw allow OpenSSH
 ufw allow 80/tcp        # ACME + http→https
 ufw allow 443/tcp       # the proxy
-ufw allow 443/udp       # HTTP/3
 ufw --force enable
 ```
 
@@ -245,6 +244,9 @@ In rough order of "most common first":
 
 For deeper debugging, [`docs/installation-debian.md`](./docs/installation-debian.md#10-common-gotchas-by-symptom)
 has a full troubleshooting table.
+
+For day-to-day operations after the first install, use
+[`docs/operator-runbook.md`](./docs/operator-runbook.md).
 
 ---
 
