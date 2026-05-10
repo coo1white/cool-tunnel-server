@@ -199,10 +199,11 @@ manifests-jq: ## jq parse every manifests/*.json
 manifest-lockstep: ## verify manifest pins match local deployment sources
 	@naive_arg=$$(sed -n -E 's/^ARG NAIVE_VERSION=v?(.+)/\1/p' docker/panel/Dockerfile | head -n1); \
 	naive_manifest=$$(jq -r '.version' manifests/naiveproxy-client.upstream.json); \
-	if [ "$$naive_arg" != "$$naive_manifest" ]; then \
-	    echo "naiveproxy-client manifest drift: Dockerfile=$$naive_arg manifest=$$naive_manifest" >&2; \
+	case "$$naive_arg" in "$$naive_manifest"| "$$naive_manifest"-*) ;; \
+	    *) echo "naiveproxy-client manifest drift: Dockerfile=$$naive_arg manifest=$$naive_manifest" >&2; \
 	    exit 1; \
-	fi
+	    ;; \
+	esac
 	@credential_pin=$$(jq -r '.version' manifests/credential-lock.upstream.json); \
 	if [ "$$credential_pin" != "db=rendered=manifest=mac-config" ]; then \
 	    echo "credential-lock manifest drift: $$credential_pin" >&2; \

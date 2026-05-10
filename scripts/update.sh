@@ -191,10 +191,12 @@ compose exec -T panel ct-server-core guard credential-lock
 step "Reload sing-box and purge stale runtime state"
 # Root-cause hardening: a correct rendered config is not sufficient if
 # the long-running sing-box process is still serving stale users. The
-# Rust reload command now performs Clash API reload, verifies the loaded
-# config path when sing-box reports one, and then restarts the container
-# as a mandatory state-clearance barrier.
+# Rust reload command performs Clash API reload and verifies the loaded
+# config path when sing-box reports one. The mandatory process purge
+# must happen here on the host, not inside the panel container, because
+# the panel intentionally has no Docker CLI.
 compose exec -T panel ct-server-core server reload
+compose restart sing-box
 
 step "Re-render haproxy config (v0.0.51)"
 # Mirrors the sing-box render step above. Pre-v0.0.51 the haproxy
