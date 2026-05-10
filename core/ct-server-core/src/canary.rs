@@ -25,6 +25,7 @@ use crate::contracts::{
     ContractBoundary, RecoveryScope, SemanticContract, PRINCIPLE_BOUNDED_HOSTILITY,
     PRINCIPLE_LOCAL_RECOVERY,
 };
+use crate::observability::{duration_ms_u64, otel_key};
 use crate::util::doh;
 use crate::{db, Error, Result};
 use chrono::Utc;
@@ -271,10 +272,36 @@ async fn run_probe(domain: &str, doh_url: &str) -> std::result::Result<(), Strin
         .await
         .map_err(|e| format!("DoH lookup failed: {e}"))?;
 
-    timeout(TCP_TIMEOUT, TcpStream::connect("haproxy:443"))
-        .await
-        .map_err(|_| format!("TCP connect to haproxy:443 timed out after {TCP_TIMEOUT:?}"))?
-        .map_err(|e| format!("TCP connect to haproxy:443 failed: {e}"))?;
+    let started = std::time::Instant::now();
+    let span = tracing::info_span!(
+        "otel.network.turn",
+        { otel_key::NETWORK_TRANSPORT } = "tcp",
+        { otel_key::NETWORK_PROTOCOL_NAME } = "tcp",
+        { otel_key::RPC_SYSTEM } = "ct-canary",
+        { otel_key::URL_PATH } = "haproxy:443",
+        { otel_key::CT_STATUS_CODE } = tracing::field::Empty,
+    );
+    let _span_guard = span.enter();
+    let tcp_result = timeout(TCP_TIMEOUT, TcpStream::connect("haproxy:443")).await;
+    match tcp_result {
+        Ok(Ok(_stream)) => {
+            span.record(otel_key::CT_STATUS_CODE, "ok");
+            tracing::trace!(
+                latency_ms = duration_ms_u64(started.elapsed()),
+                "canary TCP network turn completed"
+            );
+        }
+        Ok(Err(e)) => {
+            span.record(otel_key::CT_STATUS_CODE, "connect_error");
+            return Err(format!("TCP connect to haproxy:443 failed: {e}"));
+        }
+        Err(_) => {
+            span.record(otel_key::CT_STATUS_CODE, "timeout");
+            return Err(format!(
+                "TCP connect to haproxy:443 timed out after {TCP_TIMEOUT:?}"
+            ));
+        }
+    }
 
     Ok(())
 }

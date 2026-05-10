@@ -22,6 +22,8 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use std::time::Duration;
 
+use crate::observability::{duration_ms_u64, otel_key};
+
 /// 5-second wall-clock cap on the DoH HTTP round trip. DoH lookups
 /// are typically <100 ms when the resolver is reachable; 5 s is
 /// generous enough to absorb transient hiccups without stalling
@@ -112,19 +114,38 @@ pub async fn resolve_a(name: &str, doh_url: &str) -> std::result::Result<u16, St
         .timeout(DEFAULT_TIMEOUT)
         .build()
         .map_err(|_| "HTTP client build failed".to_owned())?;
+    let started = std::time::Instant::now();
+    let span = tracing::info_span!(
+        "otel.network.turn",
+        { otel_key::NETWORK_TRANSPORT } = "tcp",
+        { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+        { otel_key::RPC_SYSTEM } = "dns-over-https",
+        { otel_key::HTTP_REQUEST_METHOD } = "GET",
+        { otel_key::URL_PATH } = "dns-query",
+        { otel_key::CT_STATUS_CODE } = tracing::field::Empty,
+    );
+    let _span_guard = span.enter();
     let resp = client
         .get(&url)
         .header("Accept", "application/dns-message")
         .send()
         .await
-        .map_err(reqwest_error_kind)?;
+        .map_err(|e| {
+            span.record(otel_key::CT_STATUS_CODE, "request_error");
+            reqwest_error_kind(e)
+        })?;
     let status = resp.status();
+    span.record(otel_key::CT_STATUS_CODE, status.as_u16());
     if !status.is_success() {
         return Err(format!(
             "DoH HTTP {status} (resolver may be censored or misconfigured)"
         ));
     }
     let body = resp.bytes().await.map_err(reqwest_error_kind)?;
+    tracing::trace!(
+        latency_ms = duration_ms_u64(started.elapsed()),
+        "DoH network turn completed"
+    );
     classify_dns_response(&body, name)
 }
 

@@ -40,11 +40,13 @@
 
 use crate::frame::{read_http_headers, request_line, FramePolicy, StaticHttpHeaderFramePolicy};
 use crate::observability::{
-    crosses_80pct_threshold, duration_ms_u64, otel_key, packet_header_dump,
-    utilization_basis_points, HexDump, BOTTLENECK_ALERT_BASIS_POINTS,
+    crosses_80pct_threshold, duration_crosses_80pct_threshold, duration_ms_u64, otel_key,
+    packet_header_dump, utilization_basis_points, HexDump, BOTTLENECK_ALERT_BASIS_POINTS,
+    DAEMON_TURN_LATENCY_BUDGET, METRICS_TURN_LATENCY_BUDGET,
 };
 use crate::{Error, Result};
 use bytes::{BufMut, BytesMut};
+use metrics_crate::{counter, gauge};
 use sqlx::MySqlPool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -157,6 +159,12 @@ pub struct MetricsRegistry {
     metrics_buffer_80pct_crossings: AtomicU64,
     /// Count of 80% threshold crossings by daemon handler permits.
     daemon_permit_80pct_crossings: AtomicU64,
+    /// Count of 80% threshold crossings by daemon network-turn
+    /// latency.
+    daemon_latency_80pct_crossings: AtomicU64,
+    /// Count of 80% threshold crossings by metrics network-turn
+    /// latency.
+    metrics_latency_80pct_crossings: AtomicU64,
     /// Count of daemon FSM hard resets. A hard reset is connection-
     /// scoped and indicates the client deviated from the single
     /// authoritative protocol branch.
@@ -187,6 +195,8 @@ impl MetricsRegistry {
             daemon_buffer_80pct_crossings: AtomicU64::new(0),
             metrics_buffer_80pct_crossings: AtomicU64::new(0),
             daemon_permit_80pct_crossings: AtomicU64::new(0),
+            daemon_latency_80pct_crossings: AtomicU64::new(0),
+            metrics_latency_80pct_crossings: AtomicU64::new(0),
             daemon_fsm_hard_resets: AtomicU64::new(0),
         })
     }
@@ -197,6 +207,7 @@ impl MetricsRegistry {
     pub fn note_redis_subscriber_restart(&self) {
         self.redis_subscriber_restarts
             .fetch_add(1, Ordering::Relaxed);
+        counter!("ct_redis_subscriber_restarts_total").increment(1);
     }
 
     /// Called from `redis_bridge::fire_reload` on every successful
@@ -206,54 +217,131 @@ impl MetricsRegistry {
         match edge {
             "leading" => {
                 self.coalescer_fires_leading.fetch_add(1, Ordering::Relaxed);
+                counter!("ct_coalescer_fires_total", "edge" => "leading").increment(1);
             }
             "trailing" => {
                 self.coalescer_fires_trailing
                     .fetch_add(1, Ordering::Relaxed);
+                counter!("ct_coalescer_fires_total", "edge" => "trailing").increment(1);
             }
             _ => {}
         }
     }
 
-    pub fn note_daemon_network_turn(&self, latency: Duration) {
+    pub fn note_daemon_network_turn(&self, latency: Duration, status_code: &'static str) {
         self.daemon_network_turns.fetch_add(1, Ordering::Relaxed);
         self.daemon_last_turn_latency_ms
             .store(duration_ms_u64(latency), Ordering::Relaxed);
+        counter!(
+            "otel_network_turns_total",
+            "network.transport" => "unix",
+            "network.protocol.name" => "json-line",
+            "rpc.system" => "ct-daemon",
+            "ct.status_code" => status_code,
+        )
+        .increment(1);
+        gauge!(
+            "otel_network_turn_latency_milliseconds",
+            "network.transport" => "unix",
+            "network.protocol.name" => "json-line",
+            "rpc.system" => "ct-daemon",
+        )
+        .set(duration_ms_u64(latency) as f64);
+        if duration_crosses_80pct_threshold(latency, DAEMON_TURN_LATENCY_BUDGET) {
+            self.daemon_latency_80pct_crossings
+                .fetch_add(1, Ordering::Relaxed);
+            counter!(
+                "ct_threshold_80pct_crossings_total",
+                "surface" => "daemon",
+                "bottleneck" => "latency",
+            )
+            .increment(1);
+        }
     }
 
-    pub fn note_metrics_network_turn(&self, latency: Duration) {
+    pub fn note_metrics_network_turn(&self, latency: Duration, status_code: &'static str) {
         self.metrics_network_turns.fetch_add(1, Ordering::Relaxed);
         self.metrics_last_turn_latency_ms
             .store(duration_ms_u64(latency), Ordering::Relaxed);
+        counter!(
+            "otel_network_turns_total",
+            "network.transport" => "tcp",
+            "network.protocol.name" => "http",
+            "rpc.system" => "ct-internal-metrics",
+            "ct.status_code" => status_code,
+        )
+        .increment(1);
+        gauge!(
+            "otel_network_turn_latency_milliseconds",
+            "network.transport" => "tcp",
+            "network.protocol.name" => "http",
+            "rpc.system" => "ct-internal-metrics",
+        )
+        .set(duration_ms_u64(latency) as f64);
+        if duration_crosses_80pct_threshold(latency, METRICS_TURN_LATENCY_BUDGET) {
+            self.metrics_latency_80pct_crossings
+                .fetch_add(1, Ordering::Relaxed);
+            counter!(
+                "ct_threshold_80pct_crossings_total",
+                "surface" => "metrics",
+                "bottleneck" => "latency",
+            )
+            .increment(1);
+        }
     }
 
     pub fn note_daemon_buffer_utilization(&self, used: usize, limit: usize) {
         let bp = utilization_basis_points(used, limit);
         fetch_max(&self.daemon_buffer_utilization_high_water_bp, bp);
+        gauge!("ct_buffer_utilization_high_water_basis_points", "surface" => "daemon")
+            .set(bp as f64);
         if bp >= BOTTLENECK_ALERT_BASIS_POINTS {
             self.daemon_buffer_80pct_crossings
                 .fetch_add(1, Ordering::Relaxed);
+            counter!(
+                "ct_threshold_80pct_crossings_total",
+                "surface" => "daemon",
+                "bottleneck" => "buffer",
+            )
+            .increment(1);
         }
     }
 
     pub fn note_metrics_buffer_utilization(&self, used: usize, limit: usize) {
         let bp = utilization_basis_points(used, limit);
         fetch_max(&self.metrics_buffer_utilization_high_water_bp, bp);
+        gauge!("ct_buffer_utilization_high_water_basis_points", "surface" => "metrics")
+            .set(bp as f64);
         if bp >= BOTTLENECK_ALERT_BASIS_POINTS {
             self.metrics_buffer_80pct_crossings
                 .fetch_add(1, Ordering::Relaxed);
+            counter!(
+                "ct_threshold_80pct_crossings_total",
+                "surface" => "metrics",
+                "bottleneck" => "buffer",
+            )
+            .increment(1);
         }
     }
 
     pub fn note_daemon_permit_utilization(&self, used: usize, limit: usize) {
+        gauge!("ct_daemon_handler_permits_used").set(used as f64);
+        gauge!("ct_daemon_handler_permits_total").set(limit as f64);
         if utilization_basis_points(used, limit) >= BOTTLENECK_ALERT_BASIS_POINTS {
             self.daemon_permit_80pct_crossings
                 .fetch_add(1, Ordering::Relaxed);
+            counter!(
+                "ct_threshold_80pct_crossings_total",
+                "surface" => "daemon",
+                "bottleneck" => "handler_permits",
+            )
+            .increment(1);
         }
     }
 
     pub fn note_daemon_fsm_hard_reset(&self) {
         self.daemon_fsm_hard_resets.fetch_add(1, Ordering::Relaxed);
+        counter!("ct_daemon_fsm_hard_resets_total").increment(1);
     }
 
     /// Render a snapshot of all counters in Prometheus text-format.
@@ -287,6 +375,9 @@ impl MetricsRegistry {
         let daemon_buffer_crossings = self.daemon_buffer_80pct_crossings.load(Ordering::Relaxed);
         let metrics_buffer_crossings = self.metrics_buffer_80pct_crossings.load(Ordering::Relaxed);
         let daemon_permit_crossings = self.daemon_permit_80pct_crossings.load(Ordering::Relaxed);
+        let daemon_latency_crossings = self.daemon_latency_80pct_crossings.load(Ordering::Relaxed);
+        let metrics_latency_crossings =
+            self.metrics_latency_80pct_crossings.load(Ordering::Relaxed);
         let daemon_fsm_hard_resets = self.daemon_fsm_hard_resets.load(Ordering::Relaxed);
 
         format!(
@@ -326,6 +417,8 @@ impl MetricsRegistry {
              ct_threshold_80pct_crossings_total{{surface=\"daemon\",bottleneck=\"buffer\"}} {daemon_buffer_crossings}\n\
              ct_threshold_80pct_crossings_total{{surface=\"metrics\",bottleneck=\"buffer\"}} {metrics_buffer_crossings}\n\
              ct_threshold_80pct_crossings_total{{surface=\"daemon\",bottleneck=\"handler_permits\"}} {daemon_permit_crossings}\n\
+             ct_threshold_80pct_crossings_total{{surface=\"daemon\",bottleneck=\"latency\"}} {daemon_latency_crossings}\n\
+             ct_threshold_80pct_crossings_total{{surface=\"metrics\",bottleneck=\"latency\"}} {metrics_latency_crossings}\n\
              # HELP ct_daemon_fsm_hard_resets_total Connection-scoped hard resets caused by daemon FSM protocol violations or terminal transport faults.\n\
              # TYPE ct_daemon_fsm_hard_resets_total counter\n\
              ct_daemon_fsm_hard_resets_total {daemon_fsm_hard_resets}\n",
@@ -410,9 +503,24 @@ async fn handle_request(
 ) -> Result<()> {
     let mut buf = BytesMut::with_capacity(512);
     let turn_started = Instant::now();
+    let span = tracing::info_span!(
+        "otel.network.turn",
+        { otel_key::NETWORK_TRANSPORT } = "tcp",
+        { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+        { otel_key::RPC_SYSTEM } = "ct-internal-metrics",
+        { otel_key::HTTP_REQUEST_METHOD } = tracing::field::Empty,
+        { otel_key::URL_PATH } = tracing::field::Empty,
+        { otel_key::CT_FRAME_POLICY } = METRICS_FRAME_POLICY.policy_name(),
+        { otel_key::CT_BUFFER_BYTES } = tracing::field::Empty,
+        { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_BYTES,
+        { otel_key::CT_STATUS_CODE } = tracing::field::Empty,
+    );
+    let _span_guard = span.enter();
     let headers = match read_http_headers(&mut stream, &mut buf, &METRICS_FRAME_POLICY).await {
         Ok(h) => h,
         Err(Error::FrameTooLarge { .. } | Error::FrameIncomplete | Error::ReadTimeout { .. }) => {
+            span.record(otel_key::CT_STATUS_CODE, "bad_request");
+            note_metrics_turn(registry, turn_started.elapsed(), "bad_request");
             tracing::warn!(
                 { otel_key::NETWORK_TRANSPORT } = "tcp",
                 { otel_key::NETWORK_PROTOCOL_NAME } = "http",
@@ -424,13 +532,20 @@ async fn handle_request(
             let _ = write_response(&mut stream, 400, "text/plain", "").await;
             return Ok(());
         }
-        Err(e) => return Err(e),
+        Err(e) => {
+            span.record(otel_key::CT_STATUS_CODE, e.wire_code());
+            note_metrics_turn(registry, turn_started.elapsed(), e.wire_code());
+            return Err(e);
+        }
     };
+    span.record(otel_key::CT_BUFFER_BYTES, headers.len());
 
     let req_line = request_line(&headers);
     let req_str = match std::str::from_utf8(req_line) {
         Ok(s) => s,
         Err(_) => {
+            span.record(otel_key::CT_STATUS_CODE, "bad_request");
+            note_metrics_turn(registry, turn_started.elapsed(), "bad_request");
             tracing::warn!(
                 { otel_key::NETWORK_TRANSPORT } = "tcp",
                 { otel_key::NETWORK_PROTOCOL_NAME } = "http",
@@ -445,13 +560,19 @@ async fn handle_request(
     };
     let mut parts = req_str.split_whitespace();
     let Some(method) = parts.next() else {
+        span.record(otel_key::CT_STATUS_CODE, "bad_request");
+        note_metrics_turn(registry, turn_started.elapsed(), "bad_request");
         let _ = write_response(&mut stream, 400, "text/plain", "").await;
         return Ok(());
     };
+    span.record(otel_key::HTTP_REQUEST_METHOD, method);
     let Some(path) = parts.next() else {
+        span.record(otel_key::CT_STATUS_CODE, "bad_request");
+        note_metrics_turn(registry, turn_started.elapsed(), "bad_request");
         write_response(&mut stream, 400, "text/plain", "").await?;
         return Ok(());
     };
+    span.record(otel_key::URL_PATH, path);
     registry.note_metrics_buffer_utilization(headers.len(), MAX_REQUEST_BYTES);
     if crosses_80pct_threshold(headers.len(), MAX_REQUEST_BYTES) {
         tracing::warn!(
@@ -467,32 +588,23 @@ async fn handle_request(
             "metrics request crossed 80% header threshold"
         );
     }
-    let span = tracing::info_span!(
-        "otel.network.turn",
-        { otel_key::NETWORK_TRANSPORT } = "tcp",
-        { otel_key::NETWORK_PROTOCOL_NAME } = "http",
-        { otel_key::RPC_SYSTEM } = "ct-internal-metrics",
-        { otel_key::HTTP_REQUEST_METHOD } = method,
-        { otel_key::URL_PATH } = path,
-        { otel_key::CT_FRAME_POLICY } = METRICS_FRAME_POLICY.policy_name(),
-        { otel_key::CT_BUFFER_BYTES } = headers.len(),
-        { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_BYTES,
-    );
-    let _span_guard = span.enter();
     if method != "GET" {
         write_response(&mut stream, 405, "text/plain", "").await?;
-        registry.note_metrics_network_turn(turn_started.elapsed());
+        span.record(otel_key::CT_STATUS_CODE, "method_not_allowed");
+        note_metrics_turn(registry, turn_started.elapsed(), "method_not_allowed");
         return Ok(());
     }
     if path != "/metrics" {
         write_response(&mut stream, 404, "text/plain", "").await?;
-        registry.note_metrics_network_turn(turn_started.elapsed());
+        span.record(otel_key::CT_STATUS_CODE, "not_found");
+        note_metrics_turn(registry, turn_started.elapsed(), "not_found");
         return Ok(());
     }
 
     let body = registry.render_prometheus_snapshot();
     write_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
-    registry.note_metrics_network_turn(turn_started.elapsed());
+    span.record(otel_key::CT_STATUS_CODE, "ok");
+    note_metrics_turn(registry, turn_started.elapsed(), "ok");
     tracing::trace!(
         latency_ms = duration_ms_u64(turn_started.elapsed()),
         "metrics network turn completed"
@@ -527,6 +639,21 @@ async fn write_response(
     stream.flush().await?;
     let _ = stream.shutdown().await;
     Ok(())
+}
+
+fn note_metrics_turn(registry: &MetricsRegistry, latency: Duration, status_code: &'static str) {
+    registry.note_metrics_network_turn(latency, status_code);
+    if duration_crosses_80pct_threshold(latency, METRICS_TURN_LATENCY_BUDGET) {
+        tracing::warn!(
+            { otel_key::NETWORK_TRANSPORT } = "tcp",
+            { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+            { otel_key::RPC_SYSTEM } = "ct-internal-metrics",
+            { otel_key::CT_STATUS_CODE } = status_code,
+            latency_ms = duration_ms_u64(latency),
+            budget_ms = duration_ms_u64(METRICS_TURN_LATENCY_BUDGET),
+            "metrics network turn crossed 80% latency threshold"
+        );
+    }
 }
 
 fn put_decimal(buf: &mut BytesMut, mut value: usize) {
@@ -619,5 +746,16 @@ mod tests {
                 "format directive missing from render(): {d}"
             );
         }
+    }
+
+    #[test]
+    fn render_format_includes_latency_threshold_series() {
+        let render_source = include_str!("internal_metrics.rs");
+        assert!(render_source.contains(
+            r#"ct_threshold_80pct_crossings_total{{surface=\"daemon\",bottleneck=\"latency\"}}"#
+        ));
+        assert!(render_source.contains(
+            r#"ct_threshold_80pct_crossings_total{{surface=\"metrics\",bottleneck=\"latency\"}}"#
+        ));
     }
 }
