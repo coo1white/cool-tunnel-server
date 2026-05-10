@@ -28,6 +28,7 @@
 use crate::contracts::{
     ContractBoundary, RecoveryScope, SemanticContract, PRINCIPLE_LOCAL_RECOVERY,
 };
+use crate::observability::{duration_ms_u64, otel_key};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -140,9 +141,14 @@ async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<Prob
     // saw plus a copy of the request headers.
     let reachable;
     let echoed_headers: serde_json::Value;
+    let reachability_started = Instant::now();
+    let reachability_span = outbound_http_span("GET", "anti-tracking-target");
+    let reachability_guard = reachability_span.enter();
     match client.get(target).send().await {
         Ok(resp) => {
-            reachable = resp.status().is_success();
+            let status = resp.status();
+            reachability_span.record(otel_key::CT_STATUS_CODE, status.as_u16());
+            reachable = status.is_success();
             echoed_headers = match resp.json().await {
                 Ok(json) => json,
                 Err(e) => {
@@ -152,6 +158,7 @@ async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<Prob
             };
         }
         Err(e) => {
+            reachability_span.record(otel_key::CT_STATUS_CODE, "request_error");
             tracing::warn!(error = %e, "probe reachability failed");
             return Ok(ProbeResult {
                 via: via.map(str::to_owned),
@@ -163,6 +170,11 @@ async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<Prob
             });
         }
     }
+    tracing::trace!(
+        latency_ms = duration_ms_u64(reachability_started.elapsed()),
+        "anti-tracking probe target network turn completed"
+    );
+    drop(reachability_guard);
 
     // 2) For probe_resistance, hit the proxy's apex *without* auth
     // and check we get an HTML page (the fake site) rather than a
@@ -171,19 +183,34 @@ async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<Prob
     // requests; that's the whole point of probe_resistance.
     let probe_resistance_effective = match via.and_then(strip_creds) {
         Some(public_url) => match client_no_proxy() {
-            Ok(c) => match c.get(&public_url).send().await {
-                Ok(r) => {
-                    let status = r.status();
-                    let ctype = r
-                        .headers()
-                        .get(reqwest::header::CONTENT_TYPE)
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("")
-                        .to_owned();
-                    status.is_success() && ctype.starts_with("text/html")
-                }
-                Err(_) => false,
-            },
+            Ok(c) => {
+                let apex_started = Instant::now();
+                let apex_span = outbound_http_span("GET", "anti-tracking-cover-site");
+                let apex_guard = apex_span.enter();
+                let ok = match c.get(&public_url).send().await {
+                    Ok(r) => {
+                        let status = r.status();
+                        apex_span.record(otel_key::CT_STATUS_CODE, status.as_u16());
+                        let ctype = r
+                            .headers()
+                            .get(reqwest::header::CONTENT_TYPE)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_owned();
+                        status.is_success() && ctype.starts_with("text/html")
+                    }
+                    Err(_) => {
+                        apex_span.record(otel_key::CT_STATUS_CODE, "request_error");
+                        false
+                    }
+                };
+                tracing::trace!(
+                    latency_ms = duration_ms_u64(apex_started.elapsed()),
+                    "anti-tracking cover-site network turn completed"
+                );
+                drop(apex_guard);
+                ok
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "probe-resistance check skipped");
                 false
@@ -212,6 +239,18 @@ async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<Prob
         hide_via_effective: !saw_via,
         probe_resistance_effective,
     })
+}
+
+fn outbound_http_span(method: &'static str, surface: &'static str) -> tracing::Span {
+    tracing::info_span!(
+        "otel.network.turn",
+        { otel_key::NETWORK_TRANSPORT } = "tcp",
+        { otel_key::NETWORK_PROTOCOL_NAME } = "http",
+        { otel_key::RPC_SYSTEM } = "ct-probe",
+        { otel_key::HTTP_REQUEST_METHOD } = method,
+        { otel_key::URL_PATH } = surface,
+        { otel_key::CT_STATUS_CODE } = tracing::field::Empty,
+    )
 }
 
 /// A locally-spawned naive client subprocess. Translates plain
@@ -254,12 +293,30 @@ impl NaiveLocal {
                     address: format!("127.0.0.1:{port}"),
                 });
             }
+            let readiness_started = Instant::now();
+            let readiness_span = tracing::info_span!(
+                "otel.network.turn",
+                { otel_key::NETWORK_TRANSPORT } = "tcp",
+                { otel_key::NETWORK_PROTOCOL_NAME } = "tcp",
+                { otel_key::RPC_SYSTEM } = "ct-probe",
+                { otel_key::URL_PATH } = "naive-local-readiness",
+                { otel_key::CT_STATUS_CODE } = tracing::field::Empty,
+            );
+            let readiness_guard = readiness_span.enter();
             if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+                readiness_span.record(otel_key::CT_STATUS_CODE, "ok");
+                tracing::trace!(
+                    latency_ms = duration_ms_u64(readiness_started.elapsed()),
+                    "naive readiness TCP network turn completed"
+                );
+                drop(readiness_guard);
                 return Ok(Self {
                     _child: child,
                     port,
                 });
             }
+            readiness_span.record(otel_key::CT_STATUS_CODE, "connect_error");
+            drop(readiness_guard);
             sleep(NAIVE_STARTUP_POLL).await;
         }
         Err(Error::ProcessStartTimeout {
