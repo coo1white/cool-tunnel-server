@@ -22,6 +22,40 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.77] — 2026-05-10 — Rule Maker daemon FSM
+
+This patch release promotes the daemon transport FSM hardening. The
+proxy wire protocol and subscription format are unchanged.
+
+### Changed
+
+- **Rule Maker transition table.** Daemon connections now advance via
+  named `ConnectionEvent` values. The FSM owns the only legal event to
+  state mapping, so callers can no longer request arbitrary
+  `expected -> next` transitions.
+- **Atomic no-fork enforcement.** `ConnectionFsm::apply` still uses
+  `AtomicU8::compare_exchange`, but the expected predecessor now comes
+  from the Rule Maker table. Any mismatch stores `HardReset`, emits
+  telemetry, and closes the offending connection.
+- **Heng constancy remains active.** Successful turns still enter
+  `ProbingConstancy`, measure frame and latency pressure, and tune the
+  next read chunk without raising hard protocol limits.
+
+### Fixed
+
+- **Clean EOF is now an FSM event.** Peer close while reading advances
+  through `PeerClosed -> Disconnected`; clean shutdown no longer uses a
+  direct terminal-state store outside the transition table.
+
+### Tests
+
+- `cargo fmt --all -- --check`
+- `SQLX_OFFLINE=true cargo build --release --workspace --locked`
+- `SQLX_OFFLINE=true cargo test --release --workspace --locked`
+- `SQLX_OFFLINE=true cargo clippy --release --all-targets --locked`
+
+---
+
 ## [0.0.76] — 2026-05-10 — Offense-driven observability
 
 This patch release promotes the OTel-oriented observability pass from
@@ -7431,7 +7465,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.76...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.77...HEAD
+[0.0.77]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.76...v0.0.77
 [0.0.76]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.75...v0.0.76
 [0.0.75]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.74...v0.0.75
 [0.0.74]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.73...v0.0.74

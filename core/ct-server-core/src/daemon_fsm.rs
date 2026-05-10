@@ -10,8 +10,10 @@
 //!
 //! A cooperative panel client follows one path:
 //!
-//! `Accepted -> ReadingFrame -> DecodingUtf8 -> DecodingJson ->
-//! Dispatching -> Responding -> ProbingConstancy -> ReadingFrame`
+//! `Accepted --StartReading--> ReadingFrame --FrameComplete-->
+//! DecodingUtf8 --Utf8Decoded--> DecodingJson --JsonDecoded-->
+//! Dispatching --Dispatched--> Responding --ResponseWritten-->
+//! ProbingConstancy --ConstancyProbed--> ReadingFrame`
 //!
 //! Any observed state that differs from the required predecessor is a
 //! protocol violation or a code bug. The only recovery is
@@ -22,28 +24,33 @@
 //! # FSM Diagram
 //!
 //! ```text
-//! [Accepted]
-//!     |
-//!     v
-//! [ReadingFrame] -- EOF ----------------------------> [Disconnected]
+//! [Accepted] -- StartReading ----------------------> [ReadingFrame]
+//! [ReadingFrame] -- PeerClosed --------------------> [Disconnected]
 //!     |               timeout/too_large/incomplete
-//!     |               invalid transition
+//!     |               invalid event / transition
 //!     |---------------------------------------------> [HardReset]
+//!     |
+//!     | FrameComplete
 //!     v
 //! [DecodingUtf8] -- invalid utf8 -------------------> [HardReset]
 //!     |
+//!     | Utf8Decoded
 //!     v
 //! [DecodingJson] -- malformed json -----------------> [HardReset]
 //!     |
+//!     | JsonDecoded
 //!     v
 //! [Dispatching] -- domain error --------------------> [Responding]
 //!     |
+//!     | Dispatched
 //!     v
 //! [Responding] -- write failure --------------------> [HardReset]
 //!     |
+//!     | ResponseWritten
 //!     v
 //! [ProbingConstancy] -- tune next turn --------------+
 //!     |                                             |
+//!     | ConstancyProbed                             |
 //!     +---------------------------------------------+
 //!                       back to [ReadingFrame]
 //! ```
@@ -121,14 +128,79 @@ impl ConnectionState {
     }
 }
 
+/// Rule Maker events for the daemon protocol.
+///
+/// Callers never choose an arbitrary destination state. They submit
+/// the observed protocol event, and the transition table below is the
+/// single authority that decides the required predecessor and next
+/// state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(alias = "state-machine-event")]
+#[doc(alias = "rule-maker-event")]
+pub enum ConnectionEvent {
+    /// A newly accepted socket is ready to read its first bounded frame.
+    StartReading,
+    /// A complete newline-delimited request frame was acquired.
+    FrameComplete,
+    /// Frame bytes were valid UTF-8.
+    Utf8Decoded,
+    /// UTF-8 text decoded into `WireRequestV1`.
+    JsonDecoded,
+    /// The decoded request completed the dispatch boundary.
+    Dispatched,
+    /// A response was serialized, written, and flushed.
+    ResponseWritten,
+    /// Heng constancy probing completed for the previous turn.
+    ConstancyProbed,
+    /// Peer closed cleanly while the FSM was awaiting a new frame.
+    PeerClosed,
+}
+
+impl ConnectionEvent {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::StartReading => "start_reading",
+            Self::FrameComplete => "frame_complete",
+            Self::Utf8Decoded => "utf8_decoded",
+            Self::JsonDecoded => "json_decoded",
+            Self::Dispatched => "dispatched",
+            Self::ResponseWritten => "response_written",
+            Self::ConstancyProbed => "constancy_probed",
+            Self::PeerClosed => "peer_closed",
+        }
+    }
+
+    #[must_use]
+    const fn rule(self) -> (ConnectionState, ConnectionState) {
+        match self {
+            Self::StartReading => (ConnectionState::Accepted, ConnectionState::ReadingFrame),
+            Self::FrameComplete => (ConnectionState::ReadingFrame, ConnectionState::DecodingUtf8),
+            Self::Utf8Decoded => (ConnectionState::DecodingUtf8, ConnectionState::DecodingJson),
+            Self::JsonDecoded => (ConnectionState::DecodingJson, ConnectionState::Dispatching),
+            Self::Dispatched => (ConnectionState::Dispatching, ConnectionState::Responding),
+            Self::ResponseWritten => (
+                ConnectionState::Responding,
+                ConnectionState::ProbingConstancy,
+            ),
+            Self::ConstancyProbed => (
+                ConnectionState::ProbingConstancy,
+                ConnectionState::ReadingFrame,
+            ),
+            Self::PeerClosed => (ConnectionState::ReadingFrame, ConnectionState::Disconnected),
+        }
+    }
+}
+
 /// Result of attempting an atomic FSM transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitionOutcome {
     /// Transition followed the protocol contract.
     Advanced,
-    /// Observed state did not match the required predecessor; the FSM
-    /// moved to `HardReset`.
+    /// Observed state did not match the event's Rule Maker predecessor;
+    /// the FSM moved to `HardReset`.
     HardReset {
+        event: ConnectionEvent,
         expected: ConnectionState,
         observed: ConnectionState,
         requested: ConnectionState,
@@ -192,12 +264,13 @@ impl ConnectionFsm {
         self.hard_resets.load(Ordering::Relaxed)
     }
 
-    /// Atomically advance from `expected` to `next`.
+    /// Apply one Rule Maker event.
     ///
     /// Any mismatch means there is no longer one authoritative branch
     /// of truth. The state is forced to [`ConnectionState::HardReset`]
     /// and the caller should immediately close the connection.
-    pub fn advance(&self, expected: ConnectionState, next: ConnectionState) -> TransitionOutcome {
+    pub fn apply(&self, event: ConnectionEvent) -> TransitionOutcome {
+        let (expected, next) = event.rule();
         match self.state.compare_exchange(
             expected.as_u8(),
             next.as_u8(),
@@ -209,6 +282,7 @@ impl ConnectionFsm {
                 let observed = ConnectionState::from_u8(observed);
                 self.hard_reset("invalid_transition");
                 TransitionOutcome::HardReset {
+                    event,
                     expected,
                     observed,
                     requested: next,
@@ -223,12 +297,6 @@ impl ConnectionFsm {
         self.hard_resets.fetch_add(1, Ordering::Relaxed);
         self.state
             .store(ConnectionState::HardReset.as_u8(), Ordering::Release);
-    }
-
-    /// Clean terminal close after EOF with no buffered partial frame.
-    pub fn disconnect(&self) {
-        self.state
-            .store(ConnectionState::Disconnected.as_u8(), Ordering::Release);
     }
 
     /// Active Heng probe: derive the next turn's read profile from
@@ -301,50 +369,52 @@ mod tests {
     fn valid_daemon_turn_returns_to_reading_frame() {
         let fsm = ConnectionFsm::new();
         assert_eq!(
-            fsm.advance(ConnectionState::Accepted, ConnectionState::ReadingFrame),
+            fsm.apply(ConnectionEvent::StartReading),
             TransitionOutcome::Advanced
         );
         assert_eq!(
-            fsm.advance(ConnectionState::ReadingFrame, ConnectionState::DecodingUtf8),
+            fsm.apply(ConnectionEvent::FrameComplete),
             TransitionOutcome::Advanced
         );
         assert_eq!(
-            fsm.advance(ConnectionState::DecodingUtf8, ConnectionState::DecodingJson),
+            fsm.apply(ConnectionEvent::Utf8Decoded),
             TransitionOutcome::Advanced
         );
         assert_eq!(
-            fsm.advance(ConnectionState::DecodingJson, ConnectionState::Dispatching),
+            fsm.apply(ConnectionEvent::JsonDecoded),
             TransitionOutcome::Advanced
         );
         assert_eq!(
-            fsm.advance(ConnectionState::Dispatching, ConnectionState::Responding),
+            fsm.apply(ConnectionEvent::Dispatched),
             TransitionOutcome::Advanced
         );
         assert_eq!(
-            fsm.advance(
-                ConnectionState::Responding,
-                ConnectionState::ProbingConstancy,
-            ),
+            fsm.apply(ConnectionEvent::ResponseWritten),
             TransitionOutcome::Advanced
         );
         assert_eq!(
-            fsm.advance(
-                ConnectionState::ProbingConstancy,
-                ConnectionState::ReadingFrame,
-            ),
+            fsm.apply(ConnectionEvent::ConstancyProbed),
             TransitionOutcome::Advanced
         );
         assert_eq!(fsm.state(), ConnectionState::ReadingFrame);
     }
 
     #[test]
-    fn unexpected_transition_forces_hard_reset() {
+    fn unexpected_event_forces_hard_reset() {
         let fsm = ConnectionFsm::new();
-        let outcome = fsm.advance(ConnectionState::Dispatching, ConnectionState::Responding);
+        let outcome = fsm.apply(ConnectionEvent::Dispatched);
 
         assert!(outcome.is_hard_reset());
         assert_eq!(fsm.state(), ConnectionState::HardReset);
         assert_eq!(fsm.hard_reset_count(), 1);
+    }
+
+    #[test]
+    fn peer_closed_is_only_valid_while_reading() {
+        let fsm = ConnectionFsm::new();
+
+        assert!(fsm.apply(ConnectionEvent::PeerClosed).is_hard_reset());
+        assert_eq!(fsm.state(), ConnectionState::HardReset);
     }
 
     #[test]
