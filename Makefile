@@ -37,7 +37,7 @@ help: ## list available targets
 # ---------- CI gate (exactly what GitHub Actions runs) ------------
 
 .PHONY: ci
-ci: rust-fmt-check rust-clippy rust-test php-syntax composer-audit shellcheck manifests-jq verify-sot verify-supervisord ## full local CI gate
+ci: rust-fmt-check rust-clippy rust-test php-syntax composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord ## full local CI gate
 
 # Cycle 3 / v0.0.55 — cross-language SoT parity guard. Runs both
 # the PHP and Rust panel-hostname resolvers against fixture envs and
@@ -194,6 +194,21 @@ shellcheck: ## shellcheck all scripts and entrypoints (severity=warning — styl
 manifests-jq: ## jq parse every manifests/*.json
 	@for f in manifests/*.json; do jq . "$$f" >/dev/null || { echo "bad json: $$f"; exit 1; }; done
 	@echo "    manifests-jq: clean"
+
+.PHONY: manifest-lockstep
+manifest-lockstep: ## verify manifest pins match local deployment sources
+	@naive_arg=$$(sed -n -E 's/^ARG NAIVE_VERSION=v?(.+)/\1/p' docker/panel/Dockerfile | head -n1); \
+	naive_manifest=$$(jq -r '.version' manifests/naiveproxy-client.upstream.json); \
+	if [ "$$naive_arg" != "$$naive_manifest" ]; then \
+	    echo "naiveproxy-client manifest drift: Dockerfile=$$naive_arg manifest=$$naive_manifest" >&2; \
+	    exit 1; \
+	fi
+	@credential_pin=$$(jq -r '.version' manifests/credential-lock.upstream.json); \
+	if [ "$$credential_pin" != "db=rendered=manifest=mac-config" ]; then \
+	    echo "credential-lock manifest drift: $$credential_pin" >&2; \
+	    exit 1; \
+	fi
+	@echo "    manifest-lockstep: clean"
 
 # ---------- Operator ops (alias the scripts/) ---------------------
 

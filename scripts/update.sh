@@ -185,6 +185,17 @@ compose exec -T panel php artisan migrate --force --no-interaction
 step "Re-render sing-box config"
 compose exec -T panel ct-server-core --json singbox render
 
+step "Assert credential lock (db = rendered = manifest = Mac config)"
+compose exec -T panel ct-server-core guard credential-lock
+
+step "Reload sing-box and purge stale runtime state"
+# Root-cause hardening: a correct rendered config is not sufficient if
+# the long-running sing-box process is still serving stale users. The
+# Rust reload command now performs Clash API reload, verifies the loaded
+# config path when sing-box reports one, and then restarts the container
+# as a mandatory state-clearance barrier.
+compose exec -T panel ct-server-core server reload
+
 step "Re-render haproxy config (v0.0.51)"
 # Mirrors the sing-box render step above. Pre-v0.0.51 the haproxy
 # render only fired when ServerConfig was mutated (Eloquent
@@ -209,8 +220,5 @@ step "Component check (post-swap)"
 component_check_strict /srv/manifests \
     || die "post-swap check NG — investigate logs" \
            "docker compose logs --tail=100 panel sing-box haproxy"
-
-step "Reload sing-box via clash API"
-compose exec -T panel ct-server-core server reload
 
 ok "Update complete."
