@@ -22,6 +22,33 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.75] — 2026-05-10 — Readiness gate simplification
+
+This patch release promotes the readiness gate cleanup from the VPS
+validation loop. The proxy wire protocol and subscription format are
+unchanged.
+
+### Fixed
+
+- **Removed the plain-curl CONNECT readiness check.** The old
+  synthetic `curl --proxy` check did not speak NaiveProxy's padding
+  behavior and could fail while the real client path worked. It was
+  deleted instead of treated as a launch signal.
+- **Restored the meaningful end-to-end proxy check.** Check 10 now
+  uses the bundled `/usr/local/bin/naive` client through
+  `ct-server-core probe anti-tracking` and reports
+  `hide_ip + hide_via effective` on success.
+- **Readiness docs now match the script.** README, Getting Started,
+  and the operator runbook describe the 10-check gate and its
+  `9/10` pass threshold.
+
+### Tests
+
+- `bash -n scripts/late-night-comeback.sh`
+- `shellcheck -x --severity=warning scripts/late-night-comeback.sh`
+
+---
+
 ## [0.0.74] — 2026-05-10 — VPS update hardening hotfix
 
 This hotfix promotes the VPS findings from the `v0.0.73` rollout into
