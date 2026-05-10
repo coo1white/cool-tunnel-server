@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # late-night-comeback.sh — pre-launch readiness gate.
 #
-# Nine checks. Pass ≥ 89% (eight) to ship. Structural checks 1–4
+# Ten checks. Pass ≥ 90% (nine) to ship. Structural checks 1–4
 # (DNS / ports / ACME / UFW) cap the final score at 7 if any of
 # them is NG, regardless of the others — they are non-negotiable.
 #
@@ -198,6 +198,28 @@ check_cover_invariant() {
     fi
 }
 
+# ---- 10. Bundled NaiveProxy anti-tracking probe ------------------
+# This is the meaningful end-to-end proxy check: ct-server-core
+# launches the packaged /usr/local/bin/naive client, points it at the
+# real proxy credential URL, and verifies hide_ip + hide_via at the
+# target. Plain `curl --proxy` is intentionally not used here because
+# it does not speak NaiveProxy's padding extension.
+check_probe() {
+    if [[ -z "${LNC_TEST_PROXY_URL:-}" ]]; then
+        record 10 ng "Set LNC_TEST_PROXY_URL=https://user:pass@${DOMAIN:-DOMAIN}:443 to enable anti-tracking probe"
+        return
+    fi
+    local out
+    out=$(docker compose exec -T panel ct-server-core probe anti-tracking \
+              --via "$LNC_TEST_PROXY_URL" 2>/dev/null)
+    if echo "$out" | grep -q '"hide_ip_effective":true' \
+        && echo "$out" | grep -q '"hide_via_effective":true'; then
+        record 10 ok "hide_ip + hide_via effective"
+    else
+        record 10 ng "Anti-tracking probe failed: $out"
+    fi
+}
+
 # ---- run ----------------------------------------------------------
 echo "Late-Night Comeback — readiness check"
 echo "(Domain: ${DOMAIN:-<unset>})"
@@ -216,6 +238,7 @@ check_redis_bridge
 echo
 echo "Functional:"
 check_cover_invariant
+check_probe
 echo
 
 # Score logic.
@@ -223,15 +246,15 @@ score=$total_pass
 if (( structural_fails > 0 )); then
     if (( score > 7 )); then score=7; fi
 fi
-# Now out of 9 checks. PASS requires 8/9, and any structural fail
+# Now out of 10 checks. PASS requires 9/10, and any structural fail
 # still caps the score below the passing threshold.
-pct=$((score * 100 / 9))
-echo "Score: ${score}/9 (${pct}%)"
+pct=$((score * 100 / 10))
+echo "Score: ${score}/10 (${pct}%)"
 if (( structural_fails > 0 )); then
     echo "Structural fail(s): $structural_fails — score capped at 7."
 fi
 
-if (( score >= 8 )); then
+if (( score >= 9 )); then
     echo "Result: PASS — ready to ship."
     exit 0
 else
