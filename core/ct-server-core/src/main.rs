@@ -13,6 +13,7 @@ mod caddy;
 mod canary;
 mod components;
 mod contracts;
+mod credentials;
 mod daemon;
 mod daemon_fsm;
 mod db;
@@ -182,6 +183,11 @@ enum Cmd {
         #[command(subcommand)]
         op: AdminOp,
     },
+    /// Deployment invariants that must fail closed on drift.
+    Guard {
+        #[command(subcommand)]
+        op: GuardOp,
+    },
     /// Self-probe canary — early-warning surface for "this VPS is
     /// becoming unreachable from its own network position." See
     /// `docs/going-to-china.md` for the operator-facing context.
@@ -228,6 +234,12 @@ enum AdminOp {
     /// fail-fast. Whitespace in either is trimmed; both empty
     /// errors loudly rather than producing `panel.` with no base.
     PanelDomain,
+}
+
+#[derive(Subcommand, Debug)]
+enum GuardOp {
+    /// Assert DB active credentials equal the rendered sing-box users.
+    CredentialLock,
 }
 
 #[derive(Subcommand, Debug)]
@@ -584,6 +596,12 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 let pd = util::domain::panel_domain()?;
                 println!("{pd}");
                 Ok(())
+            }
+        },
+        Cmd::Guard { op } => match op {
+            GuardOp::CredentialLock => {
+                let pool = db::connect(&cli.database_url).await?;
+                credentials::assert_locked(&pool, &cli.output).await
             }
         },
         Cmd::Canary { op } => match op {

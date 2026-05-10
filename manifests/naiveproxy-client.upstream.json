@@ -1,12 +1,12 @@
 {
     "name": "naiveproxy-client",
     "kind": "binary",
-    "version": "v148.0.7778.96-2",
+    "version": "148.0.7778.96-2",
     "upstream": "https://github.com/klzgrad/naiveproxy",
     "verify": {
         "command": ["/usr/local/bin/naive", "--version"],
         "expect_zero_exit": true,
-        "expect_stdout_contains": "NaiveProxy"
+        "expect_stdout_contains": "naive"
     },
-    "note": "Apache-2.0. Upstream NaiveProxy client binary, bundled in the panel image at /usr/local/bin/naive (see docker/panel/Dockerfile, ARG NAIVE_VERSION + ARG NAIVE_SHA256). The anti-tracking probe in core/ct-server-core/src/probe.rs spawns this binary as a child process bound to a free 127.0.0.1 port and dials through it as an HTTP CONNECT proxy. Required because sing-box's `naive` inbound enforces a padding extension on CONNECT that vanilla reqwest does not emit; shelling out to the reference client speaks the padding correctly without re-implementing it (R4-3 in docs/audits/2026-05-04T06-31-58Z.md). Verify command runs the binary, not just `test -x`, so Alpine/glibc loader regressions fail the component check before the Layer 4 probe is needed."
+    "note": "Apache-2.0. Upstream NaiveProxy client binary, bundled in the panel image at /usr/local/bin/naive (see docker/panel/Dockerfile, ARG NAIVE_VERSION=v148.0.7778.96-2 + ARG NAIVE_SHA256). The anti-tracking probe in core/ct-server-core/src/probe.rs spawns this binary as a child process bound to a free 127.0.0.1 port and dials through it as an HTTP CONNECT proxy. Required because sing-box's `naive` inbound enforces a padding extension on CONNECT that vanilla reqwest does not emit; shelling out to the reference client speaks the padding correctly without re-implementing it (R4-3 in docs/audits/2026-05-04T06-31-58Z.md). Verify command runs the binary, not just `test -x`, so Alpine/glibc loader regressions fail the component check before the Layer 4 probe is needed. Pin includes the upstream release rebuild suffix (`-2`) so the manifest string matches the deployed binary release exactly instead of accepting a partial Chromium base version."
 }

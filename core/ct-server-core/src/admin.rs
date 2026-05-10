@@ -77,12 +77,15 @@ impl ClashAdmin {
         }
     }
 
-    /// Reload sing-box from `config_path` via PUT /configs?path=…&force=true.
-    /// Falls back to `docker compose restart sing-box` when the HTTP
-    /// endpoint is unreachable (host-side dev with no network, or
-    /// sing-box still booting on a fresh stack). The fallback path
-    /// is bounded by DOCKER_RESTART_TIMEOUT and emits at WARN so an
-    /// operator inspecting logs notices when the fast path is missed.
+    /// Reload sing-box from `config_path`.
+    ///
+    /// A successful Clash API response is not enough for our deployment
+    /// contract: the incident root cause was "rendered file is correct,
+    /// running process still serves stale users." Apply the hot reload,
+    /// verify the process reports the requested config path, then restart
+    /// the container as a mandatory state purge. The restart is bounded and
+    /// makes the process inherit the rendered file even if a future
+    /// sing-box release regresses hot-reload semantics.
     pub async fn reload(&self, config_path: &str) -> Result<()> {
         let started = Instant::now();
         let endpoint = format!(
@@ -106,7 +109,7 @@ impl ClashAdmin {
                     url = %self.url,
                     "clash API unreachable — falling back to docker compose restart"
                 );
-                return reload_via_docker_restart().await;
+                return reload_via_docker_restart("clash API unreachable").await;
             }
             Err(e) => {
                 return Err(Error::ClashApi {
@@ -133,7 +136,8 @@ impl ClashAdmin {
             path = config_path,
             "sing-box reloaded via clash API"
         );
-        Ok(())
+        self.assert_loaded_path(config_path).await?;
+        reload_via_docker_restart("mandatory state purge after clash reload").await
     }
 
     /// GET /configs — print the live config as JSON to stdout.
@@ -157,6 +161,46 @@ impl ClashAdmin {
             .await
             .map_err(|e| Error::clash("GET /configs body", e.to_string()))?;
         println!("{body}");
+        Ok(())
+    }
+
+    async fn assert_loaded_path(&self, config_path: &str) -> Result<()> {
+        let endpoint = format!("{}/configs", self.url);
+        let req = self.with_auth(self.client()?.get(&endpoint));
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| Error::clash("GET /configs after reload", e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(Error::ClashApiStatus {
+                endpoint: "GET /configs after reload",
+                status: resp.status(),
+                body: String::new(),
+            });
+        }
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| Error::clash("GET /configs after reload body", e.to_string()))?;
+        let loaded_path = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v.get("path")
+                    .or_else(|| v.get("Path"))
+                    .and_then(|p| p.as_str())
+                    .map(str::to_owned)
+            });
+        if loaded_path.as_deref().is_some_and(|p| p != config_path) {
+            return Err(Error::validation(
+                "sing-box reload",
+                format!(
+                    "clash API reports loaded config path {:?}, expected {:?}",
+                    loaded_path.as_deref().unwrap_or(""),
+                    config_path
+                ),
+            ));
+        }
+        tracing::info!(path = config_path, "sing-box reload path acknowledged");
         Ok(())
     }
 
@@ -195,7 +239,7 @@ impl ClashAdmin {
     }
 }
 
-async fn reload_via_docker_restart() -> Result<()> {
+async fn reload_via_docker_restart(reason: &'static str) -> Result<()> {
     let started = Instant::now();
     let out = tokio::time::timeout(
         DOCKER_RESTART_TIMEOUT,
@@ -217,7 +261,8 @@ async fn reload_via_docker_restart() -> Result<()> {
     }
     tracing::warn!(
         duration_ms = started.elapsed().as_millis() as u64,
-        "sing-box reloaded via docker compose restart (clash API unreachable)"
+        reason,
+        "sing-box reloaded via docker compose restart"
     );
     Ok(())
 }
