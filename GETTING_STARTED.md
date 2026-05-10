@@ -207,24 +207,21 @@ the laptop's.
 
 ## Step 7 — Verify the launch is solid
 
-There's a built-in readiness check that does eleven things and
-gives you a percentage score:
+There's a built-in readiness check that does nine things and gives
+you a percentage score:
 
 ```sh
-LNC_TEST_PROXY_URL='https://alice:<password>@your-domain.com:443' \
-  ./scripts/late-night-comeback.sh
+./scripts/late-night-comeback.sh
 ```
 
 It checks DNS, ports, ACME, UFW, BBR, NTP, components, the Redis
-revocation bridge, a synthetic CONNECT, the anti-tracking probe,
-and the cover-site invariant (the eleventh check, added when the
-cover-site fall-through hardened in v0.0.5x).
+revocation bridge, and the cover-site invariant.
 
-≥ 9 / 11 (82 %) = ready to ship.
-≤ 8 / 11 = read the NG lines, fix them, run again.
+≥ 8 / 9 (89 %) = ready to ship.
+≤ 7 / 9 = read the NG lines, fix them, run again.
 
 The four "structural" checks (DNS / ports / ACME / UFW) cap your
-score at 7 if any is NG, regardless of the other seven — those
+score at 7 if any is NG, regardless of the other checks — those
 are non-negotiable.
 
 ---
