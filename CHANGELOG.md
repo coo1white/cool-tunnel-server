@@ -22,6 +22,38 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.74] — 2026-05-10 — VPS update hardening hotfix
+
+This hotfix promotes the VPS findings from the `v0.0.73` rollout into
+code. The proxy wire protocol and subscription format are unchanged.
+
+### Fixed
+
+- **NaiveProxy client component check.** The bundled `naive` binary
+  reports `naive 148.0.7778.96`; the manifest now pins
+  `148.0.7778.96` instead of the Docker asset tag
+  `v148.0.7778.96-2`. The asset suffix identifies the downloaded
+  release archive, but the installed binary does not print it.
+- **Host-side state purge placement.** The mandatory `docker compose
+  restart sing-box` is performed by `scripts/update.sh` on the host,
+  not by `ct-server-core` inside the panel container. The panel image
+  intentionally has no Docker CLI.
+- **Manifest lockstep rule.** `make manifest-lockstep` now accepts a
+  Docker NaiveProxy asset tag that is either exactly the manifest
+  version or the manifest version plus a rebuild suffix. This catches
+  real drift without confusing asset naming with runtime identity.
+
+### Tests
+
+- Real VPS validation of the failure:
+  - `ct-server-core guard credential-lock` passed.
+  - `component check` showed only `naiveproxy-client` mismatched
+    because the binary printed `naive 148.0.7778.96`.
+  - Manual host-side `docker compose restart sing-box` completed the
+    stale-state purge.
+
+---
+
 ## [0.0.73] — 2026-05-10 — Tunnel manifest and reload-state hardening
 
 This patch release promotes the real-metal RackNerd validation fixes

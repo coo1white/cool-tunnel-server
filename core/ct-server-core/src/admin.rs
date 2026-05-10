@@ -41,19 +41,12 @@
 use crate::{Error, Result};
 use reqwest::Client;
 use std::time::{Duration, Instant};
-use tokio::process::Command;
 
 /// Bounded HTTP timeout for clash-API calls. A reload should
 /// complete in well under a second; a hung sing-box (deadlock,
 /// signal-blocked, OOM-stalled) must not wedge the panel's reload
 /// path forever.
 const CLASH_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Bounded timeout for the docker-compose-restart fallback. 60s is
-/// generous — `docker compose restart sing-box` is ~1s on a healthy
-/// host. The cap exists so a hung docker daemon (network blip, disk
-/// full, etc.) doesn't wedge the reload path.
-const DOCKER_RESTART_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Connection-and-secret pair for the sing-box clash API. Construct
 /// once per call site (cheap — `reqwest::Client::new()` reuses an
@@ -79,13 +72,13 @@ impl ClashAdmin {
 
     /// Reload sing-box from `config_path`.
     ///
-    /// A successful Clash API response is not enough for our deployment
+    /// A successful Clash API response is not enough for the full deployment
     /// contract: the incident root cause was "rendered file is correct,
-    /// running process still serves stale users." Apply the hot reload,
-    /// verify the process reports the requested config path, then restart
-    /// the container as a mandatory state purge. The restart is bounded and
-    /// makes the process inherit the rendered file even if a future
-    /// sing-box release regresses hot-reload semantics.
+    /// running process still serves stale users." This method applies the
+    /// hot reload and verifies the process reports the requested config path.
+    /// Host-side deployment scripts are responsible for the mandatory
+    /// container restart purge, because the panel container intentionally has
+    /// no Docker CLI.
     pub async fn reload(&self, config_path: &str) -> Result<()> {
         let started = Instant::now();
         let endpoint = format!(
@@ -104,12 +97,13 @@ impl ClashAdmin {
         let resp = match req.send().await {
             Ok(r) => r,
             Err(e) if is_connect_error(&e) => {
-                tracing::warn!(
-                    error = %e,
-                    url = %self.url,
-                    "clash API unreachable — falling back to docker compose restart"
-                );
-                return reload_via_docker_restart("clash API unreachable").await;
+                return Err(Error::ClashApi {
+                    op: "PUT /configs",
+                    message: format!(
+                        "clash API unreachable at {}; run host-side `docker compose restart sing-box` after fixing reachability: {e}",
+                        self.url
+                    ),
+                });
             }
             Err(e) => {
                 return Err(Error::ClashApi {
@@ -137,7 +131,7 @@ impl ClashAdmin {
             "sing-box reloaded via clash API"
         );
         self.assert_loaded_path(config_path).await?;
-        reload_via_docker_restart("mandatory state purge after clash reload").await
+        Ok(())
     }
 
     /// GET /configs — print the live config as JSON to stdout.
@@ -239,36 +233,8 @@ impl ClashAdmin {
     }
 }
 
-async fn reload_via_docker_restart(reason: &'static str) -> Result<()> {
-    let started = Instant::now();
-    let out = tokio::time::timeout(
-        DOCKER_RESTART_TIMEOUT,
-        Command::new("docker")
-            .args(["compose", "restart", "sing-box"])
-            .output(),
-    )
-    .await
-    .map_err(|_| Error::ExternalCommandTimedOut {
-        command: "docker compose restart sing-box",
-        timeout: DOCKER_RESTART_TIMEOUT,
-        hint: "Investigate: `docker ps` and `docker compose logs --tail=50 sing-box`.".to_owned(),
-    })??;
-    if !out.status.success() {
-        return Err(Error::ExternalCommandFailed {
-            command: "docker compose restart sing-box",
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        });
-    }
-    tracing::warn!(
-        duration_ms = started.elapsed().as_millis() as u64,
-        reason,
-        "sing-box reloaded via docker compose restart"
-    );
-    Ok(())
-}
-
 /// True for "couldn't even open a TCP connection" errors. We use this
-/// to decide whether to take the docker-compose-restart fallback.
+/// to surface a clear host-side restart hint.
 /// 5xx / 4xx HTTP responses are NOT connect errors — they mean the
 /// API answered, just unhappily; those propagate as Err.
 fn is_connect_error(e: &reqwest::Error) -> bool {
