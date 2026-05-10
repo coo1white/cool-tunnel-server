@@ -26,6 +26,7 @@ pub mod otel_key {
     pub const CT_FRAME_POLICY: &str = "ct.frame.policy";
     pub const CT_BUFFER_BYTES: &str = "ct.buffer.bytes";
     pub const CT_BUFFER_LIMIT_BYTES: &str = "ct.buffer.limit_bytes";
+    pub const CT_STATUS_CODE: &str = "ct.status_code";
 }
 
 /// Offense-driven alert threshold in basis points. Crossing 80%
@@ -33,6 +34,17 @@ pub mod otel_key {
 /// limit that the next turn should emit forensic detail instead of
 /// staying silent.
 pub const BOTTLENECK_ALERT_BASIS_POINTS: u64 = 8_000;
+
+/// Latency budget used for the 80% threshold on daemon wire turns.
+/// The panel path is intentionally expected to be snappy; reloads
+/// can take longer, but crossing this mark means the operator should
+/// start looking before users feel hard failure.
+pub const DAEMON_TURN_LATENCY_BUDGET: Duration = Duration::from_millis(500);
+
+/// Latency budget used for the 80% threshold on internal metrics
+/// scrapes. A local Prometheus scrape should complete well inside
+/// this unless the process is CPU-starved or blocked behind I/O.
+pub const METRICS_TURN_LATENCY_BUDGET: Duration = Duration::from_millis(100);
 
 /// Convert used/limit into basis points to avoid floating point in
 /// Prometheus output and alert rules.
@@ -47,6 +59,21 @@ pub fn utilization_basis_points(used: usize, limit: usize) -> u64 {
 #[must_use]
 pub fn crosses_80pct_threshold(used: usize, limit: usize) -> bool {
     utilization_basis_points(used, limit) >= BOTTLENECK_ALERT_BASIS_POINTS
+}
+
+#[must_use]
+pub fn duration_utilization_basis_points(duration: Duration, budget: Duration) -> u64 {
+    let budget_nanos = budget.as_nanos();
+    if budget_nanos == 0 {
+        return 0;
+    }
+    let used_nanos = duration.as_nanos();
+    ((used_nanos).saturating_mul(10_000) / budget_nanos) as u64
+}
+
+#[must_use]
+pub fn duration_crosses_80pct_threshold(duration: Duration, budget: Duration) -> bool {
+    duration_utilization_basis_points(duration, budget) >= BOTTLENECK_ALERT_BASIS_POINTS
 }
 
 #[must_use]
@@ -103,6 +130,18 @@ mod tests {
     fn threshold_uses_80_percent_boundary() {
         assert!(!crosses_80pct_threshold(79, 100));
         assert!(crosses_80pct_threshold(80, 100));
+    }
+
+    #[test]
+    fn duration_threshold_uses_80_percent_boundary() {
+        assert!(!duration_crosses_80pct_threshold(
+            Duration::from_millis(79),
+            Duration::from_millis(100),
+        ));
+        assert!(duration_crosses_80pct_threshold(
+            Duration::from_millis(80),
+            Duration::from_millis(100),
+        ));
     }
 
     #[test]
