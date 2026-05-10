@@ -22,6 +22,42 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.76] — 2026-05-10 — Offense-driven observability
+
+This patch release promotes the OTel-oriented observability pass from
+PR #66. The proxy wire protocol and subscription format are unchanged.
+
+### Added
+
+- **Network-turn tracing.** Daemon Unix-socket reads, internal
+  `/metrics` scrapes, Clash API calls, DoH resolver checks,
+  anti-tracking probes, and the canary TCP connect now emit
+  `otel.network.turn` spans with OTel semantic labels.
+- **80% threshold metrics.** Prometheus-compatible counters and gauges
+  now track latency-budget crossings, buffer high-water saturation,
+  daemon handler permit pressure, and daemon FSM hard resets.
+- **Monitoring dashboard spec.** `docs/observability-dashboard.md`
+  now includes Prometheus scrape config, alert rules, Grafana panels,
+  span fields, and the silent/incident logging hierarchy.
+
+### Changed
+
+- **Silent production logging.** The core now defaults to `RUST_LOG=warn`
+  behavior so normal operation stays quiet; incident operators can raise
+  `ct_server_core=trace` to expose capped technical suppression detail.
+
+### Tests
+
+- PR #66 CI passed before merge:
+  - `rust (build / test / clippy / fmt)`
+  - `php (syntax / composer validate)`
+  - `templates`
+  - `shellcheck`
+  - `manifests`
+  - `cargo audit`, `cargo deny`, `composer audit`, `gitleaks`
+
+---
+
 ## [0.0.75] — 2026-05-10 — Readiness gate simplification
 
 This patch release promotes the readiness gate cleanup from the VPS
@@ -7395,7 +7431,11 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.72...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.76...HEAD
+[0.0.76]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.75...v0.0.76
+[0.0.75]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.74...v0.0.75
+[0.0.74]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.73...v0.0.74
+[0.0.73]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.72...v0.0.73
 [0.0.72]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.71...v0.0.72
 [0.0.71]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.70...v0.0.71
 [0.0.70]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.69...v0.0.70
