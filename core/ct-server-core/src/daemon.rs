@@ -20,7 +20,7 @@
 use crate::contracts::{
     ContractBoundary, RecoveryScope, SemanticContract, PRINCIPLE_LOCAL_RECOVERY,
 };
-use crate::daemon_fsm::{ConnectionFsm, ConnectionState, HengProfile, TransitionOutcome};
+use crate::daemon_fsm::{ConnectionEvent, ConnectionFsm, HengProfile, TransitionOutcome};
 use crate::frame::{read_delimited, FramePolicy, FrameRead, StaticDelimitedFramePolicy};
 use crate::internal_metrics::MetricsRegistry;
 use crate::observability::{
@@ -339,12 +339,7 @@ async fn handle_client(
 ) -> Result<()> {
     let (mut rd, mut wr) = stream.into_split();
     let fsm = ConnectionFsm::new();
-    advance_or_reset(
-        &fsm,
-        metrics,
-        ConnectionState::Accepted,
-        ConnectionState::ReadingFrame,
-    )?;
+    advance_or_reset(&fsm, metrics, ConnectionEvent::StartReading)?;
     // One reusable request buffer per connection. `read_delimited`
     // splits complete frames out of this buffer and leaves any bytes
     // already read for the next frame, avoiding a new Vec allocation
@@ -383,16 +378,11 @@ async fn handle_client(
         let _span_guard = span.enter();
         let frame = match read_delimited(&mut rd, &mut read_buf, &turn_frame_policy).await {
             Ok(FrameRead::Complete(frame)) => {
-                advance_or_reset(
-                    &fsm,
-                    metrics,
-                    ConnectionState::ReadingFrame,
-                    ConnectionState::DecodingUtf8,
-                )?;
+                advance_or_reset(&fsm, metrics, ConnectionEvent::FrameComplete)?;
                 frame
             }
             Ok(FrameRead::Eof) => {
-                fsm.disconnect();
+                advance_or_reset(&fsm, metrics, ConnectionEvent::PeerClosed)?;
                 break;
             }
             Err(Error::ReadTimeout { .. }) => {
@@ -502,12 +492,7 @@ async fn handle_client(
                 );
             }
         }
-        advance_or_reset(
-            &fsm,
-            metrics,
-            ConnectionState::DecodingUtf8,
-            ConnectionState::DecodingJson,
-        )?;
+        advance_or_reset(&fsm, metrics, ConnectionEvent::Utf8Decoded)?;
         let req: WireRequestV1 = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
@@ -530,12 +515,7 @@ async fn handle_client(
                 return Ok(());
             }
         };
-        advance_or_reset(
-            &fsm,
-            metrics,
-            ConnectionState::DecodingJson,
-            ConnectionState::Dispatching,
-        )?;
+        advance_or_reset(&fsm, metrics, ConnectionEvent::JsonDecoded)?;
         let method = wire_method_name(&req);
         span.record(otel_key::RPC_METHOD, method);
         let dispatcher = DaemonDispatcher {
@@ -562,12 +542,7 @@ async fn handle_client(
             }
         };
         span.record(otel_key::CT_STATUS_CODE, status_code);
-        advance_or_reset(
-            &fsm,
-            metrics,
-            ConnectionState::Dispatching,
-            ConnectionState::Responding,
-        )?;
+        advance_or_reset(&fsm, metrics, ConnectionEvent::Dispatched)?;
         note_daemon_turn(metrics, turn_started.elapsed(), status_code);
         tracing::trace!(
             latency_ms = duration_ms_u64(turn_started.elapsed()),
@@ -577,12 +552,7 @@ async fn handle_client(
             fsm_hard_reset(&fsm, metrics, "write_response_failed");
             return Err(e);
         }
-        advance_or_reset(
-            &fsm,
-            metrics,
-            ConnectionState::Responding,
-            ConnectionState::ProbingConstancy,
-        )?;
+        advance_or_reset(&fsm, metrics, ConnectionEvent::ResponseWritten)?;
         heng_profile = fsm.probe_constancy(
             turn_started.elapsed(),
             frame.len(),
@@ -596,12 +566,7 @@ async fn handle_client(
                 "daemon Heng constancy probe crossed 80% pressure threshold"
             );
         }
-        advance_or_reset(
-            &fsm,
-            metrics,
-            ConnectionState::ProbingConstancy,
-            ConnectionState::ReadingFrame,
-        )?;
+        advance_or_reset(&fsm, metrics, ConnectionEvent::ConstancyProbed)?;
     }
     Ok(())
 }
@@ -609,12 +574,12 @@ async fn handle_client(
 fn advance_or_reset(
     fsm: &ConnectionFsm,
     metrics: Option<&Arc<MetricsRegistry>>,
-    expected: ConnectionState,
-    next: ConnectionState,
+    event: ConnectionEvent,
 ) -> Result<()> {
-    match fsm.advance(expected, next) {
+    match fsm.apply(event) {
         TransitionOutcome::Advanced => Ok(()),
         TransitionOutcome::HardReset {
+            event,
             expected,
             observed,
             requested,
@@ -623,6 +588,7 @@ fn advance_or_reset(
                 m.note_daemon_fsm_hard_reset();
             }
             tracing::warn!(
+                event = event.name(),
                 expected_state = expected.name(),
                 observed_state = observed.name(),
                 requested_state = requested.name(),
@@ -631,7 +597,8 @@ fn advance_or_reset(
             Err(Error::BadRequest {
                 code: "fsm_hard_reset",
                 message: format!(
-                    "daemon FSM rejected transition {} -> {}; observed {}",
+                    "daemon FSM rejected event {} ({} -> {}); observed {}",
+                    event.name(),
                     expected.name(),
                     requested.name(),
                     observed.name()
