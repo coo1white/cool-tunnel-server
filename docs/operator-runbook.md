@@ -27,13 +27,13 @@ docker compose exec -T panel php artisan ct:version
 docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
 ```
 
-For launch readiness, include a real proxy account password:
+For launch readiness:
 
 ```bash
-LNC_TEST_PROXY_URL='https://USER:PASSWORD@DOMAIN:443' make readiness
+make readiness
 ```
 
-Expected release-ready result is at least `9/11`. DNS, ports, ACME,
+Expected release-ready result is at least `8/9`. DNS, ports, ACME,
 and UFW are structural checks; if any of those fail, fix them first.
 
 ## Update
@@ -115,7 +115,6 @@ If readiness fails, fix by category:
 - DNS / ports / ACME / UFW: structural. Fix firewall, DNS, or cert
   reachability before chasing app logs.
 - Kernel tuning: run the BBR sysctl block from `GETTING_STARTED.md`.
-- Functional checks skipped: set `LNC_TEST_PROXY_URL`.
 - Component NG: run `make update`, then `make components`; inspect the
   specific NG row if it remains.
 

@@ -221,11 +221,10 @@ Expected: all components show `OK`.
 Run the readiness gate:
 
 ```bash
-LNC_TEST_PROXY_URL='https://nick:<password>@cookie.example.com:443' \
-  ./scripts/late-night-comeback.sh
+./scripts/late-night-comeback.sh
 ```
 
-Expected: at least 9 of 11 checks pass. DNS, ports, ACME, and firewall
+Expected: at least 8 of 9 checks pass. DNS, ports, ACME, and firewall
 checks are structural. If any of those fail, fix them first.
 
 ---
@@ -400,7 +399,7 @@ Recommended reading order:
 | `make update` | Pull and deploy the latest code. |
 | `make status` | Quick look at containers, images, certs, and recent errors. |
 | `make components` | Verify bundled binaries and pinned component versions. |
-| `make readiness` | Run the 11-point launch checklist. |
+| `make readiness` | Run the 9-point launch checklist. |
 | `make ci` | Run the local contributor gate before a PR. |
 | `make backup` | Snapshot DB, `.env`, and Caddy ACME state. |
 

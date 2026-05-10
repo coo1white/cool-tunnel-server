@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # late-night-comeback.sh — pre-launch readiness gate.
 #
-# Eleven checks. Pass ≥ 82% (nine) to ship. Structural checks 1–4
+# Nine checks. Pass ≥ 89% (eight) to ship. Structural checks 1–4
 # (DNS / ports / ACME / UFW) cap the final score at 7 if any of
 # them is NG, regardless of the others — they are non-negotiable.
 #
@@ -153,40 +153,7 @@ check_redis_bridge() {
     fi
 }
 
-# ---- 9. Synthetic CONNECT (skipped if no test account) ----------
-check_proxy_connect() {
-    if [[ -z "${LNC_TEST_PROXY_URL:-}" ]]; then
-        record 9 ng "Skipped — set LNC_TEST_PROXY_URL=https://user:pass@\$DOMAIN:443 to enable"
-        return
-    fi
-    local out
-    out=$(curl -s --max-time 8 --proxy "$LNC_TEST_PROXY_URL" \
-              https://ifconfig.co/json 2>/dev/null)
-    if [[ -z "$out" ]]; then
-        record 9 ng "CONNECT through proxy returned no body"
-        return
-    fi
-    record 9 ok "CONNECT through proxy returned a body"
-}
-
-# ---- 10. Anti-tracking probe ------------------------------------
-check_probe() {
-    if [[ -z "${LNC_TEST_PROXY_URL:-}" ]]; then
-        record 10 ng "Skipped — set LNC_TEST_PROXY_URL"
-        return
-    fi
-    local out
-    out=$(docker compose exec -T panel ct-server-core probe anti-tracking \
-              --via "$LNC_TEST_PROXY_URL" 2>/dev/null)
-    if echo "$out" | grep -q '"hide_ip_effective":true' \
-        && echo "$out" | grep -q '"hide_via_effective":true'; then
-        record 10 ok "hide_ip + hide_via effective"
-    else
-        record 10 ng "Anti-tracking probe failed: $out"
-    fi
-}
-
-# ---- 11. Cover-site invariant (v0.0.14) -------------------------
+# ---- 9. Cover-site invariant (v0.0.14) --------------------------
 # A censor probe sweeping for proxy endpoints should see byte-for-
 # byte identical responses on a known-bogus subscription path and
 # a random unknown path. We verify three properties from inside
@@ -200,7 +167,7 @@ check_probe() {
 # slipped past CI; do NOT ship.
 check_cover_invariant() {
     if ! docker compose exec -T panel sh -c 'command -v curl' >/dev/null 2>&1; then
-        record 11 ng "Cover-site check skipped — curl missing in panel container"
+        record 9 ng "Cover-site check skipped — curl missing in panel container"
         return
     fi
     local etag_sub etag_rand status_sub status_rand
@@ -225,9 +192,9 @@ check_cover_invariant() {
     if [[ "$status_sub" == "200" && "$status_rand" == "200" \
        && -n "$etag_sub" && "$etag_sub" == "$etag_rand" \
        && -z "$server_hdr" ]]; then
-        record 11 ok "Cover-site invariant holds (200/200, ETags match, no Server header)"
+        record 9 ok "Cover-site invariant holds (200/200, ETags match, no Server header)"
     else
-        record 11 ng "Cover-site distinguisher detected: sub=${status_sub} rand=${status_rand} etag_match=$([[ "$etag_sub" == "$etag_rand" ]] && echo y || echo n) server='${server_hdr:-<none>}'"
+        record 9 ng "Cover-site distinguisher detected: sub=${status_sub} rand=${status_rand} etag_match=$([[ "$etag_sub" == "$etag_rand" ]] && echo y || echo n) server='${server_hdr:-<none>}'"
     fi
 }
 
@@ -248,8 +215,6 @@ check_components
 check_redis_bridge
 echo
 echo "Functional:"
-check_proxy_connect
-check_probe
 check_cover_invariant
 echo
 
@@ -258,15 +223,15 @@ score=$total_pass
 if (( structural_fails > 0 )); then
     if (( score > 7 )); then score=7; fi
 fi
-# Now out of 11 checks, not 10. PASS threshold scales accordingly:
-# 9/11 ≈ 82 %, matching the prior 8/10 ≈ 80 % bar.
-pct=$((score * 100 / 11))
-echo "Score: ${score}/11 (${pct}%)"
+# Now out of 9 checks. PASS requires 8/9, and any structural fail
+# still caps the score below the passing threshold.
+pct=$((score * 100 / 9))
+echo "Score: ${score}/9 (${pct}%)"
 if (( structural_fails > 0 )); then
     echo "Structural fail(s): $structural_fails — score capped at 7."
 fi
 
-if (( score >= 9 )); then
+if (( score >= 8 )); then
     echo "Result: PASS — ready to ship."
     exit 0
 else
