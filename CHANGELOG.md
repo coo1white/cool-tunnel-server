@@ -22,6 +22,51 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.80] — 2026-05-11 — Operator-script flock (concurrent-run safety)
+
+Promotes review item 3 from the v0.0.78 robustness review. The
+proxy wire protocol, subscription manifest, and runtime behaviour
+are unchanged. This is an operator-side safety release: a second
+operator running `make update` (or update during backup, etc.) can
+no longer race the first to corrupt `.env`, the image build, or
+half-applied migrations.
+
+### Fixed
+
+- **Concurrent-run safety on operator scripts.** Previously a
+  pager-during-incident pattern (primary operator runs `make
+  update`, secondary SSHes in and runs the same to "kick" a
+  stuck-looking dashboard) could race the `.env` auto-migration's
+  `awk > .env.tmp && mv` and clobber each other; could race
+  `compose build panel` so operator A's `compose up -d` silently
+  no-ops because operator B's build became "current" with their
+  changes; could half-apply migrations. New `lib.sh::acquire_op_lock`
+  takes a non-blocking exclusive `flock` on a per-project lockfile
+  (`/tmp/cool-tunnel-ops-${project}.lock`, fd 9, kernel-released
+  on process exit) and is wired into `install.sh`, `update.sh`,
+  `backup.sh`, and `restore.sh` immediately after `require_docker`.
+  Per-project lock path preserves round-24 multi-deploy semantics
+  (prod and staging on the same host don't serialise against each
+  other); shared across the four scripts so any one of them blocks
+  the other three. A second invocation now dies fast with an
+  `lsof`-driven hint pointing at the lockfile.
+
+### Tests
+
+- PR #70 CI passed before merge:
+  - `manifests (jq parse)`
+  - `php (syntax / composer validate)`
+  - `rust (build / test / clippy / fmt)`
+  - `shell (shellcheck)`
+  - `templates (substitute + caddy/sing-box config syntax)`
+- Local pre-release validation:
+  - `make ci`
+  - `bash -n` syntax check on `lib.sh` plus the four wired scripts
+  - `. scripts/lib.sh; declare -F acquire_op_lock` confirms the
+    function loads
+
+---
+
 ## [0.0.79] — 2026-05-11 — Secret-in-argv hygiene + CI guard
 
 Promotes the highest-leverage finding from the v0.0.78 robustness
