@@ -6,12 +6,13 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use App\Services\CaddyfileGenerator;
+use App\Jobs\ReloadServerConfigJob;
 use App\Services\RedisRevocationBus;
-use App\Services\SingBoxConfigGenerator;
-use App\Services\SingBoxReloader;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 // Singleton — exactly one row, id=1. The seeder creates it on first
 // migrate; resource code uses ServerConfig::current() to fetch it.
@@ -55,23 +56,53 @@ class ServerConfig extends Model
     protected static function booted(): void
     {
         static::updated(function (): void {
-            // Same dual-path as ProxyAccount: pub/sub for the ≤100ms
-            // hot path, synchronous render+reload as a backstop.
-            app(RedisRevocationBus::class)->announceServerConfigChanged();
+            // Same dual-path as ProxyAccount: Redis pub/sub for the
+            // ≤100ms hot path, queued render+reload as the slow-path
+            // backstop. v0.0.84 robustness-review fix (item 7) moved
+            // the slow path into ReloadServerConfigJob — pre-fix
+            // both renders + the clash-API reload ran inline inside
+            // the Filament request lifecycle, blocking the Octane
+            // worker for the full 60s ct-server-core subprocess
+            // timeout on every transient hang while the operator
+            // saw an unconditional "saved successfully" notification.
+            //
+            // DB::afterCommit defers both the Redis announce and
+            // the job dispatch until the surrounding transaction
+            // (Filament's save action) commits — without it the
+            // queue worker could pick up the job between the
+            // `static::updated` callback and the transaction
+            // commit and read stale state.
+            DB::afterCommit(function (): void {
+                // Fast path. Fire-and-forget; failure is logged at
+                // warn inside the bus and does not surface to the
+                // request — the slow-path job below is the
+                // consistency layer.
+                app(RedisRevocationBus::class)->announceServerConfigChanged();
 
-            // Re-render Caddyfile (Caddy picks the new domain / email
-            // up on its own admin-API reload; nothing extra to do
-            // from our side besides writing the file). If the operator
-            // changed the domain, Caddy will obtain a fresh cert via
-            // ACME the next time it boots, and the cert-mtime in our
-            // sing-box render hash flips on first renewal.
-            app(CaddyfileGenerator::class)->renderToFile();
-
-            // Re-render sing-box and hot-reload via the clash API.
-            $singbox = app(SingBoxConfigGenerator::class);
-            if ($singbox->renderToFile() !== null) {
-                app(SingBoxReloader::class)->reload();
-            }
+                // Slow-path backstop: queued job that re-renders
+                // Caddyfile + sing-box config and hot-reloads
+                // sing-box. The job is hash-idempotent and safe
+                // to run twice.
+                //
+                // Wrap dispatch in try/catch so a transient queue
+                // outage (Redis down — both the queue and the
+                // pub/sub bus share the same Redis backend in the
+                // shipped .env) doesn't bubble out as a 500 to
+                // the Filament request. The DB row is already
+                // committed; surface the failure at warn so the
+                // operator sees it without losing the row.
+                try {
+                    ReloadServerConfigJob::dispatch();
+                } catch (Throwable $e) {
+                    Log::warning('serverconfig.reload.dispatch_failed', [
+                        'err' => $e->getMessage(),
+                        'type' => get_class($e),
+                        'note' => 'queue dispatch failed; row committed but slow-path render+reload was not queued. '
+                            .'Redis fast-path (if Redis is up) is unaffected; the every-5-min '
+                            .'`singbox:render --if-changed --reload` scheduled command will reconcile.',
+                    ]);
+                }
+            });
         });
     }
 }

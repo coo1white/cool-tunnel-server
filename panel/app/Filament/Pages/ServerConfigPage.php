@@ -113,9 +113,23 @@ class ServerConfigPage extends Page implements HasForms
     {
         $config = ServerConfig::current();
         $config->fill($this->form->getState())->save();
+
+        // v0.0.84 robustness-review fix (item 7): the model's
+        // `updated` hook now dispatches `ReloadServerConfigJob`
+        // (queued) instead of running the renders + clash-API
+        // reload inline inside this request. The notification body
+        // reflects the new contract — the row is committed, the
+        // Redis fast-path is in flight, and the panel-side
+        // render+reload backstop is queued. Pre-fix this said
+        // "regenerated; hot-reloading" unconditionally, even when
+        // the inline shell-outs had silently failed and the
+        // on-disk config still reflected the previous state.
         Notification::make()
             ->title('Server config saved')
-            ->body('Caddyfile + sing-box config regenerated; both services hot-reloading.')
+            ->body(
+                'Reload queued. The Redis fast-path is already in flight (≤100ms); the panel-side render+reload backstop will land within seconds. '
+                .'If the Components page reports drift after a minute, check `docker compose logs panel` for `serverconfig.reload.job_failed`.'
+            )
             ->success()
             ->send();
     }
