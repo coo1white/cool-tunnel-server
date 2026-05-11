@@ -37,7 +37,7 @@ help: ## list available targets
 # ---------- CI gate (exactly what GitHub Actions runs) ------------
 
 .PHONY: ci
-ci: rust-fmt-check rust-clippy rust-test php-syntax composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord ## full local CI gate
+ci: rust-fmt-check rust-clippy rust-test php-syntax composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord secrets-argv ## full local CI gate
 
 # Cycle 3 / v0.0.55 — cross-language SoT parity guard. Runs both
 # the PHP and Rust panel-hostname resolvers against fixture envs and
@@ -78,6 +78,35 @@ verify-sot-vps: ## VPS-side SoT parity check via docker compose exec (v0.0.56)
 .PHONY: verify-supervisord
 verify-supervisord: ## supervisord.conf lifecycle-invariants drift detector (round-22)
 	./scripts/verify_supervisord.sh
+
+# v0.0.79 robustness-review fix: enforce backup.sh's v0.0.17
+# MYSQL_PWD / REDISCLI_AUTH discipline across every script that
+# shells out to the db or redis container. The bad pattern is
+# `mariadb … -p"…"` or `redis-cli … -a "…"` with the password
+# interpolated into argv — the secret then surfaces in `ps -ef`
+# inside the container, in `docker top` on the host, and in any
+# process collector (sysdig / Falco / Datadog) that snapshots
+# argv. The good pattern is `compose exec -T -e MYSQL_PWD=… db
+# mariadb -u USER` (or REDISCLI_AUTH for redis-cli) — the env
+# is delivered via the docker engine API, never via argv.
+#
+# The check is line-anchored (skips comments) and looks for a
+# literal `$` after the dangerous flag, since the operational
+# hazard is env-var interpolation specifically. Hard-coded
+# literal secrets are caught separately by gitleaks in audit.yml.
+.PHONY: secrets-argv
+secrets-argv: ## enforce MYSQL_PWD / REDISCLI_AUTH discipline (no DB/Redis password on argv)
+	@bad="$$(grep -rnE --include='*.sh' \
+	    -e '^[^#]*(mariadb|mysql|redis-cli)[^|#]*[[:space:]]*-(p|a)[[:space:]]*"?\$$' \
+	    scripts/ docker/ 2>/dev/null | grep -vE ':[[:space:]]*#' || true)"; \
+	if [ -n "$$bad" ]; then \
+	    printf '%s\n' "secrets-argv: FAIL — DB/Redis password on argv detected:" "$$bad" "" \
+	        "Use 'compose exec -T -e MYSQL_PWD=\"\$$DB_PASSWORD\" db mariadb -u USER …' or" \
+	        "    'compose exec -T -e REDISCLI_AUTH=\"\$$REDIS_PASSWORD\" redis redis-cli …' instead." \
+	        "(See backup.sh's v0.0.17 pattern for the canonical example.)" >&2; \
+	    exit 1; \
+	fi; \
+	printf '    secrets-argv: clean\n'
 
 # Convenience aliases — `make fmt`, `make lint`, `make test` are
 # the muscle-memory commands every Rust project ships. The full

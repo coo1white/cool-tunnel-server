@@ -109,8 +109,11 @@ ok "baseline confirmed — $USERNAME is in /etc/sing-box/config.json"
 #    next render() will see enabled=0 in the DB and emit a
 #    config without the user.
 step "Mark stress-runner disabled in DB (raw UPDATE — no Eloquent event)"
-docker compose exec -T db mariadb \
-    -u"${DB_USERNAME}" -p"${DB_PASSWORD}" "${DB_DATABASE}" \
+# Password via MYSQL_PWD env, not -p"…" on argv (matches backup.sh's
+# v0.0.17 hardening — the secret never lands in `ps -ef` inside the
+# db container or in host-visible docker exec argv).
+docker compose exec -T -e MYSQL_PWD="${DB_PASSWORD}" db mariadb \
+    -u "${DB_USERNAME}" "${DB_DATABASE}" \
     -e "UPDATE proxy_accounts SET enabled = 0 WHERE username = '$USERNAME'" \
     2>/dev/null
 
@@ -127,8 +130,10 @@ docker compose exec -T db mariadb \
 #    busybox's `date` (alpine) silently ignores `%3N` /
 #    `%N` and returns whole-second precision only.
 step "Publish disable to Redis revocation bus"
-docker compose exec -T redis redis-cli \
-    -a "${REDIS_PASSWORD}" \
+# Password via REDISCLI_AUTH env, not -a "…" on argv (matches the
+# backup.sh v0.0.17 pattern — never reaches `ps -ef` or host argv).
+docker compose exec -T -e REDISCLI_AUTH="${REDIS_PASSWORD}" redis redis-cli \
+    --no-auth-warning \
     PUBLISH cool_tunnel:revocations \
     "{\"kind\":\"account_changed\",\"username\":\"$USERNAME\",\"reason\":\"stress\"}" \
     >/dev/null

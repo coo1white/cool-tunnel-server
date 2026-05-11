@@ -81,7 +81,14 @@ step "Import db.sql into MariaDB"
 # will fail with "table exists" — that's the correct signal that
 # this stage already ran. Operator drops + re-creates the DB if
 # they want to retry.
-compose exec -T db sh -c "mariadb -u root -p\"\$MARIADB_ROOT_PASSWORD\" \"\${MARIADB_DATABASE:-cooltunnel}\"" \
+#
+# Password discipline (matches backup.sh's v0.0.17 pattern): pass
+# MARIADB_ROOT_PASSWORD via MYSQL_PWD env, NOT via -p"…" on argv.
+# The mariadb client auto-reads MYSQL_PWD when no -p is given, so
+# the secret never reaches `ps -ef` inside the container or any
+# host-side process collector.
+compose exec -T -e MYSQL_PWD="${MARIADB_ROOT_PASSWORD}" db \
+    mariadb -u root "${MARIADB_DATABASE:-cooltunnel}" \
     < tmp/restore/db.sql \
     || die "db.sql import failed — see ct-db logs" \
            "docker compose logs --tail=50 db"

@@ -47,8 +47,11 @@ hide_via=$(echo "$probe_json" | jq -r .hide_via_effective)
 probe_res=$(echo "$probe_json" | jq -r .probe_resistance_effective)
 
 # Read the panel's intent for probe_resistance from ServerConfig.
-want_probe_res=$(docker compose exec -T db mariadb \
-    -u"${DB_USERNAME}" -p"${DB_PASSWORD}" "${DB_DATABASE}" \
+# Password via MYSQL_PWD env, not -p"…" on argv (matches backup.sh's
+# v0.0.17 hardening — never reaches `ps -ef` inside the db container
+# or in host-visible docker exec argv).
+want_probe_res=$(docker compose exec -T -e MYSQL_PWD="${DB_PASSWORD}" db mariadb \
+    -u "${DB_USERNAME}" "${DB_DATABASE}" \
     -N -B -e 'SELECT anti_tracking_probe_resistance FROM server_configs WHERE id=1' \
     2>/dev/null | tr -d '[:space:]')
 

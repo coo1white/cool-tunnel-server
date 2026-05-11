@@ -138,10 +138,15 @@ check_components() {
 }
 
 # ---- 8. Redis revocation bridge live -----------------------------
+# Password discipline (matches backup.sh's v0.0.17 pattern): pass
+# REDIS_PASSWORD via REDISCLI_AUTH env, NOT via -a "…" on argv.
+# `redis-cli` auto-reads REDISCLI_AUTH when no -a is given (>= 5.0),
+# so the secret never reaches `ps -ef` in the panel container or
+# the host-visible argv of `docker compose exec`.
 check_redis_bridge() {
-    docker compose exec -T panel sh -c '
-        : "${REDIS_PASSWORD:?missing in env}"
-        redis-cli -h redis -a "$REDIS_PASSWORD" --no-auth-warning \
+    docker compose exec -T -e REDISCLI_AUTH="${REDIS_PASSWORD:-}" panel sh -c '
+        : "${REDISCLI_AUTH:?missing REDIS_PASSWORD in env}"
+        redis-cli -h redis --no-auth-warning \
             publish cool_tunnel:revocations "{\"kind\":\"resync\"}" >/dev/null
     ' 2>/dev/null || { record 8 ng "Could not publish to Redis"; return; }
     sleep 1
