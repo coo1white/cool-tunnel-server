@@ -91,7 +91,19 @@ pub async fn collect(pool: &MySqlPool, admin: &ClashAdmin) -> Result<()> {
 
         // Read previous total for the day so we can compute the delta
         // to add to proxy_accounts.used_bytes.
-        let prev: Option<(i64, i64)> = sqlx::query_as(
+        //
+        // v0.0.82 robustness-review fix (item 5): SELECT into u64,
+        // not i64. The schema columns are `unsignedBigInteger` (per
+        // panel/database/migrations/2026_05_03_000004_create_traffic_logs_table.php
+        // :25-26). sqlx 0.8's `query_as<_, (i64, i64)>` returns a
+        // decode error the moment a value exceeds `i64::MAX`. The
+        // cron tick then fails, `traffic_logs` stops moving, and
+        // downstream `quota::enforce` stops disabling expired-by-
+        // bytes accounts. The realistic trigger is restoring from
+        // a backup written by a tool that wrote larger values; the
+        // theoretical trigger is a long-lived high-traffic VPS
+        // crossing 8 EB on a single account.
+        let prev: Option<(u64, u64)> = sqlx::query_as(
             r"SELECT uplink_bytes, downlink_bytes FROM traffic_logs
               WHERE proxy_account_id = ? AND day = ?",
         )
@@ -100,22 +112,30 @@ pub async fn collect(pool: &MySqlPool, admin: &ClashAdmin) -> Result<()> {
         .fetch_optional(pool)
         .await?;
 
-        let (prev_up, prev_down) = prev.unwrap_or((0, 0));
-        // saturating_sub: a sing-box restart resets the counter, so
-        // the new "current" can be lower than the stored "previous".
-        // Plain `s.uplink - prev_up` panics in debug and silently
-        // wraps in release if either side approaches i64::MIN/MAX
-        // (e.g. a 64-bit total returned near the extremes by a
-        // future upstream that switches counter encoding). The
-        // saturating form returns 0 in that corner instead of
-        // wrapping to a huge positive delta.
-        let delta_up = s.uplink.saturating_sub(prev_up).max(0);
-        let delta_down = s.downlink.saturating_sub(prev_down).max(0);
+        let (prev_up, prev_down) = prev.unwrap_or((0u64, 0u64));
+
+        // Sample values come from Prometheus parsing as i64 (sing-box
+        // wire format is bounded). Convert to u64 for delta
+        // arithmetic; clamp i64-negative readings to 0 (a malformed
+        // counter line; unlikely but defensive). u64::saturating_sub
+        // returns 0 when the result would be negative — which is
+        // exactly the right behaviour for the "sing-box restart
+        // reset the counter, current < previous" case.
+        let cur_up = s.uplink.max(0) as u64;
+        let cur_down = s.downlink.max(0) as u64;
+        let delta_up = cur_up.saturating_sub(prev_up);
+        let delta_down = cur_down.saturating_sub(prev_down);
 
         db::upsert_traffic(pool, id, day, s.uplink, s.downlink, s.connections).await?;
-        if delta_up + delta_down > 0 {
-            db::add_used_bytes(pool, id, delta_up + delta_down).await?;
-            total += delta_up + delta_down;
+        let delta_sum: u64 = delta_up.saturating_add(delta_down);
+        if delta_sum > 0 {
+            // add_used_bytes signature still takes i64 (and rejects
+            // > 1 PiB). Clamp at i64::MAX for the boundary cross;
+            // any real value will be far below 1 PiB anyway, so
+            // this only matters under pathological u64 inputs.
+            let delta_i64: i64 = i64::try_from(delta_sum).unwrap_or(i64::MAX);
+            db::add_used_bytes(pool, id, delta_i64).await?;
+            total = total.saturating_add(delta_i64);
         }
     }
 
