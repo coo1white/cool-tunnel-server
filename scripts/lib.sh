@@ -310,6 +310,50 @@ compose_project_name() {
     printf '%s\n' "$name"
 }
 
+# acquire_op_lock
+#
+# v0.0.80 robustness-review fix (item 3): take an exclusive,
+# non-blocking flock for the lifetime of the calling script so two
+# operators (or one operator and a cron-fired update timer) can't
+# run mutating scripts concurrently against the same project.
+#
+# The motivating incident pattern: pager fires for an unrelated
+# cause, secondary operator SSHes in, sees a "stuck" dashboard,
+# fires `make update` to "kick it" — both update.sh runs then
+# race the .env auto-migration's `awk > .env.tmp && mv` and clobber
+# each other; both `compose build panel` runs race the image tag;
+# operator A's `compose up -d` silently no-ops because operator B's
+# build is now "current" with their changes. Half-applied
+# migrations are the worst case.
+#
+# The lock is per-project (round-24 multi-deploy: prod and staging
+# on the same host don't serialise against each other) and shared
+# across install/update/backup/restore (any of them blocks the
+# others). Lock path is under /tmp because that's universally
+# writable and tmpfs-backed; conflicts across users on the same
+# host are out of scope (the deploy posture is single-operator).
+#
+# fd 9 is well outside typical script use (1=stdout, 2=stderr,
+# 0=stdin, plus the occasional 3/4 for explicit pipes). The
+# kernel releases the lock when the process exits, so no manual
+# cleanup is needed — even on `kill -9` the fd closes and flock
+# drops the lock.
+acquire_op_lock() {
+    require_cmd flock "apt install -y util-linux"
+    local project lock_path
+    project=$(compose_project_name)
+    lock_path="/tmp/cool-tunnel-ops-${project}.lock"
+
+    # shellcheck disable=SC2188  # the redirect IS the side effect (fd 9 open)
+    exec 9>"$lock_path" \
+        || die "could not open lock file $lock_path" \
+               "check /tmp permissions and disk space"
+    if ! flock -n 9; then
+        die "another cool-tunnel operator script is already running for project '${project}'" \
+            "lockfile: $lock_path  (try: lsof '$lock_path' to see who holds it)"
+    fi
+}
+
 # component_check_strict [<manifests-dir>]
 #
 # Run the Rust component checker and fail when any row reports NG.

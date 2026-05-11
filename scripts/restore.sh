@@ -27,6 +27,13 @@ fi
 BACKUP_TGZ="$1"
 require_file "$BACKUP_TGZ" "did you mean a file under backups/?"
 require_docker
+# v0.0.80 robustness-review fix: take an exclusive flock so a
+# concurrent update / install can't land mutations halfway through
+# the restore. The down-stack guard below is necessary but not
+# sufficient — without the lock, an operator who runs `make update`
+# in another shell after the down-stack check passes can still
+# race in mid-restore.
+acquire_op_lock
 
 # Refuse to restore over a populated stack — too easy to nuke a live
 # deployment by typing the wrong path. Operator must explicitly

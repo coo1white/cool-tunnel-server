@@ -29,6 +29,10 @@ cd "$(dirname "$0")/.." || exit 1
 
 require_file .env "cp .env.example .env  &&  \$EDITOR .env"
 require_docker
+# v0.0.80 robustness-review fix: take an exclusive flock so a
+# concurrent update / install can't race the dump (which would
+# tar a half-mutated DB or a Caddyfile that's mid-rename).
+acquire_op_lock
 load_env .env
 
 ts=$(date -u +%Y-%m-%dT%H-%M-%SZ)
