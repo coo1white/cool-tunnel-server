@@ -14,6 +14,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 require_file .env "cp .env.example .env  &&  \$EDITOR .env"
 require_docker
+acquire_op_lock
 
 step "git pull (fast-forward only)"
 git pull --ff-only \
