@@ -98,7 +98,16 @@ pub async fn emit(pool: &MySqlPool, account_id: i64) -> Result<()> {
             fake_site_slug: None,
         },
         issued_at: now,
-        expires_at: now + 60 * 60 * 24 * 30, // 30 days
+        // v0.0.83 robustness-review fix (item 6): clamp to the
+        // protocol's freshness window. Pre-fix this was `now + 30
+        // days`, which exceeded `FRESHNESS_WINDOW_SECONDS` (7
+        // days). Spec-compliant clients would refuse the manifest
+        // after day 7 with `StaleByIssuedAt` — users saw their
+        // subscription "stop working" a week after install while
+        // operators saw `expires_at` 23 days in the future and had
+        // no obvious diagnostic. The single source of truth is
+        // `SubscriptionManifestV1::canonical_expires_at`.
+        expires_at: SubscriptionManifestV1::canonical_expires_at(now),
         note: Some(
             "The password field is a placeholder — the panel must \
              splice in the cleartext before signing and serving."
