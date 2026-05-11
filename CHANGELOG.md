@@ -22,6 +22,60 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.81] — 2026-05-11 — Boot-time guards: OCTANE_SERVER default + APP_KEY refusal
+
+Promotes review item 4 from the v0.0.78 robustness review. Two
+boot-time guards close two Critical-class fail-silent paths. The
+proxy wire protocol, subscription manifest, and runtime behaviour
+are unchanged.
+
+### Fixed
+
+- **`OCTANE_SERVER` default is now `frankenphp`, not `roadrunner`.**
+  The upstream Laravel Octane vendor:publish stub ships
+  `'server' => env('OCTANE_SERVER', 'roadrunner')`. Cool Tunnel
+  runs FrankenPHP exclusively. The repo-root `.env.example` sets
+  `OCTANE_SERVER=frankenphp`, so production was correct — but any
+  path that loaded the config without that env injection (cached
+  config, post-deploy CLI, dev shell) inherited the upstream
+  "roadrunner" default. `php artisan octane:reload` then targeted
+  the wrong driver, found no PID, exited 0 — the worker was never
+  recycled, and the 500-request `MAX_REQUESTS` cap became the only
+  safety net for picking up code/config changes after a deploy.
+  `panel/config/octane.php` now defaults to `frankenphp`. The
+  matching setting is added to `panel/.env.example` for dev-shell
+  hygiene. The default is pinned at unit-test time by the new
+  `tests/Unit/OctaneServerDefaultTest` (text-level assertion so a
+  vendor:publish refresh that reverts the default trips immediately).
+- **`frankenphp-worker.php` refuses to boot with empty `APP_KEY`.**
+  Without a valid `APP_KEY`, every `password_cleartext_encrypted`
+  blob fails to decrypt and every subscription HMAC fails to sign;
+  the framework's exception handler then catches the throws per
+  request and degrades each subscription URL to 200-with-cover-
+  site bytes. Real users would see "subscription URL stopped
+  working" while operators saw no panel error. The bootstrap
+  entrypoint now exits 1 with a clear stderr diagnostic — and the
+  `artisan key:generate` command — when `APP_KEY` is empty or
+  unset. Operator gets a fail-fast signal at container start
+  instead of a quiet wave of degraded URLs hours later.
+
+### Tests
+
+- New unit test: `tests/Unit/OctaneServerDefaultTest::default_octane_server_is_frankenphp`.
+- PR #71 CI passed before merge — full audit.yml gate (cargo
+  audit, cargo deny, composer audit, gitleaks, phpstan, sqlx
+  offline, blade asset-link, php class-vs-filename, php style,
+  stale doc references, manifest drift, anti-tracking config,
+  dependency review) plus the standard ci.yml gate.
+- Local pre-release validation:
+  - `php -l` clean on `octane.php`, `frankenphp-worker.php`,
+    `OctaneServerDefaultTest.php`.
+  - `./vendor/bin/phpunit --filter OctaneServerDefaultTest` —
+    1 test, 4 assertions, OK.
+  - `make ci` clean.
+
+---
+
 ## [0.0.80] — 2026-05-11 — Operator-script flock (concurrent-run safety)
 
 Promotes review item 3 from the v0.0.78 robustness review. The
