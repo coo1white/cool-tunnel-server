@@ -17,4 +17,25 @@ if (! file_exists($octaneWorker)) {
     exit(1);
 }
 
+// v0.0.81 robustness-review fix (item 4): refuse to boot with an
+// empty APP_KEY. Without it every `password_cleartext_encrypted`
+// blob fails to decrypt and every subscription HMAC fails to sign;
+// the framework's exception handler then catches the throws per
+// request and degrades each subscription URL to 200-with-cover-
+// site bytes. Real users see "subscription URL stopped working"
+// while operators see no panel error and assume an upstream issue.
+//
+// Fail HERE, at boot, so the operator gets a clear startup signal
+// (supervisord prints stderr; `docker compose logs panel` shows it
+// immediately) instead of a quiet wave of degraded URLs hours later.
+$appKey = $_ENV['APP_KEY'] ?? getenv('APP_KEY');
+if ($appKey === false || $appKey === '') {
+    fwrite(STDERR, "[frankenphp-worker] APP_KEY is empty or unset.\n");
+    fwrite(STDERR, "[frankenphp-worker] Generate one and write it into the repo-root .env, then docker compose restart panel:\n");
+    fwrite(STDERR, "[frankenphp-worker]   docker compose run --rm -T panel php artisan key:generate --show\n");
+    fwrite(STDERR, "[frankenphp-worker]   # Paste the printed value into .env as APP_KEY=base64:...\n");
+    fwrite(STDERR, "[frankenphp-worker] Refusing to boot — every subscription URL would silently degrade to cover-site bytes.\n");
+    exit(1);
+}
+
 require $octaneWorker;
