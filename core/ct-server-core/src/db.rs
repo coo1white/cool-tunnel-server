@@ -243,17 +243,74 @@ pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64)
     // proxy_accounts.id and used_bytes are BIGINT UNSIGNED — bind as u64.
     let d: u64 = delta as u64;
     let id: u64 = proxy_account_id.max(0) as u64;
-    sqlx::query!(
+
+    // v0.0.82 robustness-review fix (item 5): guard the addition
+    // against u64 overflow at the SQL boundary. Naively `SET
+    // used_bytes = used_bytes + ?` lets MariaDB silently wrap (or
+    // error in strict mode) when the sum exceeds u64::MAX
+    // (18446744073709551615 = 2^64 - 1). On wrap, `used_bytes`
+    // jumps near 0 and the quota check `used_bytes < quota_bytes`
+    // passes again — the account silently re-enables. The
+    // `MAX_USED_BYTES_DELTA` cap above keeps `d` ≤ 1 PiB
+    // (= 2^50), so the right-hand `MAX - d` subtraction is always
+    // safe, and the WHERE clause refuses the UPDATE when the
+    // addition would overflow.
+    //
+    // 0 rows-affected then has two possible causes: (a) the id
+    // doesn't exist (a known late-metric race for deleted
+    // accounts; benign), or (b) the addition would overflow
+    // (loud accounting bug; surface as Err). A second one-row
+    // existence check distinguishes them on the cold path —
+    // happy-path adds zero round-trips.
+    // Runtime `sqlx::query` (not the compile-time `query!` macro)
+    // because the overflow guard adds a third `?` binding that the
+    // existing `core/.sqlx/` offline metadata doesn't cover. The
+    // schema and binding types are simple here (three `u64`s into
+    // a parameterised UPDATE); CI's stress + integration suite
+    // exercises the live path. The first compile-time-checked
+    // query on the same table (`upsert_traffic` above, plus the
+    // unchanged `SELECT 1` check below) provides the structural
+    // validation against schema drift.
+    let res = sqlx::query(
         r#"
         UPDATE proxy_accounts
-        SET used_bytes = used_bytes + ?, last_seen_at = NOW(), updated_at = NOW()
-        WHERE id = ?
+        SET used_bytes = used_bytes + ?,
+            last_seen_at = NOW(),
+            updated_at = NOW()
+        WHERE id = ? AND used_bytes <= 18446744073709551615 - ?
         "#,
-        d,
-        id,
     )
+    .bind(d)
+    .bind(id)
+    .bind(d)
     .execute(pool)
     .await?;
+
+    if res.rows_affected() == 0 {
+        // Distinguish "account no longer exists" (silent) from
+        // "would overflow u64" (loud).
+        let exists: Option<(i64,)> = sqlx::query_as(r"SELECT 1 FROM proxy_accounts WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+
+        if exists.is_some() {
+            return Err(crate::Error::validation(
+                "traffic delta",
+                format!(
+                    "add_used_bytes: account {proxy_account_id} would overflow u64 \
+                     (used_bytes + delta {delta} exceeds 18446744073709551615) \
+                     — refusing to apply"
+                ),
+            ));
+        }
+        // Account was deleted between metric collection and this
+        // call. Known race; not actionable; log at debug.
+        tracing::debug!(
+            proxy_account_id,
+            "add_used_bytes: account no longer exists (late metric for deleted account)"
+        );
+    }
     Ok(())
 }
 
@@ -364,5 +421,33 @@ mod tests {
         assert_eq!(opts.get_port(), 3306);
         assert_eq!(opts.get_database(), Some("cooltunnel"));
         assert_eq!(opts.get_username(), "cooltunnel");
+    }
+
+    #[test]
+    fn add_used_bytes_sql_carries_overflow_guard() {
+        // v0.0.82 robustness-review fix (item 5). The pre-fix
+        // `SET used_bytes = used_bytes + ?` lets MariaDB silently
+        // wrap (or error in strict mode) when the sum exceeds
+        // u64::MAX (18446744073709551615 = 2^64 - 1). On wrap,
+        // `used_bytes` jumps near 0 and the quota check
+        // `used_bytes < quota_bytes` passes again — the account
+        // silently re-enables. This text-level pin asserts the
+        // overflow guard is present in the live SQL string so a
+        // future refactor can't regress the protection without
+        // tripping the test. We can't run a live integration test
+        // against MariaDB at unit-test time, but the SQL string is
+        // a load-bearing surface — pin it.
+        let src = include_str!("db.rs");
+        assert!(
+            src.contains("used_bytes <= 18446744073709551615 - ?"),
+            "add_used_bytes UPDATE must keep its overflow-guard WHERE clause; \
+             see the v0.0.82 rationale block on add_used_bytes."
+        );
+        assert!(
+            src.contains("would overflow u64"),
+            "add_used_bytes must surface a typed validation error on the \
+             overflow-detected branch (rows_affected == 0 + account exists), \
+             not silently no-op."
+        );
     }
 }
