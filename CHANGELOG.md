@@ -22,6 +22,79 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.84] — 2026-05-11 — ServerConfig render+reload moved into queued job
+
+Promotes the final item (item 7) of the v0.0.78 robustness review.
+This closes the last remaining Critical from that review. The
+proxy wire protocol, subscription manifest, and external behaviour
+are unchanged; the change is on the operator-facing save path
+inside the panel.
+
+### Fixed
+
+- **`ServerConfig::booted::updated` no longer runs three shell-outs
+  inline inside the Filament request lifecycle.** Pre-fix the
+  hook ran `CaddyfileGenerator::renderToFile()`,
+  `SingBoxConfigGenerator::renderToFile()`, and
+  `SingBoxReloader::reload()` synchronously inside the request.
+  Each render service swallowed any `\Throwable` to a
+  `Log::critical` and returned null, but the page's `save()`
+  method unconditionally showed a green "regenerated; both
+  services hot-reloading" notification — operators who hit a
+  transient `ct-server-core` hang during the upgrade window saw
+  "saved successfully" while the on-disk config still reflected
+  the previous state. The Octane worker's request was also
+  blocked for the full 60s subprocess timeout if any of the
+  three calls hung. Slow path now runs in the new
+  `ReloadServerConfigJob` (3 tries × 5s backoff, hash-idempotent
+  via the renderer's SHA-256 dedup); fast path
+  (`announceServerConfigChanged` Redis pub/sub) stays inline so
+  the daemon still picks up changes in ~1ms. Both paths now run
+  inside `DB::afterCommit` so a rollback elsewhere in the
+  surrounding transaction doesn't queue a phantom reload. Job
+  dispatch is wrapped in `try/catch` so a transient queue-backend
+  outage (Redis down) doesn't bubble out as a 500 to the request.
+- **Filament page notification reflects the new contract.**
+  `ServerConfigPage::save()` now reads "Reload queued. The Redis
+  fast-path is already in flight (≤100ms); the panel-side
+  render+reload backstop will land within seconds. If the
+  Components page reports drift after a minute, check
+  `docker compose logs panel` for `serverconfig.reload.job_failed`."
+- **`failed()` handler surfaces drift at CRITICAL level.** On
+  retry exhaustion the job emits
+  `serverconfig.reload.job_failed` at `Log::critical`, mirroring
+  the existing `singbox.reload.job_failed` event from
+  `ReloadSingBoxJob`. Dashboards alarming on `critical` now fire
+  for slow-path failures too. The context note documents the
+  drift-vs-security split — the Redis fast-path keeps the
+  daemon in sync, so a slow-path failure is panel/disk-state
+  drift, not a security incident — so the 3am operator paged on
+  the alarm doesn't escalate to security.
+
+### Tests
+
+- New `Feature/ServerConfigSaveDispatchesReloadJobTest` pins
+  the three semantic cases the `DB::afterCommit` dispatch
+  contract must guarantee (rolled-back / committed / no-
+  transaction). Mirrors the existing
+  `ProxyAccountAfterCommitTest`.
+- New `Feature/ReloadServerConfigJobFailedHandlerTest` pins the
+  `failed()` contract — CRITICAL log level, documented event
+  name, exception type + message + tries count, drift-vs-
+  security note. Mirrors the existing
+  `ReloadSingBoxJobFailedHandlerTest`.
+- 6 new tests, 10 assertions, all pass.
+- PR #74 CI passed before merge — full audit.yml gate plus the
+  standard ci.yml gate.
+- Local pre-release validation:
+  - `php -l` clean on all five touched/new PHP files.
+  - `./vendor/bin/phpunit --filter
+    'ServerConfigSaveDispatchesReloadJob|ReloadServerConfigJobFailedHandler'`
+    — 6 tests, 10 assertions, OK.
+  - `make ci` clean.
+
+---
+
 ## [0.0.83] — 2026-05-11 — Subscription expires_at clamp (spec compliance)
 
 Promotes review item 6 from the v0.0.78 robustness review. The
