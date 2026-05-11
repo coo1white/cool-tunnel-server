@@ -22,6 +22,62 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.78] — 2026-05-11 — README refresh: Rule Maker FSM, OTel observability, credential-lock
+
+Documentation-only release. The proxy wire protocol, subscription
+manifest, rendered configuration surface, and runtime behaviour are
+unchanged from `v0.0.77`.
+
+### Changed
+
+- **README aligned with the v0.0.72 → v0.0.77 reality.** The
+  System Contract now pins `v0.0.77` as the current baseline,
+  records WireV1 as the wire format, and expands the Core model
+  row to name the credential-lock invariant, the Rule Maker daemon
+  FSM, bounded `BytesMut` frames, typed wire errors, and OTel-style
+  network-turn spans.
+- **Architecture deep-dive describes the Rule Maker FSM.** A new
+  paragraph documents connection-local atomic transitions, the
+  `HardReset` taxonomy for protocol violations, and the
+  `ProbingConstancy` step that measures frame and latency pressure
+  against the 80% bottleneck threshold and narrows the next read
+  chunk under load without raising the hard frame cap.
+- **Industrial Makefile section surfaces operator invariants.**
+  `make readiness` is now described as the 10-check launch gate
+  with a `9/10` PASS threshold and a structural-failure cap (v0.0.75),
+  and `ct-server-core guard credential-lock` is documented as a
+  separately runnable `db = rendered = manifest = mac-config`
+  invariant (v0.0.73).
+- **Health-metrics QA names the offense-driven surface.**
+  `CT_METRICS_BIND` is clarified as opt-in with a `127.0.0.1:9292`
+  recommendation; the checklist now references
+  `otel_network_turn_*`, `ct_threshold_80pct_crossings_total`,
+  and `ct_daemon_fsm_hard_resets_total` and links to
+  `docs/observability-dashboard.md` for the Prometheus and Grafana
+  story (v0.0.69, v0.0.76).
+- **Project Map and Operator References extended.** Added pointers
+  to `daemon_fsm.rs`, `observability.rs`,
+  `credential-lock.upstream.json`, and `late-night-comeback.sh` in
+  the Project Map; added nine in-repo docs to the Operator
+  References table (`installation-debian.md`, `components.md`,
+  `daemon-fsm.md`, `observability-dashboard.md`,
+  `release-stress-test.md`, `architectural-decisions-2026.md`,
+  `cross-platform-clients.md`, `going-to-china.md`, and
+  `ai-unit-test-generation.md`).
+
+### Tests
+
+- PR #68 CI passed before merge:
+  - `manifests (jq parse)`
+  - `php (syntax / composer validate)`
+  - `rust (build / test / clippy / fmt)`
+  - `shell (shellcheck)`
+  - `templates (substitute + caddy/sing-box config syntax)`
+- Local pre-release validation:
+  - `make ci`
+
+---
+
 ## [0.0.77] — 2026-05-10 — Rule Maker daemon FSM
 
 This patch release promotes the daemon transport FSM hardening. The
