@@ -22,6 +22,62 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.82] — 2026-05-11 — u64-safe traffic accounting
+
+Promotes review item 5 from the v0.0.78 robustness review. Two
+surfaces in the Rust core, one class of bug — the `traffic_logs`
+columns are `unsignedBigInteger` but were being read as `i64`,
+and `proxy_accounts.used_bytes` was being incremented without a
+u64 overflow guard. The proxy wire protocol, subscription
+manifest, and external behaviour are unchanged.
+
+### Fixed
+
+- **`metrics::collect` SELECT now reads `(u64, u64)`.** Previously
+  `sqlx::query_as::<_, (i64, i64)>` against `traffic_logs.uplink_bytes`
+  / `downlink_bytes` (declared `unsignedBigInteger` per the migration)
+  returned a sqlx decode error the moment a stored value exceeded
+  `i64::MAX`. The cron tick then failed, `traffic_logs` stopped
+  moving, and downstream `quota::enforce` stopped disabling expired-
+  by-bytes accounts. Realistic trigger: restoring from a backup
+  written by a tool that wrote larger values; theoretical trigger:
+  long-lived high-traffic VPS crossing 8 EB on a single account.
+  Switched to `Option<(u64, u64)>`, with `Sample` i64 readings
+  clamped to non-negative via `.max(0) as u64` for delta arithmetic.
+  `u64::saturating_sub` returns 0 on counter-reset, matching the
+  prior intent of `i64::saturating_sub` plus `.max(0)`.
+- **`db::add_used_bytes` UPDATE now refuses to apply on u64
+  overflow.** Previously `SET used_bytes = used_bytes + ?` would
+  silently wrap (or error in strict mode) when the sum exceeded
+  `u64::MAX` (`18446744073709551615` = 2^64 - 1). On wrap,
+  `used_bytes` jumped near 0 and the quota check
+  `used_bytes < quota_bytes` passed again — the account silently
+  re-enabled. The new WHERE-clause guard
+  `used_bytes <= 18446744073709551615 - ?` makes the UPDATE refuse
+  to apply on overflow; a one-row existence check on the cold path
+  distinguishes "account no longer exists" (silent — known late-
+  metric race for deleted accounts) from "would overflow" (loud
+  typed validation error).
+
+### Tests
+
+- New unit test `db::tests::add_used_bytes_sql_carries_overflow_guard`
+  pins the SQL string and the typed-error branch via `include_str!`
+  so a future refactor can't regress the protection silently.
+- PR #72 CI passed before merge — full `audit.yml` gate plus the
+  standard `ci.yml` gate, including `sqlx offline metadata up to
+  date` (the new UPDATE uses runtime `sqlx::query` rather than the
+  compile-time `query!` macro because the third `?` binding isn't
+  in the existing `core/.sqlx/` cache; `upsert_traffic` immediately
+  above keeps `query!` so schema-drift validation is preserved at
+  the table level).
+- Local pre-release validation:
+  - `SQLX_OFFLINE=true cargo test --release --workspace --locked`
+    — 126 passed, 0 failed.
+  - `make ci` clean.
+
+---
+
 ## [0.0.81] — 2026-05-11 — Boot-time guards: OCTANE_SERVER default + APP_KEY refusal
 
 Promotes review item 4 from the v0.0.78 robustness review. Two
