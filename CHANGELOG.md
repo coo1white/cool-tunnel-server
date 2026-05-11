@@ -22,6 +22,56 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.83] — 2026-05-11 — Subscription expires_at clamp (spec compliance)
+
+Promotes review item 6 from the v0.0.78 robustness review. The
+proxy wire format remains WireV1-compatible; the change is on the
+subscription manifest field that spec-compliant clients use for
+the freshness check, so a client built against any 0.0.x ct-protocol
+version will continue to verify and now correctly receive a
+manifest valid for the full window the spec advertises.
+
+### Fixed
+
+- **Server-emitted manifests no longer set `expires_at` past the
+  spec's freshness window.** Pre-fix, `subscription::emit` set
+  `expires_at = now + 30 days`, but
+  `SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS = 7 days` is
+  the spec invariant. Any client running `check_freshness` (the
+  macOS client links against ct-protocol and implements the check)
+  refused the manifest after day 7 with `StaleByIssuedAt`. Users
+  saw "subscription stopped working a week after install" with no
+  apparent cause; operators inspected the manifest and saw
+  `expires_at` 23 days in the future and had no diagnostic. New
+  `SubscriptionManifestV1::canonical_expires_at(issued_at)` is the
+  single source of truth for the issued/expiry relationship; the
+  server-side emitter now uses it. Saturating-add inside the
+  helper guards a near-`u64::MAX` `issued_at` from wrapping below
+  `issued_at` (which would trip `IssuedInFuture` on every
+  subsequent client).
+
+### Tests
+
+- New ct-protocol test
+  `canonical_expires_at_lands_on_freshness_window_boundary`
+  asserts the hard property
+  (`expires_at - issued_at <= FRESHNESS_WINDOW_SECONDS`), the
+  equality (the helper lands EXACTLY on the boundary, not earlier
+  than the spec promises), and the end-to-end `check_freshness`
+  behaviour at boundary and boundary+1 (transitioning to
+  `StaleByIssuedAt`, NOT `ExpiredByExpiresAt` — pinning the order
+  of checks against accidental rearrangement).
+- New ct-protocol test `canonical_expires_at_saturates_near_u64_max`
+  guards the saturating-add edge case.
+- All 24 ct-protocol tests pass.
+- PR #73 CI passed before merge — full audit.yml gate plus the
+  standard ci.yml gate.
+- Local pre-release validation:
+  - `cargo test --release -p ct-protocol --locked` — 24 passed.
+  - `make ci` clean.
+
+---
+
 ## [0.0.82] — 2026-05-11 — u64-safe traffic accounting
 
 Promotes review item 5 from the v0.0.78 robustness review. Two
