@@ -107,6 +107,32 @@ impl SubscriptionManifestV1 {
     /// level so every client agrees. Round-13 time-and-clock audit.
     pub const FRESHNESS_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
+    /// Compute the canonical `expires_at` for a manifest issued at
+    /// `issued_at`. The returned value is guaranteed to satisfy
+    /// `expires_at <= issued_at + FRESHNESS_WINDOW_SECONDS`, so any
+    /// spec-compliant client (one that runs `check_freshness`) will
+    /// accept the manifest until it ages out via the freshness
+    /// window — never refusing it earlier than the server promised.
+    ///
+    /// v0.0.83 robustness-review fix (item 6). Pre-fix, the server
+    /// (`ct_server_core::subscription::emit`) set
+    /// `expires_at = issued_at + 30 days`, which exceeded
+    /// `FRESHNESS_WINDOW_SECONDS` (7 days). Spec-compliant clients
+    /// then refused the manifest after day 7 even though the server
+    /// promised 30. Users would see "subscription stopped working
+    /// a week after install" with no apparent cause; the operator
+    /// would inspect the manifest and see `expires_at` 23 days in
+    /// the future and be confused.
+    ///
+    /// Saturating add so a near-`u64::MAX` `issued_at` (impossible
+    /// in practice but cheap to defend) doesn't wrap to a value
+    /// before `issued_at`, which would trip `IssuedInFuture` on
+    /// every subsequent client.
+    #[must_use]
+    pub fn canonical_expires_at(issued_at: u64) -> u64 {
+        issued_at.saturating_add(Self::FRESHNESS_WINDOW_SECONDS)
+    }
+
     /// Time-bounds check. Pure function — caller passes the current
     /// time so this is testable and works in `no_std` (the crate
     /// is `#![no_std]`).
@@ -437,6 +463,67 @@ mod tests {
             m.check_freshness(on_window + 1),
             FreshnessCheck::StaleByIssuedAt { age_seconds: _ }
         ));
+    }
+
+    #[test]
+    fn canonical_expires_at_lands_on_freshness_window_boundary() {
+        // v0.0.83 robustness-review fix (item 6). The server-side
+        // emitter (`ct_server_core::subscription::emit`) used to set
+        // `expires_at = issued_at + 30 days`, which exceeded
+        // `FRESHNESS_WINDOW_SECONDS` (7 days). Spec-compliant clients
+        // would refuse the manifest after day 7 with `StaleByIssuedAt`
+        // even though the server promised 30. Users would see
+        // "subscription stopped working a week after install" with no
+        // apparent cause; the operator would inspect the manifest and
+        // see `expires_at` 23 days in the future and be confused.
+        //
+        // The constructor pins the canonical relationship: any
+        // manifest minted via `canonical_expires_at` is accepted by
+        // `check_freshness` until the freshness window cuts in,
+        // never refused earlier than the server promised.
+        let issued_at = 10_000_u64;
+        let exp = SubscriptionManifestV1::canonical_expires_at(issued_at);
+
+        // Hard property: `expires_at - issued_at <= FRESHNESS_WINDOW`.
+        assert!(
+            exp.saturating_sub(issued_at) <= SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS,
+            "canonical_expires_at must keep expires_at - issued_at within \
+             FRESHNESS_WINDOW_SECONDS so check_freshness can't reject early"
+        );
+
+        // Stronger: lands EXACTLY on the boundary so the manifest is
+        // valid for the full window the spec advertises.
+        assert_eq!(
+            exp,
+            issued_at + SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS
+        );
+
+        // End-to-end: a manifest built with this expires_at is
+        // `Fresh` at every instant up to and including the window
+        // boundary; one second past, it transitions to
+        // `StaleByIssuedAt` (NOT `ExpiredByExpiresAt`, because the
+        // freshness window closes first). This pins the order of
+        // checks against accidental rearrangement.
+        let m = manifest_with_times(issued_at, exp);
+        let on_window = issued_at + SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS;
+        assert_eq!(m.check_freshness(on_window), FreshnessCheck::Fresh);
+        assert!(matches!(
+            m.check_freshness(on_window + 1),
+            FreshnessCheck::StaleByIssuedAt { .. }
+        ));
+    }
+
+    #[test]
+    fn canonical_expires_at_saturates_near_u64_max() {
+        // Defensive: a near-`u64::MAX` `issued_at` (impossible in
+        // wall-clock practice, but cheap to guard) must not wrap to
+        // a value below `issued_at`. If it did, every subsequent
+        // client would see the manifest as `IssuedInFuture` (because
+        // `now < issued_at` against the wrapped `expires_at`).
+        let issued_at = u64::MAX;
+        let exp = SubscriptionManifestV1::canonical_expires_at(issued_at);
+        assert_eq!(exp, u64::MAX, "must saturate, not wrap");
+        assert!(exp >= issued_at);
     }
 
     #[test]
