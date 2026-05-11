@@ -38,9 +38,24 @@ return [
     |
     | Supported: "roadrunner", "swoole", "frankenphp"
     |
+    | v0.0.81 robustness-review fix (item 4): the upstream Octane stub
+    | defaults to "roadrunner". Cool Tunnel runs FrankenPHP exclusively
+    | (see docker/panel/Dockerfile + supervisord.conf::frankenphp). The
+    | repo-root .env.example sets OCTANE_SERVER=frankenphp, so production
+    | is correct — but any path that loads this config without that env
+    | injection (cached config, post-deploy CLI, dev shell) inherited
+    | the upstream default, then `php artisan octane:reload` targeted
+    | the wrong driver, found no PID, exited 0 — and the worker was
+    | never actually recycled. The 500-request MAX_REQUESTS cap then
+    | became the only safety net for picking up code/config changes
+    | after a deploy. Pin the project-owned default to frankenphp so
+    | the bad upstream value can't sneak back in via a vendor:publish
+    | refresh or a dev shell that forgot to set the env. The pinning
+    | is enforced at unit-test time by tests/Unit/OctaneServerDefaultTest.
+    |
     */
 
-    'server' => env('OCTANE_SERVER', 'roadrunner'),
+    'server' => env('OCTANE_SERVER', 'frankenphp'),
 
     /*
     |--------------------------------------------------------------------------
