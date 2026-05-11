@@ -24,8 +24,9 @@ responsible for local law, provider terms, and the traffic you route.
 | Constraint | Position |
 | --- | --- |
 | Minimum host | Debian 11/12/13, root SSH, 1 vCPU, 1 GB RAM, ports `80/tcp` and `443/tcp`. |
+| Current baseline | `v0.0.77`. Wire format is WireV1; subscription manifests are stable across the 0.0.6x–0.0.7x line. |
 | Runtime model | FrankenPHP worker-mode with Laravel Octane. Laravel boot cost is paid once per worker. |
-| Core model | `ct-server-core` Rust binary handles rendering, probes, health checks, drift detection, and IPC-bound work. |
+| Core model | `ct-server-core` Rust binary owns rendering, probes, drift checks, the credential-lock invariant, and a Rule Maker daemon FSM with bounded `BytesMut` frames, typed wire errors, and OTel-style network-turn spans. |
 | Data posture | Zero user tracking. Internal health metrics are allowed; user data collection is forbidden. |
 | Deployment posture | Idempotent shell bootstrap, Docker Compose, pinned manifests, Makefile gates. |
 | License posture | Active license: AGPL-3.0-only. Restrictive LTSC-Heng terms are drafted in [LTSC-HENG-LICENSE-DRAFT.md](./LTSC-HENG-LICENSE-DRAFT.md). |
@@ -57,6 +58,19 @@ daemon IPC, and drift-sensitive checks. The design goal is zero-copy in
 the operational sense: keep data in typed structures, avoid lossy shell
 string pipelines, pass only the minimum frame over IPC, and write final
 configuration artifacts atomically.
+
+Daemon connections traverse a connection-local finite state machine — the
+Rule Maker. Transitions are atomic compare-exchange and the table is the
+only code allowed to choose a successor; an event whose required
+predecessor does not match forces `HardReset`. Oversized frames, read
+timeouts, malformed UTF-8, and malformed JSON are connection-scoped hard
+resets. Valid requests whose domain operation fails still return through
+`Responding` as a typed wire error. After every successful turn the
+server enters `ProbingConstancy`, measures frame and latency pressure
+against an 80% bottleneck threshold, and narrows the next read chunk
+under load without raising the hard frame cap. See
+[docs/daemon-fsm.md](./docs/daemon-fsm.md) and
+[docs/observability-dashboard.md](./docs/observability-dashboard.md).
 
 The stack is intentionally split:
 
@@ -131,10 +145,20 @@ environment before it mutates production state.
 | `make ci` | Rust fmt/clippy/test, PHP syntax, Composer audit, shellcheck, manifest checks, SoT parity, supervisord invariants. |
 | `make status` | Docker state, image state, embedded core binary presence, recent panel/sing-box errors, certificate presence. |
 | `make components` | Run `ct-server-core component check` against pinned manifests. |
-| `make readiness` | Execute `scripts/late-night-comeback.sh`, the operator launch gate. |
+| `make readiness` | Execute `scripts/late-night-comeback.sh`, the 10-check operator launch gate (PASS at `9/10`; structural failures cap the score below the threshold). |
 | `make verify-sot-vps` | Validate panel-hostname single-source-of-truth from inside the running Docker stack. |
 | `make backup` | Snapshot database, `.env`, and Caddy ACME state. |
 | `make sbom` | Generate CycloneDX SBOMs for Cargo, Composer, and Docker surfaces. |
+
+`make update` also runs `ct-server-core guard credential-lock` between
+the sing-box render and the post-purge component check. The guard
+asserts `db = rendered = manifest = mac-config` for every active proxy
+account and fails NG without printing passwords. Operators can invoke
+it directly:
+
+```bash
+docker compose exec -T panel ct-server-core guard credential-lock
+```
 
 Developer gates:
 
@@ -189,13 +213,19 @@ make readiness
   `sudo ss -ltnp`.
 - [ ] Confirm no metrics port is host-published:
   `docker compose ps` and `docker inspect ct-panel`.
-- [ ] If `CT_METRICS_BIND` is enabled, bind it only inside the panel
-  container or loopback namespace.
+- [ ] `CT_METRICS_BIND` is opt-in (default empty). The recommended
+  single-container value is `127.0.0.1:9292` — bind only inside the
+  panel container or loopback namespace, never on a public interface.
 - [ ] Scrape from inside the trusted Docker boundary only:
   `docker compose exec -T panel sh -lc 'curl -fsS http://127.0.0.1:9292/metrics || true'`.
 - [ ] Expected: internal-health counters only. No usernames, account
   IDs, target hosts, subscription tokens, request IDs, or per-user
-  destination data.
+  destination data. Network-turn timings appear under
+  `otel_network_turn_*` and `ct_threshold_80pct_crossings_total`;
+  daemon protocol faults appear under `ct_daemon_fsm_hard_resets_total`.
+  The Prometheus scrape config, alert rules, and Grafana panel
+  queries live in
+  [docs/observability-dashboard.md](./docs/observability-dashboard.md).
 
 ## Observability Boundary
 
@@ -268,12 +298,16 @@ Expected: JSON with `"reachable":true`.
 | [docker/panel/](./docker/panel/) | FrankenPHP, supervisord, PHP hardening, panel image. |
 | [panel/app/Filament/](./panel/app/Filament/) | Filament admin UI. |
 | [core/ct-server-core/src/](./core/ct-server-core/src/) | Rust control engine. |
+| [core/ct-server-core/src/daemon_fsm.rs](./core/ct-server-core/src/daemon_fsm.rs) | Rule Maker connection FSM, atomic transition table, Heng constancy probe. |
+| [core/ct-server-core/src/observability.rs](./core/ct-server-core/src/observability.rs) | OTel-compatible network-turn spans, capped hex dumps, 80% threshold helpers. |
 | [core/ct-protocol/src/](./core/ct-protocol/src/) | Shared protocol and manifest structures. |
 | [sing-box/config.json.tpl](./sing-box/config.json.tpl) | Proxy engine template. |
 | [caddy/Caddyfile.tpl](./caddy/Caddyfile.tpl) | Public Caddy template rendered by the panel/core. |
 | [haproxy/haproxy.cfg.tpl](./haproxy/haproxy.cfg.tpl) | Public SNI routing template. |
 | [manifests/](./manifests/) | Version pins and component verification rules. |
+| [manifests/credential-lock.upstream.json](./manifests/credential-lock.upstream.json) | `db = rendered = manifest = mac-config` invariant for `ct-server-core guard credential-lock`. |
 | [scripts/](./scripts/) | Bootstrap, install, update, backup, probes, stress gates. |
+| [scripts/late-night-comeback.sh](./scripts/late-night-comeback.sh) | The 10-check operator readiness gate (DNS, ports, ACME, UFW, kernel, NTP, components, Redis bridge, cover invariant, anti-tracking probe). |
 
 ## License
 
@@ -301,8 +335,17 @@ and [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md).
 | Document | Use |
 | --- | --- |
 | [GETTING_STARTED.md](./GETTING_STARTED.md) | Beginner install path. |
+| [docs/installation-debian.md](./docs/installation-debian.md) | Step-by-step Debian 10/11/12/13 install for first-time operators. |
 | [docs/operator-runbook.md](./docs/operator-runbook.md) | Update, repair, and incident commands. |
 | [docs/architecture.md](./docs/architecture.md) | Deeper system design notes. |
+| [docs/components.md](./docs/components.md) | The OK/NG component model and the eleven pinned components. |
+| [docs/daemon-fsm.md](./docs/daemon-fsm.md) | Rule Maker text diagram, no-forking rule, Heng constancy logic. |
+| [docs/observability-dashboard.md](./docs/observability-dashboard.md) | Prometheus scrape config, alert rules, Grafana panels for `/metrics`. |
+| [docs/release-stress-test.md](./docs/release-stress-test.md) | Runtime gate (`scripts/stress/run-all.sh`) for tagging a release. |
+| [docs/architectural-decisions-2026.md](./docs/architectural-decisions-2026.md) | Closing record of the 2026 self-audit programme. |
+| [docs/cross-platform-clients.md](./docs/cross-platform-clients.md) | Client family roadmap (macOS today, iOS/Android/Windows/Linux planned). |
+| [docs/going-to-china.md](./docs/going-to-china.md) | GFW-resistance operator runbook. |
+| [docs/ai-unit-test-generation.md](./docs/ai-unit-test-generation.md) | Retrieval anchors and contract-first guidance for AI maintainers. |
 | [LTSC.md](./LTSC.md) | Long-term servicing commitments and 2026 milestones. |
 | [AUDIT.md](./AUDIT.md) | Audit cycle map and release gates. |
 | [SECURITY.md](./SECURITY.md) | Security model and reporting path. |
