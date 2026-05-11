@@ -28,6 +28,11 @@ require_cmd jq        "apt install -y jq            # used by manifest checks + 
 require_docker
 ok "all required tools present"
 
+# v0.0.80 robustness-review fix: take an exclusive flock so a
+# secondary operator can't race a concurrent install (or update,
+# or backup) against the same project. See lib.sh::acquire_op_lock.
+acquire_op_lock
+
 step "Pre-flight: .env"
 if [[ ! -f .env ]]; then
     if prompt_yn "No .env file found. Copy .env.example to .env now?" y; then
