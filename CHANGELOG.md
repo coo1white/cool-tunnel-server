@@ -22,6 +22,60 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.79] — 2026-05-11 — Secret-in-argv hygiene + CI guard
+
+Promotes the highest-leverage finding from the v0.0.78 robustness
+review (Critical-1). The proxy wire protocol, subscription manifest,
+and runtime behaviour are unchanged. This is an operator-side
+posture release: the four call sites that regressed `backup.sh`'s
+v0.0.17 `MYSQL_PWD` / `REDISCLI_AUTH` discipline are corrected, and
+a CI grep is added so the regression class can't recur.
+
+### Security
+
+- **Stop leaking DB and Redis passwords via `argv` in operator
+  scripts.** `backup.sh`'s v0.0.17 hardening passes the secret
+  through `MYSQL_PWD` env so it never reaches `ps -ef` or any
+  host-side process collector. Four companion scripts had
+  regressed: `restore.sh:84` (`mariadb -p"$MARIADB_ROOT_PASSWORD"`),
+  `late-night-comeback.sh:144` (`redis-cli -a "$REDIS_PASSWORD"`),
+  `stress/c_revocation_latency.sh:113-134` (both DB and Redis), and
+  `stress/g_anti_tracking_probe.sh:50-53` (DB). The
+  `late-night-comeback.sh` site is the most acute — that script
+  runs from the published readiness gate and routes its `argv`
+  into `journalctl` on most deploys, so the Redis bus password
+  was leaking straight to the journal. All four sites now use
+  `compose exec -T -e MYSQL_PWD="$DB_PASSWORD" db mariadb -u USER …`
+  / `compose exec -T -e REDISCLI_AUTH="$REDIS_PASSWORD" redis
+  redis-cli --no-auth-warning …`.
+
+### Added
+
+- **`make secrets-argv` CI gate.** New Makefile target wired into
+  `make ci` that fails the build when any `*.sh` file under
+  `scripts/` or `docker/` passes `mariadb`/`mysql`/`redis-cli`
+  with `-p` or `-a` followed by a `$`-interpolated value. Targets
+  env-var interpolation specifically (literal hard-coded secrets
+  are caught by `gitleaks` in `audit.yml`). Comment lines are
+  skipped so `backup.sh`'s rationale block (which references the
+  bad pattern as a documented example) does not false-positive.
+
+### Tests
+
+- PR #69 CI passed before merge:
+  - `manifests (jq parse)`
+  - `php (syntax / composer validate)`
+  - `rust (build / test / clippy / fmt)`
+  - `shell (shellcheck)`
+  - `templates (substitute + caddy/sing-box config syntax)`
+- Local pre-release validation:
+  - `make ci` (now includes `secrets-argv: clean`)
+  - Negative test: synthetic `redis-cli -a $BAR` line trips the
+    new check; existing comment-only references in `backup.sh`
+    correctly skip.
+
+---
+
 ## [0.0.78] — 2026-05-11 — README refresh: Rule Maker FSM, OTel observability, credential-lock
 
 Documentation-only release. The proxy wire protocol, subscription
