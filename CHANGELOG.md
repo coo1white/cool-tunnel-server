@@ -22,6 +22,59 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.86] — 2026-05-12 — Readiness check 8 false-NG fix
+
+Operator-side fix promoted from a live-VPS diagnostic against v0.0.85.
+The proxy wire protocol, subscription manifest, queue contract,
+and runtime behaviour are all unchanged.
+
+### Fixed
+
+- **`scripts/late-night-comeback.sh::check_redis_bridge` no longer
+  false-NGs against a healthy Redis bridge.** The pre-fix check
+  had two compounding fragilities:
+  - `sleep 1` was too short. The Rust daemon acks a resync in
+    ~3 ms (clash-API PUT) + ~19 ms (full apply, leading-edge
+    coalescer), but Docker's log driver buffers stdout and
+    `docker compose logs` doesn't surface sub-second writes
+    reliably. The daemon's "sing-box reloaded via clash API"
+    line surfaces around the 2-second mark.
+  - `--tail=200` is a line window, not a time window. On a busy
+    panel container, a real ack matching the regex could scroll
+    out within minutes; a stale match from a previous run could
+    false-pass; two consecutive `make readiness` runs disagreed
+    (OK → NG flip observed in the field today).
+  Capture a timestamp before publishing, `sleep 2`, then
+  `docker compose logs --since="$since_t"` so the search is
+  bounded to the publish window. Broaden the regex from
+  `sing-?box reload` to `sing-?box reload(ed)?` so intent on the
+  OTel-span line ("sing-box reloaded via clash API") is
+  unambiguous. NG message now names the 2s bound so an operator
+  who hits the NG path knows it was time-bounded, not log-format
+  drift.
+
+### Tests
+
+- PR #76 CI passed before merge:
+  - `manifests (jq parse)`
+  - `php (syntax / composer validate)`
+  - `rust (build / test / clippy / fmt)`
+  - `shell (shellcheck)`
+  - `templates (substitute + caddy/sing-box config syntax)`
+- Local pre-release validation:
+  - `bash -n scripts/late-night-comeback.sh` clean.
+  - `shellcheck -x --severity=warning scripts/late-night-comeback.sh` clean.
+  - `make ci` clean (full gate).
+- Field-validated against the live production VPS (v0.0.85
+  before the fix): published resync to `cool_tunnel:revocations`
+  with `redis-cli -h redis ...`, confirmed subscriber count
+  was `1`, observed three matching log lines from the daemon
+  within 20 ms ("sing-box reloaded via clash API",
+  "sing-box reload path acknowledged", "sing-box reload
+  applied") that the time-bounded grep correctly catches.
+
+---
+
 ## [0.0.85] — 2026-05-12 — Trim first-shipping cushion in three recent surfaces
 
 Documentation-only release. The proxy wire protocol, subscription
