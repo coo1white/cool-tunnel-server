@@ -55,48 +55,26 @@ class ServerConfig extends Model
 
     protected static function booted(): void
     {
+        // Dual-path on update: Redis pub/sub (≤100ms hot path) plus
+        // ReloadServerConfigJob (slow-path render+reload backstop).
+        // Both run via DB::afterCommit so a rollback in the surrounding
+        // Filament transaction doesn't queue a phantom reload, and the
+        // queue worker can't read stale state between `updated` and
+        // commit. See CHANGELOG [0.0.84].
         static::updated(function (): void {
-            // Same dual-path as ProxyAccount: Redis pub/sub for the
-            // ≤100ms hot path, queued render+reload as the slow-path
-            // backstop. v0.0.84 robustness-review fix (item 7) moved
-            // the slow path into ReloadServerConfigJob — pre-fix
-            // both renders + the clash-API reload ran inline inside
-            // the Filament request lifecycle, blocking the Octane
-            // worker for the full 60s ct-server-core subprocess
-            // timeout on every transient hang while the operator
-            // saw an unconditional "saved successfully" notification.
-            //
-            // DB::afterCommit defers both the Redis announce and
-            // the job dispatch until the surrounding transaction
-            // (Filament's save action) commits — without it the
-            // queue worker could pick up the job between the
-            // `static::updated` callback and the transaction
-            // commit and read stale state.
             DB::afterCommit(function (): void {
-                // Fast path. Fire-and-forget; failure is logged at
-                // warn inside the bus and does not surface to the
-                // request — the slow-path job below is the
-                // consistency layer.
                 app(RedisRevocationBus::class)->announceServerConfigChanged();
 
-                // Slow-path backstop: queued job that re-renders
-                // Caddyfile + sing-box config and hot-reloads
-                // sing-box. The job is hash-idempotent and safe
-                // to run twice.
-                //
-                // Wrap dispatch in try/catch so a transient queue
-                // outage (Redis down — both the queue and the
-                // pub/sub bus share the same Redis backend in the
-                // shipped .env) doesn't bubble out as a 500 to
-                // the Filament request. The DB row is already
-                // committed; surface the failure at warn so the
-                // operator sees it without losing the row.
+                // Catch dispatch failures (Redis backs both the queue
+                // and the pub/sub bus in the shipped .env) so a
+                // transient outage doesn't bubble out as a 500 — the
+                // row is already committed.
                 try {
                     ReloadServerConfigJob::dispatch();
                 } catch (Throwable $e) {
                     Log::warning('serverconfig.reload.dispatch_failed', [
                         'err' => $e->getMessage(),
-                        'type' => get_class($e),
+                        'type' => $e::class,
                         'note' => 'queue dispatch failed; row committed but slow-path render+reload was not queued. '
                             .'Redis fast-path (if Redis is up) is unaffected; the every-5-min '
                             .'`singbox:render --if-changed --reload` scheduled command will reconcile.',
