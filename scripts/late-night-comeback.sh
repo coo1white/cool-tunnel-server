@@ -144,17 +144,27 @@ check_components() {
 # so the secret never reaches `ps -ef` in the panel container or
 # the host-visible argv of `docker compose exec`.
 check_redis_bridge() {
+    # Time-bound the log search to the publish window so a stale ack
+    # from a previous run can't false-pass, and a real ack in the
+    # current window can't be scrolled out by a busy panel. v0.0.85's
+    # 1s sleep + --tail=200 had both failure modes: 1s wasn't enough
+    # for Docker's log-driver to flush the daemon's sub-20ms reload
+    # (so a healthy bridge NG'd), and the line-window let stale
+    # matches false-pass after a fresh restart (so two back-to-back
+    # runs disagreed).
+    local since_t
+    since_t=$(date +%s)
     docker compose exec -T -e REDISCLI_AUTH="${REDIS_PASSWORD:-}" panel sh -c '
         : "${REDISCLI_AUTH:?missing REDIS_PASSWORD in env}"
         redis-cli -h redis --no-auth-warning \
             publish cool_tunnel:revocations "{\"kind\":\"resync\"}" >/dev/null
     ' 2>/dev/null || { record 8 ng "Could not publish to Redis"; return; }
-    sleep 1
-    if docker compose logs --tail=200 panel 2>/dev/null \
-            | grep -qiE 'revocation received|sing-?box reload|caddy reloaded'; then
+    sleep 2
+    if docker compose logs --since="${since_t}" panel 2>/dev/null \
+            | grep -qiE 'sing-?box reload(ed)?|caddy reloaded|revocation received'; then
         record 8 ok "Redis bridge alive (Rust daemon ack'd a resync)"
     else
-        record 8 ng "Published, but no daemon ack in panel logs"
+        record 8 ng "Published, but no daemon ack within 2s window"
     fi
 }
 
