@@ -22,6 +22,62 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.85] — 2026-05-12 — Trim first-shipping cushion in three recent surfaces
+
+Documentation-only release. The proxy wire protocol, subscription
+manifest, runtime behaviour, queue contract, and operator-script
+locking semantics are all unchanged from v0.0.84.
+
+### Changed
+
+- **`panel/app/Jobs/ReloadServerConfigJob.php`** — collapsed the
+  ~50-line top-of-file rationale block to ~15 lines and dropped
+  the per-property docblocks on `$tries` / `$timeout` /
+  `backoff()` that repeated the class-level rationale. Pointer to
+  `CHANGELOG [0.0.84]` carries the full story. Load-bearing
+  comment in `handle()` (Caddyfile-first render order matters for
+  cert-mtime propagation into the sing-box render hash) is
+  preserved.
+- **`panel/app/Models/ServerConfig.php::booted`** — collapsed the
+  ~22-line nested rationale block inside the `static::updated`
+  callback to a single 7-line summary above the closure.
+  `DB::afterCommit` + the inner `try/catch` for queue-dispatch
+  failures preserved verbatim; only the prose moved.
+- **`scripts/lib.sh::acquire_op_lock`** — collapsed the ~25-line
+  incident-pattern + history block to an 8-line summary pointing
+  at `CHANGELOG [0.0.80]`. Function body, lock path, fd choice,
+  and error messages all preserved exactly.
+- **Two micro-modernisations along the way:** `get_class($e)` →
+  `$e::class` (PHP 8 idiom available since the project's
+  `php: ^8.2`); identical behaviour, cleaner syntax.
+
+### Tests
+
+- PR #75 CI passed before merge — full `audit.yml` gate plus the
+  standard `ci.yml` gate (manifests, php syntax, rust, shell,
+  templates, php style, phpstan, sqlx offline, gitleaks, blade
+  asset-link, php class-vs-filename, stale doc references,
+  manifest drift, anti-tracking config, dependency review,
+  cargo audit, cargo deny, composer audit).
+- Local pre-release validation:
+  - `ReloadServerConfigJobFailedHandlerTest` — 3 tests pass
+    unchanged (pins log level, event name, context keys, note
+    text).
+  - `ServerConfigSaveDispatchesReloadJobTest` — 3 tests pass
+    unchanged (pins the rolled-back / committed / no-transaction
+    `DB::afterCommit` dispatch contract).
+  - `ProxyAccountAfterCommitTest` — 4 tests pass unchanged
+    (sanity check on the surrounding `DB::afterCommit` shape).
+  - 10 tests / 15 assertions total, all green.
+  - `bash -n` + `shellcheck` clean on `lib.sh`.
+  - `make ci` clean.
+
+### Diff stats
+
+`-134 lines net` across three files. No files added or removed.
+
+---
+
 ## [0.0.84] — 2026-05-11 — ServerConfig render+reload moved into queued job
 
 Promotes the final item (item 7) of the v0.0.78 robustness review.
