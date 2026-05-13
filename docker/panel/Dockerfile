@@ -126,8 +126,17 @@ COPY --from=redis:7.4.8-alpine /usr/local/bin/redis-cli /usr/local/bin/redis-cli
 # correctly. Pinned to a specific release tag + per-arch tarball
 # SHA-256; bumps are explicit, version-controlled events.
 ARG TARGETARCH
-ARG NAIVE_VERSION=v148.0.7778.96-2
-ARG NAIVE_SHA256_AMD64=acd2359291d4248a12e8c1ce51a685562449a9cefe24b97f75929a48e348830f
+# v0.0.89: bumped from v148.0.7778.96-2 → -5. Upstream maintainer
+# deleted the release assets for -2 after publication; production
+# `make update` runs hit `curl: (22) error 404` until this bump.
+# Same upstream binary (`naive --version` still prints
+# `naive 148.0.7778.96`), only the rebuild suffix changed, so the
+# manifest pin in manifests/naiveproxy-client.upstream.json stays
+# `148.0.7778.96`. The `make manifest-lockstep` rule from v0.0.74
+# already accepts the asset tag as `version` OR `version + suffix`,
+# so no change there either.
+ARG NAIVE_VERSION=v148.0.7778.96-5
+ARG NAIVE_SHA256_AMD64=ca6958dcbbfb7b1b38c55a213dab6927ce3c1417d969b815657513b81fc7352d
 # Round-18 supply-chain pin: arm64 hash for the same release tag
 # as AMD64. Computed against the GitHub-hosted tarball; bytes-in →
 # bytes-out, so the value is host-architecture-independent — the
@@ -135,7 +144,7 @@ ARG NAIVE_SHA256_AMD64=acd2359291d4248a12e8c1ce51a685562449a9cefe24b97f75929a48e
 # build time, which is the same threat model the AMD64 pin closes.
 # Bumps must update both arches together (or only the one being
 # bumped if upstream ever ships per-arch independently).
-ARG NAIVE_SHA256_ARM64=113935bc07116de1e260590331d34f2f1793f7e4cf8f96201f6b414d5e442b30
+ARG NAIVE_SHA256_ARM64=88fb88340d70b763cdf66586e056d78cb0877b62899f3194abc30d41e5d18763
 RUN set -eux; \
     cd /tmp; \
     case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')}" in \
