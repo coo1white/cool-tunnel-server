@@ -22,6 +22,61 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.89] — 2026-05-13 — Bump naiveproxy asset tag `v148.0.7778.96-2 → -5`
+
+Build-fix release. The proxy wire protocol, subscription manifest,
+queue contract, runtime behaviour, and binary version pin
+(`148.0.7778.96`) are all unchanged. The bump is purely an
+upstream-asset-availability hotfix.
+
+### Fixed
+
+- **Panel image rebuild no longer fails with `curl: (22) error 404`.**
+  The upstream maintainer (`klzgrad/naiveproxy`) deleted the
+  release assets from `v148.0.7778.96-2` after publication. The
+  release tag still exists (referenced by the upstream release
+  page) but its `assets` array is empty. Production `make update`
+  runs hit
+  `https://github.com/klzgrad/naiveproxy/releases/download/v148.0.7778.96-2/naiveproxy-v148.0.7778.96-2-linux-x64.tar.xz`
+  and got 404, with the build aborting at panel stage 5/14 (the
+  `naive` client install step). Latest available asset-bearing
+  release is `v148.0.7778.96-5` (published 2026-05-10) — same
+  upstream binary (`naive --version` still prints
+  `naive 148.0.7778.96`), only the rebuild suffix changed.
+  Therefore `manifests/naiveproxy-client.upstream.json`'s
+  `version` field stays `148.0.7778.96` (it matches the binary's
+  own `--version` output, not the asset tag), and the v0.0.74
+  `manifest-lockstep` rule already accepts the asset tag as
+  `version` or `version + rebuild-suffix`. Only the Dockerfile
+  ARG block needed updating.
+
+### Security
+
+- **New per-arch SHA256 pins** computed locally against the
+  GitHub-hosted tarballs before commit:
+  - `linux-x64`:
+    `ca6958dcbbfb7b1b38c55a213dab6927ce3c1417d969b815657513b81fc7352d`
+  - `linux-arm64`:
+    `88fb88340d70b763cdf66586e056d78cb0877b62899f3194abc30d41e5d18763`
+  Verified the byte counts match the GitHub API's reported sizes
+  (5,084,780 / 4,139,628). The Dockerfile's
+  `sha256sum -c -` step inside the panel build still fails closed
+  on any future tarball mismatch.
+
+### Tests
+
+- PR #79 CI passed before merge — full `audit.yml` gate plus the
+  standard `ci.yml` gate including `manifest-lockstep`,
+  `manifests-jq`, and the v0.0.79 `secrets-argv` regression guard.
+- Local pre-release validation:
+  - `make ci` clean.
+  - SHA256 computed via `shasum -a 256` on the downloaded
+    tarballs from the canonical
+    `github.com/klzgrad/naiveproxy/releases/download/v148.0.7778.96-5/`
+    URLs.
+
+---
+
 ## [0.0.88] — 2026-05-13 — Redis subscriber: typed `ConnectionInfo` from discrete env vars
 
 Permanent fix for the URL-parse class of bug that struck production
