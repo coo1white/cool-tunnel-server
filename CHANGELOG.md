@@ -22,6 +22,57 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.87] — 2026-05-13 — Readiness check 8: relative-duration window
+
+Follow-up to v0.0.86. Field-validated against the production VPS,
+v0.0.86's absolute-timestamp `--since="$(date +%s)"` worked in an
+interactive shell but silently missed matches when invoked via
+`make readiness`. Wire protocol, subscription manifest, and runtime
+behaviour unchanged.
+
+### Fixed
+
+- **`check_redis_bridge` switches to relative `--since=5s`.**
+  v0.0.86 captured `since_t=$(date +%s)` then queried
+  `docker compose logs --since="${since_t}"`. The daemon's
+  response (a sub-20 ms reload) and the log query both worked
+  from a standalone interactive shell on the production VPS, but
+  the same call inside `make readiness` returned no matches —
+  `[NG] 8. Published, but no daemon ack within 2s window` reliably,
+  even immediately after a clean `make update`. Exact mechanism
+  unconfirmed (docker compose parser quirk for raw Unix-second
+  timestamps, host/container clock skew, or pipefail-under-make
+  interaction); the relative-duration form sidesteps all three.
+  5 s window covers publish + sleep + buffer; the docker compose
+  CLI handles the relative form consistently across versions.
+- **Sleep bumped 2 s → 3 s** as defensive timing margin. Happy-path
+  daemon response is ~20 ms; the extra second protects against
+  cold-coalescer or busy-host scenarios where Docker's log-driver
+  flush window might lag. NG message updated accordingly.
+
+### Tests
+
+- PR #77 CI passed before merge (after a transient GitHub Actions
+  billing block was lifted by promoting the repo's billing posture
+  for the public AGPL-3.0 codebase):
+  - `manifests (jq parse)`
+  - `php (syntax / composer validate)`
+  - `rust (build / test / clippy / fmt)`
+  - `shell (shellcheck)`
+  - `templates (substitute + caddy/sing-box config syntax)`
+- Local pre-release validation:
+  - `bash -n scripts/late-night-comeback.sh` clean.
+  - `shellcheck -x --severity=warning scripts/late-night-comeback.sh` clean.
+  - `make ci` clean (full gate including `secrets-argv`).
+- Field-diagnosed against production VPS on v0.0.86: daemon publishes
+  three matching log lines within 20 ms ("sing-box reloaded via
+  clash API", "sing-box reload path acknowledged", "sing-box reload
+  applied"); `--since=<unix-seconds>` AND `--since=5s` both returned
+  those lines in interactive shell. Switching to `--since=5s`
+  eliminates the interactive-vs-`make readiness` divergence.
+
+---
+
 ## [0.0.86] — 2026-05-12 — Readiness check 8 false-NG fix
 
 Operator-side fix promoted from a live-VPS diagnostic against v0.0.85.
