@@ -144,27 +144,28 @@ check_components() {
 # so the secret never reaches `ps -ef` in the panel container or
 # the host-visible argv of `docker compose exec`.
 check_redis_bridge() {
-    # Time-bound the log search to the publish window so a stale ack
-    # from a previous run can't false-pass, and a real ack in the
-    # current window can't be scrolled out by a busy panel. v0.0.85's
-    # 1s sleep + --tail=200 had both failure modes: 1s wasn't enough
-    # for Docker's log-driver to flush the daemon's sub-20ms reload
-    # (so a healthy bridge NG'd), and the line-window let stale
-    # matches false-pass after a fresh restart (so two back-to-back
-    # runs disagreed).
-    local since_t
-    since_t=$(date +%s)
+    # Publish a resync, give the daemon a generous window to log its
+    # response, then grep for any of the well-known reload-success
+    # tracing lines. v0.0.87 swapped v0.0.86's absolute-timestamp
+    # `--since="$(date +%s)"` for a relative `--since=5s` window:
+    # field-validated against the production VPS, the absolute form
+    # silently missed matches when run from `make readiness` even
+    # though the same call worked in an interactive shell. Exact
+    # mechanism unconfirmed (parser quirk vs. host/container clock
+    # skew); the relative-duration form sidesteps both. 5 seconds
+    # is wide enough to cover the publish itself, the 3s sleep
+    # below, and a small buffer.
     docker compose exec -T -e REDISCLI_AUTH="${REDIS_PASSWORD:-}" panel sh -c '
         : "${REDISCLI_AUTH:?missing REDIS_PASSWORD in env}"
         redis-cli -h redis --no-auth-warning \
             publish cool_tunnel:revocations "{\"kind\":\"resync\"}" >/dev/null
     ' 2>/dev/null || { record 8 ng "Could not publish to Redis"; return; }
-    sleep 2
-    if docker compose logs --since="${since_t}" panel 2>/dev/null \
+    sleep 3
+    if docker compose logs --since=5s panel 2>/dev/null \
             | grep -qiE 'sing-?box reload(ed)?|caddy reloaded|revocation received'; then
         record 8 ok "Redis bridge alive (Rust daemon ack'd a resync)"
     else
-        record 8 ng "Published, but no daemon ack within 2s window"
+        record 8 ng "Published, but no daemon ack within 3s window"
     fi
 }
 
