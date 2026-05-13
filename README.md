@@ -24,7 +24,7 @@ responsible for local law, provider terms, and the traffic you route.
 | Constraint | Position |
 | --- | --- |
 | Minimum host | Debian 11/12/13, root SSH, 1 vCPU, 1 GB RAM, ports `80/tcp` and `443/tcp`. |
-| Current baseline | `v0.0.77`. Wire format is WireV1; subscription manifests are stable across the 0.0.6x–0.0.7x line. |
+| Current baseline | `v0.0.89`. Wire format is WireV1; subscription manifests are stable across the 0.0.6x–0.0.8x line. |
 | Runtime model | FrankenPHP worker-mode with Laravel Octane. Laravel boot cost is paid once per worker. |
 | Core model | `ct-server-core` Rust binary owns rendering, probes, drift checks, the credential-lock invariant, and a Rule Maker daemon FSM with bounded `BytesMut` frames, typed wire errors, and OTel-style network-turn spans. |
 | Data posture | Zero user tracking. Internal health metrics are allowed; user data collection is forbidden. |
@@ -81,15 +81,161 @@ The stack is intentionally split:
 | Engine core | Rust workspace under `core/` | Rendering, probes, component checks, reload decisions, typed IPC. |
 | Orchestration | Docker Compose, Makefile, shell scripts | Hardening, rebuilds, health checks, backups, release discipline. |
 
-## One-Click Bastion
+## First Deploy
 
-Fresh Debian VPS as `root`:
+End-to-end walkthrough from a freshly-provisioned Debian VPS to a
+9/10 `make readiness` PASS. Plan on roughly 15 minutes on a
+1 vCPU host, dominated by image build and ACME issuance.
+
+### 0. Prerequisites
+
+- **VPS**: Debian 11 / 12 / 13, root SSH, 1 vCPU, 1 GB RAM,
+  ports `80/tcp` and `443/tcp` reachable from the public internet.
+  Cloud security groups must allow inbound on both.
+- **Two domains** you control:
+  - `proxy.example.com` — the public proxy hostname (NaiveProxy
+    server, sing-box backend).
+  - `panel.proxy.example.com` — the admin panel hostname (Caddy
+    backend, FrankenPHP + Laravel + Filament).
+- **An email** for Let's Encrypt registration (`acme_email`).
+- **Two DNS A records**, both pointing at the VPS public IPv4:
+
+  ```
+  proxy.example.com        A    <VPS IPv4>
+  panel.proxy.example.com  A    <VPS IPv4>
+  ```
+
+  Cloudflare must be **DNS only** (grey-cloud). Do not orange-cloud
+  either hostname; the SNI router needs direct TCP reachability and
+  a CDN in front will collapse the routing.
+
+  Verify from your workstation before continuing:
+
+  ```bash
+  dig +short A proxy.example.com
+  dig +short A panel.proxy.example.com
+  ```
+
+  Both should return the same VPS IPv4. If they do not, fix DNS
+  and wait for propagation before installing.
+
+### 1. Bootstrap
+
+SSH to the VPS as `root` and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
 ```
 
-Unattended bootstrap with environment prefill:
+The bootstrap is idempotent. It installs Docker if absent,
+fast-forwards the repository to `/opt/cool-tunnel-server`,
+scaffolds `.env` from `.env.example`, and generates strong local
+secrets via `openssl rand`. An existing `.env` is preserved.
+
+Output ends with a hint:
+
+```
+✓ scaffolded /opt/cool-tunnel-server/.env
+
+  Next:
+    1. cd /opt/cool-tunnel-server
+    2. $EDITOR .env     # set DOMAIN, PANEL_DOMAIN, ACME_EMAIL
+    3. make install
+```
+
+### 2. Configure `.env`
+
+```bash
+cd /opt/cool-tunnel-server
+$EDITOR .env
+```
+
+At minimum, set:
+
+```ini
+DOMAIN=proxy.example.com
+PANEL_DOMAIN=panel.proxy.example.com
+ACME_EMAIL=ops@example.com
+```
+
+Everything else (`APP_KEY`, `DB_PASSWORD`, `DB_ROOT_PASSWORD`,
+`REDIS_PASSWORD`, `CT_CLASH_SECRET_SEED`) was already randomised
+by the bootstrap. Leave those alone.
+
+### 3. Install
+
+```bash
+make install
+```
+
+The install path performs the heavier alignment work: builds the
+Rust core image, builds sing-box / HAProxy / panel (with the
+embedded core binary), runs Laravel migrations, renders
+Caddyfile / `haproxy.cfg` / `sing-box config.json`, verifies the
+12 pinned components, and brings the stack up under Docker Compose
+hardening. First-run cold build on a 1 vCPU host is typically
+5–10 minutes for Rust, 5–6 minutes for the panel image.
+
+Caddy obtains TLS certificates for both hostnames via ACME during
+service startup. The certificate-issuance step is what most often
+fails on a first install — usually because DNS hasn't propagated
+or the cloud security group is blocking port 80.
+
+### 4. Verify
+
+```bash
+make status        # docker state, image state, recent errors
+make components    # 12 components, all should report OK
+make readiness     # 10-check launch gate, target ≥9/10
+```
+
+Expected:
+
+- `make components`: 12 rows, all `OK`, including
+  `credential-lock` reporting
+  `db=rendered=manifest=mac-config ok active_users=0`.
+- `make readiness`: `9/10` PASS. The only NG should be check 10
+  (`Set LNC_TEST_PROXY_URL=...`) — that's the documented soft-NG
+  for the end-to-end probe; it activates once you have at least
+  one real proxy account.
+
+### 5. Create the first admin user
+
+```bash
+docker compose exec -T panel php artisan ct:make-admin
+```
+
+Follow the interactive prompts. Then visit
+`https://panel.proxy.example.com/admin` and log in. From there you
+can create your first proxy account in the Filament UI.
+
+### 6. Validate end-to-end with the anti-tracking probe
+
+Once you have a proxy account provisioned, the readiness gate's
+check 10 becomes runnable:
+
+```bash
+USERNAME=<your-account-username>
+URL=$(docker compose exec -T -e PROBE_USER="$USERNAME" panel \
+  php artisan tinker --execute '
+    $a = \App\Models\ProxyAccount::where("username", getenv("PROBE_USER"))->firstOrFail();
+    $d = \App\Models\ServerConfig::current()->domain;
+    echo "https://{$a->username}:{$a->getCleartextPassword()}@{$d}:443";
+  ')
+LNC_TEST_PROXY_URL="$URL" make readiness
+unset URL LNC_TEST_PROXY_URL
+history -d $((HISTCMD-1)) 2>/dev/null
+```
+
+Expected: `10/10 (100%) — Result: PASS — ready to ship.`
+Check 10 reads `hide_ip + hide_via effective`, validating
+HAProxy SNI → sing-box NaiveProxy padding → live cert path →
+real upstream end-to-end.
+
+### Unattended path (CI / IaC)
+
+For Ansible / Terraform / cloud-init contexts where the three
+env values are already known:
 
 ```bash
 DOMAIN=proxy.example.com \
@@ -99,34 +245,148 @@ AUTO_INSTALL=1 \
 curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
 ```
 
-The bootstrap path is idempotent. It installs Docker when absent,
-fast-forwards the repository under `/opt/cool-tunnel-server`, scaffolds
-`.env`, generates strong local secrets, preserves an existing `.env`,
-and can chain into `scripts/install.sh` when `AUTO_INSTALL=1`.
+This chains bootstrap → install in one network round-trip,
+skipping the interactive `.env` edit step. The first-admin
+creation and end-to-end probe steps still need to happen
+post-install.
 
-The install path performs the heavier alignment work: build images,
-embed the Rust core into the panel image, run migrations, render
-HAProxy/Caddy/sing-box configuration, verify component pins, and start
-the services under Docker Compose hardening.
+## Maintaining a Running Deployment
 
-## Required DNS
+The operator loop after first install. Every step assumes
+you're cd'd into `/opt/cool-tunnel-server` (the
+[shell alias](#shell-alias-optional) below makes this less
+tedious).
 
-Create DNS A records before install:
-
-```bash
-proxy.example.com        A    <VPS IPv4>
-panel.proxy.example.com  A    <VPS IPv4>
-```
-
-Cloudflare records must be **DNS only**. Do not orange-cloud the proxy
-or panel hostnames. The SNI router expects direct TCP reachability.
-
-Verify from your workstation:
+### Routine update
 
 ```bash
-dig +short A proxy.example.com
-dig +short A panel.proxy.example.com
+cd /opt/cool-tunnel-server
+make backup    # always before a real update
+make update    # pulls, rebuilds, renders, runs credential-lock, swaps traffic
+make readiness # confirm 9/10 PASS after
 ```
+
+`make update` is the main production update path. The script:
+
+1. Acquires an exclusive flock so a second operator can't race
+   you (v0.0.80 hardening).
+2. `git pull --ff-only` to the latest tag.
+3. Auto-migrates legacy `.env` shape (PANEL_DOMAIN placement,
+   APP_URL hostname) if needed; idempotent on already-canonical
+   files.
+4. Rebuilds the Rust core + panel + sing-box + HAProxy images.
+   Subsequent runs hit the BuildKit cache and finish in seconds.
+5. Brings the new panel image up and waits for the entrypoint
+   sentinel.
+6. Runs Laravel migrations (no-op if nothing pending).
+7. Re-renders sing-box config; asserts `ct-server-core guard
+   credential-lock` (`db = rendered = manifest = mac-config`)
+   — refuses to proceed on drift, without printing passwords.
+8. Restarts sing-box for a clean state purge (v0.0.73).
+9. SIGHUPs HAProxy for a graceful re-exec.
+10. Runs the strict component check on the post-swap runtime.
+
+If anything fails mid-update, the lock auto-releases on script
+exit and the script is idempotent — re-run `make update`.
+
+### Backup and restore
+
+```bash
+make backup
+# → backups/cool-tunnel-<UTC-timestamp>.tar.gz, mode 0600
+```
+
+The tarball contains `.env` (all secrets) plus a MariaDB
+single-transaction dump plus the Caddy ACME state. **Treat the
+file as a secret.** Move it off-VPS to encrypted storage.
+
+To restore on a fresh box:
+
+```bash
+make install                                            # first, bring up an empty stack
+./scripts/restore.sh backups/cool-tunnel-<timestamp>.tar.gz
+make readiness
+```
+
+### Reading the panel
+
+- **Filament admin**: `https://panel.proxy.example.com/admin` —
+  account CRUD, server config, anti-tracking toggles, fake-site
+  selection.
+- **Components page**: same UI, surfaces the OK/NG table from
+  `ct-server-core component check` with `?` tooltips on every
+  metric label.
+
+### Observability
+
+`CT_METRICS_BIND` is opt-in (default empty). The recommended
+single-container value is `127.0.0.1:9292` — bind only inside the
+panel container or loopback namespace, never on a public
+interface. Scrape from inside the trusted Docker boundary:
+
+```bash
+docker compose exec -T panel sh -lc 'curl -fsS http://127.0.0.1:9292/metrics'
+```
+
+Prometheus scrape config, alert rules, and Grafana panel queries
+live in [docs/observability-dashboard.md](./docs/observability-dashboard.md).
+
+Key counters to alarm on:
+
+- `ct_threshold_80pct_crossings_total` — daemon hit the 80%
+  bottleneck threshold on frame buffers or latency budget.
+- `ct_daemon_fsm_hard_resets_total` — non-zero rate means
+  malformed-protocol clients are being rejected.
+- `otel_network_turn_latency_milliseconds` — daemon network-turn
+  latency distribution.
+
+### Rotating secrets
+
+`.env`-bound secrets (`APP_KEY`, `DB_PASSWORD`, `DB_ROOT_PASSWORD`,
+`REDIS_PASSWORD`, `CT_CLASH_SECRET_SEED`) are randomised at
+bootstrap. To rotate later (recommended periodically; mandatory
+if any operator with `.env` read access leaves the team):
+
+1. `make backup` first. Always.
+2. Generate new values with `openssl rand -base64 32` (the typed
+   builders in v0.0.25 / v0.0.88 accept any byte pattern including
+   `/+=` URL-meta chars).
+3. For DB credentials, run `ALTER USER` inside MariaDB **before**
+   updating `.env`, then atomically update `.env`, then restart
+   redis + panel. The DB ALTER USER → .env update → restart order
+   matters; see CHANGELOG `[0.0.x]` rotation playbook entries for
+   the precise sequence.
+4. **Never rotate `APP_KEY`** without re-generating every account's
+   subscription URL and password — the old encrypted
+   `password_cleartext_encrypted` blobs become unreadable. Treat
+   `APP_KEY` as immutable for the lifetime of the deployment.
+
+### Recovering from a failed update
+
+| Symptom | Recovery |
+|---|---|
+| `make update` died mid-build (disk full, network drop, SIGHUP) | Re-run `make update`; idempotent, resumes from BuildKit cache. |
+| Build fails with `curl: (22) error 404` on upstream tarball | Upstream asset was deleted/renamed. Wait for or open an issue for a manifest pin bump (see v0.0.89 for the pattern). |
+| `credential-lock` reports drift | Fix the source row (UI or DB), rerun `make update`. The guard prints the differing party (db / rendered / manifest / mac-config) without leaking passwords. |
+| Panel container in restart loop | `docker compose logs --tail=80 panel`; common causes: empty `APP_KEY` (v0.0.81 guard refuses boot), missing `OCTANE_SERVER=frankenphp` (v0.0.81 default), pending migration that failed to apply. |
+| `make readiness` reports check 8 NG | Probably a real Redis connectivity issue — the v0.0.86 / v0.0.87 / v0.0.88 fixes hardened this check substantially. If genuinely failing, `docker compose logs panel \| grep -iE 'redis subscriber\|did not parse'` will say why. |
+
+### Shell alias (optional)
+
+After a fresh login the shell starts in `/root`, not the install
+dir. Add to `~/.bashrc` to avoid the constant cd:
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+# Cool Tunnel Server convenience
+ct() { (cd /opt/cool-tunnel-server && make "$@"); }
+alias ctsh="cd /opt/cool-tunnel-server"
+EOF
+source ~/.bashrc
+```
+
+Then `ct update`, `ct status`, `ct readiness`, `ct backup` work
+from any cwd; `ctsh` jumps into the install dir.
 
 ## Industrial Makefile
 
