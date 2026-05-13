@@ -22,6 +22,85 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.88] — 2026-05-13 — Redis subscriber: typed `ConnectionInfo` from discrete env vars
+
+Permanent fix for the URL-parse class of bug that struck production
+during a placeholder-secret rotation on v0.0.87. Mirror of v0.0.25's
+MariaDB-URL hotfix for the same class. The proxy wire protocol,
+subscription manifest, queue contract, coalescer logic, and
+`MetricsRegistry` counters are all unchanged.
+
+### Fixed
+
+- **The Rust daemon's Redis subscriber no longer rejects passwords
+  with URL-meta characters.** Pre-fix, `docker-compose.yml`
+  interpolated `REDIS_URL` by string concatenation
+  (`"redis://:${REDIS_PASSWORD}@redis:6379/0"`). `openssl rand
+  -base64 32` — the canonical secret-generation method used by
+  `bootstrap.sh` and recommended by the README — produces
+  passwords containing `/`, `+`, `=`. All URL-meta characters that
+  the redis-rs URL parser rejects with `InvalidClientConfig`.
+  Operators rotating secrets that way saw the daemon's revocation
+  fast path die silently (slow-path queue-job reload still worked,
+  so the ≤100 ms hot path was broken but panel saves still
+  reached sing-box). Workaround was regenerating
+  `REDIS_PASSWORD` with `openssl rand -hex 32`.
+
+  The permanent fix is three surgical changes:
+
+  - **`core/ct-server-core/src/redis_bridge.rs`** — new
+    `connection_info_from_env<F>(get: F) -> Option<ConnectionInfo>`
+    helper. Builds `redis::ConnectionInfo` from discrete
+    `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` /
+    `REDIS_DATABASE` env vars. Returns `None` when `REDIS_HOST`
+    is unset so the caller can fall back to URL parsing for
+    legacy / unix-socket / TLS-Redis deployments. Pure over an
+    env-var lookup closure for testability (mirror of
+    `db::options_from_env` from v0.0.25). `run_subscriber()`
+    prefers the typed builder; URL form is the fallback.
+  - **`core/ct-server-core/src/main.rs`** — daemon spawn gate
+    widened: subscriber starts when EITHER `REDIS_URL` or
+    `REDIS_HOST` is set. Only the "neither" case logs the
+    no-subscriber warning. The legacy `--redis-url` flag is
+    preserved for operators with custom non-standard Redis.
+  - **`docker-compose.yml`** — dropped
+    `REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"` from
+    the panel service env block. The daemon now reads
+    `REDIS_HOST` / `REDIS_PORT` (already in the block) plus
+    `REDIS_PASSWORD` / `REDIS_DATABASE` from `env_file: .env`.
+    Laravel side was always on the discrete-var path
+    (`panel/config/database.php` uses `env('REDIS_HOST')` etc.,
+    not `env('REDIS_URL')`), so this change has no effect on the
+    Laravel-to-Redis path.
+
+### Tests
+
+- Six new unit tests in `redis_bridge::tests`, mirroring the
+  `db::tests` pattern:
+  - `returns_none_when_host_missing` — `REDIS_HOST` is the gate;
+    empty string treated as unset.
+  - `password_with_url_meta_chars_survives_byte_for_byte` — the
+    regression test; asserts
+    `abc/def+ghi=jkl@mno#pqr:stu?vwx` round-trips through
+    `ConnectionInfo` unchanged.
+  - `defaults_match_compose_block` — `REDIS_HOST` alone → port
+    6379, db 0, no password.
+  - `malformed_port_falls_back_to_6379` — defensive against `\r`
+    or alphabetic values in `.env`.
+  - `empty_password_is_treated_as_unset` — `REDIS_PASSWORD=`
+    collapses to `None`, not `Some("")`.
+  - `db_can_be_overridden` — multi-instance Redis isolation via
+    `REDIS_DATABASE=5`.
+- All 132 `ct-server-core` tests pass (up from 126).
+- PR #78 CI passed before merge — full `audit.yml` gate plus the
+  standard `ci.yml` gate.
+- Field-validated against production VPS: with the v0.0.87
+  base64-from-rotation password, the daemon emitted
+  `InvalidClientConfig` every 30 s; with v0.0.88's typed-builder
+  path the same password works.
+
+---
+
 ## [0.0.87] — 2026-05-13 — Readiness check 8: relative-duration window
 
 Follow-up to v0.0.86. Field-validated against the production VPS,
