@@ -357,9 +357,16 @@ services:
       DB_PORT: 3306
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # ct-server-core daemon subscribes here for the
-      # cool_tunnel:revocations channel.
-      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      # ct-server-core daemon's redis subscriber is built from the
+      # discrete REDIS_* env vars above plus REDIS_PASSWORD (from
+      # env_file: .env). Pre-v0.0.88 this stanza also set
+      #   REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      # but string-interpolating a password with URL-meta chars (`/+=`
+      # from `openssl rand -base64`) into the URL broke the redis
+      # crate's parser with `InvalidClientConfig`. The typed
+      # `ConnectionInfo` path in `redis_bridge::run_subscriber` now
+      # reads the discrete vars directly and accepts any password
+      # bytes — mirror of v0.0.25's MariaDB-URL hotfix.
       # Where the SingBoxConfigGenerator writes the rendered file.
       SINGBOX_CONFIG_PATH:    /etc/sing-box/config.json
       SINGBOX_CONFIG_TEMPLATE: /srv/sing-box/config.json.tpl
