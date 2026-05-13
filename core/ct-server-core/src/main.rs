@@ -537,7 +537,16 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 Some(r)
             };
 
-            if !redis_url.is_empty() {
+            // v0.0.88: the daemon prefers discrete REDIS_HOST/PORT/
+            // PASSWORD/DATABASE env vars over REDIS_URL (the URL
+            // form rejects passwords with `/+=` from
+            // `openssl rand -base64`). Either path is sufficient
+            // to start the subscriber; only if BOTH are missing
+            // do we run without revocations.
+            let has_discrete_redis = std::env::var("REDIS_HOST")
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if !redis_url.is_empty() || has_discrete_redis {
                 redis_bridge::spawn(
                     redis_url,
                     pool.clone(),
@@ -547,7 +556,9 @@ async fn dispatch(cli: Cli) -> Result<()> {
                     metrics_registry.clone(),
                 );
             } else {
-                tracing::warn!("REDIS_URL empty — running without revocation subscriber");
+                tracing::warn!(
+                    "neither REDIS_HOST nor REDIS_URL set — running without revocation subscriber"
+                );
             }
             daemon::serve(
                 &socket,
