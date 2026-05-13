@@ -57,7 +57,7 @@
 use crate::internal_metrics::MetricsRegistry;
 use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
 use crate::{admin, singbox, Result};
-use redis::Client;
+use redis::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo};
 use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use std::sync::{Arc, Mutex};
@@ -65,6 +65,48 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
 pub const REVOCATION_CHANNEL: &str = "cool_tunnel:revocations";
+
+/// Build a redis `ConnectionInfo` from discrete env vars
+/// (`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DATABASE`).
+/// Returns `None` when `REDIS_HOST` is unset, in which case the caller
+/// falls back to URL parsing — preserved for legacy / unix-socket /
+/// TLS-Redis deployments that need the URL form.
+///
+/// v0.0.88 robustness-review follow-up. The pre-fix daemon parsed a
+/// `redis://:${PASSWORD}@host:port/db` URL constructed by
+/// `docker-compose.yml`'s string interpolation. `openssl rand
+/// -base64 32` (the canonical secret-generation method used in
+/// `bootstrap.sh` and the README) produces passwords containing
+/// `/`, `+`, `=` — all URL-meta characters that the redis-rs URL
+/// parser rejects with `InvalidClientConfig`. Operators rotating
+/// secrets that way saw the daemon's revocation subscriber die
+/// silently while the slow-path queue-job reload still worked.
+///
+/// Mirror of v0.0.25's `db::options_from_env` MariaDB fix: the
+/// typed builder bypasses URL escaping, so any password byte
+/// (including `/`, `+`, `=`, `@`, `:`, `#`, `?`) survives intact.
+fn connection_info_from_env<F>(get: F) -> Option<ConnectionInfo>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let host = get("REDIS_HOST").filter(|s| !s.is_empty())?;
+    let port = get("REDIS_PORT")
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(6379);
+    let password = get("REDIS_PASSWORD").filter(|s| !s.is_empty());
+    let db = get("REDIS_DATABASE")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+
+    Some(ConnectionInfo {
+        addr: ConnectionAddr::Tcp(host, port),
+        redis: RedisConnectionInfo {
+            db,
+            username: None,
+            password,
+        },
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -172,7 +214,16 @@ async fn run_subscriber(
     tracker: &Arc<Mutex<FlushTracker>>,
     metrics: Option<&Arc<MetricsRegistry>>,
 ) -> Result<()> {
-    let client = Client::open(redis_url)?;
+    // Prefer the typed `ConnectionInfo` built from discrete env vars
+    // so passwords with URL-meta chars survive (see
+    // `connection_info_from_env` docstring). Fall back to the URL
+    // form only when `REDIS_HOST` is not set — operators with
+    // legacy / unix-socket / TLS Redis configs can still opt in via
+    // the `--redis-url` flag.
+    let client = match connection_info_from_env(|k| std::env::var(k).ok()) {
+        Some(info) => Client::open(info)?,
+        None => Client::open(redis_url)?,
+    };
     let mut pubsub = client.get_async_pubsub().await?;
     pubsub.subscribe(REVOCATION_CHANNEL).await?;
     tracing::info!(
@@ -458,5 +509,130 @@ mod tests {
                 .id()
         };
         assert_ne!(third_id, first_id, "post-completion call spawns fresh");
+    }
+
+    // ---- v0.0.88 connection_info_from_env tests ------------------
+    //
+    // Mirror of `db::tests::slash_in_password_does_not_corrupt_port_or_host`
+    // for the Rust core's MariaDB URL parser (v0.0.25 hotfix). The
+    // pre-v0.0.88 daemon constructed a redis URL by string
+    // interpolation in `docker-compose.yml`'s `REDIS_URL`, and
+    // passwords with `/+=` bytes from `openssl rand -base64`
+    // broke the parser. These tests pin that the discrete-env-var
+    // path accepts any password bytes byte-for-byte.
+
+    use std::collections::HashMap;
+
+    fn env_from(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |k| map.get(k).cloned()
+    }
+
+    #[test]
+    fn connection_info_from_env_returns_none_when_host_missing() {
+        // `REDIS_HOST` is the gate. Without it, the caller falls
+        // back to URL parsing (legacy / unix-socket operators).
+        assert!(connection_info_from_env(env_from(&[])).is_none());
+        assert!(
+            connection_info_from_env(env_from(&[("REDIS_HOST", "")])).is_none(),
+            "empty string is treated as unset"
+        );
+    }
+
+    #[test]
+    fn connection_info_from_env_password_with_url_meta_chars_survives_byte_for_byte() {
+        // The actual regression. `openssl rand -base64 32` produces
+        // passwords with `/`, `+`, `=`; the pre-v0.0.88 URL form
+        // rejected these with `InvalidClientConfig`. The typed
+        // builder accepts them verbatim.
+        let raw = "abc/def+ghi=jkl@mno#pqr:stu?vwx";
+        let info = connection_info_from_env(env_from(&[
+            ("REDIS_HOST", "redis"),
+            ("REDIS_PORT", "6379"),
+            ("REDIS_PASSWORD", raw),
+            ("REDIS_DATABASE", "0"),
+        ]))
+        .expect("REDIS_HOST set, should build");
+
+        match info.addr {
+            ConnectionAddr::Tcp(h, p) => {
+                assert_eq!(h, "redis");
+                assert_eq!(p, 6379);
+            }
+            other => panic!("expected Tcp addr, got {other:?}"),
+        }
+        assert_eq!(info.redis.password.as_deref(), Some(raw));
+        assert_eq!(info.redis.db, 0);
+        assert!(info.redis.username.is_none());
+    }
+
+    #[test]
+    fn connection_info_from_env_defaults_match_compose_block() {
+        // Only REDIS_HOST set → port defaults to 6379, db to 0, no
+        // password. Must match the compose `panel` service env
+        // block (REDIS_HOST=redis, REDIS_PORT=6379) so a stripped
+        // .env doesn't drift the daemon off the compose network.
+        let info = connection_info_from_env(env_from(&[("REDIS_HOST", "redis")]))
+            .expect("host set should build");
+
+        match info.addr {
+            ConnectionAddr::Tcp(h, p) => {
+                assert_eq!(h, "redis");
+                assert_eq!(p, 6379);
+            }
+            other => panic!("expected Tcp addr, got {other:?}"),
+        }
+        assert_eq!(info.redis.db, 0);
+        assert!(info.redis.password.is_none());
+    }
+
+    #[test]
+    fn connection_info_from_env_malformed_port_falls_back_to_6379() {
+        // A stray `\r` from a Windows-edited .env or an accidental
+        // alphabetic value must not blow up the daemon; fall back
+        // to the canonical Redis port rather than refusing to start
+        // the subscriber at all.
+        let info = connection_info_from_env(env_from(&[
+            ("REDIS_HOST", "redis"),
+            ("REDIS_PORT", "not-a-number"),
+        ]))
+        .expect("host set should build");
+
+        match info.addr {
+            ConnectionAddr::Tcp(_, p) => assert_eq!(p, 6379),
+            other => panic!("expected Tcp addr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connection_info_from_env_empty_password_is_treated_as_unset() {
+        // `REDIS_PASSWORD=` (empty) means "no AUTH" — Redis accepts
+        // any client when not configured with `requirepass`.
+        // Passing `Some("")` to the redis crate would send an empty
+        // AUTH command, which Redis would reject; better to pass
+        // None.
+        let info =
+            connection_info_from_env(env_from(&[("REDIS_HOST", "redis"), ("REDIS_PASSWORD", "")]))
+                .expect("host set should build");
+        assert!(
+            info.redis.password.is_none(),
+            "empty REDIS_PASSWORD must collapse to None, not Some(\"\")"
+        );
+    }
+
+    #[test]
+    fn connection_info_from_env_db_can_be_overridden() {
+        // Operators with multiple cool-tunnel instances on a shared
+        // Redis can isolate via REDIS_DATABASE. Default is 0; this
+        // test pins that an explicit override flows through.
+        let info = connection_info_from_env(env_from(&[
+            ("REDIS_HOST", "redis"),
+            ("REDIS_DATABASE", "5"),
+        ]))
+        .expect("host set should build");
+        assert_eq!(info.redis.db, 5);
     }
 }
