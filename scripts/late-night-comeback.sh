@@ -232,7 +232,16 @@ check_probe() {
         && echo "$out" | grep -q '"hide_via_effective":true'; then
         record 10 ok "hide_ip + hide_via effective"
     else
-        record 10 ng "Anti-tracking probe failed: $out"
+        # Defense-in-depth: the Rust probe already strips creds from
+        # its ProbeResult.via field as of v0.1.2 (see probe.rs
+        # strip_creds), but if a future probe path or operator-set
+        # raw-output mode leaks the URL into stdout we still need
+        # readiness logs to be safe to paste. Mask any
+        # `user:secret@` segment regardless of source.
+        local safe_out
+        safe_out=$(printf '%s' "$out" \
+            | sed -E 's#([a-zA-Z+]+://)[^/@[:space:]"]+:[^/@[:space:]"]+@#\1***:***@#g')
+        record 10 ng "Anti-tracking probe failed: $safe_out"
     fi
 }
 

@@ -348,3 +348,4 @@ EOF
 fi
 
 ok "Update complete."
+ok "If something looks off, the safe first move is:  ct fix"

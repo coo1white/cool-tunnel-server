@@ -39,6 +39,7 @@ TOPICS=(
     update
     doctor
     auto-sync
+    fix
     readiness
     backup
     restore
@@ -301,6 +302,90 @@ Exit codes:
   0   no drift detected, OR drift was detected + corrected
   1   drift detected, correction failed -- manual investigation
 
+Next topic:  ./scripts/help.sh fix
+EOF
+    printf '%s\n' "$body"
+}
+
+help_fix() {
+    h1 "fix.sh — the 'I'm stuck' command"
+    local body
+    read -r -d '' body <<'EOF' || true
+What it does:
+  Walks through every install / runtime issue we've seen on real
+  deployments, in order, and offers to fix each one interactively.
+  Each issue is explained in plain English -- you do NOT need to
+  understand Docker, sing-box, HAProxy, or IPv6 to use it.
+
+  For each detected issue you can:
+    [a]pply    -- run the fix (shows what it will do first)
+    [s]kip     -- no action; default if you just press Enter
+    [e]xplain  -- show the recipe details
+    [q]uit     -- stop the agent
+
+When to run:
+  - 'install.sh' got partway through and failed
+  - 'update.sh' got partway through and failed
+  - Cool Tunnel (Mac client) connects briefly then drops
+  - Browsers behind the proxy can't load websites
+  - 'make doctor' shows FAIL rows you don't understand
+  - You just SSH'd into a deployment you didn't set up and
+    something feels off
+
+What it does NOT do:
+  - Auto-apply anything destructive. Every fix asks first.
+  - Touch the database directly (credential issues go through
+    the existing render path).
+  - Surface secrets to the terminal.
+
+Recipes ship in install-order priority (issues that block earlier
+boot stages come first):
+
+   1. docker_daemon_down         the Docker daemon itself is down
+                                 (must run BEFORE any compose-based
+                                  recipe — none of them work without
+                                  a live daemon)
+   2. zombie_docker_proxy        port :80/:443 held by an orphan
+                                 docker-proxy from a failed earlier
+                                 `compose up` attempt
+   3. foreign_container_ports    non-cool-tunnel container on :80/:443
+   4. broken_container_dns       containers can't resolve hostnames
+   5. ipv6_dns_unreachable       Caddy ACME hits IPv6 dead-end
+                                 (common on Vultr -- they advertise
+                                  IPv6 but don't actually route it)
+   6. haproxy_backend_dns        HAProxy can't see caddy / sing-box
+   7. missing_tls_cert           sing-box waiting on Let's Encrypt
+   8. singbox_domain_resolver    sing-box 1.13+ DoH config regression
+   9. singbox_outbound_ipv4_only host can't reach the open internet
+                                 over IPv6 -> proxy traffic drops
+                                 (this and #5 are the two halves of
+                                  the v6-on-Vultr trap)
+  10. panel_restart_loop         panel container "Restarting" instead
+                                 of "Up" -- the v0.0.94-class
+                                 composer / Octane / image-stale set
+  11. pending_migrations         DB schema older than running code
+                                 (restored an old backup; panel boot
+                                  migration failed mid-way)
+  12. messenger_queue_stuck      Symfony Messenger Redis stream depth
+                                 >100 (worker died, supervisord didn't
+                                  catch SIGCHLD)
+  13. credential_drift           panel / sing-box / Mac out of sync
+                                 (delegates to auto_sync.sh)
+  14. no_proxy_account           no enabled accounts in the DB
+                                 (skip-fix: prints how-to, doesn't
+                                  echo a password)
+  15. legacy_env_shape           .env file from pre-v0.0.68
+
+When asking for help, paste the SUMMARY at the end of fix.sh's
+output (number detected / fixed / skipped / failed). That + the
+recipe slug of any FAILED entry is enough to triage almost
+anything.
+
+Exit codes:
+  0   no issues, OR all detected issues were fixed/skipped cleanly
+  1   one or more fix attempts failed -- recipe slug surfaced
+      in the summary block
+
 Next topic:  ./scripts/help.sh readiness
 EOF
     printf '%s\n' "$body"
@@ -543,6 +628,7 @@ main() {
         update)           help_update ;;
         doctor)           help_doctor ;;
         auto-sync)        help_auto_sync ;;
+        fix)              help_fix ;;
         readiness)        help_readiness ;;
         backup)           help_backup ;;
         restore)          help_restore ;;

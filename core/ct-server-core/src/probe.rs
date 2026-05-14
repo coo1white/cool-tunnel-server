@@ -161,7 +161,11 @@ async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<Prob
             reachability_span.record(otel_key::CT_STATUS_CODE, "request_error");
             tracing::warn!(error = %e, "probe reachability failed");
             return Ok(ProbeResult {
-                via: via.map(str::to_owned),
+                // Strip credentials from the via URL so a serialized
+                // ProbeResult never echoes the proxy password to logs,
+                // readiness output, telemetry, or stdout consumers
+                // (v0.1.2 readiness-NG10-leak fix).
+                via: via.and_then(strip_creds),
                 target: target.to_owned(),
                 reachable: false,
                 hide_ip_effective: false,
@@ -232,7 +236,10 @@ async fn run_anti_tracking_probe(target: &str, via: Option<&str>) -> Result<Prob
         .unwrap_or(false);
 
     Ok(ProbeResult {
-        via: via.map(str::to_owned),
+        // See companion comment on the reachability-fail path above:
+        // strip credentials from the via URL on the way out so neither
+        // the JSON stdout nor any structured consumer sees the password.
+        via: via.and_then(strip_creds),
         target: target.to_owned(),
         reachable,
         hide_ip_effective: !saw_xff,

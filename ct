@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# ct — top-level operator dispatcher (brew-style).
+#
+# A single short command for every workflow a noob operator needs:
+#
+#   ct install      first-time bootstrap on a fresh VPS
+#   ct fix          interactive auto-diagnose-and-repair agent
+#   ct doctor       read-only health dashboard
+#   ct update       pull latest, rebuild, hot-swap
+#   ct status       one-shot "what's running"
+#   ct logs         tail every container's logs
+#   ct backup       snapshot db + .env + caddy data
+#   ct restore      recover from a backup tarball
+#   ct readiness    strict ≥9/10 ship-readiness gate
+#   ct auto-sync    credential-lock audit + auto-correct
+#   ct help [topic] plain-English topic docs (no args = list topics)
+#   ct version      print the deployed release tag + git sha
+#   ct --help       this message
+#
+# All commands wrap the underlying scripts/*.sh — there is no
+# behaviour difference from `make <target>`. The point of `ct` is
+# muscle-memory parity with brew / git / docker so a new operator
+# can guess the command instead of reading the Makefile.
+#
+# Why a separate dispatcher (vs just symlinks to each script):
+#   - One discoverable surface: `ct --help` lists everything.
+#   - Subcommand routing lets us add new top-level UX later
+#     without changing each script's invocation.
+#   - Keeps `make <target>` working for CI / muscle memory from
+#     v0.1.1-era operators; the two are interchangeable.
+#
+# Install hint (optional — `ct` works fine as `./ct` from the repo):
+#   sudo ln -sf "$(pwd)/ct" /usr/local/bin/ct
+
+set -uo pipefail
+
+# Resolve to the directory containing this script so `ct` works
+# regardless of $PWD when invoked via PATH symlink.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+
+# ---------- Help -------------------------------------------------
+
+show_help() {
+    cat <<'EOF'
+ct — Cool Tunnel Server operator CLI
+
+USAGE
+  ct <command> [args...]
+
+EVERYDAY COMMANDS
+  install        first-time bootstrap on a fresh VPS (~5-10 min)
+  fix            interactive auto-diagnose-and-repair (the "I'm stuck" command)
+  doctor         read-only health dashboard (PASS / WARN / FAIL)
+  update         pull the latest release, rebuild, hot-swap
+  status         one-shot "what's running" check
+  logs           tail every container's logs
+
+DEEPER COMMANDS
+  backup         snapshot db + .env + caddy data into backups/
+  restore <f>    recover from a backup tarball
+  readiness      strict ≥9/10 ship-readiness gate (cron-friendly)
+  auto-sync      credential-lock audit + auto-correct
+
+DISCOVERY
+  help [topic]   plain-English explanation of a topic; no args -> list
+  version        print release tag + git sha
+  --help, -h     this message
+
+GETTING UNSTUCK
+  If anything looks wrong, the safest first move is:
+      ct fix
+  It walks through every known install / runtime issue and asks
+  before applying each fix. Press Enter to skip a recipe you don't
+  want to run.
+
+EOF
+}
+
+# ---------- Version ----------------------------------------------
+
+show_version() {
+    # Prefer panel's config.php (single source of truth across the
+    # PHP / Rust / manifest cluster); fall back to git describe so
+    # a bare clone without panel build still produces something.
+    local v
+    if v=$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
+            | head -1 | sed -E "s/.*'([0-9.]+)'.*/\1/"); then
+        :
+    else
+        v=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+    fi
+    local sha
+    sha=$(git rev-parse --short HEAD 2>/dev/null || echo "no-git")
+    printf 'ct (cool-tunnel-server) v%s  (git %s)\n' "$v" "$sha"
+}
+
+# ---------- Dispatch ---------------------------------------------
+
+cmd="${1:-help}"
+[[ $# -gt 0 ]] && shift
+
+case "$cmd" in
+    install)     exec ./scripts/install.sh             "$@" ;;
+    fix)         exec ./scripts/fix.sh                 "$@" ;;
+    doctor)      exec ./scripts/doctor.sh              "$@" ;;
+    update)      exec ./scripts/update.sh              "$@" ;;
+    backup)      exec ./scripts/backup.sh              "$@" ;;
+    restore)     exec ./scripts/restore.sh             "$@" ;;
+    readiness)   exec ./scripts/late-night-comeback.sh "$@" ;;
+    auto-sync)   exec ./scripts/auto_sync.sh           "$@" ;;
+    status)      exec make status ;;
+    logs)        exec make logs ;;
+    help)
+        if [[ $# -eq 0 ]]; then
+            exec ./scripts/help.sh
+        else
+            exec ./scripts/help.sh "$@"
+        fi
+        ;;
+    version|--version|-V) show_version ;;
+    -h|--help|"")
+        show_help
+        ;;
+    *)
+        printf '%s: unknown command: %s\n\n' "$0" "$cmd" >&2
+        show_help >&2
+        exit 1
+        ;;
+esac

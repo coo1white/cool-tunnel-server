@@ -269,6 +269,10 @@ doctor: ## run scripts/doctor.sh (operator-friendly health dashboard with PASS/W
 auto-sync: ## run scripts/auto_sync.sh (credential-lock audit + auto-correct agent; cron-friendly)
 	./scripts/auto_sync.sh
 
+.PHONY: fix
+fix: ## run scripts/fix.sh (interactive multi-recipe auto-diagnose-and-repair agent; the "I'm stuck" command)
+	./scripts/fix.sh
+
 .PHONY: help-topics
 help-topics: ## list operator mini-manual topics (then run `make help-<topic>`)
 	@./scripts/help.sh

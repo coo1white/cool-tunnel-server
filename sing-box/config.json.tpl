@@ -14,7 +14,6 @@
                 "path": "{{ .DohPath }}"
             }
         ],
-        "strategy": "ipv4_only",
         "final": "doh"
     },
 
@@ -38,11 +37,16 @@
     ],
 
     "outbounds": [
-        {"type": "direct", "tag": "direct"},
+        {
+            "type": "direct",
+            "tag":  "direct",
+            "domain_resolver": {"server": "doh", "strategy": "ipv4_only"}
+        },
         {"type": "block",  "tag": "block"}
     ],
 
     "route": {
+        "default_domain_resolver": {"server": "doh", "strategy": "ipv4_only"},
         "rules": [
             {"protocol": "dns", "outbound": "block"}
         ]
