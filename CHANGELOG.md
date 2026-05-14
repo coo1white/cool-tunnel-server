@@ -22,6 +22,97 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.99] — 2026-05-14 — Maintain-UX rewrite, phase 3 of 3 (`ct help <topic>` mini-manual)
+
+Phase 3 closes the three-PR maintain-UX refactor (v0.0.96 →
+v0.0.99). Lands `scripts/help.sh` + Makefile dispatch targets
+so an operator who just SSH'd into a fresh VPS can read
+plain-English explanations of each script without opening the
+source: "what does this do, when do I run it, what are the
+common failure modes, what do I do next."
+
+The original PR-3 plan also included auto-recovery hooks (e.g.
+"panel restarting → offer `compose up -d --force-recreate`").
+That's deliberately deferred — auto-recovery taking the wrong
+action is worse than no auto-recovery. The diagnostic blocks
+landed in PR 1 (v0.0.96) already tell the operator what to do;
+having a script DO it requires more field validation than this
+refactor budget allowed. Revisit when v0.0.96-v0.0.98 have
+some field time under them.
+
+### Added
+
+- **`scripts/help.sh [<topic>]`** — operator mini-manual.
+  No arg: prints the topic list. With a topic arg: prints
+  that topic's section. ~430 lines, ~50-line per topic, all
+  embedded as `read -r -d '' var <<'EOF' ... EOF || true`
+  heredocs (same bash-parser-bug-avoiding idiom from v0.0.96).
+
+- **Eight topics**:
+  - `getting-started` — what's in front of a fresh-VPS operator
+  - `install` — what install.sh does + common failure modes
+  - `update` — what update.sh does + common failure modes
+  - `doctor` — when to run it, how to read the output
+  - `readiness` — strict gate semantics, score interpretation
+  - `backup` — what gets backed up
+  - `restore` — destructive caveat + recovery flow
+  - `troubleshooting` — top 8 issues operators hit, ranked
+    by frequency, with the first-step diagnostic command per
+    class
+
+- **Makefile dispatch**:
+  - `make help-topics` — list the available topics (entry point)
+  - `make help-<topic>` — pattern rule that forwards to
+    `./scripts/help.sh $*`. So `make help-update`,
+    `make help-doctor`, etc.
+
+### Changed
+
+- No changes to existing scripts in this PR. install.sh /
+  backup.sh / restore.sh's `|| die` callsites were surveyed
+  for sweep candidates; the existing one-line hints were
+  short but acceptable. Skipping the sweep keeps the diff
+  focused.
+
+### Notes — what landed across the three-PR arc
+
+  v0.0.96  lib.sh: die_with_diag + 4 preflight helpers;
+           update.sh: full pre-flight + diagnostic blocks +
+           named NG component on component check failure
+
+  v0.0.97  preflight_network hotfix (drop curl -f; 401 is OK)
+
+  v0.0.98  doctor.sh + make doctor: health dashboard with
+           PASS/WARN/FAIL output + remediation block
+
+  v0.0.99  help.sh + make help-<topic>: operator mini-manual,
+           8 topics
+
+The original "more auto-debug and easier for noob coder" ask
+is now covered:
+  - more auto-debug:        v0.0.96 diagnostic blocks + v0.0.98 doctor
+  - easier for noob coder:  v0.0.99 mini-manual + getting-started
+
+Auto-recovery (the speculative item from the original PR-3
+sketch) is deferred. Operators have everything they need to
+diagnose + manually recover; automatic recovery requires
+field validation we haven't done.
+
+### Deployment
+
+- Pull v0.0.99 and run `ct update`. After the update, try:
+
+      make help-topics
+      make help-getting-started
+      make help-troubleshooting
+
+  Each topic is one screen of plain English. Operator-side
+  workflow: when stuck, `make doctor` for the dashboard, then
+  `make help-troubleshooting` for the recipe to apply, then
+  `make help-<thing>` for the deeper context.
+
+---
+
 ## [0.0.98] — 2026-05-14 — Maintain-UX rewrite, phase 2 of 3 (`ct doctor` self-diagnostic dashboard)
 
 Phase 2 of the three-PR maintain-UX refactor. Lands a new

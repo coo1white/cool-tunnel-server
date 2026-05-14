@@ -265,6 +265,17 @@ readiness: ## run scripts/late-night-comeback.sh (strict >=9/10 readiness gate; 
 doctor: ## run scripts/doctor.sh (operator-friendly health dashboard with PASS/WARN/FAIL + remediation hints)
 	./scripts/doctor.sh
 
+.PHONY: help-topics
+help-topics: ## list operator mini-manual topics (then run `make help-<topic>`)
+	@./scripts/help.sh
+
+# Per-topic help dispatch. The `%` is the topic name (e.g.
+# `make help-update` -> `./scripts/help.sh update`). Pattern
+# rules don't show in `make help`'s table -- run `make
+# help-topics` to see the list.
+help-%:
+	@./scripts/help.sh $*
+
 .PHONY: logs
 logs: ## tail all container logs
 	docker compose logs -f --tail=80
