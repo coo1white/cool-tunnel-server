@@ -22,6 +22,146 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.93] — 2026-05-14 — Symfony Messenger foundation (Phase 2 of Symfony-infusion arc)
+
+Phase 2 of the v0.0.92 → v0.0.94 Symfony-infusion arc. Installs
+Symfony Messenger 7.4.11 + Redis transport 7.4.8, defines the
+two reload message DTOs + handlers, wires the bus + Redis
+Streams transport, adds a `[program:messenger]` supervisord
+program, and bridges the legacy `ReloadSingBoxJob` /
+`ReloadServerConfigJob` `handle()` methods into the Messenger
+bus.
+
+Behaviour preserved end-to-end. Existing call sites
+(`ReloadSingBoxJob::dispatch()` from model observers, Filament
+actions, scheduled commands) continue to work unchanged.
+
+### Added
+
+- **Symfony Messenger 7.4.11 + Redis transport 7.4.8** in
+  `panel/composer.json`. `config.platform.ext-redis = 5.3.0`
+  so composer resolves on CI runners that don't have the
+  extension installed locally; production container has the
+  real extension via the panel Dockerfile's PECL install.
+- **`app/Messages/ReloadSingBox.php` + `ReloadServerConfig.php`** —
+  readonly DTOs with a single `reason` field for operator-side
+  observability.
+- **`app/MessageHandlers/ReloadSingBoxHandler.php` +
+  `ReloadServerConfigHandler.php`** — handlers with
+  `#[AsMessageHandler]`, depend on the v0.0.92 PSR interfaces
+  (`SingBoxConfigGeneratorInterface`,
+  `SingBoxReloaderInterface`, `CaddyfileGeneratorInterface`).
+  Same render+reload semantics as the legacy Job classes; the
+  Caddyfile-first render order from v0.0.84 is preserved.
+- **`app/Providers/MessengerServiceProvider.php`** — wires
+  `MessageBusInterface` (with `SendMessageMiddleware` +
+  `HandleMessageMiddleware`) and `TransportInterface` (Redis
+  Streams on the `cool_tunnel:messenger` stream, consumer
+  group `cool_tunnel`). In the `testing` env, swaps to
+  Messenger's `InMemoryTransport` so PHPUnit doesn't need
+  `ext-redis` installed locally / in CI runners.
+- **`app/Console/Commands/MessengerConsume.php`** — Artisan
+  wrapper around `Symfony\Component\Messenger\Worker` with
+  `--time-limit=3600` + `--memory-limit=128M` matching the
+  existing `[program:queue]` posture.
+- **`docker/panel/supervisord.conf`** — new `[program:messenger]`
+  stanza inheriting the round-22 uniform graceful-shutdown attrs
+  + the `[program:queue]` `startretries=10` Redis-blip
+  protection.
+
+### Changed
+
+- **`docker/panel/Dockerfile`** — `pecl install redis` +
+  `docker-php-ext-enable redis` in a scoped RUN block with
+  build-deps in a `--virtual` group, deleted at end of step.
+  Laravel / Predis stays as the Laravel-side Redis client;
+  ext-redis is for Symfony Messenger's Redis transport only.
+  The two clients share the same Redis instance but use
+  independent connection pools and don't interfere.
+- **`scripts/verify_supervisord.sh`** — docstring updated to
+  list the new program. The round-6 invariants check is
+  data-driven (greps `^[program:*]`) so messenger is picked
+  up + validated automatically; verify_supervisord now reports
+  `5 programs found — frankenphp queue messenger scheduler
+  ct-core-daemon`.
+- **`.github/workflows/audit.yml`**:
+  - PSR-4 strict regex updated to accept chained modifiers
+    (`final readonly class X` from PHP 8.2+) and to survive
+    grep's no-match exit when a file has no class/interface
+    declaration. The pre-fix regex only allowed one optional
+    modifier; the pre-fix `set -e` + `pipefail` killed the
+    script on any modifier-less file instead of continuing.
+  - `composer install --ignore-platform-req=ext-redis` on
+    panel installs. CI runners have ext-redis 5.3.0 but
+    `symfony/redis-messenger 7.4.8` requires 6.1+; production
+    has 6.x via the PECL install above. CI never RUNS the
+    Redis transport (PHPUnit uses `InMemoryTransport`).
+- **`.github/workflows/ci.yml`** — same
+  `--ignore-platform-req=ext-redis` on the panel test-deps
+  composer install.
+
+### Backward-compat shims
+
+- **`App\Jobs\ReloadSingBoxJob::handle()`** now dispatches
+  `new ReloadSingBox(reason: 'legacy-job-bridge')` instead of
+  resolving the renderer/reloader directly. Same for
+  `ReloadServerConfigJob`. Phase 3 (v0.0.94) deletes both Job
+  classes.
+
+### Password handling — same lesson as v0.0.88
+
+The Redis transport's password is passed via the `auth`
+transport option, **never interpolated into the DSN string**.
+Mirror of v0.0.88's Rust-core typed-builder fix —
+`openssl rand -base64` passwords with `/`, `+`, `=` bytes
+survive the typed config; URL parsers reject them.
+
+### Tests
+
+- All 13 dispatch + failed-handler tests pass against
+  `InMemoryTransport` (`ReloadSingBox`, `ReloadServerConfig`,
+  `ServerConfigSave`, `ProxyAccountAfterCommit`). No test-file
+  modifications — the test environment uses
+  `InMemoryTransport` automatically via the provider's
+  environment-aware binding.
+- PR #83 CI passed before merge — all 18 jobs green
+  (manifests, php-syntax, php-style, phpstan, php-class-vs-
+  filename, rust, shell, templates, sqlx, secret scan,
+  composer audit, dependency review, manifest drift, anti-
+  tracking config, stale doc references, blade asset-link).
+- Local pre-release validation:
+  - `php -l` clean on all new + modified PHP files.
+  - `./vendor/bin/pint` clean.
+  - `./vendor/bin/phpunit --filter 'ReloadSingBox|ReloadServerConfig|ServerConfigSave|ProxyAccountAfterCommit'`
+    — 13 tests, 23 assertions, OK.
+  - `make ci` clean.
+  - `verify_supervisord` reports `5 programs found` with
+    lifecycle invariants intact.
+
+### Operator impact (`ct update` v0.0.92 → v0.0.93)
+
+1. Image rebuild includes ext-redis PECL compile (~30 s added
+   on first build; cached on subsequent runs).
+2. supervisord brings up the new `[program:messenger]` worker
+   alongside `[program:queue]`; first send to the bus
+   auto-creates the Redis stream + consumer group via
+   `auto_setup: true` — no separate bootstrap step.
+3. Existing in-flight Laravel Queue jobs drain through the
+   legacy Job shims (still functional; they bridge to
+   Messenger internally).
+4. Operator sees no Filament-side change.
+
+### Next phase
+
+**Phase 3 (v0.0.94)**: update call sites (`ProxyAccount::booted`,
+`ServerConfig::booted`, Filament actions, scheduled commands)
+to dispatch `new ReloadSingBox()` / `new ReloadServerConfig()`
+directly to the bus. Remove legacy `ReloadSingBoxJob` and
+`ReloadServerConfigJob` classes. Rewrite dispatch tests around
+`InMemoryTransport` assertions instead of `Queue::fake()`.
+
+---
+
 ## [0.0.92] — 2026-05-14 — PSR service interfaces (Phase 1 of Symfony-infusion arc)
 
 Phase 1 of the v0.0.92 → v0.0.94 Symfony-infusion arc (hybrid of
