@@ -22,6 +22,123 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.0] — 2026-05-14 — Milestone: closing the 0.0.x line
+
+Cool Tunnel Server graduates from the 0.0.x line to 0.1.0.
+
+The 0.0.x line carried the project from the original bare Caddy
++ naive recipe through ~100 patch releases of architectural,
+ops, and developer-experience work. The major arcs that landed:
+
+- **Wire + control-plane stability** (0.0.1 → ~0.0.5x):
+  `ct-protocol` shared crate, `ProfileV1`, `SubscriptionManifestV1`,
+  `ComponentManifestV1`, the OK/NG component-check model.
+
+- **Filament + FrankenPHP runtime swap** (0.0.5x → 0.0.6x):
+  the admin UI moved to Filament 3, the application runtime moved
+  to FrankenPHP worker-mode (~3-5x latency reduction on the
+  Filament save → reload path), supervisord layout consolidated
+  to the canonical 5-program shape.
+
+- **Multi-arch + SNI router** (0.0.3x → 0.0.4x):
+  HAProxy as the public `:443` TCP SNI router (no TLS termination
+  at the edge), separation of proxy and panel domains, per-arch
+  pins for the bundled `naive` client.
+
+- **Daemon FSM + bounded IPC** (0.0.6x → 0.0.7x):
+  the Rule Maker connection FSM with atomic compare-exchange
+  transitions, typed wire errors, OTel-style network-turn spans,
+  and 80% threshold pressure handling — see
+  [`docs/daemon-fsm.md`](./docs/daemon-fsm.md).
+
+- **Robustness review arc** (0.0.79 → 0.0.85): 26 Critical findings
+  from the round-22 robustness review shipped over 6 releases plus
+  a cushion-trim release.
+
+- **Symfony-infusion arc** (0.0.92 → 0.0.94): PSR-style service
+  interfaces (Phase 1), Symfony Messenger foundation (Phase 2),
+  direct-dispatch cutover that retired the legacy
+  `ReloadSingBoxJob` / `ReloadServerConfigJob` shims (Phase 3).
+  In-flight Laravel-Queue rows for the deleted Job classes will
+  fail to deserialize after v0.0.94 — operators upgrading from
+  pre-v0.0.94 should run `php artisan queue:flush` once post-deploy.
+
+- **Maintain-UX rewrite arc** (0.0.96 → 0.0.99): `lib.sh` foundation
+  + `update.sh` diagnostic blocks (Phase 1), `ct doctor`
+  self-diagnostic dashboard (Phase 2), `ct help <topic>`
+  mini-manual (Phase 3). The original "more auto-debug and easier
+  for noob coder" ask is now covered.
+
+- **Documentation overhaul** (0.0.100): README slimmed from
+  814 lines to ~170; new
+  [`docs/operations.md`](./docs/operations.md) (day-to-day operator
+  guide) and [`docs/glossary.md`](./docs/glossary.md) (plain-English
+  definitions for every term used across the project).
+
+### Compatibility — what does NOT change at the 0.1.0 boundary
+
+Per [`VERSIONING.md`](./VERSIONING.md), the minor bump signals
+*permission to break compatibility*, NOT a forced break. The
+operator-facing surface area is unchanged at the 0.0.100 → 0.1.0
+boundary:
+
+- **`naive+https://...` profile URL format** — same parser, same
+  shape. Existing subscription URLs keep working.
+- **`SubscriptionManifestV1`, `ComponentManifestV1`,
+  `WireRequestV1` / `WireResponseV1` / `WireEventV1`** — all
+  stable. WireV1 stays WireV1.
+- **`ct-server-core` CLI subcommand surface** — unchanged.
+- **`.env` keys** — unchanged. Existing deployments keep their
+  config.
+- **Filament admin URL routes (`/admin`, `/api/v1/...`)** —
+  unchanged.
+
+This release is operator-safe to roll forward from any 0.0.9x
+release with a normal `ct update`. The release version bump
+propagates through the standard `make set-version` anchors
+(Cargo.toml, manifests/*, panel/config/cool-tunnel.php) plus
+the LTSC baseline pin in [`LTSC.md`](./LTSC.md) (`v0.0.70` →
+`v0.1.0`).
+
+### What 0.1.x means
+
+The 0.1.x line continues development on the same surface. The
+0.0.x → 0.1.0 jump is a *milestone marker* — a clean point in
+the project history where the architectural arcs of the first
+year are closed and the maintenance + ops foundation has caught
+up. Patch releases in the 0.1.x line continue to follow the
+"no breaking change" promise of the patch position; minor bumps
+(0.1.x → 0.2.x and beyond) will be reserved for surface changes
+that warrant them.
+
+### Notes
+
+- No code-path change in this release. The diff is the version
+  anchor bump + this CHANGELOG entry + the LTSC.md baseline
+  date/version update.
+- The git history rewrite that landed earlier today
+  (canonicalised author identity to `coolwhite LLC` across all
+  234 affected commits + scrubbed blob content + scrubbed commit
+  message bodies) is now the baseline for the 0.1.x line. Any
+  fresh clone post-v0.1.0 will see only the canonical history.
+- The `pre-rewrite-backup-20260514T104636Z` tag on origin
+  preserves the pre-rewrite state as a recoverable safety net.
+  Operators who want to drop it once they've confirmed the
+  rewrite is good:
+  `git push origin :refs/tags/pre-rewrite-backup-20260514T104636Z`
+
+### Deployment
+
+- Pull v0.1.0 and run `ct update`. Cache-fast on top of v0.0.100
+  (only the version anchors + CHANGELOG + LTSC.md changed; no
+  rebuild-triggering Dockerfile or composer.lock delta).
+- `ct doctor` after the update should report mostly PASS with 3
+  INFO lines (release version v0.1.0, active proxy account
+  count, Messenger Redis stream depth), 0 FAIL on a healthy
+  stack.
+
+---
+
 ## [0.0.100] — 2026-05-14 — README rewrite: noob-friendly multi-file split
 
 The README.md grew to 814 lines over the project's history and
