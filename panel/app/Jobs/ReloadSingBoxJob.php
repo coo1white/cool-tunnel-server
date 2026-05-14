@@ -6,14 +6,14 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Services\SingBoxConfigGenerator;
-use App\Services\SingBoxReloader;
+use App\Messages\ReloadSingBox;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Messenger\MessageBusInterface;
 use Throwable;
 
 // R-panel-1 (2026-05-05 audit) — pre-fix, ProxyAccount::booted ran
@@ -106,24 +106,32 @@ class ReloadSingBoxJob implements ShouldQueue
     }
 
     /**
-     * The queued unit of work: re-render config.json on disk and,
-     * if the file actually changed, ask sing-box to hot-reload.
+     * v0.0.93 transition shim: the actual render+reload work has
+     * moved to `App\MessageHandlers\ReloadSingBoxHandler`. This
+     * `handle()` body now bridges the legacy Laravel-Queue
+     * dispatch surface into the Symfony Messenger bus so
+     * existing call sites (`ReloadSingBoxJob::dispatch()` from
+     * model observers, Filament actions, scheduled commands)
+     * continue to work unchanged through the v0.0.93 → v0.0.94
+     * transition window.
      *
-     * Runs with no constructor arguments — the job is
-     * representation-free because it always reads the current DB
-     * state. Two saved-events queued back-to-back coalesce
-     * naturally: the first job renders + reloads with the latest
-     * state, the second renders the same hash and short-circuits
-     * inside renderToFile().
+     * Phase 3 (v0.0.94) updates the call sites to dispatch
+     * `new ReloadSingBox()` directly to the bus and deletes
+     * this Job class.
+     *
+     * Note: this `handle()` still runs inside Laravel's queue
+     * worker (`[program:queue]` in supervisord). The dispatched
+     * message immediately enters Messenger's `async` Redis
+     * transport, where `[program:messenger]` picks it up and
+     * invokes the handler. The two-hop path is intentional and
+     * temporary — the alternative (route the legacy dispatch
+     * straight into Messenger's sync transport from inside
+     * Laravel's queue worker) loses the async semantics for
+     * exactly the call sites we're trying to migrate.
      */
-    public function handle(
-        SingBoxConfigGenerator $generator,
-        SingBoxReloader $reloader,
-    ): void {
-        $hash = $generator->renderToFile();
-        if ($hash !== null) {
-            $reloader->reload();
-        }
+    public function handle(MessageBusInterface $bus): void
+    {
+        $bus->dispatch(new ReloadSingBox(reason: 'legacy-job-bridge'));
     }
 
     /**

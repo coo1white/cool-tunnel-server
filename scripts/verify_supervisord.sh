@@ -3,11 +3,17 @@
 # verify_supervisord.sh — pin the round-6 lifecycle invariants on
 # docker/panel/supervisord.conf.
 #
-# Round 6 (PR #13) hardened all four supervisord programs
-# (frankenphp, queue, scheduler, ct-core-daemon) with a uniform
-# graceful-shutdown discipline so `docker compose stop` drains
-# requests cleanly instead of getting SIGKILL'd by the cgroup at
-# the 10s grace window:
+# Round 6 (PR #13) hardened the supervisord programs
+# (frankenphp, queue, messenger, scheduler, ct-core-daemon)
+# with a uniform graceful-shutdown discipline so
+# `docker compose stop` drains requests cleanly instead of getting
+# SIGKILL'd by the cgroup at the 10s grace window. The messenger
+# program joined the set in v0.0.93 (Symfony Messenger worker for
+# the ReloadSingBox / ReloadServerConfig handlers); it inherits the
+# same uniform attrs and is discovered automatically by the
+# `grep ^[program:*]` loop below — no list to maintain.
+#
+# The required attrs:
 #
 #   stopsignal   = TERM
 #   stopwaitsecs = 20

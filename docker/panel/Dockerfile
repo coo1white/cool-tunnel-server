@@ -108,6 +108,23 @@ RUN apk add --no-cache \
     && chmod +x /usr/local/bin/composer \
     && rm -rf /var/cache/apk/*
 
+# v0.0.93 — install ext-redis (phpredis) via PECL so Symfony
+# Messenger's Redis transport can consume the cool_tunnel:messenger
+# stream. Laravel itself continues to use the pure-PHP Predis
+# client (panel/config/database.php:'client'=>'predis') — the
+# two clients share the same Redis instance but use independent
+# connection pools and don't interfere.
+#
+# `$PHPIZE_DEPS` is the docker-php meta-package providing the
+# headers and toolchain needed to compile PECL extensions; it's
+# scoped to a `--virtual` group and deleted at the end of the
+# step so it doesn't bloat the final image.
+RUN apk add --no-cache --virtual .ext-redis-build-deps $PHPIZE_DEPS \
+    && pecl install --force redis \
+    && docker-php-ext-enable redis \
+    && apk del .ext-redis-build-deps \
+    && rm -rf /tmp/pear ~/.pearrc /var/cache/apk/*
+
 # redis-cli for the Cycle 2 / 2 drift-detection probe (v0.0.40). The
 # probe in manifests/redis.upstream.json::verify runs
 # `redis-cli ... INFO Server | grep ^redis_version:` and the matcher
