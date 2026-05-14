@@ -40,6 +40,7 @@ TOPICS=(
     doctor
     auto-sync
     fix
+    auto-update
     readiness
     backup
     restore
@@ -343,38 +344,50 @@ boot stages come first):
 
    1. docker_daemon_down         the Docker daemon itself is down
                                  (must run BEFORE any compose-based
-                                  recipe — none of them work without
+                                  recipe -- none of them work without
                                   a live daemon)
-   2. zombie_docker_proxy        port :80/:443 held by an orphan
+   2. compose_service_down       NEW v0.1.3: a service in compose.yml
+                                 is supposed to be running but isn't
+                                 (e.g. haproxy exited after SIGHUP
+                                  re-exec, host :443 unbound, browsers
+                                  see ERR_CONNECTION_REFUSED). Fix:
+                                  compose up -d.
+   3. zombie_docker_proxy        port :80/:443 held by an orphan
                                  docker-proxy from a failed earlier
                                  `compose up` attempt
-   3. foreign_container_ports    non-cool-tunnel container on :80/:443
-   4. broken_container_dns       containers can't resolve hostnames
-   5. ipv6_dns_unreachable       Caddy ACME hits IPv6 dead-end
+   4. foreign_container_ports    non-cool-tunnel container on :80/:443
+   5. broken_container_dns       containers can't resolve hostnames
+   6. ipv6_dns_unreachable       Caddy ACME hits IPv6 dead-end
                                  (common on Vultr -- they advertise
                                   IPv6 but don't actually route it)
-   6. haproxy_backend_dns        HAProxy can't see caddy / sing-box
-   7. missing_tls_cert           sing-box waiting on Let's Encrypt
-   8. singbox_domain_resolver    sing-box 1.13+ DoH config regression
-   9. singbox_outbound_ipv4_only host can't reach the open internet
+   7. haproxy_backend_dns        HAProxy can't see caddy / sing-box
+   8. missing_tls_cert           sing-box waiting on Let's Encrypt
+   9. singbox_domain_resolver    sing-box 1.13+ DoH config regression
+  10. singbox_outbound_ipv4_only host can't reach the open internet
                                  over IPv6 -> proxy traffic drops
-                                 (this and #5 are the two halves of
+                                 (this and #6 are the two halves of
                                   the v6-on-Vultr trap)
-  10. panel_restart_loop         panel container "Restarting" instead
+  11. panel_restart_loop         panel container "Restarting" instead
                                  of "Up" -- the v0.0.94-class
                                  composer / Octane / image-stale set
-  11. pending_migrations         DB schema older than running code
+  12. pending_migrations         DB schema older than running code
                                  (restored an old backup; panel boot
                                   migration failed mid-way)
-  12. messenger_queue_stuck      Symfony Messenger Redis stream depth
+  13. messenger_queue_stuck      Symfony Messenger Redis stream depth
                                  >100 (worker died, supervisord didn't
                                   catch SIGCHLD)
-  13. credential_drift           panel / sing-box / Mac out of sync
+  14. credential_drift           panel / sing-box / Mac out of sync
                                  (delegates to auto_sync.sh)
-  14. no_proxy_account           no enabled accounts in the DB
+  15. no_proxy_account           no enabled accounts in the DB
                                  (skip-fix: prints how-to, doesn't
                                   echo a password)
-  15. legacy_env_shape           .env file from pre-v0.0.68
+  16. legacy_env_shape           .env file from pre-v0.0.68
+  17. stale_deployment           NEW v0.1.3: deployed version is
+                                 older than the latest release tag
+                                 on origin/main. Fix: pulls + runs
+                                 ct update. Interactive companion
+                                 to `ct auto-update` (the unattended
+                                  cron-fired version).
 
 When asking for help, paste the SUMMARY at the end of fix.sh's
 output (number detected / fixed / skipped / failed). That + the
@@ -385,6 +398,92 @@ Exit codes:
   0   no issues, OR all detected issues were fixed/skipped cleanly
   1   one or more fix attempts failed -- recipe slug surfaced
       in the summary block
+
+Next topic:  ./scripts/help.sh auto-update
+EOF
+    printf '%s\n' "$body"
+}
+
+help_auto_update() {
+    h1 "auto_update.sh — unattended release-pulling agent"
+    local body
+    read -r -d '' body <<'EOF' || true
+What it does:
+  Checks origin/main for a newer release tag. If the deployed
+  version is older AND the running stack is currently healthy,
+  pulls main and runs the standard `./scripts/update.sh` flow.
+
+  The agent is DEFAULT-OFF. A fresh install never auto-upgrades.
+  You opt in via:
+
+    sudo ct auto-update enable
+
+  That drops a /etc/cron.daily/ct-auto-update symlink which runs
+  the agent in --quiet mode once a day (anacron-windowed at the
+  Debian default time, usually 06:25-07:00 UTC).
+
+  Disable any time:
+
+    sudo ct auto-update disable
+
+  Manual one-shot run (interactive, prints everything):
+
+    ct auto-update now
+    # or: ct auto-update      (defaults to `now`)
+    # or: make auto-update
+
+  Status:
+
+    ct auto-update status
+
+When to enable:
+  - You operate a small fleet and don't want to SSH into each box
+    every time we cut a patch release.
+  - Your deployment doesn't have a custom dev workflow that needs
+    manual coordination on every upgrade.
+  - You're comfortable with the agent waking up overnight and
+    re-rendering configs as part of its catch-up cycle.
+
+When NOT to enable:
+  - You pin to a specific release on purpose (don't want surprises).
+  - You have heavy customizations in /opt/cool-tunnel-server (the
+    agent uses --ff-only and refuses to upgrade if your working
+    tree has uncommitted changes -- but even so, opting in is
+    riskier on a customized box).
+  - You're in the middle of a multi-step deploy and don't want a
+    cron tick interrupting it.
+
+Safety properties:
+  - flock'd: two concurrent runs can't race.
+  - Network-aware: aborts cleanly if origin is unreachable; will
+    retry on the next cron tick.
+  - Health-gated: refuses to upgrade an already-broken stack
+    (`credential-lock` guard pre-flight + `panel` running check).
+    Logic: an unattended agent should NEVER compound an existing
+    incident; rolling a new release on top of a broken
+    deployment usually makes diagnosis harder.
+  - Idempotent: re-running mid-upgrade picks up where it left off.
+  - Read-only when nothing to do: `up to date` early-exits with
+    no docker calls, no git changes.
+
+What it does NOT do:
+  - Roll back on failure. If the new release breaks the stack,
+    the agent exits non-zero with a clear "left at partial state"
+    message. Recovery is via `ct fix` (which detects most
+    upgrade-induced gotchas as recipes).
+  - Skip prereleases. Currently any tag on origin/main triggers
+    an upgrade. (We don't ship rcs; if we ever do, we'll add an
+    `--stable-only` flag and make it the default.)
+  - Notify externally. Logs to stdout/stderr; cron mails the root
+    user the daily output if your local cron is configured to.
+
+Exit codes:
+  0    up to date, OR upgraded successfully
+  1    upgrade attempted and failed (operator should investigate)
+  2    refused (stack unhealthy / no network / not a git checkout)
+
+Companion recipe in `ct fix`: `stale_deployment` — interactive
+catch-up that runs the same logic with an [a]pply/[s]kip prompt.
 
 Next topic:  ./scripts/help.sh readiness
 EOF
@@ -629,6 +728,7 @@ main() {
         doctor)           help_doctor ;;
         auto-sync)        help_auto_sync ;;
         fix)              help_fix ;;
+        auto-update)      help_auto_update ;;
         readiness)        help_readiness ;;
         backup)           help_backup ;;
         restore)          help_restore ;;

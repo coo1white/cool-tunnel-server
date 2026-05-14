@@ -558,6 +558,12 @@ If something looks wrong, the safe first move is:
   you can run it from anywhere:
        ${CT_BOLD}sudo ln -sf "\$(pwd)/ct" /usr/local/bin/ct${CT_RESET}
 
+To have this box auto-pull new releases (default OFF, opt-in):
+       ${CT_BOLD}sudo ct auto-update enable${CT_RESET}
+  Drops a /etc/cron.daily symlink that runs a once-a-day quiet
+  release-pulling agent (\`ct help auto-update\` for details).
+  Disable any time with \`sudo ct auto-update disable\`.
+
 Read docs/components.md for how to swap a part.
 Read Disclaimer.md before letting anyone else use it.
 EOF
