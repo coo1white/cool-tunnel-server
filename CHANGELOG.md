@@ -22,6 +22,95 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.92] — 2026-05-14 — PSR service interfaces (Phase 1 of Symfony-infusion arc)
+
+Phase 1 of the v0.0.92 → v0.0.94 Symfony-infusion arc (hybrid of
+Scenarios A + B from the cost-benefit pushback discussion).
+Behaviour-identical to v0.0.91; only the contract layer is new.
+
+The proxy wire protocol, subscription manifest, queue contract,
+runtime behaviour, Filament resources, and Eloquent models are
+all unchanged from v0.0.91. `ct update` from any prior version
+applies cleanly with no schema migration, no env-var addition,
+no supervisord-program addition, no Redis stream creation.
+
+### Added
+
+- **Six PSR-style interfaces under `App\Contracts\`**:
+  - `SingBoxConfigGeneratorInterface` (`renderToFile(): ?string`)
+  - `SingBoxReloaderInterface` (`reload(): bool`)
+  - `CaddyfileGeneratorInterface` (`renderToFile(): ?string`)
+  - `RevocationBusInterface` — 5 announce / status methods.
+    Name deliberately drops "Redis" (transport is an
+    implementation detail).
+  - `CtServerCoreInterface` — `run()` plus 9 typed helpers
+    covering every existing public method on `CtServerCore`.
+  - `ComponentCheckerInterface` (`check()` + `summarize()`).
+
+  Each interface captures the existing public surface of its
+  concrete service 1:1 — no method additions, no signature
+  drift. PHPdoc on each documents idempotency contracts
+  (hash-based dedup), null-on-failure semantics (swallow to
+  critical log, never throw), and the worker-mode invariants
+  the implementations already honour.
+
+### Changed
+
+- **Six concrete services declare `implements` against their
+  interface.** `SingBoxConfigGenerator`, `SingBoxReloader`,
+  `CaddyfileGenerator`, `RedisRevocationBus`, `CtServerCore`,
+  `ComponentChecker`. One-line change each.
+- **`AppServiceProvider::register()` adds six interface →
+  concrete bindings** via a private `SERVICE_BINDINGS` constant
+  map. Existing `$this->app->singleton(Concrete::class)`
+  registrations are preserved unchanged so call sites that
+  resolve by concrete class name continue to work without churn.
+  Phase 2 (Symfony Messenger handlers) will type-hint the
+  interface; Phase 3 (test rewrites) will bind fakes against
+  the interface in `$this->app->bind(...)`.
+- **Bumped `metrics` crate from 0.24.5 → 0.24.6.** Unrelated to
+  the interface work but folded in to unblock the shared CI
+  gate — 0.24.5 was yanked from crates.io between the v0.0.91
+  tag and the Phase 1 PR. Cargo.lock-only change; no code
+  changes (API identical between 0.24.5 and 0.24.6).
+
+### Tests
+
+- No test files modified. Existing tests use `Bus::fake()` /
+  `Queue::fake()` against Job classes, not service-class
+  resolution through the container. Binding correctness is
+  verified by `phpstan (level 5)`, `composer audit`, and the
+  panel container's boot-time smoke when Filament resources
+  instantiate.
+- PR #82 CI passed before merge — full `audit.yml` gate plus
+  the standard `ci.yml` gate (18 jobs).
+- Local pre-release validation:
+  - `php -l` clean on all 6 modified service files plus
+    `AppServiceProvider` plus 6 new interface files.
+  - `./vendor/bin/pint` clean.
+  - `make ci` clean (php-syntax + composer-audit + shellcheck +
+    manifests-jq + manifest-lockstep + verify-sot +
+    verify-supervisord + secrets-argv).
+
+### Diff
+
+`+306 / −6` across 13 files: 6 new interface files, 6 modified
+service files (1-line `implements` each), 1 modified
+`AppServiceProvider`. Plus the metrics Cargo.lock bump.
+
+### Next phases (for reference)
+
+- **Phase 2 (v0.0.93)**: `composer require symfony/messenger`,
+  message DTOs + handlers + `MessengerServiceProvider` +
+  supervisord `[program:messenger]`. Legacy `ReloadSingBoxJob`
+  / `ReloadServerConfigJob` stay as thin shims dispatching to
+  the Messenger bus.
+- **Phase 3 (v0.0.94)**: Cutover — update dispatch call sites,
+  remove legacy Job classes, rewrite dispatch tests around
+  Symfony Messenger's `InMemoryTransport`.
+
+---
+
 ## [0.0.91] — 2026-05-14 — README tutorials rewritten in beginner-friendly form
 
 Documentation-only release. The proxy wire protocol, subscription
