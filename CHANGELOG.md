@@ -22,6 +22,95 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.1] — 2026-05-14 — Add `auto-sync` agent — credential-lock audit + auto-correct
+
+First v0.1.x patch release. Adds an operator-facing
+"audit-and-correct" agent for the four-way credential-lock
+invariant (`db == rendered == manifest == mac-config`). Motivated
+by a production incident earlier today where a Filament-UI
+Regenerate-password click caused a transient window of
+inconsistency between server-side state and the Mac client's
+cached subscription URL. The investigation traced through the
+credential-lock guard repeatedly to find the drift — an
+operator-friendly wrapper that runs the guard *and* takes
+corrective action on its own makes the next such incident a
+one-command resolve.
+
+### Added
+
+- **`scripts/auto_sync.sh`** (~100 lines) — credential-lock
+  audit + auto-correct agent. Runs the
+  `ct-server-core guard credential-lock` invariant. On NG:
+  re-renders sing-box config, restarts the sing-box container,
+  re-verifies the guard. Logs every action loudly. Cron-friendly
+  exit codes (0 on no-drift OR drift-fixed; 1 on
+  drift-couldn't-fix). Companion to `make doctor` (which is
+  read-only).
+
+- **`make auto-sync` Makefile target** — wrapper around the
+  shell script. Slots in next to `make doctor` and
+  `make readiness` in the operator surface.
+
+- **`help-auto-sync` topic** in `scripts/help.sh` — plain-English
+  explanation of when to use the agent vs the existing
+  Laravel scheduler entry that handles the routine case
+  (`singbox:render --if-changed --reload` every 5 min).
+
+### Notes — relationship to existing scheduler
+
+The Laravel scheduler at `panel/routes/console.php:53` already
+runs `php artisan singbox:render --if-changed --reload` every 5
+minutes as a silent safety net. That handles the routine case
+of "DB row updated, sing-box config not yet re-rendered" without
+operator action.
+
+`auto-sync` is the explicit + loud + manifest-aware variant:
+- **Explicit**: invoked by `make auto-sync` rather than fired by
+  cron; operators see the output.
+- **Loud**: logs every action with timestamps so a tail of the
+  output shows exactly what happened.
+- **Manifest-aware**: uses the four-way `credential-lock` guard
+  (db = rendered = manifest = mac-config), not just the
+  `singbox:render --if-changed` two-way check. Catches drift in
+  the manifest or mac-config surfaces that the existing
+  scheduler entry doesn't.
+
+If operators want a tighter cron cadence than 5 min, the shell
+script is host-side wireable to any frequency via standard
+crontab. The Laravel scheduler entry deliberately stays at the
+existing 5-min cadence.
+
+### Notes — implementation
+
+- Pure shell. No new Rust or PHP code paths. The agent composes
+  existing `ct-server-core` subcommands
+  (`guard credential-lock`, `--json singbox render`) plus
+  `docker compose restart sing-box`. Adds no new surface that
+  needs maintenance.
+- Two known-but-unfixed-in-this-release cosmetic issues
+  surfaced during today's incident, queued for a future
+  v0.1.x release:
+  - `supervisorctl status` query from inside the panel
+    container fails with "ini file does not include
+    supervisorctl section" — supervisord is fine, just the
+    client config can't be queried that way.
+  - Custom `MessengerConsume` wrapper doesn't expose the
+    `--limit` flag from upstream `symfony/messenger`.
+
+### Deployment
+
+- Pull v0.1.1 and run `ct update`. Cache-fast (no Dockerfile
+  delta, no composer.lock delta). After the update:
+
+      make auto-sync             # one-shot audit + correct
+      make help-auto-sync        # plain-English explanation
+
+- The new agent is purely additive. Existing flows (`ct update`,
+  `make doctor`, `make readiness`, the Laravel scheduler entries)
+  are unchanged.
+
+---
+
 ## [0.1.0] — 2026-05-14 — Milestone: closing the 0.0.x line
 
 Cool Tunnel Server graduates from the 0.0.x line to 0.1.0.
