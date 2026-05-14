@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Contracts\SingBoxReloaderInterface;
 use Illuminate\Support\Facades\Log;
 
 // Thin shell-out to `ct-server-core server reload`.
@@ -23,7 +24,7 @@ use Illuminate\Support\Facades\Log;
 // every panel save that fired the model-saved event raised
 // "Class App\Services\SingBoxReloader not found" at runtime.
 
-class SingBoxReloader
+class SingBoxReloader implements SingBoxReloaderInterface
 {
     public function __construct(
         private CtServerCore $core,

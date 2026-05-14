@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Contracts\CaddyfileGeneratorInterface;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -20,7 +21,7 @@ use Illuminate\Support\Facades\Log;
  * returns the SHA-256 of the new file when it changed, or null when
  * the rendered output already matches what's on disk.
  */
-class CaddyfileGenerator
+class CaddyfileGenerator implements CaddyfileGeneratorInterface
 {
     public function __construct(
         private CtServerCore $core,

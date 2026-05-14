@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Contracts\RevocationBusInterface;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 
@@ -31,7 +32,7 @@ use Illuminate\Support\Facades\Redis;
 // receives → Caddyfile re-render → admin-socket reload: ≤100 ms in
 // the steady state. Network pub/sub itself is sub-millisecond.
 
-final class RedisRevocationBus
+final class RedisRevocationBus implements RevocationBusInterface
 {
     public const CHANNEL = 'cool_tunnel:revocations';
 
