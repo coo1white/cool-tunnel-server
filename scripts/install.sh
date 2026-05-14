@@ -552,6 +552,12 @@ What to do next:
   4. Run the readiness gate when you have a test account:
        ${CT_BOLD}LNC_TEST_PROXY_URL=... ./scripts/late-night-comeback.sh${CT_RESET}
 
+If something looks wrong, the safe first move is:
+       ${CT_BOLD}${CT_GREEN}ct fix${CT_RESET}        (interactive diagnose-and-repair)
+  Plain English, asks before applying each fix. Optional symlink so
+  you can run it from anywhere:
+       ${CT_BOLD}sudo ln -sf "\$(pwd)/ct" /usr/local/bin/ct${CT_RESET}
+
 Read docs/components.md for how to swap a part.
 Read Disclaimer.md before letting anyone else use it.
 EOF

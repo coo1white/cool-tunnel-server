@@ -22,6 +22,135 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.2] — 2026-05-15 — Brew-style `ct` CLI + 4 new fix-agent recipes + sing-box 1.13 schema fix
+
+The theme for this release is: **a noob operator should never have
+to know what sing-box, HAProxy, IPv6, or Docker is to recover from
+a failure.** Three reinforcing layers ship together:
+
+  1. **Prevention** — the sing-box template now emits the new-schema
+     `domain_resolver` directive (sing-box 1.13+), pinning outbound
+     DNS resolution to IPv4 only by default. New installs on cloud
+     providers that advertise but don't route IPv6 (Vultr being the
+     canonical example) now work without intervention.
+  2. **Self-heal** — `ct fix` (formerly `make fix`, still works)
+     gains four new recipes covering the most common
+     historical-debug surfaces. The agent now ships 15 recipes
+     total, each with a plain-English explanation an operator
+     can act on without prior systems knowledge.
+  3. **Failsafe surface** — every script that calls `die()` from
+     `lib.sh` now prints a universal `↳ stuck? Run: ct fix` footer
+     on failure. The `install.sh` success message and `update.sh`
+     completion line both end with the same pointer. There is no
+     longer a "what do I do now?" hole in the operator journey.
+
+A new top-level `ct` dispatcher (`./ct install / fix / doctor /
+update / status / logs / help [topic] / version`) gives the project
+brew-/git-style muscle memory. The underlying scripts are unchanged
+and `make <target>` still works — `ct` is purely a discoverability
+shim.
+
+Motivated by a real new-operator install incident on a fresh Vultr
+instance (2026-05-14, naive.coolwhite.space): a fresh `install.sh`
+ran to 10/10 readiness but the macOS client could not actually
+proxy traffic — server-side sing-box accepted the CONNECT, returned
+`HTTP/1.1 200 OK`, then RST'd the tunnel because its outbound
+dialer prefers IPv6 and Vultr doesn't actually route IPv6. The
+template + new recipe close the loop for every future operator who
+lands on the same VPS.
+
+### Added
+
+- `ct` top-level dispatcher script at the repo root. One short
+  command per workflow, mirrors the `make` targets but easier to
+  guess from cold. Install hint surfaced in the install.sh success
+  block: `sudo ln -sf "$(pwd)/ct" /usr/local/bin/ct`.
+- `make fix` target wrapping `scripts/fix.sh`, listed in `make help`.
+- `make help-fix` (and `ct help fix`) — plain-English explanation
+  of every recipe + when to run + what each one does.
+- `scripts/fix.sh` grows from 11 → 15 recipes, picked from
+  historical debug activity. New entries:
+  - **`docker_daemon_down`** (recipe #1) — host's docker daemon
+    isn't running. Runs BEFORE every other recipe because none of
+    them work without a live daemon. Fix: `systemctl start docker`
+    + `compose up -d`. Captures the "I just installed docker.io
+    but never enabled the service" first-time pitfall.
+  - **`singbox_outbound_ipv4_only`** (recipe #9) — the May-2026
+    Vultr post-CONNECT-RST incident. Detects: sing-box up + host's
+    IPv6 outbound unreachable + rendered config lacks the new-schema
+    `domain_resolver` directive. Fix: re-render + restart sing-box;
+    also retires any legacy
+    `ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS=true` override
+    file an earlier hotfix may have written.
+  - **`panel_restart_loop`** (recipe #10) — catch-all for the
+    v0.0.94-class composer / Octane / image-stale family of
+    panel-container restart loops. Fix: rebuild + recreate +
+    wait-for-healthy.
+  - **`pending_migrations`** (recipe #11) — restored an old backup
+    and the schema's now behind the running code. Fix:
+    `artisan migrate --force` (idempotent, data-preserving).
+  - **`messenger_queue_stuck`** (recipe #12) — Symfony Messenger
+    Redis stream depth > 100, worker dead. Fix: `compose restart
+    panel` so supervisord re-spawns the worker.
+- Universal `↳ stuck? Run: ct fix` footer in `lib.sh::die()`. Every
+  script that surfaces a failure now leaves the operator with a
+  one-command escape hatch. Inhibited inside `fix.sh` itself via
+  `CT_NO_FIX_HINT=1` so the agent doesn't recursively recommend
+  itself.
+- New `help.sh` topic `fix` — between `auto-sync` and `readiness`
+  in the topic chain.
+
+### Changed
+
+- `sing-box/config.json.tpl` migrates from the deprecated
+  `dns.strategy: ipv4_only` / `outbound.domain_strategy` shape to
+  sing-box 1.13's `domain_resolver: {server, strategy}` shape, set
+  both per-outbound (on the `direct` outbound) and globally on
+  `route.default_domain_resolver`. Eliminates the
+  `ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS=true` env-var
+  workaround that v0.1.1-era operators on broken-v6 hosts had to
+  apply manually. No operator-visible change other than the legacy
+  WARN no longer appearing in sing-box startup logs.
+- `install.sh` success summary now ends with a `ct fix` pointer +
+  optional `/usr/local/bin/ct` symlink hint, so the recovery path
+  is on-screen at first deploy.
+- `update.sh` completion line now suggests `ct fix` when the
+  operator wants to verify post-swap health.
+- Recipe ordering inside `scripts/fix.sh` is now stricter
+  install-order priority — `docker_daemon_down` first, then every
+  recipe that assumes a working daemon, in roughly the order an
+  issue would block earlier stages of boot.
+
+### Fixed
+
+- Readiness gate (check 10, anti-tracking probe) no longer echoes
+  the proxy `Proxy-Authorization` URL — and therefore the proxy
+  password — into the NG message when the probe fails. Two-layer
+  defense: (a) `ct-server-core probe anti-tracking` now strips
+  credentials from the `ProbeResult.via` field before serializing
+  (`core/ct-server-core/src/probe.rs::strip_creds`), (b)
+  `scripts/late-night-comeback.sh::check_probe()` masks any
+  `scheme://user:secret@` pattern with `***:***@` before recording
+  the NG message, so a future regression in the Rust layer can't
+  leak via the shell layer either.
+- `scripts/fix.sh` shellcheck SC2164 — every `cd
+  /opt/cool-tunnel-server 2>/dev/null || cd "$(dirname "$0")/.."`
+  chain now appends `|| return 1` so a recipe whose `cd` fails
+  returns to the dispatcher cleanly instead of silently running
+  the rest of the recipe in the wrong directory.
+
+### Security
+
+- Proxy password no longer surfaced through the readiness gate's
+  NG10 output path (see `Fixed` above for the two-layer defense).
+  This was a low-severity leak — the readiness gate normally runs
+  as a cron / CI step whose logs are operator-only — but the
+  output was previously safe to paste, and "safe to paste" is the
+  property we want to preserve as readiness logs flow toward
+  monitoring dashboards over time.
+
+---
+
 ## [0.1.1] — 2026-05-14 — Add `auto-sync` agent — credential-lock audit + auto-correct
 
 First v0.1.x patch release. Adds an operator-facing
