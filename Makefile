@@ -273,6 +273,10 @@ auto-sync: ## run scripts/auto_sync.sh (credential-lock audit + auto-correct age
 fix: ## run scripts/fix.sh (interactive multi-recipe auto-diagnose-and-repair agent; the "I'm stuck" command)
 	./scripts/fix.sh
 
+.PHONY: auto-update
+auto-update: ## run scripts/auto_update.sh (unattended release-pulling agent; default-OFF cron-safe; `ct auto-update enable` to schedule)
+	./scripts/auto_update.sh
+
 .PHONY: help-topics
 help-topics: ## list operator mini-manual topics (then run `make help-<topic>`)
 	@./scripts/help.sh

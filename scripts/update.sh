@@ -289,6 +289,16 @@ step "Reload haproxy (SIGHUP — graceful re-exec)"
 # is invalid, the master keeps the old worker running and logs an
 # alert — fail-safe.
 compose kill -s HUP haproxy
+# v0.1.3 belt-and-suspenders: on rare occasions (observed Vultr,
+# 2026-05-15, post-v0.1.2 deploy) the SIGHUP-induced re-exec ends
+# with the container exiting rather than reloading in place — host
+# :443 stops being listened on, the panel and proxy go dark, and
+# the next operator hits ERR_CONNECTION_REFUSED in the browser.
+# `compose up -d haproxy` is a no-op when haproxy is already healthy
+# and a recreate when it isn't; either way it guarantees the
+# container is back up before component-check runs.
+compose up -d haproxy
+sleep 2
 
 step "Component check (post-swap)"
 # v0.0.96 — capture the NG component names so the failure block

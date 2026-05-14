@@ -22,6 +22,107 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.3] — 2026-05-15 — `ct auto-update` agent + haproxy SIGHUP safety net + 2 new fix-agent recipes
+
+Hot on the heels of v0.1.2. Two motivations:
+
+  1. **Incident**: ~15 minutes after the v0.1.2 deploy on Vultr,
+     the panel went dark with `ERR_CONNECTION_REFUSED`. Diagnosis
+     traced to a quietly-exited `haproxy` container — `update.sh`'s
+     SIGHUP re-exec path can end with the container exiting
+     instead of reloading in place on some hosts, leaving host
+     port 443 unbound. None of the 15 v0.1.2 fix-agent recipes
+     caught this, because both the haproxy and panel recipes
+     require the container to be in a *restart loop* state — a
+     container that is outright **missing** from `docker compose ps`
+     tripped neither. v0.1.3 closes the gap two ways: an
+     `update.sh` belt-and-suspenders pass that *guarantees*
+     haproxy is up after the SIGHUP, and a new fix-agent recipe
+     `compose_service_down` that detects "service in compose.yml is
+     not in the Up set" regardless of why.
+  2. **Operator ask**: small fleets need a way to keep deployments
+     current without an operator SSH'ing into every box on every
+     patch release. v0.1.3 ships an unattended release-pulling
+     agent, default-OFF, opt-in via `ct auto-update enable` (drops
+     a `/etc/cron.daily/ct-auto-update` symlink). Health-gated:
+     refuses to auto-upgrade an already-broken stack so a cron tick
+     never compounds an existing incident.
+
+### Added
+
+- **`scripts/auto_update.sh`** — unattended release-pulling agent.
+  Checks `origin/main` for a newer tag; if the deployed version
+  is older AND the running stack is healthy (panel running +
+  credential-lock guard OK), pulls and runs `./scripts/update.sh`.
+  Safe-to-cron: `flock`'d single-flight, abort-on-unhealthy,
+  abort-on-network-blip, structured exit codes (0 up-to-date or
+  upgraded; 1 upgrade attempted + failed; 2 refused). Flags:
+  `--quiet` (cron-friendly), `--dry-run` (decision only).
+- **`ct auto-update`** subcommand cluster on the top-level
+  dispatcher:
+    `ct auto-update now`     — run the agent right now (interactive)
+    `ct auto-update enable`  — sudo; install
+                               `/etc/cron.daily/ct-auto-update`
+                               symlink (runs daily, anacron-windowed)
+    `ct auto-update disable` — sudo; remove the cron entry
+    `ct auto-update status`  — show enabled/disabled state
+    Default-OFF; a fresh install does NOT auto-upgrade.
+- **`make auto-update`** Makefile target, listed in `make help`.
+- **`help.sh` new topic `auto-update`** between `fix` and `readiness`
+  in the topic chain. Documents safety properties, when-to-enable
+  vs when-NOT-to-enable, and the companion recipe in `ct fix`.
+- **`scripts/fix.sh` grows from 15 → 17 recipes**:
+  - **`compose_service_down`** (recipe #2) — the recipe written
+    for tonight's panel-unreachable incident. Detects: any service
+    declared in `docker compose config --services` not present in
+    `docker compose ps --status running --services`. Fix:
+    `docker compose up -d`. Catches container-outright-missing
+    cases that the existing haproxy_backend_dns / panel_restart_loop
+    recipes miss (those require Restarting/Created state, not gone).
+  - **`stale_deployment`** (recipe #17) — interactive catch-up
+    companion to `ct auto-update`. Detects: current version (from
+    `panel/config/cool-tunnel.php`) older than the latest tag on
+    `origin/main`. Fix: `git pull --ff-only && ./scripts/update.sh`.
+    Operators who prefer interactive flows over cron-fired
+    unattended catch up via `ct fix` instead of `ct auto-update`.
+- **`install.sh` success summary** now also surfaces `sudo ct
+  auto-update enable` as an optional follow-up alongside the
+  existing `ct fix` hint. New operators see both safety nets on
+  first deploy.
+
+### Changed
+
+- **`scripts/update.sh` step 13** (the haproxy SIGHUP reload) now
+  follows the `compose kill -s HUP haproxy` with a defensive
+  `compose up -d haproxy` + 2s settle. The kill-s-HUP is still the
+  primary reload path (graceful, connection-preserving); the
+  `up -d` is a guarantee that the container is in the Up state
+  before component-check runs, regardless of whether SIGHUP
+  caused the master to re-exec or exit. Idempotent: a no-op if
+  haproxy is already healthy.
+- `make help` table now lists `auto-update` between `auto-sync`
+  and `help-topics`.
+- `ct --help` table now mentions `auto-update {enable|disable|now|
+  status}` in the DEEPER COMMANDS section.
+
+### Fixed
+
+- The panel-unreachable failure mode on Vultr post-v0.1.2 deploy.
+  Root cause: `compose kill -s HUP haproxy` *can* exit the
+  container on some Linux kernels / haproxy builds, leaving host
+  port 443 with no listener. Two-layer fix:
+  - `update.sh` always brings haproxy back up after the SIGHUP
+    (belt-and-suspenders).
+  - `compose_service_down` fix-agent recipe catches any future
+    occurrence (defense in depth), regardless of which service
+    quietly exited.
+
+### Security
+
+(no v0.1.3-class security changes)
+
+---
+
 ## [0.1.2] — 2026-05-15 — Brew-style `ct` CLI + 4 new fix-agent recipes + sing-box 1.13 schema fix
 
 The theme for this release is: **a noob operator should never have

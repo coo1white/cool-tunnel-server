@@ -25,20 +25,25 @@
 # on the Vultr instance 2026-05-14):
 #
 #   1. docker_daemon_down          host's docker daemon isn't running
-#   2. zombie_docker_proxy         ports bound by orphan docker-proxy
-#   3. foreign_container_ports     non-compose container holding :80/:443
-#   4. broken_container_dns        container can't resolve hostnames
-#   5. ipv6_dns_unreachable        Caddy logs IPv6 DNS errors (Vultr)
-#   6. haproxy_backend_dns         haproxy can't resolve compose services
-#   7. missing_tls_cert            sing-box can't read cert file
-#   8. singbox_domain_resolver     sing-box 1.13+ DoH config regression
-#   9. singbox_outbound_ipv4_only  v6-broken host + outbound dial fails (Vultr)
-#  10. panel_restart_loop          panel container restart-looping
-#  11. pending_migrations          DB schema older than current code
-#  12. messenger_queue_stuck       Symfony Messenger Redis worker dead
-#  13. credential_drift            DB / sing-box / manifest out of sync
-#  14. no_proxy_account            DB count of enabled accounts = 0
-#  15. legacy_env_shape            pre-v0.0.68 .env layout
+#   2. compose_service_down        any compose service is supposed to
+#                                  be running but isn't (e.g. haproxy
+#                                  exited after SIGHUP re-exec)
+#   3. zombie_docker_proxy         ports bound by orphan docker-proxy
+#   4. foreign_container_ports     non-compose container holding :80/:443
+#   5. broken_container_dns        container can't resolve hostnames
+#   6. ipv6_dns_unreachable        Caddy logs IPv6 DNS errors (Vultr)
+#   7. haproxy_backend_dns         haproxy can't resolve compose services
+#   8. missing_tls_cert            sing-box can't read cert file
+#   9. singbox_domain_resolver     sing-box 1.13+ DoH config regression
+#  10. singbox_outbound_ipv4_only  v6-broken host + outbound dial fails (Vultr)
+#  11. panel_restart_loop          panel container restart-looping
+#  12. pending_migrations          DB schema older than current code
+#  13. messenger_queue_stuck       Symfony Messenger Redis worker dead
+#  14. credential_drift            DB / sing-box / manifest out of sync
+#  15. no_proxy_account            DB count of enabled accounts = 0
+#  16. legacy_env_shape            pre-v0.0.68 .env layout
+#  17. stale_deployment            current deployment older than the
+#                                  latest release tag on origin/main
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -56,6 +61,7 @@ export CT_NO_FIX_HINT=1
 
 RECIPES=(
     docker_daemon_down
+    compose_service_down
     zombie_docker_proxy
     foreign_container_ports
     broken_container_dns
@@ -70,6 +76,7 @@ RECIPES=(
     credential_drift
     no_proxy_account
     legacy_env_shape
+    stale_deployment
 )
 
 # ---------- Counters ---------------------------------------------
@@ -224,7 +231,88 @@ verify_docker_daemon_down() {
 }
 
 # ============================================================
-# RECIPE 2 - zombie_docker_proxy
+# RECIPE 2 - compose_service_down
+# ============================================================
+#
+# The exact incident this recipe is designed for: an operator runs
+# the panel URL in a browser and gets ERR_CONNECTION_REFUSED. They
+# run `ct fix` (15-recipe agent), every recipe reports OK, but the
+# panel still doesn't load.
+#
+# Root cause when this lights up: one or more compose services is
+# declared in compose.yml but is NOT in the "Up *" state right now.
+# Most common reason: an `update.sh` step (typically the haproxy
+# SIGHUP reload) caused a container to exit instead of reload, and
+# Docker's restart policy didn't catch it. Result: host port 443 is
+# unbound, the world sees connection-refused. Existing recipes 7
+# (haproxy_backend_dns) and 11 (panel_restart_loop) both require
+# the container to be in 'Restarting'/'Created' state; a container
+# that is *outright missing* from the Up set didn't trip either of
+# them. This recipe closes that gap.
+
+detect_compose_service_down() {
+    local declared running missing
+    declared=$(docker compose config --services 2>/dev/null | sort -u)
+    [[ -z "$declared" ]] && return 1
+    running=$(docker compose ps --status running --services 2>/dev/null | sort -u)
+    missing=$(comm -23 \
+        <(printf '%s\n' "$declared") \
+        <(printf '%s\n' "$running"))
+    [[ -n "$missing" ]]
+}
+
+describe_compose_service_down() {
+    local declared running missing
+    declared=$(docker compose config --services 2>/dev/null | sort -u)
+    running=$(docker compose ps --status running --services 2>/dev/null | sort -u)
+    missing=$(comm -23 \
+        <(printf '%s\n' "$declared") \
+        <(printf '%s\n' "$running") \
+        | paste -sd, -)
+    cat <<EOF
+One or more containers that the Cool Tunnel stack expects to be
+running is currently NOT running.
+
+Missing services: ${missing}
+
+What this means in practice:
+  - If haproxy is missing -> host port 443 is unbound -> every
+    browser request to the panel or proxy gets connection-refused.
+  - If panel is missing   -> the admin UI is gone; proxy continues
+    working until next render but new accounts can't be created.
+  - If caddy is missing   -> ACME cert renewals stop; if the
+    current cert is still valid, the proxy keeps working for now.
+  - If sing-box is missing -> the proxy itself is down.
+
+Common cause: a previous \`ct update\` ran an in-place reload of
+one of the services (e.g. haproxy SIGHUP) and the reload caused
+the container to exit instead of re-exec. The other v0.1.2-era
+recipes (haproxy_backend_dns, panel_restart_loop) only catch
+containers that are in a *restart loop*; this recipe is for the
+"container is just gone" case.
+
+Fix: \`docker compose up -d\` brings every declared service back
+to Up state. Existing services that are already healthy are
+untouched (no-op). The missing services are recreated from the
+current image.
+
+Safe to run regardless: no data loss, no config rewrite, no
+secret regen. Just brings up what should already be up.
+EOF
+}
+
+fix_compose_service_down() {
+    cd /opt/cool-tunnel-server 2>/dev/null || cd "$(dirname "$0")/.." || return 1
+    docker compose up -d >/dev/null 2>&1
+    sleep 8
+}
+
+verify_compose_service_down() {
+    ! detect_compose_service_down
+}
+
+# ============================================================
+# RECIPE 3 - zombie_docker_proxy
 # ============================================================
 
 detect_zombie_docker_proxy() {
@@ -268,7 +356,7 @@ verify_zombie_docker_proxy() {
 }
 
 # ============================================================
-# RECIPE 3 - foreign_container_ports
+# RECIPE 4 - foreign_container_ports
 # ============================================================
 
 detect_foreign_container_ports() {
@@ -328,7 +416,7 @@ verify_foreign_container_ports() {
 }
 
 # ============================================================
-# RECIPE 4 - broken_container_dns
+# RECIPE 5 - broken_container_dns
 # ============================================================
 
 detect_broken_container_dns() {
@@ -371,7 +459,7 @@ verify_broken_container_dns() {
 }
 
 # ============================================================
-# RECIPE 5 - ipv6_dns_unreachable
+# RECIPE 6 - ipv6_dns_unreachable
 # ============================================================
 
 detect_ipv6_dns_unreachable() {
@@ -431,7 +519,7 @@ verify_ipv6_dns_unreachable() {
 }
 
 # ============================================================
-# RECIPE 6 - haproxy_backend_dns
+# RECIPE 7 - haproxy_backend_dns
 # ============================================================
 
 detect_haproxy_backend_dns() {
@@ -466,7 +554,7 @@ verify_haproxy_backend_dns() {
 }
 
 # ============================================================
-# RECIPE 7 - missing_tls_cert
+# RECIPE 8 - missing_tls_cert
 # ============================================================
 
 detect_missing_tls_cert() {
@@ -500,7 +588,7 @@ verify_missing_tls_cert() {
 }
 
 # ============================================================
-# RECIPE 8 - singbox_domain_resolver
+# RECIPE 9 - singbox_domain_resolver
 # ============================================================
 
 detect_singbox_domain_resolver() {
@@ -543,7 +631,7 @@ verify_singbox_domain_resolver() {
 }
 
 # ============================================================
-# RECIPE 9 - singbox_outbound_ipv4_only
+# RECIPE 10 - singbox_outbound_ipv4_only
 # ============================================================
 #
 # Symptom shape (from a noob operator's perspective):
@@ -651,7 +739,7 @@ verify_singbox_outbound_ipv4_only() {
 }
 
 # ============================================================
-# RECIPE 10 - panel_restart_loop
+# RECIPE 11 - panel_restart_loop
 # ============================================================
 #
 # The panel container restart-loops with "Restarting" or "Created"
@@ -718,7 +806,7 @@ verify_panel_restart_loop() {
 }
 
 # ============================================================
-# RECIPE 11 - pending_migrations
+# RECIPE 12 - pending_migrations
 # ============================================================
 #
 # After restoring a backup taken on an older release, the DB schema
@@ -769,7 +857,7 @@ verify_pending_migrations() {
 }
 
 # ============================================================
-# RECIPE 12 - messenger_queue_stuck
+# RECIPE 13 - messenger_queue_stuck
 # ============================================================
 #
 # Symfony Messenger's Redis transport (cool_tunnel:messenger stream)
@@ -824,7 +912,7 @@ verify_messenger_queue_stuck() {
 }
 
 # ============================================================
-# RECIPE 13 - credential_drift (wraps auto_sync)
+# RECIPE 14 - credential_drift (wraps auto_sync)
 # ============================================================
 
 detect_credential_drift() {
@@ -854,7 +942,7 @@ verify_credential_drift() {
 }
 
 # ============================================================
-# RECIPE 14 - no_proxy_account
+# RECIPE 15 - no_proxy_account
 # ============================================================
 
 detect_no_proxy_account() {
@@ -909,7 +997,7 @@ verify_no_proxy_account() {
 }
 
 # ============================================================
-# RECIPE 15 - legacy_env_shape
+# RECIPE 16 - legacy_env_shape
 # ============================================================
 
 detect_legacy_env_shape() {
@@ -943,6 +1031,90 @@ fix_legacy_env_shape() {
 
 verify_legacy_env_shape() {
     ! detect_legacy_env_shape
+}
+
+# ============================================================
+# RECIPE 17 - stale_deployment
+# ============================================================
+#
+# The "you've been running an old release for weeks" recipe. If
+# the deployment is older than the latest tag on origin/main, this
+# recipe offers to bring it up to date by running ct update.
+#
+# Companion to scripts/auto_update.sh (v0.1.3+), which is the
+# unattended version. This recipe is the interactive one: an
+# operator running ct fix gets a one-keystroke catch-up, with the
+# option to skip if they want to stay pinned.
+
+detect_stale_deployment() {
+    # Need a valid git checkout + network reachability to compare.
+    git -C "$(dirname "$0")/.." rev-parse --is-inside-work-tree \
+        >/dev/null 2>&1 || return 1
+    # Fetch tags + main quietly. Don't fail the detect on network
+    # blips -- treat unreachable origin as "no upgrade available".
+    git -C "$(dirname "$0")/.." fetch --quiet --tags origin \
+        2>/dev/null || return 1
+    local latest current
+    latest=$(git -C "$(dirname "$0")/.." describe --tags --abbrev=0 \
+        origin/main 2>/dev/null)
+    [[ -z "$latest" ]] && return 1
+    # Current = panel/config/cool-tunnel.php 'version' field, the
+    # release-of-record across the PHP/Rust/manifest cluster.
+    current=$(grep -E "^\s*'version'\s*=>" \
+        "$(dirname "$0")/.."/panel/config/cool-tunnel.php 2>/dev/null \
+        | head -1 | sed -E "s/.*'([0-9.]+)'.*/\1/")
+    [[ -z "$current" ]] && return 1
+    # If they match, no upgrade. (Note: latest is like 'v0.1.3',
+    # current is like '0.1.3'. Strip the leading 'v' for compare.)
+    [[ "${latest#v}" == "$current" ]] && return 1
+    return 0
+}
+
+describe_stale_deployment() {
+    local latest current
+    latest=$(git -C "$(dirname "$0")/.." describe --tags --abbrev=0 \
+        origin/main 2>/dev/null)
+    current=$(grep -E "^\s*'version'\s*=>" \
+        "$(dirname "$0")/.."/panel/config/cool-tunnel.php 2>/dev/null \
+        | head -1 | sed -E "s/.*'([0-9.]+)'.*/\1/")
+    cat <<EOF
+A newer Cool Tunnel release is available.
+
+  Currently deployed:  v${current}
+  Latest on origin:    ${latest}
+
+Releases ship bug fixes, security hardening, and new fix-agent
+recipes that catch issues we've actually seen in the wild. Falling
+behind is fine for short windows but accumulates risk over time.
+
+Fix: pulls origin/main + runs the standard update flow
+(\`./scripts/update.sh\`). That is:
+  - git pull --ff-only (no rebase, no merge commits)
+  - rebuilds the Rust core + Docker images (cached when nothing
+    changed)
+  - migrates the database (idempotent)
+  - re-renders sing-box + haproxy configs
+  - runs the post-swap component check
+  - confirms ✓ Update complete.
+
+If you want to STAY pinned at v${current} (e.g. you're between
+deploys and don't want surprises), pick [s]kip. The recipe will
+notice the next time you run ct fix.
+
+If you want this to happen automatically without you running
+ct fix, enable the unattended path: \`ct auto-update enable\`
+(adds a /etc/cron.daily symlink; ships with v0.1.3+).
+EOF
+}
+
+fix_stale_deployment() {
+    cd /opt/cool-tunnel-server 2>/dev/null || cd "$(dirname "$0")/.." || return 1
+    git pull --ff-only origin main >/dev/null 2>&1 || return 1
+    ./scripts/update.sh >/dev/null 2>&1
+}
+
+verify_stale_deployment() {
+    ! detect_stale_deployment
 }
 
 # ============================================================

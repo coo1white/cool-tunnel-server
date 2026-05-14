@@ -62,6 +62,11 @@ DEEPER COMMANDS
   restore <f>    recover from a backup tarball
   readiness      strict ≥9/10 ship-readiness gate (cron-friendly)
   auto-sync      credential-lock audit + auto-correct
+  auto-update    unattended release-pulling agent (default OFF)
+                   `ct auto-update enable`   add daily cron entry
+                   `ct auto-update disable`  remove the cron entry
+                   `ct auto-update now`      run once interactively
+                   `ct auto-update status`   show on/off state
 
 DISCOVERY
   help [topic]   plain-English explanation of a topic; no args -> list
@@ -98,20 +103,117 @@ show_version() {
 
 # ---------- Dispatch ---------------------------------------------
 
+# ---------- auto-update subcommand cluster -----------------------
+#
+# `ct auto-update` orchestrates the unattended-release-pulling
+# agent. Default-OFF (we never auto-upgrade a deployment unless the
+# operator opts in). `enable` drops a /etc/cron.daily symlink that
+# runs scripts/auto_update.sh --quiet once a day.
+
+CRON_SYMLINK=/etc/cron.daily/ct-auto-update
+
+auto_update_subcommand() {
+    local sub="${1:-status}"
+    case "$sub" in
+        now|run|"")
+            exec ./scripts/auto_update.sh
+            ;;
+        enable)
+            if [[ -L "$CRON_SYMLINK" || -e "$CRON_SYMLINK" ]]; then
+                printf 'ct auto-update: already enabled (%s exists)\n' "$CRON_SYMLINK"
+                ls -la "$CRON_SYMLINK"
+                return 0
+            fi
+            printf 'ct auto-update: installing %s -> %s/scripts/auto_update.sh\n' \
+                "$CRON_SYMLINK" "$SCRIPT_DIR"
+            if [[ $EUID -ne 0 ]]; then
+                printf '  ! needs root to write /etc/cron.daily; re-run with sudo\n' >&2
+                return 1
+            fi
+            ln -sf "$SCRIPT_DIR/scripts/auto_update.sh" "$CRON_SYMLINK"
+            # cron.daily entries must be executable + name-restricted
+            # (anacron skips files containing '.', a '_', etc. -- our
+            # symlink uses a safe basename, so we're fine).
+            chmod +x "$CRON_SYMLINK"
+            printf '  ✓ enabled. Next run: tomorrow ~06:25 UTC (anacron-window).\n'
+            printf '  Tail the log:  journalctl -t cron --since today\n'
+            printf '  Disable:       ct auto-update disable\n'
+            ;;
+        disable)
+            if [[ ! -L "$CRON_SYMLINK" && ! -e "$CRON_SYMLINK" ]]; then
+                printf 'ct auto-update: already disabled (no %s)\n' "$CRON_SYMLINK"
+                return 0
+            fi
+            if [[ $EUID -ne 0 ]]; then
+                printf 'ct auto-update: needs root to remove %s; re-run with sudo\n' \
+                    "$CRON_SYMLINK" >&2
+                return 1
+            fi
+            rm -f "$CRON_SYMLINK"
+            printf '  ✓ disabled. Manual `ct update` is unaffected.\n'
+            ;;
+        status)
+            printf 'ct auto-update status\n'
+            if [[ -L "$CRON_SYMLINK" || -e "$CRON_SYMLINK" ]]; then
+                printf '  state:   %sENABLED%s\n' '' ''
+                printf '  symlink: '
+                ls -la "$CRON_SYMLINK"
+            else
+                printf '  state:   DISABLED (no %s)\n' "$CRON_SYMLINK"
+                printf '  enable:  sudo ct auto-update enable\n'
+            fi
+            printf '  manual run (interactive, no schedule needed):\n'
+            printf '    ct auto-update now\n'
+            ;;
+        --help|-h|help)
+            cat <<'EOF'
+ct auto-update — unattended release-pulling agent
+
+SUBCOMMANDS
+  now        Run the agent right now (interactive, verbose).
+             Pulls origin, compares with deployed version, runs
+             `ct update` if a new release exists.
+  enable     Install /etc/cron.daily/ct-auto-update symlink (needs
+             sudo). Runs the agent in --quiet mode once a day.
+  disable    Remove the cron.daily symlink (needs sudo).
+  status     Show whether the cron entry is installed.
+
+DEFAULT (no subcommand)
+  Same as `ct auto-update now`.
+
+SAFETY
+  - Default-OFF: a fresh install does NOT auto-upgrade.
+  - Aborts if the running stack is unhealthy (you don't want an
+    unattended agent layering a release on top of an incident).
+  - Idempotent: re-running mid-upgrade picks up where it left off.
+  - flock'd: two concurrent runs can't race.
+EOF
+            ;;
+        *)
+            printf 'ct auto-update: unknown subcommand: %s\n' "$sub" >&2
+            printf 'try: ct auto-update --help\n' >&2
+            return 1
+            ;;
+    esac
+}
+
+# ---------- Dispatch ---------------------------------------------
+
 cmd="${1:-help}"
 [[ $# -gt 0 ]] && shift
 
 case "$cmd" in
-    install)     exec ./scripts/install.sh             "$@" ;;
-    fix)         exec ./scripts/fix.sh                 "$@" ;;
-    doctor)      exec ./scripts/doctor.sh              "$@" ;;
-    update)      exec ./scripts/update.sh              "$@" ;;
-    backup)      exec ./scripts/backup.sh              "$@" ;;
-    restore)     exec ./scripts/restore.sh             "$@" ;;
-    readiness)   exec ./scripts/late-night-comeback.sh "$@" ;;
-    auto-sync)   exec ./scripts/auto_sync.sh           "$@" ;;
-    status)      exec make status ;;
-    logs)        exec make logs ;;
+    install)      exec ./scripts/install.sh             "$@" ;;
+    fix)          exec ./scripts/fix.sh                 "$@" ;;
+    doctor)       exec ./scripts/doctor.sh              "$@" ;;
+    update)       exec ./scripts/update.sh              "$@" ;;
+    backup)       exec ./scripts/backup.sh              "$@" ;;
+    restore)      exec ./scripts/restore.sh             "$@" ;;
+    readiness)    exec ./scripts/late-night-comeback.sh "$@" ;;
+    auto-sync)    exec ./scripts/auto_sync.sh           "$@" ;;
+    auto-update)  auto_update_subcommand "$@" ;;
+    status)       exec make status ;;
+    logs)         exec make logs ;;
     help)
         if [[ $# -eq 0 ]]; then
             exec ./scripts/help.sh
