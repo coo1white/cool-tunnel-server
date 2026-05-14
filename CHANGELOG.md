@@ -22,6 +22,82 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.91] — 2026-05-14 — README tutorials rewritten in beginner-friendly form
+
+Documentation-only release. The proxy wire protocol, subscription
+manifest, queue contract, and runtime behaviour are all unchanged
+from v0.0.90.
+
+### Changed
+
+- **`## First Deploy` and `## Maintaining a Running Deployment`
+  rewritten as beginner-friendly tutorials.** v0.0.90's
+  operator-grade prose was correct but assumed reader familiarity
+  with Docker / Laravel / SSH / DNS / TLS / Linux ops. Real
+  operators on first install have hit: not knowing what a VPS is,
+  not knowing how to set DNS A records, not knowing what output
+  to look for, not knowing how to tell "good" from "broken". The
+  rewrite drops the assumed-knowledge floor — same step structure,
+  same commands, dramatically more hand-holding. New material:
+  - **"What you need before starting"** explains VPS / domains /
+    email from scratch with cost estimate, concrete cloud
+    providers, and the Cloudflare grey-cloud warning.
+  - **"Check your DNS works"** step with explicit ✅/❌ branches.
+  - **Six numbered steps** in First Deploy, each showing the exact
+    command, the expected output snippet, and an explicit
+    ❌-branch table for the common failure modes.
+  - **Tables instead of paragraphs** for env-var assignments —
+    easier to scan.
+  - **Recovery hints inline** at every step rather than dumped at
+    the end.
+  - **`scp` recipe** in "Backing up your data" for off-server
+    copy with the security warning about treating the tarball as
+    a secret.
+  - **Disaster-recovery walkthrough** in "Restoring from backup"
+    covering provisioning a fresh VPS and bringing data back.
+  - **Three log-fetch one-liners** in "Looking at logs when
+    something seems off" (recent / follow-live / errors-only).
+  - **Password-rotation recipes** in "Rotating passwords" with
+    `REDIS_PASSWORD` (low-blast) and `DB_PASSWORD` (with the
+    `ALTER USER → .env → restart` order spelled out) plus the
+    explicit "never rotate `APP_KEY`" warning.
+  - **"Fixing common problems" recovery table** covering every
+    failure mode this deployment has actually surfaced through
+    the v0.0.78–v0.0.89 development arc.
+  - **"Quick path (advanced)"** and **"Advanced — what `ct
+    update` actually does internally"** subsections collapse the
+    dense operator-grade content into clearly-labelled sidebars
+    so power users still have the dense reference but
+    first-timers don't get intimidated.
+  - **Voice changed throughout** from "operator commands" to
+    "you'll do this, here's what you'll see". Concrete example
+    values (`203.0.113.42`, `proxy.example.com`) repeated where
+    placeholders used to be. Visual ✅/❌ glyphs on every
+    verify-step so the boundary between "good" and "keep
+    digging" is unambiguous.
+
+### Tests
+
+- PR #81 CI passed before merge:
+  - `manifests (jq parse)`
+  - `php (syntax / composer validate)`
+  - `rust (build / test / clippy / fmt)`
+  - `shell (shellcheck)`
+  - `templates (substitute + caddy/sing-box config syntax)`
+- Local pre-release validation:
+  - `make ci` clean.
+  - All in-line links + anchor refs verified to point at real
+    targets.
+  - Markdown table syntax verified.
+
+### Diff
+
+`+396 / −196` on a single file (`README.md`). Section structure
+unchanged from v0.0.90 so anchor links from external docs (e.g.
+`docs/operator-runbook.md`) continue to resolve.
+
+---
+
 ## [0.0.90] — 2026-05-14 — README tutorial: First Deploy + Maintaining a Running Deployment
 
 Documentation-only release. The proxy wire protocol, subscription
