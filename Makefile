@@ -265,6 +265,10 @@ readiness: ## run scripts/late-night-comeback.sh (strict >=9/10 readiness gate; 
 doctor: ## run scripts/doctor.sh (operator-friendly health dashboard with PASS/WARN/FAIL + remediation hints)
 	./scripts/doctor.sh
 
+.PHONY: auto-sync
+auto-sync: ## run scripts/auto_sync.sh (credential-lock audit + auto-correct agent; cron-friendly)
+	./scripts/auto_sync.sh
+
 .PHONY: help-topics
 help-topics: ## list operator mini-manual topics (then run `make help-<topic>`)
 	@./scripts/help.sh

@@ -38,6 +38,7 @@ TOPICS=(
     install
     update
     doctor
+    auto-sync
     readiness
     backup
     restore
@@ -235,6 +236,70 @@ Output anatomy:
 Exit codes:
   0   - all-PASS or WARN-only (FAIL count is 0)
   1   - one or more FAIL rows
+
+Next topic:  ./scripts/help.sh readiness
+EOF
+    printf '%s\n' "$body"
+}
+
+help_auto_sync() {
+    h1 "auto_sync.sh — credential-lock audit + auto-correct agent"
+    local body
+    read -r -d '' body <<'EOF' || true
+What it does:
+  Runs the credential-lock guard (ct-server-core guard
+  credential-lock). The guard asserts the four-way invariant:
+
+    db == rendered == manifest == mac-config
+
+  If any of them drift (DB row updated but sing-box config still
+  has the old credentials; sing-box volume mounted to a stale
+  path; etc.), the guard fails NG.
+
+  On NG, auto-sync attempts corrective action:
+    1. Re-render sing-box config from current DB state
+       (ct-server-core --json singbox render).
+    2. Restart the sing-box container so the new config takes
+       effect.
+    3. Re-run the guard to confirm drift is resolved.
+
+  Logs every action loudly so an operator tailing the output
+  sees exactly what happened.
+
+When to run:
+  - Manually (make auto-sync) any time something feels off
+    -- e.g. you just rotated a proxy account's password in the
+    Filament UI and want to confirm the change propagated all
+    the way through sing-box, the manifest, and the Mac config
+    surfaces before the next user hits the proxy.
+  - Periodically via cron if you want a self-healing alarm
+    surface beyond what the existing scheduler already does.
+
+Companion to make doctor:
+  doctor    -> 'show me everything I should look at' (read-only)
+  auto-sync -> 'check the credential-lock invariant and fix any
+                drift' (does write -- re-renders + restarts
+                sing-box on drift)
+
+What it does NOT do:
+  - Touch the database. Strictly server-config-side correction.
+  - Replace operator judgement on harder failure modes
+    (decryption failures, mount path issues). On a re-verify
+    that still reports drift, the script exits 1 with the
+    most-likely causes listed.
+
+Already covered without explicit auto-sync runs:
+  - Laravel's scheduler runs 'singbox:render --if-changed
+    --reload' every 5 minutes (see panel/routes/console.php).
+    That handles the routine case of 'DB updated, sing-box
+    not yet re-rendered' within 5 min, silently. auto-sync is
+    the explicit-and-loud version of that, plus the
+    credential-lock guard adds the manifest + mac-config
+    surfaces to the check.
+
+Exit codes:
+  0   no drift detected, OR drift was detected + corrected
+  1   drift detected, correction failed -- manual investigation
 
 Next topic:  ./scripts/help.sh readiness
 EOF
@@ -477,6 +542,7 @@ main() {
         install)          help_install ;;
         update)           help_update ;;
         doctor)           help_doctor ;;
+        auto-sync)        help_auto_sync ;;
         readiness)        help_readiness ;;
         backup)           help_backup ;;
         restore)          help_restore ;;
