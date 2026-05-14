@@ -22,6 +22,62 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.90] — 2026-05-14 — README tutorial: First Deploy + Maintaining a Running Deployment
+
+Documentation-only release. The proxy wire protocol, subscription
+manifest, queue contract, and runtime behaviour are all unchanged
+from v0.0.89.
+
+### Changed
+
+- **Two new tutorial sections in `README.md`.** The pre-fix
+  `One-Click Bastion` + `Required DNS` sections covered the install
+  one-liner but didn't walk a first-time operator through the full
+  deploy path. Operators on the v0.0.78 → v0.0.89 line have hit
+  several discoverable-only-by-running issues (placeholder secrets,
+  wrong cwd after SSH, `REDIS_PASSWORD` URL-meta-char gotcha
+  pre-v0.0.88, upstream-asset 404 pre-v0.0.89). The new sections
+  surface those in the README so they're not learned the hard way:
+  - `## First Deploy` — six-step walkthrough from blank Debian
+    VPS to 9/10 readiness PASS, plus a 10/10 end-to-end probe
+    step once a real account is provisioned. Prerequisites
+    checklist (VPS, DNS, ports, email). Unattended path
+    subsection for CI / IaC / cloud-init.
+  - `## Maintaining a Running Deployment` — operator loop
+    covering routine update via `make update` (with the v0.0.80
+    flock + v0.0.73 credential-lock + state-purge sequence
+    surfaced for visibility), backup / restore, reading the
+    panel + Components page, observability via `CT_METRICS_BIND`
+    + the key counters to alarm on, secret rotation (with the
+    `APP_KEY` immutability caveat and the v0.0.88 typed-builder
+    freedom from URL-meta chars), a recovery table for the
+    failure modes we've actually seen in production, and the
+    `~/.bashrc` shell alias snippet that closes the
+    "still in /root after SSH" foot-gun.
+- **System Contract baseline bumped from `v0.0.77` to
+  `v0.0.89`.** The README's previous baseline note was 12
+  releases stale.
+
+### Tests
+
+- PR #80 CI passed before merge:
+  - `manifests (jq parse)`
+  - `php (syntax / composer validate)`
+  - `rust (build / test / clippy / fmt)`
+  - `shell (shellcheck)`
+  - `templates (substitute + caddy/sing-box config syntax)`
+- Local pre-release validation:
+  - `make ci` clean.
+  - All in-line links verified to point at files that exist.
+  - Anchor links resolve to the new section headings.
+
+### Diff
+
+`+281 / −21` on a single file (`README.md`). No code, manifests,
+configuration, or behaviour changes.
+
+---
+
 ## [0.0.89] — 2026-05-13 — Bump naiveproxy asset tag `v148.0.7778.96-2 → -5`
 
 Build-fix release. The proxy wire protocol, subscription manifest,
