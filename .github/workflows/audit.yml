@@ -504,9 +504,19 @@ jobs:
           # without any decl (Migrations, helpers).
           while IFS= read -r f; do
               base=$(basename "$f" .php)
-              decl=$(grep -E '^[[:space:]]*(abstract[[:space:]]+|final[[:space:]]+)?(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' "$f" \
+              # Modifier prefix uses `*` (not `?`) so chains like
+              # `final readonly class X` (PHP 8.2+, used by the
+              # v0.0.93 Symfony Messenger DTOs in app/Messages/)
+              # match. `readonly` joins `abstract` + `final` in
+              # the modifier set. `|| true` on the pipeline keeps
+              # grep's no-match exit (pipefail-amplified by
+              # `set -e` via command substitution) from killing
+              # the script before the `if -z` branch handles the
+              # legitimate "no decl in this file" case.
+              decl=$(grep -E '^[[:space:]]*((abstract|final|readonly)[[:space:]]+)*(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' "$f" \
                      | head -1 \
-                     | sed -E 's/.*(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/')
+                     | sed -E 's/.*(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/' \
+                     || true)
               if [[ -z "$decl" ]]; then continue; fi
               if [[ "$decl" != "$base" ]]; then
                   echo "::error file=$f::declares \`$decl\` but file is \`$base.php\` — PSR-4 autoloading will fail"
