@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Contracts\SingBoxConfigGeneratorInterface;
 use Illuminate\Support\Facades\Log;
 
 // Thin shell-out to `ct-server-core singbox render`.
@@ -27,7 +28,7 @@ use Illuminate\Support\Facades\Log;
 // at runtime on every panel save. Now correctly calls
 // renderSingBoxConfig().
 
-class SingBoxConfigGenerator implements \App\Contracts\SingBoxConfigGeneratorInterface
+class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
 {
     public function __construct(
         private CtServerCore $core,

@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Contracts\ComponentCheckerInterface;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\Log;
 // seconds so a fast click-through doesn't hammer the DB / docker
 // cli; the UI exposes a "Re-check" button to bust the cache.
 
-final class ComponentChecker implements \App\Contracts\ComponentCheckerInterface
+final class ComponentChecker implements ComponentCheckerInterface
 {
     public function __construct(
         private CtServerCore $core,

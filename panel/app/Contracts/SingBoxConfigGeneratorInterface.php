@@ -32,8 +32,8 @@ interface SingBoxConfigGeneratorInterface
     /**
      * Render and atomically write the config.
      *
-     * @return string|null  Hex-encoded SHA-256 of the rendered
-     *                      bytes on success; null on failure.
+     * @return string|null Hex-encoded SHA-256 of the rendered
+     *                     bytes on success; null on failure.
      */
     public function renderToFile(): ?string;
 }

@@ -45,11 +45,11 @@ class AppServiceProvider extends ServiceProvider
      */
     private const SERVICE_BINDINGS = [
         SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
-        SingBoxReloaderInterface::class        => SingBoxReloader::class,
-        CaddyfileGeneratorInterface::class     => CaddyfileGenerator::class,
-        RevocationBusInterface::class          => RedisRevocationBus::class,
-        CtServerCoreInterface::class           => CtServerCore::class,
-        ComponentCheckerInterface::class       => ComponentChecker::class,
+        SingBoxReloaderInterface::class => SingBoxReloader::class,
+        CaddyfileGeneratorInterface::class => CaddyfileGenerator::class,
+        RevocationBusInterface::class => RedisRevocationBus::class,
+        CtServerCoreInterface::class => CtServerCore::class,
+        ComponentCheckerInterface::class => ComponentChecker::class,
     ];
 
     public function register(): void
