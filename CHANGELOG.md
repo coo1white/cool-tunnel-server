@@ -22,6 +22,78 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.95] — 2026-05-14 — Hotfix: pin ext-redis to 6.3.0 (close v0.0.93 restart-loop regression)
+
+Hotfix for a regression introduced in v0.0.93 and surfaced when
+v0.0.94 reached production. The panel container restart-looped
+because PECL installed phpredis 5.3.0 (below symfony/redis-
+messenger v7.4.8's `conflict: ext-redis <6.1`), the entrypoint's
+`composer install` exited non-zero on the conflict, and `set -e`
+killed the entrypoint before supervisord could start. CI passed
+because all four CI composer invocations carry
+`--ignore-platform-req=ext-redis` (the runners have no ext-redis
+to detect against); the entrypoint did not.
+
+Three lockstep fixes — primary control + matching record +
+guardrail:
+
+### Fixed
+
+- **Dockerfile pins `pecl install --force redis-6.3.0`** (the
+  latest stable as of 2025-11-06) instead of the unpinned
+  `pecl install --force redis` introduced in v0.0.93. Future
+  bumps are explicit, version-controlled events — same posture
+  as the Composer / naiveproxy-client / redis-cli pins
+  elsewhere in this Dockerfile. Added `pecl channel-update
+  pecl.php.net` ahead of the install so the channel cache
+  matches reality on every build.
+- **Panel composer platform override bumped 5.3.0 → 6.3.0** in
+  `panel/composer.json` and the matching `platform-overrides`
+  record in `panel/composer.lock`. Composer's solver now sees
+  the same ext-redis version that the Dockerfile actually
+  installs, so the on-host `composer install` produces a
+  consistent lockstep view regardless of the
+  `--ignore-platform-req` flag.
+- **Entrypoint `composer install` carries
+  `--ignore-platform-req=ext-redis`** as belt-and-braces,
+  mirroring the four CI composer invocations. The Dockerfile
+  pin is the single source of truth for the runtime
+  ext-redis version — composer's solver doesn't need to
+  re-verify on every container boot. If the PECL pin ever
+  drifts again, the entrypoint won't blow up: it will install
+  cleanly and the operator will see the actual version drift
+  via direct inspection rather than via a restart loop.
+
+### Deployment
+
+- Pull v0.0.95 and run `ct update`. The panel image rebuilds
+  with the pinned PECL phpredis-6.3.0, the entrypoint's
+  `composer install` succeeds, supervisord starts all five
+  programs (frankenphp, queue, messenger, scheduler,
+  ct-core-daemon), and the v0.0.94 Messenger cutover is live
+  as intended.
+- Operators who deployed v0.0.94 and are currently in a
+  restart loop: `ct update` from v0.0.94 → v0.0.95 directly
+  fixes the loop. No data was at risk (the restart loop was
+  in the boot path, before any DB or filesystem mutation).
+- Rollback path: revert to v0.0.91 and re-deploy if v0.0.95's
+  PECL pin fails to land for any reason. v0.0.91 → v0.0.95
+  upgrade is a no-op for DB schema, sing-box config format,
+  Caddyfile rendering, and the operator-facing `ct` CLI
+  surface.
+
+### Notes
+
+- No code-path changes in this release. The PR diff is three
+  small files: `docker/panel/Dockerfile` (PECL pin),
+  `panel/composer.json` + `panel/composer.lock` (platform
+  override bump), `docker/panel/entrypoint.sh` (composer
+  install flag).
+- v0.0.92 (PSR interfaces) and v0.0.93 (Messenger foundation)
+  are unaffected by this hotfix and remain in production.
+
+---
+
 ## [0.0.94] — 2026-05-14 — Messenger cutover (Phase 3 of Symfony-infusion arc)
 
 Phase 3 — the cutover. v0.0.93's Symfony Messenger foundation is
