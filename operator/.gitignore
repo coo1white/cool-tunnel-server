@@ -1,0 +1,6 @@
+node_modules/
+bin/
+*.log
+.DS_Store
+# Private signing key for SHA256SUMS — never commit. See `make operator-keygen`.
+signing.key

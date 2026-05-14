@@ -197,6 +197,31 @@ EOF
     esac
 }
 
+# ---------- ct-operator binary preference ------------------------
+#
+# For fix / doctor / readiness, prefer the compiled ct-operator binary
+# in operator/bin/ when it exists; otherwise fall back to the legacy
+# shell script. Either path is behaviourally equivalent on the operator
+# surface — the binary adds the structured AI-bridge output on failure.
+dispatch_via_operator() {
+    local subcmd="$1"; shift
+    local fallback="$1"; shift
+    local arch=""
+    case "$(uname -m)" in
+        x86_64)        arch=x64 ;;
+        aarch64|arm64) arch=arm64 ;;
+    esac
+    if [[ -n "$arch" ]]; then
+        local os
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        local op_bin="$SCRIPT_DIR/operator/bin/ct-operator-${os}-${arch}"
+        if [[ -x "$op_bin" ]]; then
+            exec "$op_bin" "$subcmd" "$@"
+        fi
+    fi
+    exec "$fallback" "$@"
+}
+
 # ---------- Dispatch ---------------------------------------------
 
 cmd="${1:-help}"
@@ -204,12 +229,12 @@ cmd="${1:-help}"
 
 case "$cmd" in
     install)      exec ./scripts/install.sh             "$@" ;;
-    fix)          exec ./scripts/fix.sh                 "$@" ;;
-    doctor)       exec ./scripts/doctor.sh              "$@" ;;
-    update)       exec ./scripts/update.sh              "$@" ;;
-    backup)       exec ./scripts/backup.sh              "$@" ;;
-    restore)      exec ./scripts/restore.sh             "$@" ;;
-    readiness)    exec ./scripts/late-night-comeback.sh "$@" ;;
+    fix)          dispatch_via_operator fix       ./scripts/fix.sh                 "$@" ;;
+    doctor)       dispatch_via_operator doctor    ./scripts/doctor.sh              "$@" ;;
+    update)       exec ./scripts/update.sh             "$@" ;;
+    backup)       exec ./scripts/backup.sh             "$@" ;;
+    restore)      exec ./scripts/restore.sh            "$@" ;;
+    readiness)    dispatch_via_operator readiness ./scripts/late-night-comeback.sh "$@" ;;
     auto-sync)    exec ./scripts/auto_sync.sh           "$@" ;;
     auto-update)  auto_update_subcommand "$@" ;;
     status)       exec make status ;;

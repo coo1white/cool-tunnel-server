@@ -277,6 +277,42 @@ fix: ## run scripts/fix.sh (interactive multi-recipe auto-diagnose-and-repair ag
 auto-update: ## run scripts/auto_update.sh (unattended release-pulling agent; default-OFF cron-safe; `ct auto-update enable` to schedule)
 	./scripts/auto_update.sh
 
+# ============================================================
+# operator/ — Bun CLI (ct-operator)
+# ============================================================
+# Compiled standalone replacement for fix / doctor / late-night-comeback.
+# The `ct` dispatcher prefers operator/bin/ct-operator-<os>-<arch> when
+# present and falls back to the .sh scripts otherwise. No flag day.
+
+.PHONY: operator-build
+operator-build: ## build ct-operator binary (default linux-x64; pass TARGET=<linux-arm64|darwin-arm64|all> to cross-compile)
+	cd operator && bun install --frozen-lockfile && bun run build $(TARGET)
+
+.PHONY: operator-test
+operator-test: ## run ct-operator unit tests (bun test)
+	cd operator && bun test
+
+.PHONY: operator-typecheck
+operator-typecheck: ## tsc --noEmit on operator/
+	cd operator && bun run typecheck
+
+.PHONY: operator-keygen
+operator-keygen: ## generate ed25519 signing keypair for SHA256SUMS (writes operator/signing.key; prints pubkey)
+	@if [ -f operator/signing.key ]; then \
+		echo "operator/signing.key already exists; refusing to overwrite."; \
+		echo "If you really mean to rotate, move the old one aside first."; \
+		exit 1; \
+	fi
+	openssl genpkey -algorithm ed25519 -out operator/signing.key
+	@chmod 600 operator/signing.key
+	@echo ""
+	@echo "private key: operator/signing.key  (chmod 600, KEEP SECRET)"
+	@echo "  -> store as GitHub Actions secret CT_OPERATOR_SIGNING_KEY"
+	@echo "  -> operator/.gitignore already excludes this file"
+	@echo ""
+	@echo "public key (set as CT_OPERATOR_PUBKEY env var at build time):"
+	@openssl pkey -in operator/signing.key -pubout -outform DER | tail -c 32 | base64
+
 .PHONY: help-topics
 help-topics: ## list operator mini-manual topics (then run `make help-<topic>`)
 	@./scripts/help.sh
