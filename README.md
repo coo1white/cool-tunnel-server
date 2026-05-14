@@ -731,7 +731,7 @@ Verify proxy behavior with a real account:
 
 ```bash
 docker compose exec -T panel sh -lc '
-URL=$(php artisan tinker --execute '\''$a = \App\Models\ProxyAccount::where("username", "nick")->firstOrFail(); $d = \App\Models\ServerConfig::current()->domain; echo "https://{$a->username}:{$a->getCleartextPassword()}@{$d}:443";'\'')
+URL=$(php artisan tinker --execute '\''$a = \App\Models\ProxyAccount::where("username", "alice")->firstOrFail(); $d = \App\Models\ServerConfig::current()->domain; echo "https://{$a->username}:{$a->getCleartextPassword()}@{$d}:443";'\'')
 ct-server-core probe anti-tracking --via "$URL"
 '
 ```

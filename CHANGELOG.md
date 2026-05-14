@@ -1555,7 +1555,7 @@ unchanged.
   - `ct-server-core component check --manifests /srv/manifests` reports
     all components OK after the manifest correction.
   - Bundled `naive` local adapter returned `http_code=204` through
-    `https://nick:<password>@cookie.coolwhite.space:443`.
+    `https://alice:<password>@cookie.coolwhite.space:443`.
 - PR #65 CI:
   - `rust (build / test / clippy / fmt)`
   - `manifest drift`
@@ -6818,7 +6818,7 @@ cleanup PR:
 unblocking the SSH-tunnel login flow, the user signed in
 successfully — and landed on a **functional but unstyled** Filament
 dashboard. All the HTML rendered, the data was correct ("Welcome
-nick", active accounts: 0, traffic today: 0 B), but every
+alice", active accounts: 0, traffic today: 0 B), but every
 component was a wall of plain text with browser-default styling.
 The "Show password" eye icon rendered as a giant SVG dominating
 the screen.
