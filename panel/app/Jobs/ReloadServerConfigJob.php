@@ -6,15 +6,14 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Services\CaddyfileGenerator;
-use App\Services\SingBoxConfigGenerator;
-use App\Services\SingBoxReloader;
+use App\Messages\ReloadServerConfig;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Messenger\MessageBusInterface;
 use Throwable;
 
 // Slow-path render+reload backstop for ServerConfig changes. Mirror
@@ -45,22 +44,20 @@ class ReloadServerConfigJob implements ShouldQueue
         return [5, 5, 5];
     }
 
-    public function handle(
-        CaddyfileGenerator $caddy,
-        SingBoxConfigGenerator $singbox,
-        SingBoxReloader $reloader,
-    ): void {
-        // Caddyfile FIRST so the operator's "I changed the panel
-        // domain" case lands the new TLS cert path before sing-box
-        // re-reads it on its next reload — sing-box's render hash
-        // feeds in cert mtime, so the order matters for one-pass
-        // reconciliation.
-        $caddy->renderToFile();
-
-        $hash = $singbox->renderToFile();
-        if ($hash !== null) {
-            $reloader->reload();
-        }
+    /**
+     * v0.0.93 transition shim: actual render+reload work has
+     * moved to `App\MessageHandlers\ReloadServerConfigHandler`.
+     * This `handle()` body now bridges the legacy dispatch
+     * surface into the Symfony Messenger bus so existing call
+     * sites (`ReloadServerConfigJob::dispatch()` from
+     * `ServerConfig::booted`) continue to work unchanged through
+     * the transition window. Phase 3 (v0.0.94) updates the call
+     * sites to dispatch `new ReloadServerConfig()` directly and
+     * deletes this class.
+     */
+    public function handle(MessageBusInterface $bus): void
+    {
+        $bus->dispatch(new ReloadServerConfig(reason: 'legacy-job-bridge'));
     }
 
     public function failed(Throwable $e): void
