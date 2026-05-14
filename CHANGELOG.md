@@ -22,6 +22,112 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.98] — 2026-05-14 — Maintain-UX rewrite, phase 2 of 3 (`ct doctor` self-diagnostic dashboard)
+
+Phase 2 of the three-PR maintain-UX refactor. Lands a new
+`scripts/doctor.sh` + `make doctor` target that gives operators
+a single unified health dashboard with PASS / WARN / FAIL output
++ per-failure remediation hints. Complements (does not replace)
+`scripts/late-night-comeback.sh`, which keeps its strict
+≥9/10 readiness-gate semantics for cron / CI use.
+
+The two commands answer different questions:
+
+  | command                  | question                              |
+  |--------------------------|---------------------------------------|
+  | `make doctor`            | "show me everything I should look at" |
+  | `make readiness`         | "is the system ready to publicly ship?" |
+
+Operators day-to-day will use `doctor`; one-time launch / post-
+incident gating will use `readiness`. PR 3 may dedupe the
+overlapping checks into a shared library, or may leave the two
+side-by-side — depends on whether the divergence stays small.
+
+### Added
+
+- **`scripts/doctor.sh`** — operator-friendly health dashboard.
+  ~350 lines. Reuses `lib.sh`'s colour helpers + the existing
+  `component_check_strict` / `file_mode_octal` / `load_env`
+  primitives. Sourced .env is optional — checks degrade
+  gracefully when the file is missing or env vars are unset
+  (the dashboard tells you to fix .env first rather than
+  crashing on `set -u`).
+
+- **Output layout** — six sections:
+  - **Prerequisites** — `docker compose v2` on PATH; `.env`
+    present + mode 0600 (warns on world-readable).
+  - **Structural (network reachability)** — DNS A record matches
+    host IP; ports 80+443 listening; ACME cert expiry (FAIL
+    <7 days, WARN <14 days, PASS otherwise).
+  - **Application** — `/up` endpoint HTTP 200; component check
+    OK across all 12 components.
+  - **Compose stack** — all 6 expected containers running
+    (panel, sing-box, haproxy, caddy, db, redis); panel
+    container's 5 supervisord programs all RUNNING.
+  - **Resources** — disk under repo + docker root meets
+    thresholds (FAIL <2/4 GB, WARN <4/8 GB); RAM headroom
+    (FAIL <10% avail, WARN <25%).
+  - **Info** — release version, active proxy account count,
+    Messenger Redis-stream depth. No PASS/FAIL contribution
+    — context the operator uses to interpret the rest.
+
+- **Summary + remediation** — bottom of dashboard prints
+  `N PASS, M WARN, K FAIL, J INFO`. If any WARN or FAIL was
+  recorded, a `Remediation:` block follows with the per-failure
+  next-step commands extracted from each check's hint.
+
+- **Exit codes** — 0 on all-PASS or WARN-only; 1 on any FAIL.
+  Cron-suitable for `make doctor` gates.
+
+- **`make doctor` target** — `./scripts/doctor.sh` wrapper with
+  a friendly help string. Slots in next to the existing
+  `make readiness` target.
+
+### Changed
+
+- **`Makefile::readiness`** — help string clarified to
+  ">=9/10 readiness gate; cron/CI suitable" to disambiguate
+  from the new `doctor` target.
+
+### Notes — implementation
+
+- No changes to `scripts/late-night-comeback.sh` in this PR.
+  Its 10 checks remain its own; PR 3 may dedupe by extracting
+  shared check functions into a third file (`scripts/checks.sh`
+  candidate). Keeping the two scripts independent for now
+  keeps PR 2's diff focused.
+
+- The `check_up_endpoint` curl pattern is single-call: an
+  earlier iteration chained `|| curl ...` as a fallback, but
+  `curl -w '%{http_code}'` writes to stdout regardless of exit
+  code, so each `||` branch appends another "000" to the
+  captured value. Single call + explicit empty-string fallback
+  is both simpler and correct.
+
+- The `dr_pass` / `dr_warn` / `dr_fail` / `dr_info` helpers
+  buffer remediation lines into a flat `dr_remediation`
+  array (pipe-delimited `sev|label|msg|hint`) so the final
+  block can render them grouped at the end. Avoids interleaving
+  hints with the table — operators see the full table first,
+  then the remediation block.
+
+- All checks are read-only. No state mutation. Safe to run on
+  a healthy production VPS, mid-deploy, or during an outage.
+
+### Deployment
+
+- Pull v0.0.98 and run `ct update`. After the update, run
+  `make doctor` to see the new dashboard against your live
+  stack. Expected output on a healthy deployment: most PASS,
+  3 INFO lines (release version, active users, Messenger
+  depth), 0 FAIL.
+
+- The dashboard is purely additive — existing scripts and
+  workflows are unaffected. Operators who prefer the strict
+  readiness-gate semantics can keep using `make readiness`.
+
+---
+
 ## [0.0.97] — 2026-05-14 — Hotfix: preflight_network false positive on registry-1.docker.io (401)
 
 v0.0.96's new `preflight_network` helper failed on the first
