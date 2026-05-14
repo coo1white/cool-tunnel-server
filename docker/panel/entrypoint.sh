@@ -80,13 +80,28 @@ elif [ composer.lock -nt vendor/autoload.php ]; then
     echo "[entrypoint] composer.lock newer than vendor/ — running composer install"
     needs_install=1
 fi
+# v0.0.95 — pass `--ignore-platform-req=ext-redis` here, matching
+# the four CI composer invocations (.github/workflows/ci.yml +
+# audit.yml). Reason: this container's PECL ext-redis pin is the
+# single point of truth for the phpredis version (see the Dockerfile
+# block that pins `redis-6.3.0`). composer's solver doesn't need to
+# re-verify the runtime ext-redis version on every container boot —
+# the Dockerfile already guarantees it. The flag short-circuits a
+# whole class of restart-loop failure that bit v0.0.94 in
+# production: if the PECL pin drifts to a version below
+# symfony/redis-messenger's `conflict: ext-redis <6.1`, composer
+# would otherwise detect the mismatch, exit non-zero, and `set -e`
+# would kill the entrypoint before supervisord boots. Defense in
+# depth — the Dockerfile pin is the primary control; this is the
+# guardrail.
 if [ "$needs_install" = "1" ]; then
     composer install \
         --no-dev \
         --no-interaction \
         --prefer-dist \
         --optimize-autoloader \
-        --no-scripts
+        --no-scripts \
+        --ignore-platform-req=ext-redis
 fi
 
 # Run package:discover UNCONDITIONALLY — not just after a fresh

@@ -119,8 +119,30 @@ RUN apk add --no-cache \
 # headers and toolchain needed to compile PECL extensions; it's
 # scoped to a `--virtual` group and deleted at the end of the
 # step so it doesn't bloat the final image.
+#
+# v0.0.95 — PIN the phpredis version explicitly. The original
+# v0.0.93 line was `pecl install --force redis` (no pin), which on
+# the dunglas/frankenphp:1-php8.4-alpine image resolved to
+# phpredis 5.3.0 — well below the >= 6.1 minimum required by
+# symfony/redis-messenger v7.4.8 (which declares
+# `conflict: ext-redis <6.1`). Result: the entrypoint's
+# `composer install` saw the runtime ext-redis at 5.3.0, detected
+# the conflict, exited non-zero, and `set -e` killed the
+# entrypoint — supervisord never started, panel container went
+# into a restart loop. CI didn't catch the regression because all
+# four CI composer invocations carry `--ignore-platform-req=ext-redis`
+# (the runners themselves have no ext-redis to detect against).
+#
+# Pin 6.3.0 (the latest stable as of 2025-11-06). Future bumps
+# are explicit, version-controlled events — same posture as the
+# composer / naiveproxy / redis-cli pins above. The matching
+# platform override in `panel/composer.json` is bumped to
+# `6.3.0` in lockstep so composer's solver agrees with the
+# runtime, and the entrypoint now carries
+# `--ignore-platform-req=ext-redis` as belt-and-braces.
 RUN apk add --no-cache --virtual .ext-redis-build-deps $PHPIZE_DEPS \
-    && pecl install --force redis \
+    && pecl channel-update pecl.php.net \
+    && pecl install --force redis-6.3.0 \
     && docker-php-ext-enable redis \
     && apk del .ext-redis-build-deps \
     && rm -rf /tmp/pear ~/.pearrc /var/cache/apk/*
