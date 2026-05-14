@@ -22,6 +22,93 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.100] — 2026-05-14 — README rewrite: noob-friendly multi-file split
+
+The README.md grew to 814 lines over the project's history and
+became hostile to new operators: the first two content sections
+after the badges were "System Contract" (a technical table
+mentioning "WireV1", "OTel-style network-turn spans", "bounded
+BytesMut frames") and "Architecture Deep-Dive" (a mermaid diagram
+plus prose about "Rule Maker FSM transitions are atomic
+compare-exchange"). A new operator bounced off before reaching
+the friendly "First Deploy" tutorial at line 84.
+
+This release splits the README along reader-intent lines. The
+new entry point is short, plain-English, and points each kind
+of reader to the document that answers their actual question.
+
+### Added
+
+- **`docs/operations.md`** (~330 lines) — day-to-day operator
+  guide. Extracted from the old README's "Maintaining a Running
+  Deployment" section, refreshed and expanded:
+  - Daily checklist (`ct doctor`)
+  - Updating to a new release
+  - Backing up (with off-server recommendations)
+  - Restoring from backup
+  - Looking at logs when something seems off
+  - Rotating passwords (Redis + MariaDB playbooks)
+  - Watching health over time (Prometheus / Grafana wiring)
+  - Common problems + one-command fixes (10-row table)
+  - "What `ct update` actually does" — exact sequence
+  - `make` command reference
+
+- **`docs/glossary.md`** (~250 lines) — plain-English
+  definitions for every term used across the documentation:
+  ACME, APP_KEY, Caddy, Component check, ct-server-core,
+  docker compose, .env, entrypoint, Filament, flock, FrankenPHP,
+  FSM, GFW, HAProxy, Laravel, NaiveProxy, Octane, OK/NG, panel,
+  PANEL_DOMAIN, Rule Maker, sing-box, SNI, subscription manifest,
+  supervisord, TLS, TTL, VPS, Wire format / WireV1, doctor,
+  readiness, help-<topic>, DOMAIN. Cross-linked internally
+  (one term's definition links to others it depends on).
+
+### Changed
+
+- **`README.md`** slimmed from 814 lines → ~170 lines:
+  - "What is this?" — plain-English elevator pitch (2 paragraphs)
+  - "Who is this for?" — explicit audience signal
+  - "60-second quickstart" — 5 commands with pointer to
+    GETTING_STARTED.md
+  - "Documentation map" — table mapping reader goals to
+    documents
+  - "Help from the command line" — exposes the v0.0.99
+    `make help-<topic>` mini-manual surface
+  - "What's running" — 6-row service table, brief
+  - "License + posture" — terse
+  - "Reference index" — categorized doc list
+
+  Cut from README (content lives in the new files):
+  - System Contract table → covered in docs/architecture.md
+  - Architecture Deep-Dive → docs/architecture.md
+  - First Deploy section → already in GETTING_STARTED.md
+  - Maintaining a Running Deployment → docs/operations.md
+  - Industrial Makefile → docs/operations.md
+  - QA Checklist: Operator's Eyes → docs/operator-runbook.md
+  - Observability Boundary → docs/observability-dashboard.md
+  - Smoke Tests → docs/operations.md
+  - Project Map (long version) → docs/architecture.md
+  - Operator References (long version) → README "Reference
+    index" (compressed) + docs/operations.md
+
+### Notes
+
+- No code or script changes in this release. README + 2 new
+  documentation files only. All cross-references verified to
+  resolve to extant paths.
+- The release version bump pulls Cargo.toml + manifests in
+  lockstep with the other version anchors; no functional
+  Rust / PHP / Docker change.
+
+### Deployment
+
+- `ct update` after merge picks up the new docs. No image
+  rebuild is functionally required (only doc files changed),
+  but `update.sh` will rebuild anyway because it bumps the
+  release-version anchor.
+
+---
+
 ## [0.0.99] — 2026-05-14 — Maintain-UX rewrite, phase 3 of 3 (`ct help <topic>` mini-manual)
 
 Phase 3 closes the three-PR maintain-UX refactor (v0.0.96 →
