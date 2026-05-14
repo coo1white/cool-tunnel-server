@@ -638,6 +638,21 @@ preflight_stack_up() {
 # can override the host list. Update fails mysteriously on offline
 # VPSes; surfacing this up front saves the operator from a 5-
 # minute wait for compose to time out twice.
+#
+# v0.0.97 — drop the `-f` flag from the curl call. Pre-v0.0.97
+# used `curl -fsSI`, which `-f` makes return non-zero on any HTTP
+# 4xx/5xx response. registry-1.docker.io/ returns 401 to an
+# unauthenticated request — perfectly valid behaviour, the
+# registry IS reachable — but `-f` rejected that as a connection
+# failure. Operators on a freshly-rebuilt VPS hit "cannot reach
+# registry-1.docker.io" even though the network was fine.
+# The reachability check should pass on ANY HTTP response code
+# (the network round-trip completed); it should only fail on
+# real connection-level errors (DNS NXDOMAIN, connection refused,
+# TLS handshake timeout). `curl -sS` without `-f` returns 0 for
+# any successful HTTP transaction regardless of status code, so
+# the single-call form below is both simpler and more correct
+# than the two-call fallback ladder it replaces.
 preflight_network() {
     local hosts=("$@")
     if (( ${#hosts[@]} == 0 )); then
@@ -646,8 +661,8 @@ preflight_network() {
 
     local unreachable=()
     for h in "${hosts[@]}"; do
-        if ! curl -fsSI --connect-timeout 5 --max-time 10 "https://$h/" >/dev/null 2>&1 \
-           && ! curl -fsS --connect-timeout 5 --max-time 10 -o /dev/null "https://$h/" 2>/dev/null; then
+        if ! curl -sS --connect-timeout 5 --max-time 10 \
+                 -o /dev/null "https://$h/" 2>/dev/null; then
             unreachable+=("$h")
         fi
     done

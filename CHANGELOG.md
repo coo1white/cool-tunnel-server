@@ -22,6 +22,46 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.97] — 2026-05-14 — Hotfix: preflight_network false positive on registry-1.docker.io (401)
+
+v0.0.96's new `preflight_network` helper failed on the first
+production VPS to run `./scripts/update.sh` post-rewrite: the
+unauthenticated HEAD-equivalent request to
+`https://registry-1.docker.io/` returns HTTP 401 (perfectly
+valid — the registry IS reachable, it just wants auth), but the
+pre-v0.0.97 implementation used `curl -fsSI` whose `-f` flag
+rejects any 4xx/5xx as failure. Operators saw "✗ FAILED network:
+cannot reach registry-1.docker.io" even though the network was
+fine.
+
+### Fixed
+
+- **`scripts/lib.sh::preflight_network`** now uses
+  `curl -sS --connect-timeout 5 --max-time 10 -o /dev/null` for
+  each host check (no `-f`). curl returns 0 for any successful
+  HTTP transaction regardless of status code, so 401 / 403 /
+  404 / 500 all correctly read as "host reachable; whatever it
+  returned is between the caller and the server." Only true
+  connection-level failures (DNS NXDOMAIN, connection refused,
+  TLS handshake timeout) trip the diagnostic block now.
+- The two-call fallback ladder (HEAD then GET) collapses to a
+  single call — both simpler and more correct.
+
+### Notes
+
+- No other code-path change. v0.0.96's new lib.sh helpers
+  (`die_with_diag`, `preflight_clean_tree`, `preflight_disk_space`,
+  `preflight_stack_up`) are unaffected.
+- The `update.sh` call sites that invoke `preflight_network`
+  are unchanged.
+
+### Deployment
+
+- Operators stuck on the v0.0.96 `update.sh`'s preflight error:
+  `git fetch && git reset --hard origin/main && ./scripts/update.sh`.
+
+---
+
 ## [0.0.96] — 2026-05-14 — Maintain-UX rewrite, phase 1 of 3 (foundation + update.sh diagnostic blocks)
 
 The v0.0.95 production incident — operator hand-rolled-back
