@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\Log;
 // every panel save that fired the model-saved event raised
 // "Class App\Services\SingBoxReloader not found" at runtime.
 
-class SingBoxReloader
+class SingBoxReloader implements \App\Contracts\SingBoxReloaderInterface
 {
     public function __construct(
         private CtServerCore $core,

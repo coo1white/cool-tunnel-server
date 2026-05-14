@@ -6,6 +6,12 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Contracts\CaddyfileGeneratorInterface;
+use App\Contracts\ComponentCheckerInterface;
+use App\Contracts\CtServerCoreInterface;
+use App\Contracts\RevocationBusInterface;
+use App\Contracts\SingBoxConfigGeneratorInterface;
+use App\Contracts\SingBoxReloaderInterface;
 use App\Services\CaddyfileGenerator;
 use App\Services\ComponentChecker;
 use App\Services\CtServerCore;
@@ -20,8 +26,36 @@ use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
+    /**
+     * PSR-style contract → concrete implementation map.
+     *
+     * v0.0.92 Phase 1 of the Symfony-infusion arc. Existing call
+     * sites that resolve the concrete class directly (e.g.
+     * `app(SingBoxConfigGenerator::class)`) keep working — the
+     * concrete singleton registrations below preserve that path.
+     * New / refactored code prefers the interface for testability:
+     *
+     *     public function __construct(
+     *         private SingBoxConfigGeneratorInterface $gen,
+     *     ) {}
+     *
+     * Phase 2 (Symfony Messenger handlers) will type-hint the
+     * interface; Phase 3 (test rewrites) will bind fakes against
+     * the interface in `$this->app->bind(...)`.
+     */
+    private const SERVICE_BINDINGS = [
+        SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
+        SingBoxReloaderInterface::class        => SingBoxReloader::class,
+        CaddyfileGeneratorInterface::class     => CaddyfileGenerator::class,
+        RevocationBusInterface::class          => RedisRevocationBus::class,
+        CtServerCoreInterface::class           => CtServerCore::class,
+        ComponentCheckerInterface::class       => ComponentChecker::class,
+    ];
+
     public function register(): void
     {
+        // Concrete singletons — preserved so existing call sites
+        // resolving by class name continue to work without churn.
         $this->app->singleton(CtServerCore::class);
         $this->app->singleton(SingBoxConfigGenerator::class);
         $this->app->singleton(SingBoxReloader::class);
@@ -29,6 +63,14 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(TrafficCollector::class);
         $this->app->singleton(ComponentChecker::class);
         $this->app->singleton(RedisRevocationBus::class);
+
+        // Interface → concrete bindings. `$this->app->bind` (not
+        // `singleton`) is enough here because the concrete is
+        // already a singleton above; the container returns the
+        // same instance for both keys.
+        foreach (self::SERVICE_BINDINGS as $interface => $concrete) {
+            $this->app->bind($interface, $concrete);
+        }
     }
 
     public function boot(): void

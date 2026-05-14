@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Log;
 // seconds so a fast click-through doesn't hammer the DB / docker
 // cli; the UI exposes a "Re-check" button to bust the cache.
 
-final class ComponentChecker
+final class ComponentChecker implements \App\Contracts\ComponentCheckerInterface
 {
     public function __construct(
         private CtServerCore $core,

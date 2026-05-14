@@ -27,7 +27,7 @@ use Illuminate\Support\Facades\Log;
 // at runtime on every panel save. Now correctly calls
 // renderSingBoxConfig().
 
-class SingBoxConfigGenerator
+class SingBoxConfigGenerator implements \App\Contracts\SingBoxConfigGeneratorInterface
 {
     public function __construct(
         private CtServerCore $core,

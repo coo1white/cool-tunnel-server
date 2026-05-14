@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\Log;
  * returns the SHA-256 of the new file when it changed, or null when
  * the rendered output already matches what's on disk.
  */
-class CaddyfileGenerator
+class CaddyfileGenerator implements \App\Contracts\CaddyfileGeneratorInterface
 {
     public function __construct(
         private CtServerCore $core,

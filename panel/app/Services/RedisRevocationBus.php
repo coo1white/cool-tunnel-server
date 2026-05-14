@@ -31,7 +31,7 @@ use Illuminate\Support\Facades\Redis;
 // receives → Caddyfile re-render → admin-socket reload: ≤100 ms in
 // the steady state. Network pub/sub itself is sub-millisecond.
 
-final class RedisRevocationBus
+final class RedisRevocationBus implements \App\Contracts\RevocationBusInterface
 {
     public const CHANNEL = 'cool_tunnel:revocations';
 

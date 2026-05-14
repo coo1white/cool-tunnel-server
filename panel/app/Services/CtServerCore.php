@@ -19,7 +19,7 @@ use Symfony\Component\Process\Process;
 // We always pass --json and parse stdout. If the exit code is non-
 // zero we surface stderr to the caller.
 
-final class CtServerCore
+final class CtServerCore implements \App\Contracts\CtServerCoreInterface
 {
     public function __construct(
         private string $binary = 'ct-server-core',
