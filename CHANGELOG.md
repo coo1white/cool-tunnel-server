@@ -22,6 +22,122 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.96] — 2026-05-14 — Maintain-UX rewrite, phase 1 of 3 (foundation + update.sh diagnostic blocks)
+
+The v0.0.95 production incident — operator hand-rolled-back
+v0.0.93's Messenger work directly on the VPS to escape the
+restart loop, then `./scripts/update.sh` died with the entirely
+unhelpful message `✗ FAILED git pull failed (uncommitted
+changes?)  ↳ try: stash or commit your local edits first` —
+made the maintain-side UX gap obvious. A novice operator stares
+at that and has no idea (a) what is uncommitted, (b) whether
+stashing is safe, or (c) what to do next.
+
+Phase 1 of a three-PR refactor that closes the gap. PR 2
+introduces a `ct doctor` self-diagnostic; PR 3 layers
+auto-recovery hooks + a `ct help <topic>` mini-manual on top.
+Phase 1 lands the foundation in `lib.sh` and rewires `update.sh`
+to use it. No behaviour change to the happy path — only the
+error paths are different (much more useful).
+
+### Added
+
+- **`scripts/lib.sh::die_with_diag <summary> <body>`** —
+  multi-line variant of `die`. Prints a one-line FAILED summary
+  followed by a `Diagnostic:` block (indented, line-by-line) so
+  novice operators get the (1) what, (2) why, (3) what-to-do-next
+  triad on every failure path. Existing `die` retained for the
+  many one-line-hint sites.
+- **`scripts/lib.sh::preflight_clean_tree`** — interactive
+  detection of an uncommitted working tree. Shows stat summary
+  + first-30-lines diff preview, then offers `[s]tash with
+  timestamp label / [d]iscard / [a]bort`. Non-interactive (CI,
+  cron, hooks) → dies with a diagnostic block that lists the
+  exact commands for each path. Replaces the v0.0.95 "uncommitted
+  changes?" trap directly.
+- **`scripts/lib.sh::preflight_disk_space [<repo_gb>] [<docker_gb>]`**
+  — refuses to proceed when free disk under either the repo path
+  OR docker's data-root is below the threshold (defaults 2 / 4 GB;
+  override via `CT_MIN_REPO_GB` / `CT_MIN_DOCKER_GB`). Diagnostic
+  block lists the highest-impact cleanup commands in priority
+  order (`docker system prune -af`, `docker builder prune -af`,
+  `rm -rf core/target`, `du -h --max-depth=1 /`).
+- **`scripts/lib.sh::preflight_stack_up <service...>`** —
+  verifies each named compose service has at least one container
+  in `running` or `restarting` state. `restarting` counts as up
+  so the helper does not refuse to operate during the very
+  crisis it is trying to help recover from. When the entire stack
+  is down, the diagnostic block explicitly says "you probably
+  want install.sh, not update.sh" — common operator confusion on
+  fresh boxes.
+- **`scripts/lib.sh::preflight_network [<host>...]`** —
+  HEAD-pings `github.com` (git pull) and `registry-1.docker.io`
+  (image pull / buildkit) before any work. Override host list
+  per-deployment if behind a corporate proxy or registry mirror.
+  Diagnostic block lists the network-debug command ladder
+  (`ping 1.1.1.1`, `dig +short`, `curl -v`, `printenv HTTPS_PROXY`,
+  `docker info | grep Registry`) so an offline VPS does not
+  silently waste five minutes on compose timeouts.
+
+### Changed
+
+- **`scripts/update.sh`** now opens with a four-helper pre-flight
+  block (`preflight_network`, `preflight_disk_space`,
+  `preflight_stack_up panel sing-box haproxy`,
+  `preflight_clean_tree`) instead of going straight to
+  `git pull --ff-only`. Every failure-prone step now uses
+  `die_with_diag`:
+  - `git pull` — separate diagnostic for the "non-FF" case
+    (pre-flight already filtered "dirty tree"), with the
+    `git fetch origin; git reset --hard origin/main` recovery
+    path spelled out.
+  - `compose build core-builder` — out-of-disk / network /
+    cargo-cache-rot / buildkit-bug enumeration.
+  - `compose build sing-box panel haproxy` — out-of-disk / APK /
+    PECL / composer.lock-conflict enumeration, with an explicit
+    reference back to the v0.0.95 ext-redis class of bug.
+  - `component_check_strict` — captures stdout, extracts the NG
+    component name(s), and renders a per-component recovery
+    block (`panel`, `sing-box`, `haproxy`, `redis`,
+    `ct-server-core`, `caddy`) with the targeted log-tail
+    commands. Pre-v0.0.96 this said "post-swap check NG —
+    investigate logs" with no indication of *which* component
+    or *which* logs.
+
+### Notes — implementation
+
+- The heredoc-into-`$(cat <<EOF ...)` pattern was abandoned
+  mid-development after triggering a bash parser bug: parentheses
+  inside the heredoc body confuse the substitution's paren-counter
+  and produce "unexpected EOF" parse errors. The library now
+  uses `read -r -d '' var <<'EOF' ... EOF` instead — reads to NUL
+  (never present in the heredoc), hits EOF, returns non-zero,
+  trailed by `|| true` to satisfy `set -e`. Same pattern in both
+  `lib.sh` and `update.sh`. Documented in-source.
+- All new helpers + every diagnostic block run cleanly under
+  `shellcheck -x --severity=warning` and pass the project's
+  `secrets-argv` check (the redis-cli command shown in the NG
+  diagnostic uses the canonical `REDISCLI_AUTH` env-var form,
+  not `-a "$REDIS_PASSWORD"`).
+- No code-path change to install.sh / backup.sh / restore.sh /
+  late-night-comeback.sh in this PR. Those become PR 3's sweep
+  pass once PR 2's `ct doctor` is in place.
+
+### Deployment
+
+- Pull v0.0.96 and run `ct update`. The script picks up its own
+  rewritten version on the next invocation (since `update.sh`
+  always re-sources `lib.sh` from the working tree, not from a
+  cached image). No image rebuild, no container restart needed
+  for the maintain-script change itself — the regular update
+  flow rebuilds images for the version-anchor bumps.
+- Operators stuck mid-recovery on v0.0.95 can paste the
+  `git stash push -u + ./scripts/update.sh` sequence from the
+  v0.0.95 release notes verbatim; v0.0.96's preflight_clean_tree
+  would have offered the same path interactively on the next run.
+
+---
+
 ## [0.0.95] — 2026-05-14 — Hotfix: pin ext-redis to 6.3.0 (close v0.0.93 restart-loop regression)
 
 Hotfix for a regression introduced in v0.0.93 and surfaced when
@@ -1439,7 +1555,7 @@ unchanged.
   - `ct-server-core component check --manifests /srv/manifests` reports
     all components OK after the manifest correction.
   - Bundled `naive` local adapter returned `http_code=204` through
-    `https://nick:<password>@cookie.coolwhite.space:443`.
+    `https://alice:<password>@cookie.coolwhite.space:443`.
 - PR #65 CI:
   - `rust (build / test / clippy / fmt)`
   - `manifest drift`
@@ -6702,7 +6818,7 @@ cleanup PR:
 unblocking the SSH-tunnel login flow, the user signed in
 successfully — and landed on a **functional but unstyled** Filament
 dashboard. All the HTML rendered, the data was correct ("Welcome
-nick", active accounts: 0, traffic today: 0 B), but every
+alice", active accounts: 0, traffic today: 0 B), but every
 component was a wall of plain text with browser-default styling.
 The "Show password" eye icon rendered as a giant SVG dominating
 the screen.
