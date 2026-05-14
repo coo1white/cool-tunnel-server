@@ -16,10 +16,50 @@ require_file .env "cp .env.example .env  &&  \$EDITOR .env"
 require_docker
 acquire_op_lock
 
+# v0.0.96 — comprehensive pre-flight. Each helper either passes
+# silently / with one `ok` line, or dies with a `die_with_diag`
+# block that tells the operator EXACTLY what to do next. Replaces
+# the pre-v0.0.96 path where `git pull --ff-only` would fail with
+# a generic "uncommitted changes?" message that left novice
+# operators stuck (v0.0.95 production recovery surfaced this).
+step "Pre-flight"
+preflight_network
+preflight_disk_space
+preflight_stack_up panel sing-box haproxy
+preflight_clean_tree
+
 step "git pull (fast-forward only)"
-git pull --ff-only \
-    || die "git pull failed (uncommitted changes?)" \
-           "stash or commit your local edits first"
+# preflight_clean_tree above guarantees a clean tree, so this
+# only fails on genuine non-FF situations (someone force-pushed,
+# rebase, etc.) — needs a different diagnostic than v0.0.95's.
+if ! git pull --ff-only; then
+    # `read -r -d ''` pattern (not `$(cat <<EOF...)`) because the
+    # latter triggers a bash parser bug: parentheses inside the
+    # heredoc body confuse the substitution's paren-counter and
+    # produce "unexpected EOF" errors. `read -d ''` reads to NUL
+    # (which is never present in the heredoc), gets EOF, returns
+    # non-zero — hence the trailing `|| true`. Same pattern used
+    # throughout this script and lib.sh.
+    read -r -d '' git_pull_diag <<'EOF' || true
+Working tree is clean (preflight passed), so this is a non-FF
+situation -- usually one of:
+  - Upstream main was force-pushed (rare; check #incidents channel)
+  - Local main has diverged from origin/main (you committed
+    directly to main, not through a PR)
+  - Detached HEAD or wrong branch
+
+Inspect with:
+  git log --oneline -5 HEAD origin/main
+  git status
+
+Recover by hard-resetting to the published main (loses any local
+main commits -- be sure that is what you want):
+  git fetch origin
+  git reset --hard origin/main
+  ./scripts/update.sh
+EOF
+    die_with_diag "git pull --ff-only refused to fast-forward" "$git_pull_diag"
+fi
 
 # v0.0.54 — auto-heal legacy .env files. Pre-v0.0.33 .env files (and
 # operator-managed copies that predate v0.0.33's R1-1/R1-2 SNI router
@@ -105,7 +145,20 @@ else
 fi
 
 step "Rebuild ct-server-core (Rust)"
-compose --profile build-only build core-builder
+if ! compose --profile build-only build core-builder; then
+    read -r -d '' core_build_diag <<'EOF' || true
+Common causes (in priority order):
+  - Out of disk     ->  df -h .   then  docker builder prune -af
+  - Network blip    ->  retry: ./scripts/update.sh
+  - Cargo cache rot ->  rm -rf core/target  then retry
+  - Buildkit bug    ->  docker buildx rm default-builder; retry
+
+If the build error mentions a specific Rust crate, paste the last
+20 lines of output when asking for help. The crate name + line
+number are usually enough to diagnose.
+EOF
+    die_with_diag "ct-server-core build failed" "$core_build_diag"
+fi
 
 step "Rebuild sing-box + panel + haproxy"
 # v0.0.44 added haproxy to this list. The haproxy 2.9 → 3.0 hardening
@@ -116,7 +169,25 @@ step "Rebuild sing-box + panel + haproxy"
 # drift-detection probe would then trip VersionMismatch indefinitely.
 # Adding haproxy to the build set keeps the existing rebuild-then-
 # swap discipline intact for any future haproxy-side change too.
-compose build sing-box panel haproxy
+if ! compose build sing-box panel haproxy; then
+    read -r -d '' image_build_diag <<'EOF' || true
+Common causes (in priority order):
+  - Out of disk             ->  df -h /var/lib/docker
+                                then docker system prune -af
+  - APK / PECL transient    ->  retry: ./scripts/update.sh
+  - Composer.lock conflict  ->  this was the v0.0.95 class
+                                of bug -- check the entrypoint
+                                output for "platform-req" errors
+
+The build prints which Dockerfile step failed; that pinpoints
+which image (sing-box / panel / haproxy) and which line. Recent
+build-failure classes worth ruling out:
+  v0.0.94 -> v0.0.95  ext-redis 5.3.0 vs symfony/redis-messenger
+                      (already fixed; if you see it, you are on a
+                      stale image -- rerun update)
+EOF
+    die_with_diag "sing-box / panel / haproxy build failed" "$image_build_diag"
+fi
 
 # IMPORTANT — order: bring new image up BEFORE running migrations.
 # Pre-v0.0.15 update.sh ran `php artisan migrate` against the
@@ -220,8 +291,60 @@ step "Reload haproxy (SIGHUP — graceful re-exec)"
 compose kill -s HUP haproxy
 
 step "Component check (post-swap)"
-component_check_strict /srv/manifests \
-    || die "post-swap check NG — investigate logs" \
-           "docker compose logs --tail=100 panel sing-box haproxy"
+# v0.0.96 — capture the NG component names so the failure block
+# tells the operator EXACTLY which component is unhealthy. Pre-
+# v0.0.96 the message was "post-swap check NG — investigate
+# logs", which left a noob staring at 100 lines of mixed sing-box
+# / panel / haproxy logs with no idea which one was the offender.
+component_check_out=$(mktemp)
+if component_check_strict /srv/manifests 2>&1 | tee "$component_check_out"; then
+    rm -f "$component_check_out"
+else
+    ng_components=$(grep -E '^[[:space:]]*NG[[:space:]]' "$component_check_out" \
+        | awk '{print $2}' | sort -u | paste -sd, - || true)
+    rm -f "$component_check_out"
+    read -r -d '' ng_diag <<'EOF' || true
+The new release built and started, but the component check
+flagged components as NG (see name above). Targeted next steps
+by component (read the FIRST one whose component matches):
+
+  panel       -> docker compose logs --tail=120 panel
+                 Common: composer install failed in entrypoint
+                         (look for "platform-req" / "ext-redis"),
+                         migration failed (/tmp/cool-tunnel/migrate-failed),
+                         APP_KEY missing, or Octane worker crash.
+
+  sing-box    -> docker compose logs --tail=60 sing-box
+                 docker compose exec panel ct-server-core --json singbox render
+                 Common: rendered config invalid, port collision,
+                         Clash API reload rejected, naive padding
+                         regressed.
+
+  haproxy     -> docker compose logs --tail=40 haproxy
+                 docker compose exec panel ct-server-core haproxy render
+                 Common: cfg parse error after SIGHUP, stats socket
+                         permissions, backend health timeout.
+
+  redis       -> docker compose exec -T -e REDISCLI_AUTH="$REDIS_PASSWORD" redis redis-cli PING
+                 Should print PONG. NG usually means AUTH failure
+                 from a stale password. (Pass the password via env
+                 var, not -a, to keep it off the argv list visible
+                 to other processes.)
+
+  ct-server-core -> docker compose logs --tail=40 ct-core-daemon
+                 Common: Redis URL parse (v0.0.88-class), Clash API
+                         unreachable, manifest pin drift.
+
+  caddy       -> docker compose logs --tail=40 caddy
+                 Common: ACME failure (DNS, port 80/443 blocked),
+                         cert path mtime not advancing.
+
+The OLD release is still running on the volumes from before this
+update -- your users are NOT impacted. You can roll back with:
+  git checkout v0.0.95   # (or the prior known-good tag)
+  ./scripts/update.sh
+EOF
+    die_with_diag "post-swap check NG: ${ng_components:-unknown}" "$ng_diag"
+fi
 
 ok "Update complete."

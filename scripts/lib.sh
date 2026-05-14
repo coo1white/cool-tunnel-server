@@ -364,3 +364,312 @@ component_check_strict() {
     rm -f "$out"
     return 0
 }
+
+# ---------- Diagnostic-block error reporting -----------------------
+#
+# `die` (above) prints a one-line failure + one-line "↳ try:" hint.
+# Good for the common case. Inadequate when the operator needs
+# multi-line context to act — e.g. "git pull blocked by uncommitted
+# changes" needs to show *what* is uncommitted, *why* it's blocking,
+# and *which three options* the operator can choose.
+#
+# `die_with_diag` is for those cases. Caller passes a one-line
+# summary + a multi-line body (printed verbatim, indented). The
+# body is heredoc-friendly — see update.sh for canonical examples.
+
+# die_with_diag <summary> <body>
+#
+# Print:  ✗ FAILED <summary>
+#         Diagnostic:
+#           <body, line-by-line, indented 2 spaces>
+# Then exit 1.
+die_with_diag() {
+    local summary="$1"
+    shift || true
+    local body="${*:-}"
+    printf "\n%s✗ FAILED%s %s\n" "${CT_RED}${CT_BOLD}" "${CT_RESET}" "$summary" >&2
+    if [[ -n "$body" ]]; then
+        printf "\n%sDiagnostic:%s\n" "${CT_BOLD}" "${CT_RESET}" >&2
+        printf '%s\n' "$body" | sed 's/^/  /' >&2
+        printf "\n" >&2
+    fi
+    exit 1
+}
+
+# ---------- Pre-flight bundle (v0.0.96 maintain-UX rewrite) -------
+#
+# The helpers in this section are designed to run at the TOP of any
+# operator-facing maintain script (update.sh, install.sh, restore.sh).
+# Each one either:
+#   - passes silently / with one `ok` line, or
+#   - dies with a `die_with_diag` block that tells the operator what
+#     to do next.
+#
+# Operator-tested rule: an error block must contain (1) the failure,
+# (2) a plain-English diagnosis, (3) ≥ 2 concrete commands to try.
+# A one-line "↳ try: stash or commit your local edits first" is not
+# enough — that's the gap v0.0.96 closes.
+
+# preflight_clean_tree
+#
+# Refuse to proceed when the git working tree has uncommitted
+# changes. Interactive: shows a stat summary + diff preview, then
+# offers stash / discard / abort. Non-interactive: prints a
+# diagnostic block and exits (never silently overwrites local state).
+#
+# Returns 0 (tree clean or stash succeeded) or dies. Tested on the
+# v0.0.95 production incident where an operator hand-rolled-back
+# v0.0.93 directly on the VPS, then `update.sh`'s `git pull` died
+# with a generic "uncommitted changes?" message that left them
+# stuck.
+preflight_clean_tree() {
+    if git diff --quiet HEAD 2>/dev/null \
+       && git diff --quiet --cached 2>/dev/null; then
+        ok "working tree clean"
+        return 0
+    fi
+
+    printf "\n  %s!%s Working tree has uncommitted changes:\n\n" \
+        "${CT_YELLOW}" "${CT_RESET}" >&2
+    git diff --stat HEAD 2>/dev/null | sed 's/^/    /' >&2
+    printf "\n  Preview (first 30 lines of diff):\n" >&2
+    git diff HEAD 2>/dev/null | head -30 | sed 's/^/    /' >&2
+    printf "\n" >&2
+
+    if [[ ! -t 0 ]]; then
+        # `read -r -d ''` pattern (not `$(cat <<EOF...)`) because
+        # the latter triggers a bash parser bug: parentheses
+        # inside the heredoc body confuse the substitution's
+        # paren-counter and produce "unexpected EOF" errors.
+        # `read -d ''` reads to NUL (which is never present in
+        # the heredoc), hits EOF, returns non-zero — hence the
+        # trailing `|| true`. Used consistently across lib.sh.
+        local diag
+        read -r -d '' diag <<'EOF' || true
+Running non-interactively, so this script will not auto-decide.
+
+To preserve the edits and proceed:
+  git stash push -u -m "preflight-$(date -u +%Y%m%dT%H%M%SZ)"
+  ./scripts/update.sh
+
+To discard the edits and proceed:
+  git checkout -- .
+  ./scripts/update.sh
+
+To inspect what is there before deciding:
+  git diff HEAD
+  git stash list   # if you have stashed before
+EOF
+        die_with_diag "uncommitted changes block git pull" "$diag"
+    fi
+
+    local choice
+    while true; do
+        printf "  How do you want to proceed?\n" >&2
+        printf "    [s] stash with timestamp label (preserves edits, recoverable via 'git stash pop')\n" >&2
+        printf "    [d] discard local edits (NOT recoverable)\n" >&2
+        printf "    [a] abort — I'll handle it manually\n" >&2
+        printf "  choice [s/d/a]: " >&2
+        IFS= read -r choice
+        case "${choice:-a}" in
+            s|S)
+                local label
+                label="preflight-$(date -u +%Y%m%dT%H%M%SZ)"
+                if git stash push -u -m "$label"; then
+                    ok "stashed as '$label' (recover with: git stash pop)"
+                    return 0
+                else
+                    local stash_diag
+                    read -r -d '' stash_diag <<'EOF' || true
+git refused to stash -- usually means the index is in a
+broken state. Inspect with:
+  git status
+  git stash list
+If you see an in-progress merge / rebase / cherry-pick:
+  git merge --abort  (or rebase --abort, etc.)
+EOF
+                    die_with_diag "git stash failed" "$stash_diag"
+                fi
+                ;;
+            d|D)
+                if prompt_yn "Discard ALL uncommitted changes to TRACKED files? (untracked files preserved)" n; then
+                    git checkout -- .
+                    ok "tracked-file changes reverted (untracked files left alone)"
+                    return 0
+                fi
+                continue
+                ;;
+            a|A)
+                local abort_diag
+                read -r -d '' abort_diag <<'EOF' || true
+You chose to handle this manually. The diff is shown above.
+When ready to retry, run:
+  ./scripts/update.sh
+EOF
+                die_with_diag "aborted on uncommitted changes" "$abort_diag"
+                ;;
+            *)
+                printf "    please answer s, d, or a\n" >&2
+                continue
+                ;;
+        esac
+    done
+}
+
+# preflight_disk_space [<min_repo_gb>] [<min_docker_gb>]
+#
+# Refuse to proceed when free disk under the repo path OR under
+# docker's data-root is below the threshold. Defaults: 2 GB repo,
+# 4 GB docker. Override per-invocation via CT_MIN_REPO_GB /
+# CT_MIN_DOCKER_GB env vars. Running out of disk mid-build is the
+# messiest failure class — half-built panel image, confused
+# composer install, ENOSPC sentinel in the entrypoint log.
+preflight_disk_space() {
+    local min_repo_gb="${1:-${CT_MIN_REPO_GB:-2}}"
+    local min_docker_gb="${2:-${CT_MIN_DOCKER_GB:-4}}"
+
+    local repo_free_kb repo_free_gb
+    repo_free_kb=$(df -k . 2>/dev/null | awk 'NR==2 {print $4}')
+    repo_free_gb=$(( ${repo_free_kb:-0} / 1024 / 1024 ))
+    if (( repo_free_gb < min_repo_gb )); then
+        local repo_disk_diag
+        read -r -d '' repo_disk_diag <<'EOF' || true
+Compose build, git pull, and composer install all need scratch
+space; running out mid-update corrupts the build cache.
+
+What to free (priority order, most-impact first):
+  docker system prune -af        # stopped containers + dangling images
+  docker builder prune -af       # buildkit cache (1-3 GB typical)
+  rm -rf core/target             # Rust build cache (2-5 GB)
+  du -h --max-depth=1 / | sort -rh | head    # find the actual offender
+
+Re-run ./scripts/update.sh after freeing space.
+EOF
+        die_with_diag "low disk under repo path: ${repo_free_gb}G free, need >= ${min_repo_gb}G" \
+            "$repo_disk_diag"
+    fi
+
+    local docker_root docker_free_kb docker_free_gb
+    docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
+    docker_free_kb=$(df -k "$docker_root" 2>/dev/null | awk 'NR==2 {print $4}')
+    docker_free_gb=$(( ${docker_free_kb:-0} / 1024 / 1024 ))
+    if (( docker_free_gb < min_docker_gb )); then
+        local docker_disk_diag
+        docker_disk_diag=$(printf '%s\n' \
+            "Compose pull + build will store image layers under $docker_root." \
+            "Out-of-space mid-build typically surfaces as 'no space left on" \
+            "device' partway through, leaving a half-built panel image and a" \
+            "confused stack." \
+            "" \
+            "What to free (priority order):" \
+            "  docker system prune -af" \
+            "  docker builder prune -af" \
+            "  docker volume ls -qf dangling=true | xargs -r docker volume rm" \
+            "  du -sh $docker_root/overlay2/*  | sort -rh | head")
+        die_with_diag "low disk under docker root ($docker_root): ${docker_free_gb}G free, need >= ${min_docker_gb}G" \
+            "$docker_disk_diag"
+    fi
+
+    ok "disk space OK (repo: ${repo_free_gb}G, docker: ${docker_free_gb}G)"
+}
+
+# preflight_stack_up <service...>
+#
+# Verify each named compose service has at least one container in
+# `running` or `restarting` state. `restarting` counts as "up" so
+# we don't refuse to operate during the very crisis we're trying
+# to recover from (the v0.0.94 restart-loop on production was the
+# motivating case).
+#
+# Dies with a "did you mean install.sh?" diagnostic when ALL
+# services are down — that's almost always operator confusion
+# about which script to run on a fresh box.
+preflight_stack_up() {
+    local services=("$@")
+    if (( ${#services[@]} == 0 )); then
+        ok "preflight_stack_up: no services specified, skipping"
+        return 0
+    fi
+
+    local missing=() running_count=0
+    for svc in "${services[@]}"; do
+        if docker compose ps --status running --status restarting --services 2>/dev/null \
+                | grep -qxF "$svc"; then
+            running_count=$((running_count + 1))
+        else
+            missing+=("$svc")
+        fi
+    done
+
+    if (( ${#missing[@]} == 0 )); then
+        ok "stack is up (${running_count}/${#services[@]} services running)"
+        return 0
+    fi
+
+    if (( running_count == 0 )); then
+        local stack_diag
+        stack_diag=$(printf '%s\n' \
+            "None of the expected services are running:" \
+            "  ${services[*]}" \
+            "" \
+            "You probably want install.sh, not update.sh. update.sh assumes a" \
+            "live stack and reuses its volumes + cache." \
+            "" \
+            "What to do:" \
+            "  First-time setup on a fresh box:" \
+            "    ./scripts/install.sh" \
+            "" \
+            "  Stack was running and crashed:" \
+            "    docker compose ps                # what is the state?" \
+            "    docker compose logs --tail=80    # what blew up?" \
+            "    docker compose up -d             # bring it back up" \
+            "    ./scripts/update.sh              # then update")
+        die_with_diag "stack is entirely down" "$stack_diag"
+    fi
+
+    warn "stack is partially up — these services are NOT running: ${missing[*]}"
+    warn "update will try to bring them back up alongside the rebuild"
+}
+
+# preflight_network [<host>...]
+#
+# Verify outbound HTTPS reachability to github.com (for git pull)
+# and registry-1.docker.io (for image pulls + buildkit). Caller
+# can override the host list. Update fails mysteriously on offline
+# VPSes; surfacing this up front saves the operator from a 5-
+# minute wait for compose to time out twice.
+preflight_network() {
+    local hosts=("$@")
+    if (( ${#hosts[@]} == 0 )); then
+        hosts=(github.com registry-1.docker.io)
+    fi
+
+    local unreachable=()
+    for h in "${hosts[@]}"; do
+        if ! curl -fsSI --connect-timeout 5 --max-time 10 "https://$h/" >/dev/null 2>&1 \
+           && ! curl -fsS --connect-timeout 5 --max-time 10 -o /dev/null "https://$h/" 2>/dev/null; then
+            unreachable+=("$h")
+        fi
+    done
+
+    if (( ${#unreachable[@]} > 0 )); then
+        local network_diag
+        read -r -d '' network_diag <<'EOF' || true
+Update needs to git pull (github.com) and pull image layers
+(registry-1.docker.io). One or both is unreachable.
+
+What to check (in priority order):
+  ping -c 3 1.1.1.1                  # internet reachable at all?
+  dig +short github.com              # DNS resolving?
+  curl -v https://github.com/        # outbound 443 not blocked?
+  printenv HTTPS_PROXY               # corporate proxy needed?
+  docker info | grep -A3 Registry    # registry mirror configured?
+
+When the network is back, re-run:
+  ./scripts/update.sh
+EOF
+        die_with_diag "network: cannot reach ${unreachable[*]}" "$network_diag"
+    fi
+
+    ok "network reachable (${hosts[*]})"
+}
