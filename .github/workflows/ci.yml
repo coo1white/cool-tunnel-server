@@ -124,11 +124,21 @@ jobs:
       - name: composer install (panel test deps)
         working-directory: panel
         run: |
+          # --ignore-platform-req=ext-redis: the CI runner has
+          # ext-redis 5.3.0 (default for the GitHub-hosted PHP
+          # 8.4 image), but symfony/redis-messenger v7.4.8
+          # requires ext-redis >= 6.1. Production has the right
+          # version via the panel Dockerfile's PECL install; CI
+          # never RUNS the Redis transport (phpunit uses
+          # MessengerServiceProvider's InMemoryTransport in the
+          # testing env), so this is safe.
+          # (v0.0.93 Symfony-Messenger-foundation PR.)
           composer install \
               --no-interaction \
               --prefer-dist \
               --optimize-autoloader \
-              --no-scripts
+              --no-scripts \
+              --ignore-platform-req=ext-redis
           php artisan package:discover --ansi
 
       - name: phpunit (panel)

@@ -381,7 +381,7 @@ jobs:
       - name: composer install (panel)
         working-directory: panel
         run: |
-          composer install --no-progress --no-interaction --prefer-dist
+          composer install --no-progress --no-interaction --prefer-dist --ignore-platform-req=ext-redis
       - name: pint --test
         working-directory: panel
         run: |
@@ -490,7 +490,7 @@ jobs:
           tools: composer
       - name: composer install
         working-directory: panel
-        run: composer install --no-progress --no-interaction --prefer-dist
+        run: composer install --no-progress --no-interaction --prefer-dist --ignore-platform-req=ext-redis
       - name: composer dump-autoload --strict-psr
         working-directory: panel
         run: composer dump-autoload --strict-psr --no-scripts
@@ -537,7 +537,7 @@ jobs:
           tools: composer, phpstan
       - name: composer install
         working-directory: panel
-        run: composer install --no-progress --no-interaction --prefer-dist
+        run: composer install --no-progress --no-interaction --prefer-dist --ignore-platform-req=ext-redis
       - name: phpstan analyse
         working-directory: panel
         run: |
