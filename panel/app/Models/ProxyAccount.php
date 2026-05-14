@@ -6,7 +6,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use App\Jobs\ReloadSingBoxJob;
+use App\Messages\ReloadSingBox;
 use App\Services\RedisRevocationBus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Messenger\MessageBusInterface;
 
 // One row per proxy user.
 //
@@ -29,11 +30,15 @@ use Illuminate\Support\Facades\DB;
 //      Redis-pub level.
 //
 //   2. ASYNCHRONOUS PHP-side render+reload as a backstop, dispatched
-//      to the database-backed queue (see App\Jobs\ReloadSingBoxJob).
-//      Pre-2026-05-05 this fired synchronously inside saved()/
-//      deleted(); a hung ct-server-core stalled the whole Filament
-//      request, and a bulk-delete fanned out N synchronous reloads.
-//      Both layers dedupe by SHA-256, so racing reloads (e.g. queue
+//      to Symfony Messenger's Redis Streams transport (see
+//      App\Messages\ReloadSingBox + App\MessageHandlers\
+//      ReloadSingBoxHandler). [program:messenger] picks it up,
+//      renders, reloads. Pre-2026-05-05 this fired synchronously
+//      inside saved() / deleted(); a hung ct-server-core stalled
+//      the whole Filament request, and a bulk-delete fanned out N
+//      synchronous reloads. v0.0.84 introduced a queued backstop
+//      via Laravel Queue; v0.0.94 moved it onto Symfony Messenger.
+//      Both layers dedupe by SHA-256, so racing reloads (e.g.
 //      worker firing while another save is mid-flight) reduce to a
 //      no-op-after-first.
 //
@@ -234,8 +239,13 @@ class ProxyAccount extends Model
         // if) the row actually persists.
         //
         // Hot path (Redis pub/sub) is still ~1ms fire-and-forget;
-        // cold path (ReloadSingBoxJob) still runs out-of-band on
-        // the queue worker. Only the trigger boundary moved.
+        // cold path now dispatches directly to the Symfony Messenger
+        // bus (v0.0.94 cutover). MessageBusInterface routes the
+        // ReloadSingBox message to the `async` transport
+        // (cool_tunnel:messenger Redis stream); [program:messenger]
+        // picks it up and invokes ReloadSingBoxHandler. The
+        // two-hop path through the legacy ReloadSingBoxJob shim
+        // is gone.
         static::saved(function (self $account): void {
             $username = $account->username;
             $status = $account->isActive() ? 'active'
@@ -246,7 +256,9 @@ class ProxyAccount extends Model
                 $bus->setAccountStatus($username, $status);
                 $bus->announceAccountChanged($username, "saved:{$status}");
 
-                ReloadSingBoxJob::dispatch();
+                app(MessageBusInterface::class)->dispatch(
+                    new ReloadSingBox(reason: "proxy_account.saved:{$status}"),
+                );
             });
         });
 
@@ -258,7 +270,9 @@ class ProxyAccount extends Model
                 $bus->clearAccountStatus($username);
                 $bus->announceAccountChanged($username, 'deleted');
 
-                ReloadSingBoxJob::dispatch();
+                app(MessageBusInterface::class)->dispatch(
+                    new ReloadSingBox(reason: 'proxy_account.deleted'),
+                );
             });
         });
     }

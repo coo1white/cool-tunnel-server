@@ -6,12 +6,13 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use App\Jobs\ReloadServerConfigJob;
+use App\Messages\ReloadServerConfig;
 use App\Services\RedisRevocationBus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Messenger\MessageBusInterface;
 use Throwable;
 
 // Singleton — exactly one row, id=1. The seeder creates it on first
@@ -56,26 +57,29 @@ class ServerConfig extends Model
     protected static function booted(): void
     {
         // Dual-path on update: Redis pub/sub (≤100ms hot path) plus
-        // ReloadServerConfigJob (slow-path render+reload backstop).
-        // Both run via DB::afterCommit so a rollback in the surrounding
-        // Filament transaction doesn't queue a phantom reload, and the
-        // queue worker can't read stale state between `updated` and
-        // commit. See CHANGELOG [0.0.84].
+        // ReloadServerConfig Messenger message (slow-path render+reload
+        // backstop). Both run via DB::afterCommit so a rollback in the
+        // surrounding Filament transaction doesn't queue a phantom
+        // reload, and the worker can't read stale state between
+        // `updated` and commit. See CHANGELOG [0.0.84] (original
+        // queue-job design) + [0.0.94] (Messenger cutover).
         static::updated(function (): void {
             DB::afterCommit(function (): void {
                 app(RedisRevocationBus::class)->announceServerConfigChanged();
 
-                // Catch dispatch failures (Redis backs both the queue
-                // and the pub/sub bus in the shipped .env) so a
-                // transient outage doesn't bubble out as a 500 — the
-                // row is already committed.
+                // Catch dispatch failures (Redis backs both the
+                // Messenger transport and the pub/sub bus in the
+                // shipped .env) so a transient outage doesn't bubble
+                // out as a 500 — the row is already committed.
                 try {
-                    ReloadServerConfigJob::dispatch();
+                    app(MessageBusInterface::class)->dispatch(
+                        new ReloadServerConfig(reason: 'server_config.updated'),
+                    );
                 } catch (Throwable $e) {
                     Log::warning('serverconfig.reload.dispatch_failed', [
                         'err' => $e->getMessage(),
                         'type' => $e::class,
-                        'note' => 'queue dispatch failed; row committed but slow-path render+reload was not queued. '
+                        'note' => 'Messenger bus dispatch failed; row committed but slow-path render+reload was not queued. '
                             .'Redis fast-path (if Redis is up) is unaffected; the every-5-min '
                             .'`singbox:render --if-changed --reload` scheduled command will reconcile.',
                     ]);
