@@ -1,7 +1,7 @@
 {
     "name": "ct-server-core",
     "kind": "binary",
-    "version": "0.0.93",
+    "version": "0.0.94",
     "upstream": "https://github.com/coo1white/cool-tunnel-server",
     "verify": {
         "command": ["ct-server-core", "version"],

@@ -22,6 +22,138 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.0.94] — 2026-05-14 — Messenger cutover (Phase 3 of Symfony-infusion arc)
+
+Phase 3 — the cutover. v0.0.93's Symfony Messenger foundation is
+already in production via the legacy Job → Bus shim. This release
+retires the shim: call sites dispatch the Messenger message
+directly, the legacy `App\Jobs\ReloadSingBoxJob` and
+`App\Jobs\ReloadServerConfigJob` classes are removed, and the
+dispatch tests are rewritten around Symfony Messenger's
+`InMemoryTransport` instead of Laravel's `Queue::fake()`.
+
+The two-hop path collapses to one hop. Operator-side behaviour
+is unchanged.
+
+### Changed
+
+- **Three production call sites now dispatch direct to the
+  Messenger bus** instead of `ReloadSingBoxJob::dispatch()` /
+  `ReloadServerConfigJob::dispatch()`:
+  - `ProxyAccount::booted::saved` →
+    `new ReloadSingBox(reason: "proxy_account.saved:<status>")`
+  - `ProxyAccount::booted::deleted` →
+    `new ReloadSingBox(reason: "proxy_account.deleted")`
+  - `ServerConfig::booted::updated` →
+    `new ReloadServerConfig(reason: "server_config.updated")`
+  Each `reason` lets an operator inspecting the Messenger
+  transport correlate each pending message back to the event
+  that produced it. The `ServerConfig` dispatch retains the
+  v0.0.84 `try/catch + Log::warning` shape so a transient
+  Redis-Streams outage doesn't bubble out as a 500 — the row
+  is already committed and the every-5-min scheduled command
+  reconciles.
+
+### Removed
+
+- `app/Jobs/ReloadSingBoxJob.php` and
+  `app/Jobs/ReloadServerConfigJob.php`. The legacy Job classes
+  served as the v0.0.93 transition shim (Laravel-Queue dispatch
+  → Messenger-bus dispatch) and have completed that role.
+- `tests/Feature/ReloadSingBoxJobFailedHandlerTest.php` and
+  `tests/Feature/ReloadServerConfigJobFailedHandlerTest.php`
+  (6 tests total). The `failed()` hook's responsibility of
+  surfacing permanent failure at `Log::critical` is handed off
+  to Symfony Messenger's `failure_transport` mechanism (a
+  dedicated `failed` transport on the bus + a critical-log
+  subscriber on `SendMessageToFailureTransportEvent`). Wiring
+  that is deferred to a later release; Phase 3 retains
+  correctness by pinning the handler's invocation contract at
+  unit-test time.
+
+### Added
+
+- **Handler invocation-contract tests**:
+  - `tests/Feature/ReloadSingBoxHandlerTest.php` (2 tests):
+    `handler_renders_and_reloads_when_hash_changes` and
+    `handler_skips_reload_when_render_returns_null`.
+  - `tests/Feature/ReloadServerConfigHandlerTest.php` (2 tests):
+    `handler_renders_caddy_first_then_singbox_then_reloads_on_change`
+    (pinning the Caddy-first render order from v0.0.84) and
+    `handler_skips_singbox_reload_when_singbox_render_returns_null`.
+  Anonymous classes replaced by named test doubles
+  (`FakeSingBoxGenerator`, `FakeSingBoxReloader`,
+  `RecordingCaddyGenerator`, etc.) for object-identity-stable
+  assertions after `app->instance(...)`.
+
+### Updated
+
+- `tests/Feature/ProxyAccountAfterCommitTest.php` and
+  `tests/Feature/ServerConfigSaveDispatchesReloadJobTest.php`
+  both moved from `Queue::fake() + Queue::assertPushed(JobClass, N)`
+  to direct introspection of
+  `app(TransportInterface::class)->getSent()`. The transport is
+  `InMemoryTransport` in the testing env (per v0.0.93's
+  environment-aware binding). One extra test added to
+  `ProxyAccountAfterCommitTest` validating the new `reason`
+  field flows through correctly.
+
+### `[program:queue]` retained
+
+Even though no app code dispatches via Laravel's queue anymore,
+Filament internals (queued notifications, bulk-action progress,
+queued exports) may still use it. The worker idles when nothing
+is dispatched — cheap to keep. Auditing Filament's queue usage
+is a separate concern outside this release's scope.
+
+### Operator impact (`ct update` v0.0.93 → v0.0.94)
+
+1. No Dockerfile change. ext-redis is already installed from
+   v0.0.93.
+2. No supervisord change. `[program:messenger]` continues;
+   `[program:queue]` continues.
+3. **In-flight Laravel-Queue jobs from before the deploy**:
+   any `ReloadSingBoxJob` or `ReloadServerConfigJob` row still
+   in the `jobs` table will fail to deserialize after the
+   deploy (class missing). That's a known one-time drain
+   hazard — operators should `php artisan queue:flush` or
+   accept the failed-jobs surfacing in `failed_jobs`. **No
+   data loss** — the row that triggered each job is already
+   committed; the new Filament save / scheduled tick will
+   reconcile.
+
+### Tests
+
+- All 12 dispatch + handler tests pass:
+  4 dispatch contract (`ProxyAccountAfterCommit`),
+  3 dispatch contract (`ServerConfigSave`),
+  2 handler contract (`ReloadSingBoxHandler`),
+  2 handler contract (`ReloadServerConfigHandler`),
+  1 reason-field flow (`ProxyAccountAfterCommit`).
+- No Laravel queue interaction remains in the test suite.
+- PR #84 CI passed before merge — all 18 jobs green.
+- Local pre-release validation:
+  - `php -l` clean on all modified PHP files.
+  - `./vendor/bin/pint` clean.
+  - `make ci` clean.
+
+### Diff
+
+`+398 / −558` net. Deletes 4 files, modifies 4, adds 2. Net
+negative line count — the cutover collapses the bridge layer.
+
+### The Symfony-infusion arc is complete
+
+v0.0.92 introduced six PSR-style interfaces. v0.0.93 wired
+Symfony Messenger 7.4 with a Redis Streams transport, defined
+the message DTOs and handlers, and bridged the legacy Jobs into
+the bus. v0.0.94 retires the legacy Jobs and the bridge. The
+panel's render+reload concurrency model is now Symfony Messenger
+end-to-end while Filament, Eloquent, and the rest of the Laravel
+surface remain intact.
+
+---
+
 ## [0.0.93] — 2026-05-14 — Symfony Messenger foundation (Phase 2 of Symfony-infusion arc)
 
 Phase 2 of the v0.0.92 → v0.0.94 Symfony-infusion arc. Installs
