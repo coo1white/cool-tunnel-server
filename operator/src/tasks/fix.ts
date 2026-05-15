@@ -29,6 +29,16 @@ import { recipe as singBoxDohCrash } from "./recipes/sing_box_doh_crash";
 import { recipe as composeCaddyZombie } from "./recipes/compose_caddy_zombie";
 import { recipe as ipv6BrokenRouting } from "./recipes/ipv6_broken_routing";
 import { recipe as staleSubscriptionUsers } from "./recipes/stale_subscription_users";
+// v0.1.13 — five more pure-TS ports of clean docker / compose plumbing
+// recipes from scripts/fix.sh (3, 4, 5, 7, 8). The riskier recipes
+// (sysctl heredoc writes, artisan tinker DB edits, sing-box config
+// rewrites) still delegate to fix.sh until they can be ported with
+// confidence.
+import { recipe as zombieDockerProxy } from "./recipes/zombie_docker_proxy";
+import { recipe as foreignContainerPorts } from "./recipes/foreign_container_ports";
+import { recipe as brokenContainerDns } from "./recipes/broken_container_dns";
+import { recipe as haproxyBackendDns } from "./recipes/haproxy_backend_dns";
+import { recipe as missingTlsCert } from "./recipes/missing_tls_cert";
 
 // Slugs implemented in operator/src/tasks/recipes/*.ts. Everything else
 // falls back to the delegating bash path below.
@@ -40,6 +50,11 @@ const PURE_TS_RECIPES = new Map<string, Recipe>([
     [composeCaddyZombie.slug, composeCaddyZombie],
     [ipv6BrokenRouting.slug, ipv6BrokenRouting],
     [staleSubscriptionUsers.slug, staleSubscriptionUsers],
+    [zombieDockerProxy.slug, zombieDockerProxy],
+    [foreignContainerPorts.slug, foreignContainerPorts],
+    [brokenContainerDns.slug, brokenContainerDns],
+    [haproxyBackendDns.slug, haproxyBackendDns],
+    [missingTlsCert.slug, missingTlsCert],
 ]);
 
 const RECIPE_SLUGS = [
