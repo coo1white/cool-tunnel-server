@@ -63,6 +63,7 @@ DEEPER COMMANDS
   restore <f>    recover from a backup tarball
   readiness      strict ≥9/10 ship-readiness gate (cron-friendly)
   ballast        critical-invariant check only (no narration; cron-friendly; requires ct-operator binary)
+  version-bridge cross-layer (PHP/Rust/Bun) version-skew check (requires ct-operator binary)
   render <tgt>   re-render caddyfile/haproxy/singbox config from the DB
   auto-sync      credential-lock audit + auto-correct
   auto-update    unattended release-pulling agent (default OFF)
@@ -201,6 +202,66 @@ EOF
     esac
 }
 
+# ---------- ct-operator binary self-bootstrap --------------------
+#
+# Compare the binary's reported version against panel/config/cool-
+# tunnel.php (the panel-deployed version, our canonical source of
+# truth). If they disagree, fetch the matching binary from the
+# GitHub Release before dispatching. Closes the deploy-skew hole
+# that ate hours on the v0.1.12 → v0.1.13 update (the operator
+# binary on disk was v0.1.12 but `./ct update` had become a
+# binary-only subcommand in v0.1.13 — wrapper dispatched, binary
+# replied "unknown command: update", recovery required a manual
+# curl). Skip via CT_SKIP_OPERATOR_BOOTSTRAP=1.
+operator_bootstrap_if_skewed() {
+    local op_bin="$1"
+    [[ "${CT_SKIP_OPERATOR_BOOTSTRAP:-}" == "1" ]] && return 0
+    [[ -x "$op_bin" ]] || return 0   # No binary → nothing to bootstrap.
+
+    local deployed
+    deployed=$(grep -E "^\s*'version'\s*=>" "$SCRIPT_DIR/panel/config/cool-tunnel.php" 2>/dev/null \
+        | head -1 | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
+    [[ -z "$deployed" ]] && return 0   # Can't read panel config → skip.
+
+    local installed
+    installed=$("$op_bin" version 2>/dev/null | head -1 | tr -d '[:space:]' || true)
+    [[ -z "$installed" ]] && return 0   # Binary won't talk → skip.
+    [[ "$installed" == "$deployed" ]] && return 0   # Already in sync.
+
+    printf 'ct: operator binary v%s ≠ deployed v%s; fetching matching binary…\n' \
+        "$installed" "$deployed" >&2
+
+    local arch="$2" os="$3"
+    local url="https://github.com/coo1white/cool-tunnel-server/releases/download/v${deployed}/ct-operator-${os}-${arch}"
+    local sums="https://github.com/coo1white/cool-tunnel-server/releases/download/v${deployed}/SHA256SUMS"
+    local target="ct-operator-${os}-${arch}"
+    local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/ct-operator.XXXXXX") || return 1
+
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        printf 'ct: download failed (%s); continuing with stale binary\n' "$url" >&2
+        rm -f "$tmp"
+        return 0
+    fi
+    # SHA-256 verify against the release's manifest.
+    if command -v sha256sum >/dev/null 2>&1; then
+        local sums_body expected actual
+        sums_body=$(curl -fsSL "$sums" 2>/dev/null || true)
+        if [[ -n "$sums_body" ]]; then
+            expected=$(printf '%s' "$sums_body" | awk -v t="$target" '$2==t || $2=="*"t {print $1; exit}')
+            actual=$(sha256sum "$tmp" | awk '{print $1}')
+            if [[ -n "$expected" && "$expected" != "$actual" ]]; then
+                printf 'ct: sha256 mismatch (expected %s, got %s); refusing\n' \
+                    "$expected" "$actual" >&2
+                rm -f "$tmp"
+                return 1
+            fi
+        fi
+    fi
+    chmod +x "$tmp"
+    mv "$tmp" "$op_bin"
+    printf 'ct: bootstrapped operator binary to v%s\n' "$deployed" >&2
+}
+
 # ---------- ct-operator binary preference ------------------------
 #
 # For fix / doctor / readiness, prefer the compiled ct-operator binary
@@ -219,6 +280,7 @@ dispatch_via_operator() {
         local os
         os=$(uname -s | tr '[:upper:]' '[:lower:]')
         local op_bin="$SCRIPT_DIR/operator/bin/ct-operator-${os}-${arch}"
+        operator_bootstrap_if_skewed "$op_bin" "$arch" "$os"
         if [[ -x "$op_bin" ]]; then
             exec "$op_bin" "$subcmd" "$@"
         fi
@@ -293,6 +355,7 @@ case "$cmd" in
     status)       exec make status ;;
     logs)         exec make logs ;;
     help)         dispatch_via_operator help ./scripts/help.sh "$@" ;;
+    version-bridge) dispatch_via_operator version-bridge ""                       "$@" ;;
     version|--version|-V) show_version ;;
     -h|--help|"")
         show_help

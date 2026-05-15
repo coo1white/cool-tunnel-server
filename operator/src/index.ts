@@ -31,6 +31,7 @@ Commands:
   help [topic]   Operator mini-manual; no args lists topics
   self-update    Pull a new signed binary from GitHub Releases
   version        Print version and exit
+  version-bridge Check that PHP / Rust / Bun layers agree on version
 
 Options:
   --json         Emit structured JSON to stdout instead of human output
@@ -104,6 +105,10 @@ async function loadTask(cmd: string): Promise<Task | null> {
             const { SelfUpdateTask } = await import("./tasks/self-update");
             return new SelfUpdateTask();
         }
+        case "version-bridge": {
+            const { VersionBridgeTask } = await import("./tasks/version-bridge");
+            return new VersionBridgeTask(VERSION);
+        }
         default:
             return null;
     }
@@ -132,6 +137,12 @@ async function main(): Promise<number> {
     for (const [k, v] of Object.entries(process.env)) {
         if (v !== undefined) env[k] = v;
     }
+    // The compiled binary's BUILD_VERSION is a TS-level constant
+    // (set via `bun build --compile --define`); the ballast
+    // ct-operator-version check needs access to it via ctx.env so
+    // it can compare against panel/config/cool-tunnel.php. Inject
+    // it under a reserved internal key.
+    env["_CT_OPERATOR_OWN_VERSION"] = VERSION;
 
     const ctx: RunContext = {
         cwd: process.cwd(),

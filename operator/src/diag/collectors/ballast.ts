@@ -205,6 +205,46 @@ const CHECKS: Check[] = [
         },
     },
     {
+        slug: "ct-operator-version",
+        title: "ct-operator binary version matches panel config",
+        async run(ctx) {
+            // The deploy-skew failure mode that ate hours on the
+            // 2026-05-15 v0.1.12 → v0.1.13 Vultr update: the
+            // operator binary on disk was v0.1.12, but the wrapper
+            // (post-git-pull) dispatched `update` — a subcommand
+            // v0.1.12 didn't have. Result: "error: unknown
+            // command: update". This check surfaces that mismatch
+            // before the operator notices via a broken `./ct`
+            // invocation.
+            const phpPath = await tryPaths(
+                `${ctx.cwd}/panel/config/cool-tunnel.php`,
+                `${ctx.cwd}/../panel/config/cool-tunnel.php`,
+            );
+            if (!phpPath) {
+                return { status: "warn", detail: "panel/config/cool-tunnel.php not found" };
+            }
+            const { parsePanelConfigVersion } = await import("../../util/version-bridge");
+            const expected = parsePanelConfigVersion(await Bun.file(phpPath).text());
+            if (expected === null) {
+                return { status: "warn", detail: "no version field in panel/config/cool-tunnel.php" };
+            }
+            // The compiled binary knows its own version via BUILD_VERSION;
+            // imported from the entry-point's constant indirectly through
+            // the ENV-injected operator_version field. Dev runs (no
+            // BUILD_VERSION) fall back to "dev" — warn rather than fail.
+            const own = ctx.env["_CT_OPERATOR_OWN_VERSION"] ?? "dev";
+            if (own === "dev") {
+                return { status: "warn", detail: "running dev build; skipping skew check" };
+            }
+            return own === expected
+                ? { status: "pass" }
+                : {
+                      status: "fail",
+                      detail: `operator binary=${own}, panel/config=${expected} (run: ./ct update OR make operator-fetch)`,
+                  };
+        },
+    },
+    {
         slug: "ct-core-version",
         title: "ct-server-core version matches core/Cargo.toml",
         async run(ctx) {
