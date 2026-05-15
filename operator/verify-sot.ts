@@ -23,6 +23,7 @@
 import { $ } from "bun";
 import { FIXTURES, formatOutcome, runFixtures } from "./src/util/sot";
 import { makeHostRunner, makeVpsRunner } from "./src/util/sot-runners";
+import { ensureRepoRoot } from "./src/util/repo-root";
 
 type Mode = "host" | "vps";
 export type ParseResult = { ok: true; mode: Mode } | { ok: false; error: string };
@@ -87,8 +88,7 @@ async function main(): Promise<number> {
     }
     const mode = parsed.mode;
 
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+    ensureRepoRoot(import.meta.url);
 
     let runner;
     let banner: string;

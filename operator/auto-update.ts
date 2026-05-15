@@ -27,6 +27,7 @@ import { accessSync, constants as fsConstants } from "node:fs";
 import { $, capture } from "./src/util/sh";
 import { probeVersions, upgradeAvailable, readCurrentVersion } from "./src/util/release";
 import { acquireOpLock } from "./src/util/op-lock";
+import { ensureRepoRoot } from "./src/util/repo-root";
 
 // Distinct marker so the inner `./ct update` subprocess (which
 // acquires its own per-project ops flock under the default
@@ -101,9 +102,7 @@ async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reas
 }
 
 export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
-    // Resolve cwd to repo root so relative paths resolve.
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+    ensureRepoRoot(import.meta.url);
 
     // Single-flight: per-machine lock distinct from the ops-mutex.
     // A scheduled auto-update tick that collides with another tick

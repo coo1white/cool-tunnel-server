@@ -23,6 +23,7 @@ import { composeProjectName } from "./src/util/compose";
 import { die, makeTerm } from "./src/util/term";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
+import { ensureRepoRoot } from "./src/util/repo-root";
 
 const { step, ok, warn } = makeTerm();
 
@@ -60,10 +61,7 @@ async function panelEntrypointDone(): Promise<boolean> {
 }
 
 export async function runRestore(backupPath: string): Promise<number> {
-    // Resolve cwd to repo root so relative paths (.env, manifests,
-    // sing-box/, caddy/, haproxy/) resolve correctly.
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+    ensureRepoRoot(import.meta.url);
 
     // Pre-flight: require the tarball, docker, and a non-running
     // stack. Bash original calls require_file / require_docker

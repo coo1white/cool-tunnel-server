@@ -18,6 +18,7 @@
 
 import { $ } from "bun";
 import { die, makeTerm } from "./src/util/term";
+import { ensureRepoRoot } from "./src/util/repo-root";
 
 const { step, ok, warn } = makeTerm();
 
@@ -109,10 +110,7 @@ function which(bin: string): boolean {
 }
 
 async function main(): Promise<number> {
-    // Resolve cwd to the repo root so relative paths work regardless
-    // of where the script is invoked from.
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+    ensureRepoRoot(import.meta.url);
 
     // ---------- Cargo workspace ----------
     step("Generating Rust SBOM (cargo-cyclonedx)");

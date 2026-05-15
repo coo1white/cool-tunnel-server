@@ -33,6 +33,7 @@ import { dieWithDiag, type DiagFailure } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
 import { checkNetwork, checkDiskSpace, checkStackUp, checkIpv6Routing } from "./src/util/preflight";
+import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
 import { runComponentCheckStrict } from "./src/util/component-check";
 import { promptChoice, promptYn } from "./src/util/prompt";
@@ -339,8 +340,7 @@ async function fetchOperatorBinary(): Promise<void> {
 }
 
 export async function runUpdate(): Promise<number> {
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+    ensureRepoRoot(import.meta.url);
 
     if (!(await Bun.file(".env").exists())) {
         die("required file '.env' is missing", "cp .env.example .env  &&  $EDITOR .env");

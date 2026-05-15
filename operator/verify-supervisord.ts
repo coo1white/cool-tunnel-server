@@ -32,6 +32,8 @@ interface RequiredAttr {
     readonly label: string;
 }
 
+import { ensureRepoRoot } from "./src/util/repo-root";
+
 interface ProgramSpecificAttr {
     readonly program: string;
     readonly literal: string;
@@ -103,11 +105,16 @@ export function verify(conf: string, opts: VerifyOptions = DEFAULT_OPTIONS): Ver
 }
 
 async function main(): Promise<number> {
-    // The script is run from the repo root via `make verify-supervisord`
-    // (which does `cd operator && bun run ...`); resolve the conf
-    // relative to this file so cwd doesn't matter.
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    const confPath = `${repoRoot}/docker/panel/supervisord.conf`;
+    // Resolve the supervisord.conf relative to the repo root. Pre-this-fix
+    // the path was built from `new URL("..", import.meta.url).pathname`,
+    // which in a compiled binary resolves to `/$bunfs/docker/panel/
+    // supervisord.conf` (Bun's virtual fs) — the file IS bundled in but
+    // we want to verify the on-disk file, not the embedded snapshot.
+    // ensureRepoRoot is /$bunfs-safe: in dev it chdir's to the real repo
+    // root; in a compiled binary it trusts process.cwd() (which `./ct`
+    // sets to the repo root before exec'ing the binary).
+    ensureRepoRoot(import.meta.url);
+    const confPath = "docker/panel/supervisord.conf";
     const f = Bun.file(confPath);
     if (!(await f.exists())) {
         console.error(`verify_supervisord: ${confPath} not found`);

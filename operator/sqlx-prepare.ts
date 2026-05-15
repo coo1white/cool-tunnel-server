@@ -23,6 +23,7 @@ import { $, capture, which } from "./src/util/sh";
 import { loadDotenv } from "./src/util/env";
 import { die, makeTerm } from "./src/util/term";
 import { waitFor } from "./src/util/wait";
+import { ensureRepoRoot } from "./src/util/repo-root";
 
 const term = makeTerm();
 const { step, ok, warn } = term;
@@ -128,9 +129,7 @@ async function reportDiff(): Promise<void> {
 }
 
 async function main(): Promise<number> {
-    // Resolve cwd to repo root so .env / core/Cargo.toml resolve.
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+    ensureRepoRoot(import.meta.url);
 
     if (!(await which("docker"))) {
         die(
