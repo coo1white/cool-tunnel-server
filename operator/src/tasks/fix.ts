@@ -53,6 +53,14 @@ import { recipe as messengerQueueStuck } from "./recipes/messenger_queue_stuck";
 import { recipe as noProxyAccount } from "./recipes/no_proxy_account";
 import { recipe as legacyEnvShape } from "./recipes/legacy_env_shape";
 import { recipe as credentialDrift } from "./recipes/credential_drift";
+// v0.1.15 — the final four. After this, every slug in RECIPE_SLUGS
+// resolves to a PURE_TS_RECIPES entry; the makeRecipe() bash-delegation
+// path below is dead code on the happy path but stays in the file as
+// a fallback for any future-added slugs that haven't been ported yet.
+import { recipe as ipv6DnsUnreachable } from "./recipes/ipv6_dns_unreachable";
+import { recipe as singboxDomainResolver } from "./recipes/singbox_domain_resolver";
+import { recipe as singboxOutboundIpv4Only } from "./recipes/singbox_outbound_ipv4_only";
+import { recipe as staleDeployment } from "./recipes/stale_deployment";
 
 // Slugs implemented in operator/src/tasks/recipes/*.ts. Everything else
 // falls back to the delegating bash path below.
@@ -74,6 +82,10 @@ const PURE_TS_RECIPES = new Map<string, Recipe>([
     [noProxyAccount.slug, noProxyAccount],
     [legacyEnvShape.slug, legacyEnvShape],
     [credentialDrift.slug, credentialDrift],
+    [ipv6DnsUnreachable.slug, ipv6DnsUnreachable],
+    [singboxDomainResolver.slug, singboxDomainResolver],
+    [singboxOutboundIpv4Only.slug, singboxOutboundIpv4Only],
+    [staleDeployment.slug, staleDeployment],
 ]);
 
 const RECIPE_SLUGS = [
