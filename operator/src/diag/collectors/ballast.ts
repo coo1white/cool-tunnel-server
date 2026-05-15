@@ -182,17 +182,26 @@ const CHECKS: Check[] = [
     {
         slug: "sot-parity",
         title: "Cross-language SoT parity (panel_domain)",
-        async run(ctx) {
-            // ctx.cwd is the repo root when invoked via `./ct ballast`;
-            // the v0.1.4 path hard-coded `../scripts/...` which assumed
-            // cwd was operator/. That assumption only held in dev mode.
-            const sot = await tryPaths(
-                `${ctx.cwd}/scripts/verify_sot.sh`,
-                `${ctx.cwd}/../scripts/verify_sot.sh`,
-            );
-            if (!sot) return { status: "warn", detail: "scripts/verify_sot.sh not found" };
-            const r = await capture($`bash ${sot}`);
-            return r.ok ? { status: "pass" } : { status: "fail", detail: "verify_sot.sh disagreed" };
+        async run() {
+            // Was shelling out to scripts/verify_sot.sh; that script
+            // is now gone. The same fixture matrix + equivalence
+            // logic lives in operator/src/util/sot.ts, and we call
+            // the VPS runner in-process: the ballast check is meant
+            // to assert the running deployment's PHP and Rust
+            // implementations agree, which is exactly what
+            // verify-sot-vps does. The dev-side host runner is for
+            // `make ci` only.
+            if (!(await which("docker"))) return { status: "warn", detail: "docker not on PATH" };
+            const compose = await capture($`docker compose exec -T panel true`);
+            if (!compose.ok) {
+                return { status: "warn", detail: "panel container not reachable" };
+            }
+            const { runFixtures } = await import("../../util/sot");
+            const { makeVpsRunner } = await import("../../util/sot-runners");
+            const summary = await runFixtures(makeVpsRunner());
+            return summary.failed === 0
+                ? { status: "pass" }
+                : { status: "fail", detail: `${summary.failed}/${summary.outcomes.length} fixtures disagreed` };
         },
     },
     {
