@@ -16,10 +16,10 @@
                 "tag": "doh",
                 "type": "https",
                 "server": "{{ .DohServer }}",
-                "path": "{{ .DohPath }}"
+                "path": "{{ .DohPath }}",
+                "domain_resolver": "bootstrap"
             }
         ],
-        "default_domain_resolver": "bootstrap",
         "final": "doh"
     },
 
