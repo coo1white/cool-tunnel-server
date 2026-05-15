@@ -116,30 +116,40 @@ const CHECKS: Check[] = [
             const domain = ctx.env["PANEL_DOMAIN"];
             if (!domain) return { status: "warn", detail: "PANEL_DOMAIN not set" };
             if (!(await which("docker"))) return { status: "warn", detail: "docker not on PATH" };
-            const ls = await capture(
-                $`bash -c "docker compose exec -T caddy ls /data/caddy/certificates 2>/dev/null"`,
+            // Caddy nests certs under the ACME issuer subdirectory:
+            //   /data/caddy/certificates/<issuer>/<domain>/<domain>.crt
+            // v0.1.6 listed only the top level and grepped for the
+            // domain — the listing was the issuer dir, never the
+            // domain, so the check always FAILed on a real deploy.
+            const find = await capture(
+                $`bash -c "docker compose exec -T caddy sh -c \"find /data/caddy/certificates -name '${domain}.crt' -print -quit\""`,
             );
-            if (!ls.ok || !ls.stdout.includes(domain)) {
-                return { status: "fail", detail: `no cert dir for ${domain} under caddy_data` };
+            const certPath = find.stdout.trim();
+            if (!find.ok || !certPath) {
+                return { status: "fail", detail: `no ${domain}.crt found under caddy_data` };
             }
             const probe = await capture(
-                $`bash -c "docker compose exec -T caddy sh -c 'openssl x509 -in /data/caddy/certificates/*/${domain}/${domain}.crt -noout -checkend $((7*86400))'"`,
+                $`bash -c "docker compose exec -T caddy sh -c \"openssl x509 -in ${certPath} -noout -checkend $((7*86400))\""`,
             );
             return probe.ok
                 ? { status: "pass" }
-                : { status: "warn", detail: "cert expires within 7 days or expiry probe failed" };
+                : { status: "warn", detail: `cert expires within 7 days or expiry probe failed (${certPath})` };
         },
     },
     {
         slug: "singbox-admin",
-        title: "sing-box admin port reachable",
-        async run(ctx) {
-            const port = ctx.env["SINGBOX_ADMIN_PORT"] ?? "9090";
-            if (!(await which("nc"))) return { status: "warn", detail: "nc not on PATH" };
-            const r = await capture($`nc -z -w 2 localhost ${port}`);
-            return r.ok
-                ? { status: "pass" }
-                : { status: "fail", detail: `nc -z localhost ${port} failed` };
+        title: "sing-box container running",
+        async run() {
+            // v0.1.6 probed the host on port 9090, but the clash admin
+            // port is bound INSIDE the sing-box container only (project
+            // security policy — never expose the admin port to the host).
+            // From the host the check could never succeed even on a
+            // healthy deploy. Switch to a container-state assertion —
+            // mirrors panel-container, uses the same compose primitive.
+            if (!(await which("docker"))) return { status: "warn", detail: "docker not on PATH" };
+            const r = await capture($`docker compose ps sing-box --status running --quiet`);
+            if (!r.ok) return { status: "fail", detail: r.stderr.split("\n")[0] ?? "compose ps failed" };
+            return r.stdout.trim() ? { status: "pass" } : { status: "fail", detail: "sing-box not running" };
         },
     },
     {

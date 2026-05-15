@@ -22,6 +22,43 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.8] — 2026-05-15 — Hot-fix: `caddy-acme` + `singbox-admin` check designs + operator/package.json version bump
+
+Second iteration of Phase-9 dogfood. After v0.1.6 fixed the
+primitives, the live-VPS run flipped 4 checks to PASS but
+surfaced two remaining check-design bugs and one cosmetic
+version-display bug.
+
+### Fixed
+
+  **`caddy-acme` was looking at the wrong directory level.**
+  v0.1.6's check did `ls /data/caddy/certificates` (top level)
+  and grepped the listing for the domain. But Caddy nests certs
+  under the ACME issuer:
+  `/data/caddy/certificates/<issuer>/<domain>/<domain>.crt`.
+  The top-level listing returns the issuer dir name, never the
+  domain — so the check FAILed on every real deploy. Switched
+  to `find /data/caddy/certificates -name "${domain}.crt"` and
+  expanded the expiry probe to use the discovered path.
+
+  **`singbox-admin` was probing a port that's never
+  host-bound.** The clash admin port (default 9090) is bound
+  inside the sing-box container only — project security policy.
+  Probing `localhost:9090` from the host could never succeed on
+  a healthy deploy. Switched to a container-state assertion via
+  `docker compose ps sing-box --status running --quiet`, which
+  mirrors `panel-container`.
+
+  **`make set-version` did not update `operator/package.json`.**
+  Because `build.ts` reads the version from package.json and
+  bakes it into the binary via `--define BUILD_VERSION=`, every
+  v0.1.4+ binary reported `operator_version: "0.0.1"` (the
+  scaffold value) in the incident-bridge JSON and `ct-operator
+  --version`. Added a sed line to the `set-version` target so
+  the operator binary's reported version tracks the release.
+
+---
+
 ## [0.1.7] — 2026-05-15 — `./ct update` auto-fetches the matching ct-operator binary
 
 Closes a manual step from the v0.1.4 install procedure. Operators
