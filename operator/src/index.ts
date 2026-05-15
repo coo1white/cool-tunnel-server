@@ -27,6 +27,7 @@ Commands:
   backup         Snapshot db + .env + caddy ACME state into backups/
   restore <p>    Restore a deployment from a backup tarball
   auto-update    Unattended release-pulling agent (cron-safe)
+  update         Pull a new release, rebuild, hot-swap
   help [topic]   Operator mini-manual; no args lists topics
   self-update    Pull a new signed binary from GitHub Releases
   version        Print version and exit
@@ -90,6 +91,10 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "auto-update": {
             const { AutoUpdateTask } = await import("./tasks/auto-update");
             return new AutoUpdateTask();
+        }
+        case "update": {
+            const { UpdateTask } = await import("./tasks/update");
+            return new UpdateTask();
         }
         case "help": {
             const { HelpTask } = await import("./tasks/help");
