@@ -22,6 +22,162 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.13] — 2026-05-15 — Bun-native operator binary is canonical for every interactive subcommand; bash stays as fallback
+
+The Bun-bundled `ct-operator` binary, introduced in v0.1.5, is now
+the **canonical implementation** for every interactive subcommand
+the operator runs on a VPS. The bash scripts under `scripts/` that
+existed in parallel are now thin fallbacks that `./ct` only reaches
+when the operator binary is missing (e.g. a brand-new clone that
+hasn't yet run `./ct update`).
+
+Three categories of bash scripts went away in this release:
+
+  - **Operator-canonical, bash kept as fallback** —
+    `fix.sh`, `doctor.sh`, `late-night-comeback.sh`, `auto_sync.sh`,
+    `backup.sh`, `restore.sh`, `auto_update.sh`, `update.sh`,
+    `help.sh`. The operator binary owns the logic; the bash file
+    stays so a host without the binary still functions.
+
+  - **Operator-canonical, bash deleted** — `verify_supervisord.sh`,
+    `pin-images.sh`, `sbom.sh`, `verify_sot.sh`, `verify_sot_vps.sh`,
+    `sqlx-prepare.sh`. These only have `make` callers (dev hosts +
+    CI); the operator path is the only path now.
+
+  - **Consolidated** — `render-{caddyfile,haproxy,singbox}.sh`
+    collapsed into one `render <target>` operator subcommand.
+    The bash trio stays as the fallback dispatch target.
+
+Test coverage grew from 19 → 135 passing operator tests across
+18 test files.
+
+### Added
+
+- **`ct-operator` subcommands** — `auto-sync`, `backup`,
+  `restore <path>`, `auto-update`, `update`, `help [topic]`,
+  `render <target>`. Plus the existing `doctor`, `fix`, `readiness`,
+  `ballast`, `self-update`.
+
+- **Pure-TS port of all 21 `fix.sh` recipes** —
+  `docker_daemon_down`, `compose_service_down`, `pending_migrations`,
+  `sing_box_doh_crash`, `compose_caddy_zombie`, `ipv6_broken_routing`,
+  `stale_subscription_users`, `zombie_docker_proxy`,
+  `foreign_container_ports`, `broken_container_dns`,
+  `haproxy_backend_dns`, `missing_tls_cert`, `panel_restart_loop`,
+  `messenger_queue_stuck`, `no_proxy_account`, `legacy_env_shape`,
+  `credential_drift`, `ipv6_dns_unreachable`,
+  `singbox_domain_resolver`, `singbox_outbound_ipv4_only`,
+  `stale_deployment`. All run in-process from the operator binary —
+  no more `bash -c` shelling out to extract function bodies from
+  `scripts/fix.sh` via the MAIN-divider `sed` trick. (#118-#120.)
+
+- **Operator-side utility modules** under `operator/src/util/`:
+  - `term.ts` — shared step/ok/warn/die helpers + ANSI palette.
+  - `compose.ts` — `composeProjectName()`, `serviceRunning()`.
+  - `op-lock.ts` — `acquireOpLock()` re-execs self under `flock -n`,
+    parameterised marker so nested locks don't collide (#134).
+  - `wait.ts` — bounded polling helper.
+  - `release.ts` — `probeVersions()`, `readCurrentVersion()`,
+    `upgradeAvailable()` shared by the stale_deployment fix recipe
+    and the auto-update task.
+  - `preflight.ts` — `checkNetwork()`, `checkDiskSpace()`,
+    `checkStackUp()` mirror `scripts/lib.sh::preflight_*`.
+  - `diag.ts` — `dieWithDiag()` mirrors `scripts/lib.sh::die_with_diag`.
+  - `env-migrate.ts` — pure `.env` migration logic (PANEL_DOMAIN
+    backfill + relocate + APP_URL legacy-form fix). Three phases,
+    each idempotent.
+  - `component-check.ts` — strict NG gate over `ct-server-core
+    component check` table output.
+  - `credential-sync.ts` — shared audit-and-correct cycle used by
+    both `auto-sync` and the `credential_drift` fix recipe.
+  - `prompt.ts` — `promptYn()`, `promptChoice()` for the
+    interactive clean-tree prompt (#135).
+  - `sot.ts` + `sot-runners.ts` — fixture matrix + host/VPS probes
+    for the panel_domain SoT cross-language parity check.
+
+- **`TaskResult.skipBridge`** — opt out of the incident-bridge dump
+  for known-clean failures (usage errors, missing prerequisites).
+  Used by every subcommand that has its own structured diagnostic
+  output already.
+
+- **Interactive `[s/d/a]` clean-tree prompt** in the operator-
+  binary update path. Was previously bash-fallback-only. Matches
+  `scripts/lib.sh::preflight_clean_tree` semantics on TTY; falls
+  back to a non-interactive `die_with_diag` on cron/CI. (#135.)
+
+- **135 operator unit tests** (was 19), covering every pure helper
+  introduced this release plus the fix recipe argv parsers and
+  fixture matrices.
+
+### Changed
+
+- **`./ct` dispatcher** — every subcommand that has an operator-
+  binary implementation now routes through `dispatch_via_operator`:
+  `fix`, `doctor`, `readiness`, `ballast`, `render`, `auto-sync`,
+  `backup`, `restore`, `auto-update now`, `update`, `help`. The
+  bash script in `scripts/` is the fallback target. The dispatch
+  pattern is uniform across every subcommand.
+
+- **`auto-update`** — was shelling out to `./scripts/update.sh`
+  (the bash original). Now invokes `./ct update`, which prefers
+  the operator binary. Scheduled auto-update runs ride the same
+  deploy code path as interactive `ct update`. (#134.)
+
+- **`scripts/fix.sh`'s 17 recipes**, formerly delegated to via a
+  `sed`-extracted helper-function dispatcher, are no longer
+  reached from the operator binary. The bash file remains as
+  the bash fallback.
+
+- **Makefile targets** that were called only by `make` (not via
+  `ct`) — `verify-supervisord`, `pin-images`, `sbom`, `verify-sot`,
+  `verify-sot-vps`, `sqlx-prepare`, `help-topics`, `help-%` —
+  now invoke the operator-side Bun script directly via
+  `cd operator && bun run …`. Dev hosts need Bun installed
+  (which they already do — `operator-build`, `operator-test`,
+  `operator-typecheck` all require it).
+
+- **`scripts/install.sh`'s `require_cmd jq` hint** — stripped the
+  stale "+ sbom.sh" mention now that SBOM generation uses
+  `JSON.stringify` instead of shelling out to `jq`.
+
+### Removed
+
+- **`scripts/verify_supervisord.sh`** — replaced by
+  `operator/verify-supervisord.ts` (#122).
+- **`scripts/pin-images.sh`** — replaced by
+  `operator/pin-images.ts` (#123).
+- **`scripts/sbom.sh`** — replaced by `operator/sbom.ts` (#124).
+- **`scripts/verify_sot.sh`** + **`scripts/verify_sot_vps.sh`** —
+  replaced by `operator/verify-sot.ts` with `--mode=host|vps`
+  (#125). The `sot-parity` ballast check now calls the matrix
+  in-process instead of shelling out.
+- **`scripts/sqlx-prepare.sh`** — replaced by
+  `operator/sqlx-prepare.ts` (#130).
+
+### Fixed
+
+- **`sot-parity` ballast check** used to skip-exit 0 on docker-only
+  VPS hosts because `scripts/verify_sot.sh` would skip when
+  `php`/`cargo` were missing, and the operator collector treated
+  any exit-0 as PASS. The check now runs the matrix in-process via
+  `docker compose exec`, so it actually asserts PHP/Rust parity on
+  the deployed stack. (#125.)
+
+- **Nested-lock marker collision in `acquireOpLock`** — a process
+  holding one flock that then nested into another `acquireOpLock`
+  call would see the outer's marker and skip acquiring the inner
+  lock. Markers are now parameterised; auto-update uses a
+  dedicated marker distinct from the per-project ops lock. (#134.)
+
+### Security
+
+- **Lock-busy soft-skip** — `acquireOpLock({ softSkip: true })`
+  exit 0 instead of `die()` when the lock is busy. Used by the
+  cron-triggered auto-update so a missed tick isn't logged as an
+  error.
+
+---
+
 ## [0.1.12] — 2026-05-15 — Hot-fix: doctor's caddy-acme + active-users checks (Bun shell-escape unnest)
 
 Two cosmetic ct-operator regressions caught on the first v0.1.11
