@@ -52,10 +52,13 @@ have to run on a fresh VPS before any operator binary exists.
        prompt with best-effort redaction.
     3. Tasks: TS ports of `doctor.sh` and
        `late-night-comeback.sh`; `fix.sh` recipes exposed as a
-       typed registry that currently delegates to the existing
-       `lib.sh` helpers via on-the-fly sed extraction of
-       `scripts/fix.sh`. Pure-TS port of individual recipes can
-       happen incrementally without changing dispatch.
+       typed registry. Three of the highest-traffic recipes
+       (`docker_daemon_down`, `compose_service_down`,
+       `pending_migrations`) are pure-TS in
+       `operator/src/tasks/recipes/*.ts`; the remaining 14 fall
+       back to the existing `lib.sh` helpers via on-the-fly sed
+       extraction of `scripts/fix.sh`. Pure-TS recipes don't
+       depend on fix.sh's MAIN-divider convention staying stable.
     4. `self-update`: pulls binary from GitHub Releases,
        verifies SHA-256 + detached ed25519 signature against a
        pubkey baked in at build time, atomic-renames in place.

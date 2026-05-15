@@ -1,28 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/fix.ts — interactive recipe walker.
 //
-// The 17 recipes from scripts/fix.sh are exposed as a typed registry of
-// { slug, describe(), detect(), fix(), verify() }. Each detect/fix/verify
-// delegates to the corresponding helper function inside scripts/fix.sh
-// via a `bash -c` subshell. The MAIN section of fix.sh is stripped on
-// the fly (everything past the canonical `# =====` divider) so sourcing
-// only loads the function definitions and does not re-run the loop.
+// The 17 recipes from scripts/fix.sh are exposed as a typed registry.
+// Each recipe is either:
+//   - pure-TS, implemented in operator/src/tasks/recipes/<slug>.ts and
+//     registered in PURE_TS_RECIPES below, OR
+//   - delegating, falling back to the corresponding helper function in
+//     scripts/fix.sh via a `bash -c` subshell with on-the-fly sed
+//     extraction of everything before the canonical MAIN-section
+//     divider.
 //
-// This keeps the well-tested shell logic intact while providing the
-// unified Bun CLI surface. Individual recipes can be ported to pure TS
-// over time without changing this orchestration.
+// Recipes can be migrated from delegating to pure TS incrementally
+// without changing this orchestration. The pure-TS path is preferred
+// because it doesn't depend on fix.sh's MAIN-divider convention
+// staying stable across releases.
 
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture } from "../util/sh";
+import type { Recipe } from "./recipes/types";
+import { recipe as dockerDaemonDown } from "./recipes/docker_daemon_down";
+import { recipe as composeServiceDown } from "./recipes/compose_service_down";
+import { recipe as pendingMigrations } from "./recipes/pending_migrations";
 
-interface Recipe {
-    slug: string;
-    describe(): string;
-    detect(ctx: RunContext): Promise<boolean>;
-    fix(ctx: RunContext): Promise<{ ok: boolean; detail?: string }>;
-    verify(ctx: RunContext): Promise<boolean>;
-}
+// Slugs implemented in operator/src/tasks/recipes/*.ts. Everything else
+// falls back to the delegating bash path below.
+const PURE_TS_RECIPES = new Map<string, Recipe>([
+    [dockerDaemonDown.slug, dockerDaemonDown],
+    [composeServiceDown.slug, composeServiceDown],
+    [pendingMigrations.slug, pendingMigrations],
+]);
 
 const RECIPE_SLUGS = [
     "docker_daemon_down",
@@ -72,7 +79,7 @@ ${expr}
 function makeRecipe(slug: string): Recipe {
     return {
         slug,
-        describe() {
+        async describe() {
             return `see scripts/fix.sh::describe_${slug}`;
         },
         async detect(ctx) {
@@ -98,7 +105,9 @@ function makeRecipe(slug: string): Recipe {
     };
 }
 
-const RECIPES: Recipe[] = RECIPE_SLUGS.map(makeRecipe);
+const RECIPES: Recipe[] = RECIPE_SLUGS.map(
+    (slug) => PURE_TS_RECIPES.get(slug) ?? makeRecipe(slug),
+);
 
 interface Counters {
     ok: number;
@@ -160,7 +169,7 @@ export class FixTask implements Task {
             for (;;) {
                 const action = await promptAction(recipe.slug, ctx.interactive);
                 if (action === "explain") {
-                    process.stdout.write(`    ${recipe.describe()}\n`);
+                    process.stdout.write(`    ${await recipe.describe(ctx)}\n`);
                     continue;
                 }
                 if (action === "skip") {
