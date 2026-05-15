@@ -85,6 +85,9 @@ pub async fn render(
     let changed = last_hash != hash;
 
     if changed {
+        validate_json_body(&body, &hash)?;
+        preserve_last_known_good(output_path).await;
+
         atomic_write(output_path, &body).await?;
         db::record_caddyfile_hash(pool, &hash).await?;
         tracing::info!(
@@ -378,6 +381,53 @@ pub(crate) fn clash_secret() -> Result<String> {
     Ok(hex::encode(h.finalize()))
 }
 
+/// Cheap pre-write JSON sanity check. Catches malformed templates
+/// (unbalanced braces, broken Go-template fall-through, missing
+/// quotes around interpolated strings) BEFORE the current on-disk
+/// config gets replaced. `sing-box check` (via `validate()` below)
+/// catches a strict superset (schema, port conflicts) but costs a
+/// 30s docker-exec round-trip and runs only when the caller opts in
+/// — this parse check is O(microseconds) and always runs.
+fn validate_json_body(body: &str, hash: &str) -> Result<()> {
+    serde_json::from_str::<serde_json::Value>(body).map_err(|source| {
+        Error::validation(
+            "singbox-render",
+            format!(
+                "rendered config is not valid JSON ({} bytes, hash {hash}): {source}",
+                body.len()
+            ),
+        )
+    })?;
+    Ok(())
+}
+
+/// Preserve the currently-on-disk config as `<path>.bak` before the
+/// next atomic_write replaces it. Gives the operator a one-step
+/// rollback path (`mv config.json.bak config.json && docker compose
+/// restart sing-box`) when a syntactically-valid new render turns
+/// out to be semantically broken — e.g. the 2026-05-15 hostname-form
+/// DoH case where the JSON parsed fine but sing-box 1.13 rejected
+/// the schema at load.
+///
+/// Failure is logged but NOT propagated: the render still proceeds.
+/// Rationale: a failed-to-back-up render is strictly better than a
+/// failed render. A missing source file (first-ever render) is the
+/// expected case on a clean install and is also a no-op here.
+async fn preserve_last_known_good(output_path: &str) {
+    let bak_path = format!("{output_path}.bak");
+    match fs::copy(output_path, &bak_path).await {
+        Ok(_) => tracing::debug!(bak = %bak_path, "preserved last-known-good"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // First render — nothing to back up.
+        }
+        Err(e) => tracing::warn!(
+            bak = %bak_path,
+            err = %e,
+            "could not preserve last-known-good (continuing render anyway)"
+        ),
+    }
+}
+
 async fn atomic_write(path: &str, body: &str) -> Result<()> {
     let path = Path::new(path);
     let dir = path.parent().ok_or_else(|| Error::MissingParent {
@@ -659,5 +709,59 @@ mod tests {
         // today, but emit them so a future panel feature ("show
         // last render bytes in admin UI") doesn't have to touch
         // the Rust struct.
+    }
+
+    #[test]
+    fn validate_json_body_accepts_well_formed() {
+        let body = r#"{"inbounds": [{"type": "naive"}]}"#;
+        validate_json_body(body, "test-hash").unwrap();
+    }
+
+    #[test]
+    fn validate_json_body_rejects_malformed_with_actionable_error() {
+        // Simulates a template-rendering bug: unbalanced braces in the
+        // body would replace a working config with garbage today.
+        let body = r#"{"inbounds": [{"type": "naive"]}"#;
+        let err = validate_json_body(body, "broken-hash").unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("not valid JSON"),
+            "error should explain the failure mode: {msg}"
+        );
+        assert!(
+            msg.contains("broken-hash"),
+            "error should carry the hash so logs correlate: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn preserve_last_known_good_copies_existing_file() {
+        let dir = tempdir().unwrap();
+        let live = dir.path().join("config.json");
+        tokio::fs::write(&live, br#"{"version":"old"}"#)
+            .await
+            .unwrap();
+
+        preserve_last_known_good(live.to_str().unwrap()).await;
+
+        let bak = dir.path().join("config.json.bak");
+        let bak_body = tokio::fs::read_to_string(&bak).await.unwrap();
+        assert_eq!(bak_body, r#"{"version":"old"}"#);
+    }
+
+    #[tokio::test]
+    async fn preserve_last_known_good_silent_on_first_render() {
+        // No file at `live` yet — first-ever render. Helper must not panic
+        // or propagate an error; the bak should simply not exist.
+        let dir = tempdir().unwrap();
+        let live = dir.path().join("does-not-exist.json");
+
+        preserve_last_known_good(live.to_str().unwrap()).await;
+
+        let bak = dir.path().join("does-not-exist.json.bak");
+        assert!(
+            !bak.exists(),
+            "first render must not synthesise an empty .bak"
+        );
     }
 }
