@@ -357,5 +357,15 @@ EOF
     die_with_diag "post-swap check NG: ${ng_components:-unknown}" "$ng_diag"
 fi
 
+# v0.1.5: fetch the ct-operator binary that matches the new release.
+# Non-fatal — if this fails, ct fix / doctor / readiness keep working
+# via the legacy .sh fallbacks. Opt out with CT_SKIP_OPERATOR_FETCH=1.
+step "Operator binary"
+if ! ./scripts/fetch_operator_binary.sh; then
+    printf '  %s!%s operator binary fetch did not complete; .sh fallbacks remain in use.\n' \
+        "${CT_YELLOW}" "${CT_RESET}"
+    printf '     retry later with:  make operator-fetch\n'
+fi
+
 ok "Update complete."
 ok "If something looks off, the safe first move is:  ct fix"
