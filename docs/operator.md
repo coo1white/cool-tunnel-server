@@ -150,6 +150,17 @@ The bundle includes:
   `caddy`, `haproxy`, `redis`), via `journalctl` or `docker compose logs`.
 - `metrics`     — CPU load, memory, disk usage.
 - `proctree`    — `ps axf` filtered to our services.
+- `compose`     — `docker compose ps --all --format json` parsed
+  per service: name, state (running / exited / created), status
+  ("Up 2 hours", "Exited (137) 30 seconds ago"), health, exit
+  code. Catches the "container is just gone" failure mode that
+  `journal` and `proctree` miss (negative space).
+
+The bridge asks the AI to ground its diagnosis in specific
+evidence — cite a ballast check slug, a compose service state,
+or a journal line — and to state explicitly what additional
+data it would need if the payload is insufficient, rather than
+guessing.
 
 Redaction runs on every string-bearing field before output:
 

@@ -8,11 +8,12 @@
 
 import type { RunContext } from "../runner/context";
 import type { TaskResult } from "../runner/task";
-import type { BallastResult, CollectorOutput, IncidentContext, JournalSlice, ProcTreeSnapshot, SysMetrics } from "./types";
+import type { BallastResult, CollectorOutput, ComposeState, IncidentContext, JournalSlice, ProcTreeSnapshot, SysMetrics } from "./types";
 import { collectSysMetrics } from "./collectors/sysmetrics";
 import { collectJournal } from "./collectors/journal";
 import { collectProcTree } from "./collectors/proctree";
 import { collectBallast } from "./collectors/ballast";
+import { collectComposeState } from "./collectors/compose_state";
 import { formatBridge, redactContext } from "./bridge";
 import { $, capture } from "../util/sh";
 
@@ -58,6 +59,7 @@ const EMPTY_METRICS: SysMetrics = {
     disk: [],
 };
 const EMPTY_PROCTREE: ProcTreeSnapshot = { lines: [] };
+const EMPTY_COMPOSE: ComposeState = { services: [] };
 
 export async function captureIncidentContext(
     ctx: RunContext,
@@ -66,11 +68,12 @@ export async function captureIncidentContext(
 ): Promise<void> {
     ctx.logger.info(`[incident] collecting context for ${taskName} (exit=${result.code})…`);
 
-    const [ballast, journal, metrics, proctree, host] = await Promise.all([
+    const [ballast, journal, metrics, proctree, compose, host] = await Promise.all([
         timed("ballast", () => collectBallast(ctx), EMPTY_BALLAST),
         timed("journal", () => collectJournal(), EMPTY_JOURNAL),
         timed("sysmetrics", () => collectSysMetrics(), EMPTY_METRICS),
         timed("proctree", () => collectProcTree(), EMPTY_PROCTREE),
+        timed("compose", () => collectComposeState(), EMPTY_COMPOSE),
         readHostInfo(),
     ]);
 
@@ -85,6 +88,7 @@ export async function captureIncidentContext(
         journal,
         metrics,
         proctree,
+        compose,
     };
     if (result.summary !== undefined) {
         incident.summary = result.summary;

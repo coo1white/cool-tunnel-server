@@ -6,11 +6,17 @@
 import type { IncidentContext } from "./types";
 
 const PROMPT_HEADER =
-    "Here is an incident context from ct-operator. The deployment hit a failure; " +
-    "you have the structured diagnostic payload below. Respond with a single " +
-    "executable command that will most likely repair the failure, OR a short " +
-    "explanation if no single command suffices. Do not invent file paths or " +
-    "services not present in the payload.";
+    "Here is an incident context from ct-operator. The deployment hit a " +
+    "failure; you have the structured diagnostic payload below. Respond with:\n" +
+    "  1. A diagnosis grounded in specific evidence -- cite the ballast " +
+    "check slug, the compose service state, or the journal line you're " +
+    "relying on.\n" +
+    "  2. A single executable command that will most likely repair the " +
+    "failure, OR a short explanation if no single command suffices.\n" +
+    "  3. If the payload doesn't contain enough information to diagnose, " +
+    "name the specific data you'd need next (e.g. `docker compose logs " +
+    "--tail=200 panel`) instead of guessing.\n" +
+    "Do not invent file paths or services not present in the payload.";
 
 export function formatBridge(ctx: IncidentContext): string {
     const json = JSON.stringify(ctx, null, 2);
@@ -53,6 +59,20 @@ export function redactContext(ctx: IncidentContext): IncidentContext {
                 checks: ctx.ballast.data.checks.map((c) => ({
                     ...c,
                     detail: c.detail !== undefined ? redact(c.detail) : c.detail,
+                })),
+            },
+        },
+        compose: {
+            ...ctx.compose,
+            data: {
+                ...ctx.compose.data,
+                services: ctx.compose.data.services.map((s) => ({
+                    ...s,
+                    // status is the only free-form text field; everything else
+                    // is enumerated (service name from compose.yml, state from
+                    // a fixed set). Status can include human-readable phrases
+                    // like "Exited (137) 30 seconds ago" or rarely an IP/host.
+                    status: redact(s.status),
                 })),
             },
         },
