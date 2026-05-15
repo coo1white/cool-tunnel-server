@@ -16,6 +16,7 @@ import { collectBallast } from "./collectors/ballast";
 import { collectComposeState } from "./collectors/compose_state";
 import { formatBridge, redactContext } from "./bridge";
 import { $, capture } from "../util/sh";
+import { loadDotenv, mergeEnv } from "../util/env";
 
 declare const BUILD_VERSION: string;
 const VERSION: string = (typeof BUILD_VERSION !== "undefined") ? BUILD_VERSION : "dev";
@@ -68,8 +69,16 @@ export async function captureIncidentContext(
 ): Promise<void> {
     ctx.logger.info(`[incident] collecting context for ${taskName} (exit=${result.code})…`);
 
+    // v0.1.6: merge .env so ballast checks that depend on DOMAIN /
+    // PANEL_DOMAIN / REDIS_PASSWORD work the same way as a direct
+    // `ct ballast` run. Without this, the bridge-emitted ballast
+    // loses .env-only vars (v0.1.5 capture used process.env only).
+    const dotenv = await loadDotenv([`${ctx.cwd}/.env`, `${ctx.cwd}/../.env`]);
+    const env = mergeEnv(ctx.env, dotenv?.env ?? null);
+    const collectorCtx: RunContext = { ...ctx, env };
+
     const [ballast, journal, metrics, proctree, compose, host] = await Promise.all([
-        timed("ballast", () => collectBallast(ctx), EMPTY_BALLAST),
+        timed("ballast", () => collectBallast(collectorCtx), EMPTY_BALLAST),
         timed("journal", () => collectJournal(), EMPTY_JOURNAL),
         timed("sysmetrics", () => collectSysMetrics(), EMPTY_METRICS),
         timed("proctree", () => collectProcTree(), EMPTY_PROCTREE),
