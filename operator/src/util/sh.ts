@@ -43,12 +43,19 @@ export async function capture(p: ReturnType<typeof $>): Promise<ShResult> {
 }
 
 const whichCache = new Map<string, boolean>();
+// Bun.which() is the right primitive — it walks PATH directly without
+// spawning a subprocess. v0.1.5's `command -v <bin>` approach was broken
+// because `command` is a shell builtin (not an executable on PATH), so
+// Bun.$ (which execs directly without a shell) couldn't find it, and
+// every which() call returned false. The live VPS run at v0.1.4 lit up
+// every "<tool> not on PATH" warn as a false positive — fixing this
+// single primitive flips most ballast checks back to their real state.
 export async function which(bin: string): Promise<boolean> {
     const cached = whichCache.get(bin);
     if (cached !== undefined) return cached;
-    const r = await capture($`command -v ${bin}`);
-    whichCache.set(bin, r.ok);
-    return r.ok;
+    const found = Bun.which(bin) !== null;
+    whichCache.set(bin, found);
+    return found;
 }
 
 export { $ };

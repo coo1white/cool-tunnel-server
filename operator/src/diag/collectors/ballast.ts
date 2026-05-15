@@ -14,6 +14,17 @@ interface CheckOutcome {
     detail?: string;
 }
 
+// In production ctx.cwd is the repo root (./ct ballast). In dev
+// (`bun run src/index.ts ballast` from operator/) ctx.cwd is the
+// operator dir. tryPaths() returns the first candidate that exists,
+// so checks that look at scripts/ or core/ work either way.
+async function tryPaths(...candidates: string[]): Promise<string | null> {
+    for (const p of candidates) {
+        if (await Bun.file(p).exists()) return p;
+    }
+    return null;
+}
+
 interface Check {
     slug: string;
     title: string;
@@ -35,23 +46,33 @@ const CHECKS: Check[] = [
         slug: "panel-octane-up",
         title: "Panel Octane responds on /up",
         async run(ctx) {
-            const port = ctx.env["PANEL_OCTANE_PORT"] ?? "8000";
-            const r = await capture($`curl -fsS --max-time 3 http://localhost:${port}/up`);
+            // Port 9000 matches scripts/doctor.sh::check_up_endpoint —
+            // FrankenPHP's host-side bind is 127.0.0.1:9000, not 8000
+            // (the v0.1.4 default was wrong).
+            const port = ctx.env["PANEL_OCTANE_PORT"] ?? "9000";
+            const r = await capture($`curl -fsS --max-time 3 http://127.0.0.1:${port}/up`);
             return r.ok
                 ? { status: "pass" }
-                : { status: "fail", detail: `http://localhost:${port}/up unreachable` };
+                : { status: "fail", detail: `http://127.0.0.1:${port}/up unreachable` };
         },
     },
     {
         slug: "redis-ping",
         title: "Redis reachable",
-        async run() {
+        async run(ctx) {
+            const pw = ctx.env["REDIS_PASSWORD"];
+            // REDISCLI_AUTH (env, not -a on argv) keeps the secret off
+            // `ps -ef`. Matches scripts/late-night-comeback.sh's pattern.
             if (await which("redis-cli")) {
-                const r = await capture($`redis-cli ping`);
+                const r = pw
+                    ? await capture($`redis-cli --no-auth-warning ping`.env({ ...process.env, REDISCLI_AUTH: pw }))
+                    : await capture($`redis-cli ping`);
                 if (r.ok && r.stdout.trim() === "PONG") return { status: "pass" };
             }
             if (await which("docker")) {
-                const r = await capture($`docker compose exec -T redis redis-cli ping`);
+                const r = pw
+                    ? await capture($`docker compose exec -T -e REDISCLI_AUTH=${pw} redis redis-cli --no-auth-warning ping`)
+                    : await capture($`docker compose exec -T redis redis-cli ping`);
                 if (r.ok && r.stdout.includes("PONG")) return { status: "pass" };
             }
             return { status: "fail", detail: "no PONG from any redis path" };
@@ -77,8 +98,14 @@ const CHECKS: Check[] = [
         slug: "sqlx-cache",
         title: "sqlx cache in sync with schema",
         async run(ctx) {
-            if (!(await which("cargo"))) return { status: "warn", detail: "cargo not on PATH" };
-            const r = await capture($`bash -c "cd ${ctx.cwd}/../core && cargo sqlx prepare --check 2>&1"`);
+            if (!(await which("cargo"))) return { status: "warn", detail: "cargo not on PATH (dev-only check)" };
+            const cargoToml = await tryPaths(
+                `${ctx.cwd}/core/Cargo.toml`,
+                `${ctx.cwd}/../core/Cargo.toml`,
+            );
+            if (!cargoToml) return { status: "warn", detail: "core/Cargo.toml not found" };
+            const coreDir = cargoToml.replace(/\/Cargo\.toml$/, "");
+            const r = await capture($`bash -c "cd ${coreDir} && cargo sqlx prepare --check 2>&1"`);
             return r.ok ? { status: "pass" } : { status: "fail", detail: "cargo sqlx prepare --check failed" };
         },
     },
@@ -133,22 +160,34 @@ const CHECKS: Check[] = [
         slug: "sot-parity",
         title: "Cross-language SoT parity (panel_domain)",
         async run(ctx) {
-            const sot = `${ctx.cwd}/../scripts/verify_sot.sh`;
-            if (!(await Bun.file(sot).exists())) {
-                return { status: "warn", detail: "scripts/verify_sot.sh not found" };
-            }
+            // ctx.cwd is the repo root when invoked via `./ct ballast`;
+            // the v0.1.4 path hard-coded `../scripts/...` which assumed
+            // cwd was operator/. That assumption only held in dev mode.
+            const sot = await tryPaths(
+                `${ctx.cwd}/scripts/verify_sot.sh`,
+                `${ctx.cwd}/../scripts/verify_sot.sh`,
+            );
+            if (!sot) return { status: "warn", detail: "scripts/verify_sot.sh not found" };
             const r = await capture($`bash ${sot}`);
             return r.ok ? { status: "pass" } : { status: "fail", detail: "verify_sot.sh disagreed" };
         },
     },
     {
         slug: "ct-core-version",
-        title: "ct-server-core version matches core/ct-server-core/Cargo.toml",
+        title: "ct-server-core version matches core/Cargo.toml",
         async run(ctx) {
-            const cargo = Bun.file(`${ctx.cwd}/../core/ct-server-core/Cargo.toml`);
-            if (!(await cargo.exists())) {
-                return { status: "warn", detail: "core/ct-server-core/Cargo.toml not found" };
+            // The workspace root core/Cargo.toml holds the actual
+            // `version = "X.Y.Z"`; ct-server-core/Cargo.toml uses
+            // `version.workspace = true`. v0.1.4 read the wrong file
+            // and reported "no version field" against a deployed VPS.
+            const cargoPath = await tryPaths(
+                `${ctx.cwd}/core/Cargo.toml`,
+                `${ctx.cwd}/../core/Cargo.toml`,
+            );
+            if (!cargoPath) {
+                return { status: "warn", detail: "core/Cargo.toml not found" };
             }
+            const cargo = Bun.file(cargoPath);
             const m = (await cargo.text()).match(/^version\s*=\s*"([^"]+)"/m);
             if (!m || !m[1]) return { status: "warn", detail: "no version field in Cargo.toml" };
             const expected = m[1];
