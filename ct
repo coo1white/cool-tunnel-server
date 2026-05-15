@@ -282,7 +282,7 @@ case "$cmd" in
     install)      exec ./scripts/install.sh             "$@" ;;
     fix)          dispatch_via_operator fix       ./scripts/fix.sh                 "$@" ;;
     doctor)       dispatch_via_operator doctor    ./scripts/doctor.sh              "$@" ;;
-    update)       exec ./scripts/update.sh             "$@" ;;
+    update)       dispatch_via_operator update ./scripts/update.sh "$@" ;;
     backup)       dispatch_via_operator backup ./scripts/backup.sh "$@" ;;
     restore)      dispatch_via_operator restore ./scripts/restore.sh "$@" ;;
     readiness)    dispatch_via_operator readiness ./scripts/late-night-comeback.sh "$@" ;;
