@@ -27,7 +27,7 @@ use crate::observability::{
     crosses_80pct_threshold, duration_crosses_80pct_threshold, duration_ms_u64, otel_key,
     packet_header_dump, DAEMON_TURN_LATENCY_BUDGET,
 };
-use crate::{admin, metrics, singbox, Error, Result};
+use crate::{admin, credentials, metrics, singbox, Error, Result};
 use bytes::{BufMut, BytesMut};
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use sqlx::MySqlPool;
@@ -684,6 +684,35 @@ async fn handle(
             // Renaming the variant is a v0.1 task (it'd break
             // every connected client core that speaks WireV1).
             singbox::render(pool, template, output, false, false).await?;
+
+            // Render-and-validate: the wire request is treated as one
+            // atomic operation. Pre-this-change, render() could write
+            // a syntactically-valid but semantically-broken config
+            // (the 2026-05-15 hostname-form DoH case), the daemon
+            // would Ok the response, and only the subsequent
+            // ReloadCaddy request would surface the failure — by
+            // which time the panel had already declared the change
+            // successful to the operator.
+            //
+            // `validate()` runs `sing-box check` in the ct-singbox
+            // container (30s ceiling, see singbox::validate). A
+            // failure here means the new config is on disk but
+            // unloadable; the `.bak` preserved by render lets the
+            // operator roll back cheaply.
+            singbox::validate(output).await?;
+
+            // Drift re-check: assert_locked compares the live DB
+            // active-account tuple against what we just rendered.
+            // Even with this handler's own render serialised by the
+            // daemon's per-connection FSM, another caller (the
+            // every-5-min `singbox:render --if-changed --reload`
+            // scheduler, or quota-driven re-render) could have
+            // raced between our write and this read. If the rendered
+            // bytes don't match the DB at this instant, we surface
+            // it instead of letting the next subscription manifest
+            // hand out credentials that aren't in the proxy config.
+            credentials::assert_locked(pool, output).await?;
+
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::ReloadCaddy => {
