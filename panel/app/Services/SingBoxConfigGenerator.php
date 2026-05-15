@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Contracts\CtServerCoreInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use Illuminate\Support\Facades\Log;
 
@@ -31,7 +32,7 @@ use Illuminate\Support\Facades\Log;
 class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
 {
     public function __construct(
-        private CtServerCore $core,
+        private CtServerCoreInterface $core,
     ) {}
 
     /**
@@ -43,11 +44,6 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
         try {
             $out = $this->core->renderSingBoxConfig();
         } catch (\Throwable $e) {
-            // Catch \Throwable rather than \RuntimeException so a
-            // future undefined-method / type-error / class-not-
-            // found Error doesn't propagate silently up to the
-            // panel and abort the surrounding model save.
-            //
             // Severity is CRITICAL (was ERROR pre-v0.0.59): when
             // a sing-box re-render fails on account create /
             // delete / password regenerate, the surrounding save
@@ -61,6 +57,30 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
                 'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);
+
+            // PHP distinguishes two failure classes both reachable
+            // here:
+            //
+            //   - \Exception (including \RuntimeException from
+            //     CtServerCore::run on non-zero exit): expected,
+            //     transient. Docker hiccup, sing-box check timeout,
+            //     stale config. The render is "soft-failed": we
+            //     return null so the surrounding model save still
+            //     commits (the operator can retry; the every-5-min
+            //     scheduler will reconcile).
+            //
+            //   - \Error (TypeError, undefined-method, class-not-
+            //     found, ArgumentCountError, etc.): code defect.
+            //     v0.0.9's `renderCaddyfile()` typo that lived in
+            //     this file for weeks was exactly this — every save
+            //     hit it, the catch silenced it, and the panel
+            //     looked fine while no save ever rendered anything.
+            //     Re-throw so the surrounding save fails with a
+            //     500 and the operator sees the bug instead of a
+            //     silent diverge.
+            if ($e instanceof \Error) {
+                throw $e;
+            }
 
             return null;
         }
