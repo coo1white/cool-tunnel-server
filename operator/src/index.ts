@@ -25,6 +25,7 @@ Commands:
   render         Re-render caddyfile/haproxy/singbox config from the DB
   auto-sync      Credential-lock audit + auto-correct agent
   backup         Snapshot db + .env + caddy ACME state into backups/
+  restore <p>    Restore a deployment from a backup tarball
   self-update    Pull a new signed binary from GitHub Releases
   version        Print version and exit
 
@@ -79,6 +80,10 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "backup": {
             const { BackupTask } = await import("./tasks/backup");
             return new BackupTask();
+        }
+        case "restore": {
+            const { RestoreTask } = await import("./tasks/restore");
+            return new RestoreTask();
         }
         case "self-update": {
             const { SelfUpdateTask } = await import("./tasks/self-update");

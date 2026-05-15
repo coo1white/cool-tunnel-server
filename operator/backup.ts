@@ -22,40 +22,13 @@
 // each other — matches scripts/lib.sh::acquire_op_lock.
 
 import { mkdirSync, rmSync, chmodSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { $, capture } from "./src/util/sh";
 import { loadDotenv } from "./src/util/env";
 import { composeProjectName, serviceRunning } from "./src/util/compose";
 import { die, makeTerm } from "./src/util/term";
+import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 
 const { step, ok } = makeTerm();
-
-const LOCK_HELD_MARKER = "CT_BACKUP_FLOCK_HELD";
-
-// Re-exec self under `flock -n` so the lock is held for the
-// lifetime of this process. The kernel releases on exit, including
-// SIGKILL — no manual cleanup needed.
-async function reExecUnderFlock(): Promise<never> {
-    const project = await composeProjectName();
-    const lockPath = `/tmp/cool-tunnel-ops-${project}.lock`;
-    if (!Bun.which("flock")) {
-        die("required command 'flock' is not on PATH", "apt install -y util-linux");
-    }
-    const result = spawnSync(
-        "flock",
-        ["-n", lockPath, process.execPath, ...process.argv.slice(1)],
-        { stdio: "inherit", env: { ...process.env, [LOCK_HELD_MARKER]: "1" } },
-    );
-    // flock exits with 1 on EWOULDBLOCK; the bash original `die`s with
-    // an "already running" message in that case. Pass it through.
-    if (result.status === 1 && result.signal == null) {
-        die(
-            `another cool-tunnel operator script is already running for project '${project}'`,
-            `lockfile: ${lockPath}  (try: lsof '${lockPath}' to see who holds it)`,
-        );
-    }
-    process.exit(result.status ?? 1);
-}
 
 async function dumpDatabase(env: Record<string, string>, dest: string): Promise<void> {
     const dbPw = env["DB_ROOT_PASSWORD"] ?? "";
@@ -143,7 +116,7 @@ export async function runBackup(): Promise<number> {
     // Single-flight lock via flock re-exec. Skip when already in
     // the locked child.
     if (!process.env[LOCK_HELD_MARKER]) {
-        await reExecUnderFlock();
+        await acquireOpLock();
     }
 
     const loaded = await loadDotenv([".env"]);
