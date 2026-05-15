@@ -22,6 +22,72 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.10] — 2026-05-15 — Smarter `ct fix`: 4 new pure-TS recipes for the v0.1.7 debug-session classes + `--auto` mode
+
+v0.1.9 fixed the three deployment-killers at the source. v0.1.10
+teaches the fix agent how to recognize and self-heal them when
+they appear on an EXISTING deploy that hasn't picked up the
+v0.1.9 changes — and adds an unattended `--auto` mode so a
+busy / tired operator can just say "heal everything" without
+walking the apply/skip/explain prompt.
+
+### Added
+
+  Four new pure-TS recipes in `operator/src/tasks/recipes/`,
+  registered in `PURE_TS_RECIPES` and pushed to the top of
+  `RECIPE_SLUGS` so they're detected before the legacy
+  delegating recipes:
+
+  - **`ipv6_broken_routing`** — detects `ip -6 addr show scope
+    global` empty + sysctl override missing. Fix: writes
+    `/etc/sysctl.d/99-disable-ipv6.conf` + `daemon.json` +
+    restarts docker. Same logic as v0.1.9's
+    `disable_ipv6_if_broken` in `lib.sh`, but applied
+    post-deploy when the operator is past install.sh.
+
+  - **`compose_caddy_zombie`** — detects `ct-caddy` in
+    Created / Exited / Dead state. Fix: `docker rm -f
+    ct-caddy` to release the docker port reservation, then
+    `compose up -d caddy`.
+
+  - **`sing_box_doh_crash`** — detects sing-box in
+    Restarting state with `missing domain resolver` in the
+    last 20 log lines. Fix: re-render via
+    `ct-server-core --json singbox render` (picks up v0.1.9's
+    template with the bootstrap server). Falls back to an
+    in-place sed patch if the panel is unreachable.
+
+  - **`stale_subscription_users`** — detects
+    `__no_active_accounts__` in the rendered sing-box config
+    AND >= 1 enabled proxy account in the DB. Fix: re-render
+    + restart sing-box. Catches the "I created an account
+    but the proxy still uses the placeholder" trap that
+    cost ~30 min on the v0.1.7 deploy.
+
+  **`ct fix --auto`** — non-interactive mode. Every detected
+  issue is fixed without the apply/skip/explain prompt. Cron-
+  safe, unattended-recovery-safe, "I just want my stack
+  healthy" safe. Compose with `--no-bridge` to also suppress
+  the AI incident bridge.
+
+### Verified
+
+  - `bun run typecheck` clean.
+  - `bun test` — 19 / 19 pass (no test changes; existing suite
+    still green).
+  - Recipe ordering: pure-TS recipes run before the 17 legacy
+    delegating ones, so the v0.1.10 class is caught fast.
+
+### Operator note
+
+Land after PR #104 (v0.1.9). v0.1.9 fixes the underlying causes
+in install.sh / bootstrap.sh / the sing-box template; v0.1.10
+teaches `ct fix` to handle the post-incident cleanup when the
+issue did slip past install. Both PRs are independently useful;
+together they make the foolproof-deploy story complete.
+
+---
+
 ## [0.1.9] — 2026-05-15 — Foolproof first-deploy: sing-box DoH bootstrap + cheap-VPS IPv6 ban + ct-caddy zombie cleanup
 
 Three deployment-killers found on a real v0.1.7 first-deploy that
