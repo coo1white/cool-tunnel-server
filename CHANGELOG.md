@@ -22,6 +22,65 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.15] — 2026-05-15 — Critical hot-fix: chdir to `/$bunfs` blocked every compiled-binary subcommand
+
+v0.1.13's port-everything-to-Bun batch landed a chdir pattern in
+every top-level `operator/*.ts`:
+
+  const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  process.chdir(repoRoot);
+
+In dev (`bun run operator/update.ts`) this lands cwd at the repo
+root. In a compiled binary (`bun build --compile`), Bun bundles
+sources into a synthetic `/$bunfs/` virtual filesystem;
+`import.meta.url` points INTO `/$bunfs/`, and `new URL("..", ...).
+pathname` resolves to `/$bunfs` — a path that exists only inside
+the binary's runtime, not on the host. v0.1.13 + v0.1.14 binaries
+unconditionally chdir'd there and died on first invocation:
+
+    [update] fail (1ms, ENOENT: no such file or directory,
+                  chdir '/opt/cool-tunnel-server' -> '/$bunfs')
+
+Hit on the Vultr v0.1.14 deploy 2026-05-15. **Affects every
+top-level operator script** dispatched through the compiled binary:
+update, backup, restore, sbom, pin-images, auto-update,
+sqlx-prepare, verify-sot, verify-supervisord. The binary failed
+before any real work ran on every subcommand.
+
+### Fixed
+
+  New helper `operator/src/util/repo-root.ts::ensureRepoRoot()`.
+  Detects `/$bunfs` URLs via substring match (`isBunFsUrl`). In
+  compiled-binary mode trusts `process.cwd()` — the `./ct`
+  wrapper cd's into the repo root before exec'ing the binary
+  (`cd "$SCRIPT_DIR"` at ct:42), so cwd is correct on entry.
+  In dev mode walks `..` from `import.meta.url` as before.
+  Single source of truth; the 9 affected scripts now all call
+  `ensureRepoRoot(import.meta.url)`.
+
+  Special case — `verify-supervisord.ts` used `${repoRoot}/
+  docker/panel/supervisord.conf` as a path string (no chdir).
+  Same root cause: `${repoRoot}` was `/$bunfs` in compiled mode,
+  so `Bun.file()` looked inside the embedded snapshot instead
+  of the host's on-disk conf. Switched to `ensureRepoRoot()`
+  + relative path; now reads the host file as intended.
+
+### Operator note
+
+  Operator-binary only. v0.1.14 deploys whose `./ct update`
+  failed cannot self-heal via `./ct update` (the bug *is* in
+  update). Manual one-time fetch:
+
+      curl -fsSL https://github.com/coo1white/cool-tunnel-server/releases/download/v0.1.15/ct-operator-linux-x64 \
+          -o operator/bin/ct-operator-linux-x64
+      chmod +x operator/bin/ct-operator-linux-x64
+      ./ct update
+
+  Future `./ct update` runs auto-fetch the latest binary at
+  step 15 (v0.1.7's behaviour, unchanged).
+
+---
+
 ## [0.1.14] — 2026-05-15 — Hot-fix: IPv6 preflight in `ct update` + secret-carrying bash-c unnest
 
 Re-audit pass on the freshly-Bun-migrated v0.1.13 surface caught
