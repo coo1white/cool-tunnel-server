@@ -22,6 +22,65 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.14] — 2026-05-15 — Hot-fix: IPv6 preflight in `ct update` + secret-carrying bash-c unnest
+
+Re-audit pass on the freshly-Bun-migrated v0.1.13 surface caught
+two regressions worth a hot-fix release. Both are operator-binary
+only — no Rust core / panel image / compose changes.
+
+### Fixed
+
+  **`update.ts` inherited the v0.1.9 IPv6-preflight gap.** The
+  v0.1.9 IPv6 auto-disable runs in `bootstrap.sh` + `install.sh`
+  preflight, so first-installs on cheap VPSes (Vultr, RackNerd)
+  with broken IPv6 routing get the sysctl + daemon.json override
+  written before the first Rust build. `update.sh` / `update.ts`
+  never had the equivalent — so a box whose docker daemon.json
+  got re-enabled for IPv6 between installs (kernel update,
+  provider reboot, manual mucking) hits the exact
+  `static.rust-lang.org Network unreachable (os error 101)` wall
+  on the next `./ct update`, with no auto-recovery. Hit a Vultr
+  v0.1.11 → v0.1.12 update in production on 2026-05-15.
+
+  Added `checkIpv6Routing()` to `operator/src/util/preflight.ts`.
+  Detects no-global-IPv6 + missing
+  `/etc/sysctl.d/99-disable-ipv6.conf`, delegates the fix to the
+  existing `ipv6_broken_routing` recipe (single source of truth),
+  reports `skipped` / `ok` / `fixed` / `warn`. Skippable via
+  `CT_SKIP_IPV6_AUTO_DISABLE=1`. Wired into `operator/update.ts`
+  between `checkStackUp()` and `preflightCleanTree()`, so it runs
+  BEFORE the `gitPullFfOnly` + `rebuildCore` steps that would
+  otherwise trip on IPv6. Pure classification logic split into
+  `classifyIpv6Preflight()` + 6 unit tests covering every action
+  branch.
+
+### Security
+
+  **Bun-shell-escape bug class in two secret-carrying call
+  sites.** Same class as v0.1.12's caddy-acme / active-users
+  bug. Pre-fix the Redis password was interpolated INTO a `bash
+  -c "..."` quoted string. Bun shell-escaped `${pw}` once, but
+  bash then re-parsed the resulting command line. A password
+  containing `$`, backtick, or `"` would corrupt tokenisation.
+  Generated passwords are filtered (`tr -d '/=+'`) so the field-
+  encounter probability is near zero, but an operator-set
+  `REDIS_PASSWORD` is unconstrained.
+
+  Fixed by switching to `docker compose exec -e REDISCLI_AUTH`
+  (no value — imports from the calling shell's env) +
+  `.env({...process.env, REDISCLI_AUTH: pw})`. The secret never
+  appears in argv. Sites updated:
+  `operator/src/tasks/doctor.ts::infoMessengerDepth` and
+  `operator/src/tasks/readiness.ts` slot 8 "Redis bridge".
+
+### Operator note
+
+  Operator-binary only. Existing v0.1.13 deploys pick up the new
+  binary automatically on next `./ct update` step 15 (auto-fetch
+  added in v0.1.7). No service downtime.
+
+---
+
 ## [0.1.13] — 2026-05-15 — Bun-native operator binary is canonical for every interactive subcommand; bash stays as fallback
 
 The Bun-bundled `ct-operator` binary, introduced in v0.1.5, is now
