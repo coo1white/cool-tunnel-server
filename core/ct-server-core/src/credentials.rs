@@ -14,18 +14,35 @@
 //! leaving stale credentials silently live.
 
 use crate::{db, Error, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::MySqlPool;
 use std::collections::BTreeMap;
+use std::fmt;
 use tokio::fs;
 
 const LOCK_VERSION: &str = "db=rendered=manifest=mac-config";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq)]
 struct CredentialTuple {
     username: String,
     password: String,
+}
+
+// Custom Debug — redact the password so an accidental `{:?}` or test
+// snapshot can't leak plaintext. Auto-derive would print the password
+// inline; the project's CONTRIBUTING.md privacy policy is "never log
+// credentials". Username is left visible so operator drift-debugging
+// stays useful in stderr logs (the daemon's stderr is operator-only).
+// Serialize is intentionally NOT derived for the same reason —
+// CredentialTuple never crosses a wire or persistence boundary.
+impl fmt::Debug for CredentialTuple {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CredentialTuple")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize)]

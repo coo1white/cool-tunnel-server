@@ -122,7 +122,19 @@ return [
         OperationTerminated::class => [
             FlushOnce::class,
             FlushTemporaryContainerInstances::class,
-            // DisconnectFromDatabases::class,
+            // FrankenPHP worker mode keeps the framework booted, so the
+            // MySQL/Redis connection pool is reused across requests. On a
+            // VPS the upstream server's idle-timeout (MySQL's `wait_timeout`
+            // defaults to 28800s = 8h) closes connections out from under
+            // the worker, and the next request on that worker fails with
+            // "MySQL server has gone away". Laravel has no built-in
+            // reconnect-on-lost-connection without explicit ATTR_PERSISTENT
+            // or a Health::class listener, neither of which we configure.
+            // Disconnecting after every request trades a small per-request
+            // reconnect cost for the robustness invariant "every request
+            // sees a fresh connection". On a 1 vCPU / 1 GB VPS admin panel
+            // (low QPS) the cost is negligible.
+            DisconnectFromDatabases::class,
             // CollectGarbage::class,
         ],
 
