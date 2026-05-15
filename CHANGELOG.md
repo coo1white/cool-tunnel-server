@@ -22,6 +22,60 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.16] — 2026-05-15 — Critical hot-fix: op-lock re-exec passed `/$bunfs` argv to lock-holding child
+
+Second `/$bunfs` bug from the v0.1.13 Bun-migration aftermath.
+v0.1.15's `ensureRepoRoot()` fix unblocked the binary's startup
+but exposed this lurking issue in the same call chain:
+`acquireOpLock()` re-execs the binary under `flock -n`, passing
+`process.argv.slice(1)` as the child's argv.
+
+In dev: `argv = [<bun>, "operator/update.ts", "update"]` →
+`slice(1)` is correct (bun expects the script path first).
+In a compiled binary: `argv = [<binary>, "/$bunfs/root/<binary-
+name>", "update"]` → `slice(1)` includes the synthetic /$bunfs
+path, which the dispatcher in the re-exec'd lock-holding child
+sees as the first user arg → routes to "/$bunfs/root/...":
+
+    [update] start
+    error: unknown command: /$bunfs/root/ct-operator-linux-x64
+
+Surfaced 2026-05-15 on the Vultr v0.1.15 deploy. `./ct update`
+died inside `acquireOpLock` before any update work ran.
+
+### Fixed
+
+  New `resolveReExecArgs(argv)` pure helper in `operator/src/util/
+  op-lock.ts` (exported for testing). Detects compiled-binary mode
+  via `isBunFsUrl(argv[1])` — the same check `ensureRepoRoot` uses.
+  In compiled mode returns `argv.slice(2)`; in dev returns
+  `argv.slice(1)`. `acquireOpLock` now passes `resolveReExecArgs(
+  process.argv)` to `flock` instead of the raw `slice(1)`.
+
+  Audit pass over the rest of `operator/` confirmed every other
+  `process.argv` / `import.meta.url` consumer is /$bunfs-safe:
+  argv parsers use `indexOf("cmd")` instead of positional slicing,
+  the chdir sites are all behind `ensureRepoRoot()`, and
+  `import.meta.main` is a Bun-runtime check that works in both
+  modes. No other compiled-binary-sensitive sites found.
+
+### Operator note
+
+  Operator-binary only. v0.1.15 deploys whose `./ct update` died
+  with `error: unknown command: /$bunfs/...` cannot self-heal via
+  `./ct update` — the bug *is* in the lock acquisition that
+  guards `update`. Manual one-time fetch:
+
+      curl -fsSL https://github.com/coo1white/cool-tunnel-server/releases/download/v0.1.16/ct-operator-linux-x64 \
+          -o operator/bin/ct-operator-linux-x64
+      chmod +x operator/bin/ct-operator-linux-x64
+      ./ct update
+
+  Future `./ct update` runs auto-fetch the latest binary at step
+  15 — same pattern as v0.1.7+.
+
+---
+
 ## [0.1.15] — 2026-05-15 — Critical hot-fix: chdir to `/$bunfs` blocked every compiled-binary subcommand
 
 v0.1.13's port-everything-to-Bun batch landed a chdir pattern in
