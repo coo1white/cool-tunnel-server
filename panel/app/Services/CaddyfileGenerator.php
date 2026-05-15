@@ -7,6 +7,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Contracts\CaddyfileGeneratorInterface;
+use App\Contracts\CtServerCoreInterface;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -24,7 +25,7 @@ use Illuminate\Support\Facades\Log;
 class CaddyfileGenerator implements CaddyfileGeneratorInterface
 {
     public function __construct(
-        private CtServerCore $core,
+        private CtServerCoreInterface $core,
     ) {}
 
     public function renderToFile(): ?string
@@ -32,11 +33,6 @@ class CaddyfileGenerator implements CaddyfileGeneratorInterface
         try {
             $out = $this->core->renderCaddyfile();
         } catch (\Throwable $e) {
-            // Catch \Throwable rather than \RuntimeException so a
-            // future undefined-method / type-error / class-not-
-            // found Error doesn't propagate silently up to the
-            // panel and abort the surrounding model save.
-            //
             // Severity is CRITICAL (was ERROR pre-v0.0.59): when
             // a Caddyfile re-render fails on ServerConfig save,
             // the surrounding save SUCCEEDS in the UI but the
@@ -50,6 +46,20 @@ class CaddyfileGenerator implements CaddyfileGeneratorInterface
                 'err' => $e->getMessage(),
                 'type' => get_class($e),
             ]);
+
+            // PHP \Error (TypeError, undefined-method, class-not-
+            // found, etc.) signals a code defect, NOT a transient
+            // runtime failure. Re-throw so the surrounding save
+            // fails with a 500 and the operator sees the bug
+            // instead of a silently-diverged panel/proxy state.
+            // \Exception subclasses (\RuntimeException from
+            // CtServerCore::run on non-zero exit) keep the soft-
+            // fail return-null path — they're recoverable via the
+            // every-5-min scheduler. Mirror in
+            // SingBoxConfigGenerator::renderToFile.
+            if ($e instanceof \Error) {
+                throw $e;
+            }
 
             return null;
         }
