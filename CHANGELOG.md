@@ -22,6 +22,44 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.7] — 2026-05-15 — `./ct update` auto-fetches the matching ct-operator binary
+
+Closes a manual step from the v0.1.4 install procedure. Operators
+upgrading from a pre-v0.1.4 release had to run a separate
+`curl ... | sha256sum --check` after `./ct update` to land the
+new operator binary. v0.1.7 folds this into `update.sh` as a
+non-fatal post-deploy step: the binary appears in `operator/bin/`
+automatically, matched to the deployed version.
+
+Idempotent (skips when the existing binary already matches the
+manifest hash), opt-out via `CT_SKIP_OPERATOR_FETCH=1`, non-fatal
+(a failed fetch leaves the `.sh` fallbacks in place — operators
+can retry with `make operator-fetch`).
+
+Originally targeted as v0.1.5; renumbered to v0.1.7 so the v0.1.6
+ballast hot-fix could ship first (it blocked operator use).
+
+### Added
+
+  `scripts/fetch_operator_binary.sh` — reads the deployed version
+  from `panel/config/cool-tunnel.php`, picks the right target for
+  the host (linux-x64 / linux-arm64), downloads from the matching
+  GitHub release, verifies SHA-256, atomic-renames into place.
+  Idempotent and non-fatal. Honors `CT_SKIP_OPERATOR_FETCH=1`.
+
+  `make operator-fetch` — invokes the script standalone. Useful
+  for first-time installs and for hosts where the post-deploy
+  fetch was skipped during an earlier update.
+
+### Changed
+
+  `scripts/update.sh` — the final step before `ok "Update
+  complete."` now invokes `fetch_operator_binary.sh`. Failures
+  are warned about but do not abort the update (the `.sh`
+  fallbacks continue to work; a future `./ct update` will retry).
+
+---
+
 ## [0.1.6] — 2026-05-15 — Hot-fix: `ct ballast` primitives surfaced by the v0.1.4 live-VPS run
 
 First Phase-9 validation against v0.1.4 on a deployed VPS lit up
