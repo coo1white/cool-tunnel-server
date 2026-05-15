@@ -27,7 +27,7 @@
 //  16. component_check_strict /srv/manifests
 //  17. fetch_operator_binary.sh (non-fatal)
 
-import { $, capture, which } from "./src/util/sh";
+import { $, capture, runStreaming, which } from "./src/util/sh";
 import { die, makeTerm, ANSI } from "./src/util/term";
 import { dieWithDiag, type DiagFailure } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
@@ -182,7 +182,12 @@ async function autoMigrateEnv(): Promise<void> {
 
 async function rebuildCore(): Promise<void> {
     step("Rebuild ct-server-core (Rust)");
-    const r = await capture($`docker compose --profile build-only build core-builder`);
+    // Streams BuildKit progress live (`[+] Building 31.6s (17/23)...`).
+    // The pre-v0.1.17 capture() variant buffered until subprocess
+    // exit; on a 1 vCPU VPS the operator saw the "==> Rebuild" step
+    // hang for 60-180s with no output and assumed the build was
+    // stuck. Surfaced 2026-05-15 on the v0.1.16 Vultr update.
+    const r = await runStreaming($`docker compose --profile build-only build core-builder`);
     if (!r.ok) {
         dieWithDiag(
             "ct-server-core build failed",
@@ -201,7 +206,8 @@ number are usually enough to diagnose.`,
 
 async function rebuildImages(): Promise<void> {
     step("Rebuild sing-box + panel + haproxy");
-    const r = await capture($`docker compose build sing-box panel haproxy`);
+    // Same live-streaming rationale as rebuildCore — see comment there.
+    const r = await runStreaming($`docker compose build sing-box panel haproxy`);
     if (!r.ok) {
         dieWithDiag(
             "sing-box / panel / haproxy build failed",

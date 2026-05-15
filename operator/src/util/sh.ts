@@ -42,6 +42,23 @@ export async function capture(p: ReturnType<typeof $>): Promise<ShResult> {
     };
 }
 
+// Live-streaming counterpart to capture() — pipes stdout AND stderr
+// to the operator's terminal in real time, returns only the exit
+// code. Use for long-running operations where the operator needs
+// to see progress (docker build, db migrate, etc.); the v0.1.13
+// Bun port wrapped these in capture() which buffered everything
+// until subprocess exit, making a 2-minute `docker compose build`
+// look like the script was stuck. Reported 2026-05-15 on the
+// v0.1.16 Vultr update.
+//
+// Trade-off: no captured stdout/stderr strings, so the caller's
+// error path can only show a generic diag (which is what the
+// build callers already do — they don't reference r.stdout).
+export async function runStreaming(p: ReturnType<typeof $>): Promise<{ ok: boolean; code: number }> {
+    const r = await p.nothrow();
+    return { ok: r.exitCode === 0, code: r.exitCode };
+}
+
 const whichCache = new Map<string, boolean>();
 // Bun.which() is the right primitive — it walks PATH directly without
 // spawning a subprocess. v0.1.5's `command -v <bin>` approach was broken
