@@ -17,6 +17,8 @@ use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Form;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Illuminate\Support\Facades\Redis;
+use Throwable;
 
 /**
  * @property Form $form Provided by InteractsWithForms (Filament magic).
@@ -124,14 +126,64 @@ class ServerConfigPage extends Page implements HasForms
         // "regenerated; hot-reloading" unconditionally, even when
         // the inline shell-outs had silently failed and the
         // on-disk config still reflected the previous state.
-        Notification::make()
-            ->title('Server config saved')
-            ->body(
-                'Reload queued. The Redis fast-path is already in flight (≤100ms); the panel-side render+reload backstop will land within seconds. '
-                .'If the Components page reports drift after a minute, check `docker compose logs panel` for `serverconfig.reload.job_failed`.'
-            )
-            ->success()
-            ->send();
+        //
+        // Post-save Redis health probe (audit hardening): both the
+        // Redis fast-path AND the Messenger transport for the
+        // backstop job run against Redis. If Redis is unreachable
+        // at the moment of save, neither path will reach sing-box
+        // until the every-5-min scheduler reconciles. Surface that
+        // synchronously instead of showing an unconditional success
+        // banner. The DB row IS committed in either case; this is
+        // strictly an operator hint, not a save failure.
+        $reloadOk = $this->probeReloadTransport();
+
+        if ($reloadOk) {
+            Notification::make()
+                ->title('Server config saved')
+                ->body(
+                    'Reload queued. The Redis fast-path is already in flight (≤100ms); the panel-side render+reload backstop will land within seconds. '
+                    .'If the Components page reports drift after a minute, check `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
+                )
+                ->success()
+                ->send();
+        } else {
+            Notification::make()
+                ->title('Server config saved (reload path degraded)')
+                ->body(
+                    'The DB row was committed, but Redis appears unreachable from the panel right now. The Redis fast-path and the Messenger backstop will both fail until Redis recovers. '
+                    .'The every-5-min `singbox:render --if-changed --reload` scheduler will reconcile once Redis is back. Run `docker compose ps redis` and grep `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
+                )
+                ->warning()
+                ->persistent()
+                ->send();
+        }
+    }
+
+    /**
+     * Cheap synchronous probe — is Redis reachable right now?
+     *
+     * Both the fast-path (RedisRevocationBus pub/sub) and the slow-
+     * path backstop (Symfony Messenger over Redis transport) depend
+     * on Redis being up. The actual dispatch runs inside
+     * DB::afterCommit and can't surface failure synchronously to
+     * the operator — by the time it fires, save() has already
+     * returned and rendered a notification. A 1s PING is a good
+     * enough proxy for "the dispatch about to fire will work".
+     *
+     * False positives (Redis comes up between probe and dispatch)
+     * just lose the operator a hint; harmless. False negatives
+     * (Redis flaps during probe) likewise — the worst case is one
+     * spurious "degraded" notification that the next save corrects.
+     */
+    private function probeReloadTransport(): bool
+    {
+        try {
+            $pong = Redis::connection()->command('PING');
+
+            return $pong === true || $pong === 'PONG' || $pong === '+PONG';
+        } catch (Throwable $e) {
+            return false;
+        }
     }
 
     protected function getFormActions(): array
