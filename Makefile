@@ -161,7 +161,7 @@ rust-clippy: ## cargo clippy --all-targets (offline sqlx; deny rules in workspac
 
 .PHONY: sqlx-prepare
 sqlx-prepare: ## regenerate core/.sqlx/ from live schema (run after migrations or query!() edits)
-	./scripts/sqlx-prepare.sh
+	cd operator && bun run sqlx-prepare.ts
 
 .PHONY: sqlx-check
 sqlx-check: ## verify core/.sqlx/ matches the live schema (CI lint)
