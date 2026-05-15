@@ -13,6 +13,9 @@
 // Wired into `make pin-images`.
 
 import { $ } from "bun";
+import { die, makeTerm } from "./src/util/term";
+
+const { step, ok, warn } = makeTerm();
 
 // Map of Dockerfile path → image specs to pin. The bash original
 // kept these as `path|image` strings to dodge `declare -A`'s
@@ -30,31 +33,6 @@ const MAPPINGS: ReadonlyArray<{ readonly file: string; readonly image: string }>
     { file: "docker/core/Dockerfile", image: "alpine:3.20" },
     { file: "docker/panel/Dockerfile", image: "dunglas/frankenphp:1-php8.4-alpine" },
 ];
-
-const ANSI = {
-    bold: "\x1b[1m",
-    green: "\x1b[32m",
-    yellow: "\x1b[33m",
-    red: "\x1b[31m",
-    reset: "\x1b[0m",
-} as const;
-
-let stepNum = 0;
-function step(msg: string): void {
-    stepNum++;
-    console.log(`\n${ANSI.bold}${ANSI.green}==>${ANSI.reset} ${ANSI.bold}${stepNum}.${ANSI.reset} ${msg}`);
-}
-function ok(msg: string): void {
-    console.log(`    ${ANSI.green}✓${ANSI.reset} ${msg}`);
-}
-function warn(msg: string): void {
-    console.error(`    ${ANSI.yellow}!${ANSI.reset} ${msg}`);
-}
-function die(msg: string, hint?: string): never {
-    console.error(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${msg}`);
-    if (hint) console.error(`  ${ANSI.bold}↳ try:${ANSI.reset} ${hint}`);
-    process.exit(1);
-}
 
 // Build the FROM-line regex for a given image. Matches:
 //   FROM <image>[@sha256:<hex>][ <trailer>]

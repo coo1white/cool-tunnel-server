@@ -17,6 +17,9 @@
 // Idempotent — re-running just regenerates the files.
 
 import { $ } from "bun";
+import { die, makeTerm } from "./src/util/term";
+
+const { step, ok, warn } = makeTerm();
 
 const DOCKER_IMAGES = [
     "cool-tunnel-server-caddy",
@@ -24,31 +27,6 @@ const DOCKER_IMAGES = [
     "cool-tunnel-server-panel",
     "cool-tunnel-server-core",
 ] as const;
-
-const ANSI = {
-    bold: "\x1b[1m",
-    green: "\x1b[32m",
-    yellow: "\x1b[33m",
-    red: "\x1b[31m",
-    reset: "\x1b[0m",
-} as const;
-
-let stepNum = 0;
-function step(msg: string): void {
-    stepNum++;
-    console.log(`\n${ANSI.bold}${ANSI.green}==>${ANSI.reset} ${ANSI.bold}${stepNum}.${ANSI.reset} ${msg}`);
-}
-function ok(msg: string): void {
-    console.log(`    ${ANSI.green}✓${ANSI.reset} ${msg}`);
-}
-function warn(msg: string): void {
-    console.error(`    ${ANSI.yellow}!${ANSI.reset} ${msg}`);
-}
-function die(msg: string, hint?: string): never {
-    console.error(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${msg}`);
-    if (hint) console.error(`  ${ANSI.bold}↳ try:${ANSI.reset} ${hint}`);
-    process.exit(1);
-}
 
 // Pick the first usable cdxgen invocation. Returns null when none
 // is available — the script then warn-skips the PHP and docker
