@@ -22,6 +22,111 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.4] — 2026-05-15 — `ct-operator` Bun CLI + AI incident bridge + signed self-update
+
+Three of the heavier operator scripts (`fix.sh` 1154 LOC,
+`doctor.sh` 471 LOC, `late-night-comeback.sh` 288 LOC) had grown
+to where adding structured JSON output, an AI-paste incident
+bridge, and signed self-update would have significantly inflated
+the existing bash. v0.1.4 introduces a parallel Bun + TypeScript
+layer (`operator/`) that compiles to a single platform-specific
+binary. The `ct` dispatcher prefers
+`operator/bin/ct-operator-<os>-<arch>` when present and falls
+back to the legacy `.sh` scripts otherwise. This is purely
+additive — the shell scripts remain on disk and unchanged.
+
+Scope is deliberately narrow: only `fix` / `doctor` / `readiness`
+move. `bootstrap.sh` / `install.sh` / `lib.sh` stay shell — they
+have to run on a fresh VPS before any operator binary exists.
+
+### Added
+
+  `operator/` — new top-level Bun + TypeScript module
+  (~2.5k LOC + 18 unit tests). Six logical phases:
+
+    1. Skeleton: `TaskRunner` (Command pattern), `Bun.$`
+       wrapper, CLI entry, `bun build --compile` wrapper.
+    2. Diagnostics: `captureIncidentContext()` fires on every
+       task failure; four collectors (`ballast`, `journal`,
+       `sysmetrics`, `proctree`); structured JSON + pasteable AI
+       prompt with best-effort redaction.
+    3. Tasks: TS ports of `doctor.sh` and
+       `late-night-comeback.sh`; `fix.sh` recipes exposed as a
+       typed registry that currently delegates to the existing
+       `lib.sh` helpers via on-the-fly sed extraction of
+       `scripts/fix.sh`. Pure-TS port of individual recipes can
+       happen incrementally without changing dispatch.
+    4. `self-update`: pulls binary from GitHub Releases,
+       verifies SHA-256 + detached ed25519 signature against a
+       pubkey baked in at build time, atomic-renames in place.
+    5. Wiring: `ct` dispatcher prefers the binary when present;
+       Makefile gets `operator-build`, `operator-test`,
+       `operator-typecheck`, `operator-keygen` targets.
+    6. Release pipeline:
+       `.github/workflows/operator-release.yml` matrix-builds
+       linux-x64 / linux-arm64 / darwin-arm64, derives the
+       pubkey from the secret signing key, signs `SHA256SUMS`,
+       self-verifies before upload.
+
+  **Ballast stones** (`operator/src/diag/collectors/ballast.ts`)
+  — a 10-item critical-invariant set (panel container, octane
+  up, db schema, sqlx cache, redis, caddy ACME, sing-box admin,
+  haproxy stats, sot-parity, ct-core version). Runs as part of
+  doctor; also embedded in every incident-bridge payload.
+
+  **AI incident bridge** is local-only by design. No network
+  egress, no API keys; output goes to stdout (or stderr in
+  `--json` mode) for the operator to paste into their AI of
+  choice. Fires automatically on any task failure (suppress
+  with `--no-bridge`).
+
+  **`docs/operator.md`** — install (from release or source),
+  ballast list, bridge schema, self-update trust model, keygen
+  + rotation procedure, OPSEC notes.
+
+### Changed
+
+  `ct` — `fix` / `doctor` / `readiness` subcommands now prefer
+  `operator/bin/ct-operator-<os>-<arch>` when present and fall
+  back to the corresponding `.sh` otherwise. No flag day; the
+  shell scripts remain on disk and unchanged.
+
+  `Makefile` — new `operator-build`, `operator-test`,
+  `operator-typecheck`, `operator-keygen` targets. Existing
+  `make doctor` / `fix` / `readiness` targets are untouched
+  (still run the shell scripts; CI muscle-memory parity).
+
+  `.github/workflows/ci.yml` — new fifth job `operator
+  (ct-operator typecheck + test)` runs `bun install
+  --frozen-lockfile`, `bun run typecheck`, and `bun test`
+  against `operator/` on every push / PR. Matches the existing
+  per-language pattern (rust / php / shell): native tooling,
+  ubuntu-24.04, 5-minute timeout.
+
+### Security
+
+  **Trust model for `ct-operator self-update`.** Releases
+  publish `SHA256SUMS` + `SHA256SUMS.sig`. The binary verifies
+  the ed25519 signature against a pubkey baked in at build time
+  (`BUILD_PUBKEY`). The build prints a warning if no pubkey is
+  set, and the runtime returns exit 4 ("no pinned pubkey")
+  rather than attempting an unverified update. Rotation
+  procedure documented in `docs/operator.md`.
+
+  **Operator ask before first release**: run
+  `make operator-keygen` locally, store the printed private key
+  as the `CT_OPERATOR_SIGNING_KEY` repo secret, then cut a
+  release. The workflow fails loudly until the secret is set
+  rather than shipping an unsigned binary.
+
+  **AI bridge redaction** scrubs IPv4 addresses, Bearer tokens,
+  `password=` / `secret=` / `token=` / `api_key=` values, and
+  JWT-shaped strings from output before printing. Best-effort
+  belt for the careless case, not a defence against adversaries
+  — operators are responsible for what they paste.
+
+---
+
 ## [0.1.3] — 2026-05-15 — `ct auto-update` agent + haproxy SIGHUP safety net + 2 new fix-agent recipes
 
 Hot on the heels of v0.1.2. Two motivations:
