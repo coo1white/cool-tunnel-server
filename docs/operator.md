@@ -54,9 +54,10 @@ the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
 
 | Command            | What it does                                                           |
 |--------------------|------------------------------------------------------------------------|
-| `ct doctor`        | PASS/WARN/FAIL health dashboard. No state mutation.                    |
+| `ct doctor`        | PASS/WARN/FAIL health dashboard, including a Ballast Stones group at the end. No state mutation. |
 | `ct fix`           | Interactive recipe walker. Same 17 recipes as `scripts/fix.sh`.        |
 | `ct readiness`     | Strict ≥9/10 launch gate. Offers tactical retreat / rebuild on fail.   |
+| `ct ballast`       | Run the 10 critical-invariant checks only. Exit 0 if no FAIL, 1 otherwise. Cron-friendly. |
 | `ct-operator self-update` | Pull a signed binary update from GitHub Releases.               |
 | `ct-operator version` | Print the embedded build version.                                   |
 
@@ -93,6 +94,48 @@ failure and embeds the results in the AI-paste payload.
     pinned in `core/ct-server-core/Cargo.toml`.
 
 Edits to the list live in [src/diag/collectors/ballast.ts](../operator/src/diag/collectors/ballast.ts).
+
+Three consumers, one source of truth:
+- `ct doctor` appends the results as a "Ballast Stones" group.
+- `ct ballast` runs just these checks (no other doctor noise; cron-friendly).
+- The incident bridge embeds them in its payload on any task failure.
+
+## VPS validation procedure
+
+Run after the binary is installed on a real VPS to confirm the
+deployment is healthy. Two paths.
+
+### One-shot
+
+```bash
+cd /opt/cool-tunnel-server
+./ct ballast
+echo "exit code: $?"
+```
+
+A green run shows ten lines, all `[PASS]`, exit 0. Anything else
+means a critical invariant is missing — investigate before
+treating the deployment as healthy. `WARN` does **not** flip the
+exit code; only `FAIL` does (the deployment is functional but
+missing best-practice configuration, vs broken).
+
+### Machine-readable for CI / scripting
+
+```bash
+./ct ballast --json --no-bridge > ballast.json
+jq -r '.checks[] | "\(.status)\t\(.slug)\t\(.detail // "")"' ballast.json
+jq '.overall_ok' ballast.json   # `true` => safe to keep running
+```
+
+### Cron alert
+
+```cron
+*/5 * * * * cd /opt/cool-tunnel-server && ./ct ballast --no-bridge >/dev/null || curl -fsS -X POST <your-alert-url>
+```
+
+The `--no-bridge` flag suppresses the AI incident-bridge prompt so
+cron emails don't contain a large pasteable payload; the operator
+can reproduce by running `./ct ballast` interactively.
 
 ## Incident bridge
 

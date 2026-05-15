@@ -61,6 +61,7 @@ DEEPER COMMANDS
   backup         snapshot db + .env + caddy data into backups/
   restore <f>    recover from a backup tarball
   readiness      strict ≥9/10 ship-readiness gate (cron-friendly)
+  ballast        critical-invariant check only (no narration; cron-friendly; requires ct-operator binary)
   auto-sync      credential-lock audit + auto-correct
   auto-update    unattended release-pulling agent (default OFF)
                    `ct auto-update enable`   add daily cron entry
@@ -219,6 +220,14 @@ dispatch_via_operator() {
             exec "$op_bin" "$subcmd" "$@"
         fi
     fi
+    # Empty fallback => binary-only subcommand (e.g. ballast). Error
+    # rather than silently doing nothing.
+    if [[ -z "$fallback" ]]; then
+        printf 'ct %s: requires the ct-operator binary (operator/bin/ct-operator-<os>-<arch>); no shell fallback exists for this subcommand.\n' "$subcmd" >&2
+        printf '  build it locally:        make operator-build\n' >&2
+        printf '  or install from release: see docs/operator.md\n' >&2
+        exit 2
+    fi
     exec "$fallback" "$@"
 }
 
@@ -235,6 +244,7 @@ case "$cmd" in
     backup)       exec ./scripts/backup.sh             "$@" ;;
     restore)      exec ./scripts/restore.sh            "$@" ;;
     readiness)    dispatch_via_operator readiness ./scripts/late-night-comeback.sh "$@" ;;
+    ballast)      dispatch_via_operator ballast   ""                                "$@" ;;
     auto-sync)    exec ./scripts/auto_sync.sh           "$@" ;;
     auto-update)  auto_update_subcommand "$@" ;;
     status)       exec make status ;;

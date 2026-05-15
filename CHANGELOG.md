@@ -71,8 +71,12 @@ have to run on a fresh VPS before any operator binary exists.
   **Ballast stones** (`operator/src/diag/collectors/ballast.ts`)
   — a 10-item critical-invariant set (panel container, octane
   up, db schema, sqlx cache, redis, caddy ACME, sing-box admin,
-  haproxy stats, sot-parity, ct-core version). Runs as part of
-  doctor; also embedded in every incident-bridge payload.
+  haproxy stats, sot-parity, ct-core version). Three consumers,
+  one source of truth: `ct doctor` appends them as a "Ballast
+  Stones" group; `ct ballast` runs only these checks (clean
+  PASS/WARN/FAIL with non-zero exit on any FAIL, cron-friendly);
+  the incident bridge embeds them in its payload on any task
+  failure. See `docs/operator.md::VPS validation procedure`.
 
   **AI incident bridge** is local-only by design. No network
   egress, no API keys; output goes to stdout (or stderr in
