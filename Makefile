@@ -417,6 +417,13 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 	@# VersionMismatch on every component check after the bump.
 	@sed -i.bak -E "s/'version' => '[0-9]+\.[0-9]+\.[0-9]+'/'version' => '$(V)'/" \
 		panel/config/cool-tunnel.php
+	@# operator/package.json::version — read at build time by build.ts
+	@# and baked into the binary via --define BUILD_VERSION=. Without
+	@# bumping this, the compiled binary's `--version` and the
+	@# incident-bridge JSON's `operator_version` field stay at the
+	@# scaffold's 0.0.1 forever, regardless of release tag. (v0.1.8.)
+	@sed -i.bak -E 's/"version": "[0-9]+\.[0-9]+\.[0-9]+"/"version": "$(V)"/' \
+		operator/package.json
 	@find . -name '*.bak' -delete
 	@# Refresh core/Cargo.lock so the workspace member version
 	@# entries (`name = "ct-server-core" / "ct-protocol", version = "..."`)
