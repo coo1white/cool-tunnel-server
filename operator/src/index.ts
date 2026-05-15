@@ -24,6 +24,7 @@ Commands:
   ballast        Critical-invariant check only (no narration; cron-friendly)
   render         Re-render caddyfile/haproxy/singbox config from the DB
   auto-sync      Credential-lock audit + auto-correct agent
+  backup         Snapshot db + .env + caddy ACME state into backups/
   self-update    Pull a new signed binary from GitHub Releases
   version        Print version and exit
 
@@ -74,6 +75,10 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "auto-sync": {
             const { AutoSyncTask } = await import("./tasks/auto-sync");
             return new AutoSyncTask();
+        }
+        case "backup": {
+            const { BackupTask } = await import("./tasks/backup");
+            return new BackupTask();
         }
         case "self-update": {
             const { SelfUpdateTask } = await import("./tasks/self-update");
