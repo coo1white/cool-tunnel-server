@@ -43,18 +43,25 @@ export interface AcquireOpts {
     // calling die(). Used by cron-triggered auto-update so missing
     // the lock isn't logged as an error.
     readonly softSkip?: boolean;
+    // Override the held-marker env var name. Distinct markers let
+    // a process hold multiple locks at once without the inner
+    // acquireOpLock collapsing into the outer one's marker (the
+    // auto-update agent calls runUpdate() in-process and each
+    // wants its own lock).
+    readonly markerName?: string;
 }
 
 export async function acquireOpLock(opts: AcquireOpts = {}): Promise<never> {
     const project = opts.project ?? (await composeProjectName());
     const lockPath = opts.lockPath ?? `/tmp/cool-tunnel-ops-${project}.lock`;
+    const marker = opts.markerName ?? LOCK_HELD_MARKER;
     if (!Bun.which("flock")) {
         die("required command 'flock' is not on PATH", "apt install -y util-linux");
     }
     const result = spawnSync(
         "flock",
         ["-n", lockPath, process.execPath, ...process.argv.slice(1)],
-        { stdio: "inherit", env: { ...process.env, [LOCK_HELD_MARKER]: "1" } },
+        { stdio: "inherit", env: { ...process.env, [marker]: "1" } },
     );
     if (result.status === 1 && result.signal == null) {
         if (opts.softSkip) {

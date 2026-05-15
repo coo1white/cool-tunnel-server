@@ -26,7 +26,13 @@
 import { accessSync, constants as fsConstants } from "node:fs";
 import { $, capture } from "./src/util/sh";
 import { probeVersions, upgradeAvailable, readCurrentVersion } from "./src/util/release";
-import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
+import { acquireOpLock } from "./src/util/op-lock";
+
+// Distinct marker so the inner `./ct update` subprocess (which
+// acquires its own per-project ops flock under the default
+// CT_OPS_FLOCK_HELD marker) doesn't see our auto-update flock as
+// already-held when it re-execs under flock.
+const AUTO_UPDATE_MARKER = "CT_AUTOUPDATE_FLOCK_HELD";
 
 export interface AutoUpdateOptions {
     readonly quiet: boolean;
@@ -102,9 +108,10 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
     // Single-flight: per-machine lock distinct from the ops-mutex.
     // A scheduled auto-update tick that collides with another tick
     // is a no-op (soft skip; exit 0 so cron logs stay clean).
-    if (!process.env[LOCK_HELD_MARKER]) {
+    if (!process.env[AUTO_UPDATE_MARKER]) {
         await acquireOpLock({
             lockPath: pickLockPath(),
+            markerName: AUTO_UPDATE_MARKER,
             busyMessage:
                 "another auto-update is already running — skipping this tick",
             softSkip: true,
@@ -161,11 +168,17 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
         }
     }
 
+    // Delegate the actual deploy to `./ct update` so we ride the
+    // dispatch_via_operator path — operator binary when present
+    // (canonical Bun runUpdate), bash scripts/update.sh otherwise.
+    // The subprocess gets its own ops flock; AUTO_UPDATE_MARKER
+    // is distinct from CT_OPS_FLOCK_HELD so the child re-execs
+    // under its own lock without thinking ours is "already held".
     const update = opts.quiet
-        ? await capture($`./scripts/update.sh`.quiet())
-        : await capture($`./scripts/update.sh`);
+        ? await capture($`./ct update`.quiet())
+        : await capture($`./ct update`);
     if (!update.ok) {
-        log.err("./scripts/update.sh failed — stack may be in a partial state");
+        log.err("./ct update failed — stack may be in a partial state");
         log.err("re-run interactively: ct update   (or: ct fix to walk the recipes)");
         return 1;
     }
