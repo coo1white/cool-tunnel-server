@@ -28,6 +28,12 @@ require_cmd jq        "apt install -y jq            # used by manifest checks + 
 require_docker
 ok "all required tools present"
 
+# v0.1.9: auto-disable IPv6 on cheap-VPS hosts where it advertises in
+# kernel but has no working route. Without this, docker buildkit's
+# Rust build step dies on static.rust-lang.org with `Network
+# unreachable`. Idempotent; honours CT_SKIP_IPV6_AUTO_DISABLE=1.
+disable_ipv6_if_broken
+
 # v0.0.80 robustness-review fix: take an exclusive flock so a
 # secondary operator can't race a concurrent install (or update,
 # or backup) against the same project. See lib.sh::acquire_op_lock.
@@ -456,6 +462,21 @@ except Exception as e: sys.exit(0)
 fi
 
 step "Start Caddy (ACME — :80 challenges; manages certs for ${DOMAIN:-?} and ${PANEL_DOMAIN:-?})"
+# v0.1.9 fix: if a prior attempt left ct-caddy in Created or Exited
+# state, docker has the host :80 port reserved AT CREATE TIME but
+# nothing is actually listening on it. `compose up -d caddy` then
+# fails with "bind 0.0.0.0:80: address already in use" forever.
+# Detected from a real operator deploy where 5+ wipe/retry rounds
+# kept regenerating the zombie. Surgical fix: kill the stale
+# container before `compose up`. Safe — only fires for a non-Running
+# ct-caddy.
+caddy_state=$(docker inspect -f '{{.State.Status}}' ct-caddy 2>/dev/null || echo "")
+case "$caddy_state" in
+    created|exited|dead)
+        warn "removing stale ct-caddy (state=$caddy_state) from prior attempt"
+        docker rm -f ct-caddy >/dev/null 2>&1 || true
+        ;;
+esac
 compose up -d caddy
 ok "caddy running on :80"
 warn "Caddy will fetch the TLS certs from Let's Encrypt now; both"

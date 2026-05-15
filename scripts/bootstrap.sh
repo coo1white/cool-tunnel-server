@@ -72,6 +72,39 @@ else
     log "docker already installed — skipping"
 fi
 
+# v0.1.9: cheap-VPS IPv6 protection. Many Vultr/RackNerd/etc images
+# advertise IPv6 in the kernel but have no working global route, so
+# docker buildkit's Rust build step dies on static.rust-lang.org with
+# `Network unreachable`. Detect the missing global IPv6 address +
+# disable to prevent that class of failure. Idempotent; skip with
+# CT_SKIP_IPV6_AUTO_DISABLE=1. Burned ~1 hour of operator time on
+# a v0.1.7 deploy that this would have prevented.
+if [ "${CT_SKIP_IPV6_AUTO_DISABLE:-}" != "1" ] \
+    && [ ! -f /etc/sysctl.d/99-disable-ipv6.conf ] \
+    && ! ip -6 addr show scope global 2>/dev/null | grep -q 'inet6'; then
+    log "no global IPv6 address detected → disabling IPv6 (Vultr-class protection)"
+    cat >/etc/sysctl.d/99-disable-ipv6.conf <<'EOF'
+# v0.1.9 — auto-written by scripts/bootstrap.sh because the host has
+# no global IPv6 address. Remove to re-enable.
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+    sysctl --system > /dev/null 2>&1 || true
+    mkdir -p /etc/docker
+    if [ ! -f /etc/docker/daemon.json ]; then
+        cat >/etc/docker/daemon.json <<'EOF'
+{
+  "ipv6": false,
+  "dns": ["1.1.1.1", "8.8.8.8"]
+}
+EOF
+        systemctl restart docker > /dev/null 2>&1 || true
+    else
+        warn '/etc/docker/daemon.json exists; manually add "ipv6": false + DNS'
+    fi
+fi
+
 # ---------- 3. clone (or fast-forward) -------------------------------------
 
 if [ ! -d "$INSTALL_DIR/.git" ]; then

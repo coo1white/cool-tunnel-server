@@ -8,10 +8,16 @@
     "dns": {
         "servers": [
             {
+                "tag": "bootstrap",
+                "type": "udp",
+                "server": "223.5.5.5"
+            },
+            {
                 "tag": "doh",
                 "type": "https",
                 "server": "{{ .DohServer }}",
-                "path": "{{ .DohPath }}"
+                "path": "{{ .DohPath }}",
+                "domain_resolver": "bootstrap"
             }
         ],
         "final": "doh"
