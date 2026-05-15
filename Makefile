@@ -535,7 +535,7 @@ pin-images: ## resolve current docker base-image tags to digests; updates Docker
 
 .PHONY: sbom
 sbom: ## generate CycloneDX SBOMs for cargo + composer + docker
-	./scripts/sbom.sh
+	cd operator && bun run sbom.ts
 
 # ---------- Cleaning ---------------------------------------------
 

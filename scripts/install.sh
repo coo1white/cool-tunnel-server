@@ -24,7 +24,7 @@ require_cmd openssl   "apt install -y openssl"
 require_cmd sed       "apt install -y sed"
 require_cmd dig       "apt install -y dnsutils      # for DNS sanity in late-night-comeback.sh"
 require_cmd curl      "apt install -y curl"
-require_cmd jq        "apt install -y jq            # used by manifest checks + sbom.sh"
+require_cmd jq        "apt install -y jq            # used by manifest checks"
 require_docker
 ok "all required tools present"
 
