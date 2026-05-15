@@ -545,7 +545,45 @@ services:
     # Single-threaded Redis core + a few I/O threads + bgsave fork
     # at AOF-rewrite time. 32 is plenty.
     pids_limit: 32
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    # Why not just `command: [redis-server, ..., --requirepass, ${REDIS_PASSWORD}]`?
+    # Pre-fix, compose substituted ${REDIS_PASSWORD} at parse time
+    # and the resolved password ended up in the container's Cmd[]
+    # array, visible via `docker inspect ct-redis` AND in the
+    # container's `ps -e` (any process inside the redis container,
+    # if compromised, could read /proc/1/cmdline). Industry
+    # convention and Kubernetes-style security policies both want
+    # secrets in env, never in argv.
+    #
+    # Post-fix: redis-server reads its config from stdin
+    # (the `-` argument is documented in `redis-server --help`).
+    # The password reaches redis via $REDIS_PASSWORD (mirroring how
+    # every other service in this stack receives credentials — db,
+    # panel, ct-server-core daemon all read REDIS_PASSWORD from env).
+    # Inside the container, `ps -e` now shows `redis-server -`
+    # with no password at all; the secret never appears on a
+    # command line.
+    #
+    # docker inspect still shows REDIS_PASSWORD in the container's
+    # Env[] field — that's the existing pattern across every other
+    # service and a separate (much larger) refactor would be needed
+    # to move ALL service secrets to mounted-file form. This PR is
+    # scoped to closing the redis-specific Cmd[] leak the 2026-05-15
+    # audit flagged.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$REDIS_PASSWORD" ]; then
+            echo "FATAL: REDIS_PASSWORD is empty or unset; refusing to start without auth" >&2
+            exit 1
+        fi
+        umask 077
+        # `redis-server -` reads config from stdin. The
+        # password never lands in argv, so the container's
+        # `ps -e` and /proc/<pid>/cmdline are clean.
+        printf 'appendonly yes\nrequirepass %s\n' "$$REDIS_PASSWORD" | exec redis-server -
     volumes:
       - redis_data:/data
     networks:
