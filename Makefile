@@ -55,7 +55,7 @@ ci: rust-fmt-check rust-clippy rust-test php-syntax composer-audit shellcheck ma
 # silently masking the SoT contract.
 .PHONY: verify-sot
 verify-sot: ## cross-language SoT parity check (Cycle 3 / v0.0.55; skips when host lacks php/cargo — see verify-sot-vps)
-	./scripts/verify_sot.sh
+	cd operator && bun run verify-sot.ts --mode=host
 
 # v0.0.56 — VPS-side counterpart to verify-sot. Exercises the same
 # five fixtures via `docker compose exec` against the running panel
@@ -65,7 +65,7 @@ verify-sot: ## cross-language SoT parity check (Cycle 3 / v0.0.55; skips when ho
 # confirming a deployed release honours the v0.0.55 SoT contract.
 .PHONY: verify-sot-vps
 verify-sot-vps: ## VPS-side SoT parity check via docker compose exec (v0.0.56)
-	./scripts/verify_sot_vps.sh
+	cd operator && bun run verify-sot.ts --mode=vps
 
 # Round-22 process-lifecycle audit — pin the round-6 supervisord
 # graceful-shutdown invariants (stopsignal=TERM, stopwaitsecs=20,
