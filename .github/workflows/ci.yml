@@ -8,13 +8,23 @@
 # We deliberately do NOT build Docker images in CI — that is left
 # to the release pipeline (RELEASE.md). CI's job is fast feedback;
 # image builds are a separate per-tag concern.
+#
+# Tag pushes do NOT re-trigger ci: tags are created on a commit
+# that already passed ci on main (per RELEASE.md), so the re-run
+# is pure duplication. The 2026-05-15 release of v0.1.8/9/10 cut
+# three tags in quick succession and the resulting 3× ci re-runs
+# saturated the GitHub-hosted runner queue, starving the
+# `ct-operator release` workflows of slots and timing them out
+# at the ~23-minute mark with zero steps run. `tag-version-check`
+# (the per-tag manifest assertion) stays on tag-push because
+# its whole purpose is to catch tags that diverge from the
+# panel/config/cool-tunnel.php version string.
 
 name: ci
 
 on:
   push:
     branches: [main]
-    tags:    ['v*']
   pull_request:
     branches: [main]
 
