@@ -121,15 +121,28 @@ const CHECKS: Check[] = [
             // v0.1.6 listed only the top level and grepped for the
             // domain — the listing was the issuer dir, never the
             // domain, so the check always FAILed on a real deploy.
+            //
+            // v0.1.12 unnested the shell layering. Pre-this-fix the
+            // expiry probe ran `bash -c "docker compose exec sh -c
+            // \"openssl ... -checkend $((7*86400))\""`. Bun's $
+            // template literal parser saw `$((` and tried to read
+            // it as command substitution (`$(...)`), failing with
+            // `expected a command or assignment but got:
+            // "CmdSubstEnd"`. The whole check threw before either
+            // sub-shell ran. Pre-computing the seconds in TS and
+            // dropping the redundant `bash -c "..."` wrapper makes
+            // the call a single argv that Bun escapes correctly.
+            const certName = `${domain}.crt`;
             const find = await capture(
-                $`bash -c "docker compose exec -T caddy sh -c \"find /data/caddy/certificates -name '${domain}.crt' -print -quit\""`,
+                $`docker compose exec -T caddy find /data/caddy/certificates -name ${certName} -print -quit`,
             );
             const certPath = find.stdout.trim();
             if (!find.ok || !certPath) {
-                return { status: "fail", detail: `no ${domain}.crt found under caddy_data` };
+                return { status: "fail", detail: `no ${certName} found under caddy_data` };
             }
+            const sevenDaysInSeconds = 7 * 86400;
             const probe = await capture(
-                $`bash -c "docker compose exec -T caddy sh -c \"openssl x509 -in ${certPath} -noout -checkend $((7*86400))\""`,
+                $`docker compose exec -T caddy openssl x509 -in ${certPath} -noout -checkend ${sevenDaysInSeconds}`,
             );
             return probe.ok
                 ? { status: "pass" }
