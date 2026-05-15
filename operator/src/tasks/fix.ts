@@ -39,6 +39,20 @@ import { recipe as foreignContainerPorts } from "./recipes/foreign_container_por
 import { recipe as brokenContainerDns } from "./recipes/broken_container_dns";
 import { recipe as haproxyBackendDns } from "./recipes/haproxy_backend_dns";
 import { recipe as missingTlsCert } from "./recipes/missing_tls_cert";
+// v0.1.14 — five more pure-TS ports. panel_restart_loop and
+// messenger_queue_stuck are direct docker / redis-cli probes;
+// no_proxy_account is the print-only informational recipe;
+// legacy_env_shape and credential_drift detect locally but delegate
+// the fix to the existing scripts/update.sh and scripts/auto_sync.sh
+// entry points (stable shell-script seams, not the MAIN-divider sed
+// extraction). Only the 4 highest-risk recipes (sysctl heredocs,
+// sing-box config rewrites, stale_deployment git probing) still
+// delegate to scripts/fix.sh.
+import { recipe as panelRestartLoop } from "./recipes/panel_restart_loop";
+import { recipe as messengerQueueStuck } from "./recipes/messenger_queue_stuck";
+import { recipe as noProxyAccount } from "./recipes/no_proxy_account";
+import { recipe as legacyEnvShape } from "./recipes/legacy_env_shape";
+import { recipe as credentialDrift } from "./recipes/credential_drift";
 
 // Slugs implemented in operator/src/tasks/recipes/*.ts. Everything else
 // falls back to the delegating bash path below.
@@ -55,6 +69,11 @@ const PURE_TS_RECIPES = new Map<string, Recipe>([
     [brokenContainerDns.slug, brokenContainerDns],
     [haproxyBackendDns.slug, haproxyBackendDns],
     [missingTlsCert.slug, missingTlsCert],
+    [panelRestartLoop.slug, panelRestartLoop],
+    [messengerQueueStuck.slug, messengerQueueStuck],
+    [noProxyAccount.slug, noProxyAccount],
+    [legacyEnvShape.slug, legacyEnvShape],
+    [credentialDrift.slug, credentialDrift],
 ]);
 
 const RECIPE_SLUGS = [
