@@ -296,6 +296,10 @@ operator-test: ## run ct-operator unit tests (bun test)
 operator-typecheck: ## tsc --noEmit on operator/
 	cd operator && bun run typecheck
 
+.PHONY: operator-fetch
+operator-fetch: ## fetch the ct-operator binary matching the deployed release into operator/bin/ (idempotent; honors CT_SKIP_OPERATOR_FETCH=1)
+	./scripts/fetch_operator_binary.sh
+
 .PHONY: operator-keygen
 operator-keygen: ## generate ed25519 signing keypair for SHA256SUMS (writes operator/signing.key; prints pubkey)
 	@if [ -f operator/signing.key ]; then \
