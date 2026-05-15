@@ -8,6 +8,7 @@ import {
     kbToGb,
     classifyStackUp,
     checkNetwork,
+    classifyIpv6Preflight,
 } from "../src/util/preflight";
 
 // ---------- parseDfAvailableKb ----------
@@ -132,4 +133,76 @@ test("checkNetwork: every probe fails → both hosts listed", async () => {
     if (!r.ok) {
         expect(r.failure.summary).toContain("a b");
     }
+});
+
+// ---------- classifyIpv6Preflight ----------
+
+test("classifyIpv6Preflight: CT_SKIP_IPV6_AUTO_DISABLE=1 → skipped", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: true,
+        sysctlPresent: false,
+        hasGlobalIpv6: false,
+        canDetect: true,
+        fixResult: null,
+    });
+    expect(r.action).toBe("skipped");
+    expect(r.detail).toContain("CT_SKIP_IPV6_AUTO_DISABLE");
+});
+
+test("classifyIpv6Preflight: no `ip` binary → skipped (non-Linux host)", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: false,
+        hasGlobalIpv6: false,
+        canDetect: false,
+        fixResult: null,
+    });
+    expect(r.action).toBe("skipped");
+    expect(r.detail).toContain("ip");
+});
+
+test("classifyIpv6Preflight: existing sysctl override → ok (no-op)", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: true,
+        hasGlobalIpv6: false,
+        canDetect: true,
+        fixResult: null,
+    });
+    expect(r.action).toBe("ok");
+});
+
+test("classifyIpv6Preflight: working IPv6 globally → ok (no fix needed)", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: false,
+        hasGlobalIpv6: true,
+        canDetect: true,
+        fixResult: null,
+    });
+    expect(r.action).toBe("ok");
+});
+
+test("classifyIpv6Preflight: broken IPv6 + successful auto-fix → fixed", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: false,
+        hasGlobalIpv6: false,
+        canDetect: true,
+        fixResult: { ok: true },
+    });
+    expect(r.action).toBe("fixed");
+    expect(r.detail).toContain("IPv4");
+});
+
+test("classifyIpv6Preflight: broken IPv6 + failed auto-fix → warn with recovery hint", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: false,
+        hasGlobalIpv6: false,
+        canDetect: true,
+        fixResult: { ok: false, detail: "permission denied on sysctl.d" },
+    });
+    expect(r.action).toBe("warn");
+    expect(r.detail).toContain("./ct fix --auto");
 });

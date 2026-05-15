@@ -463,8 +463,19 @@ async function infoMessengerDepth(c: CheckCtx): Promise<CheckLine> {
     if (!pw) {
         return { group: G_INFO, label: "Msgr depth", severity: "info", detail: "skipped (REDIS_PASSWORD unset in .env)" };
     }
+    // v0.1.14 hardened against the v0.1.12 bug class. Pre-fix the
+    // password was interpolated INTO a `bash -c "..."` quoted string
+    // (`-e REDISCLI_AUTH=${pw}`). Bun shell-escaped it as a single
+    // arg, but bash then re-parsed the resulting command line; a
+    // password containing `$`, backtick, or `"` would corrupt
+    // tokenisation. Now `docker compose exec -e REDISCLI_AUTH`
+    // takes no value — it imports REDISCLI_AUTH from the calling
+    // shell's env, which Bun's $.env() sets cleanly. The secret
+    // never appears in argv.
     const r = await capture(
-        $`bash -c "docker compose exec -T -e REDISCLI_AUTH=${pw} redis redis-cli XLEN cool_tunnel:messenger 2>/dev/null"`,
+        $`docker compose exec -T -e REDISCLI_AUTH redis redis-cli XLEN cool_tunnel:messenger`
+            .env({ ...process.env, REDISCLI_AUTH: pw })
+            .quiet(),
     );
     const depth = r.ok && r.stdout.trim() ? r.stdout.trim() : "?";
     return { group: G_INFO, label: "Msgr depth", severity: "info", detail: `${depth} (cool_tunnel:messenger stream)` };

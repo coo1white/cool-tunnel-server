@@ -32,7 +32,7 @@ import { die, makeTerm, ANSI } from "./src/util/term";
 import { dieWithDiag, type DiagFailure } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
-import { checkNetwork, checkDiskSpace, checkStackUp } from "./src/util/preflight";
+import { checkNetwork, checkDiskSpace, checkStackUp, checkIpv6Routing } from "./src/util/preflight";
 import { migrateEnv } from "./src/util/env-migrate";
 import { runComponentCheckStrict } from "./src/util/component-check";
 import { promptChoice, promptYn } from "./src/util/prompt";
@@ -366,6 +366,20 @@ export async function runUpdate(): Promise<number> {
     if (!stack.ok) dieOnFailure(stack.failure);
     else if (stack.missing.length > 0) warn(stack.summary);
     else ok(stack.summary);
+
+    // v0.1.14: IPv6 broken-routing auto-disable. The v0.1.9 install.sh
+    // and bootstrap.sh both run this check on first install, but
+    // update.sh / update.ts did not — so a Vultr/RackNerd box whose
+    // docker daemon.json got re-enabled for IPv6 (kernel update,
+    // provider reboot, manual /etc/docker mucking) would hit the
+    // exact "static.rust-lang.org Network unreachable" wall on the
+    // next Rust rebuild, with no auto-recovery. checkIpv6Routing()
+    // mirrors the install-time logic: detect missing IPv6 route +
+    // missing sysctl override, write the sysctl + daemon.json, then
+    // restart docker. Skippable via CT_SKIP_IPV6_AUTO_DISABLE=1.
+    const ipv6 = await checkIpv6Routing();
+    if (ipv6.action === "warn") warn(ipv6.detail);
+    else ok(ipv6.detail);
 
     await preflightCleanTree();
 
