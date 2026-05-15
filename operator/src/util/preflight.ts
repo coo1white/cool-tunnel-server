@@ -236,3 +236,106 @@ export async function checkStackUp(services: readonly string[]): Promise<StackUp
     );
     return classifyStackUp(services, running);
 }
+
+// ---------- preflight_ipv6_routing ----------
+
+export interface Ipv6PreflightResult {
+    readonly action: "skipped" | "ok" | "fixed" | "warn";
+    readonly detail: string;
+}
+
+// Pure: classify the outcome of the detect/fix steps. Exported so
+// tests can drive every branch without shelling out.
+export function classifyIpv6Preflight(input: {
+    readonly skipEnv: boolean;
+    readonly sysctlPresent: boolean;
+    readonly hasGlobalIpv6: boolean;
+    readonly canDetect: boolean;
+    readonly fixResult: { ok: boolean; detail?: string } | null;
+}): Ipv6PreflightResult {
+    if (input.skipEnv) {
+        return { action: "skipped", detail: "CT_SKIP_IPV6_AUTO_DISABLE=1" };
+    }
+    if (!input.canDetect) {
+        return { action: "skipped", detail: "`ip` not on PATH (non-Linux host?)" };
+    }
+    if (input.sysctlPresent || input.hasGlobalIpv6) {
+        return { action: "ok", detail: "IPv6 routing OK (or already disabled)" };
+    }
+    if (!input.fixResult) {
+        return { action: "warn", detail: "IPv6 broken but auto-fix not attempted" };
+    }
+    if (input.fixResult.ok) {
+        return {
+            action: "fixed",
+            detail: "IPv6 disabled at sysctl + docker daemon (Rust build will use IPv4)",
+        };
+    }
+    return {
+        action: "warn",
+        detail: `IPv6 auto-fix failed (${input.fixResult.detail ?? "unknown"}); Rust build may fail. Retry with: ./ct fix --auto`,
+    };
+}
+
+// Pre-flight equivalent of scripts/lib.sh::disable_ipv6_if_broken,
+// invoked by `./ct update`. The matching `ipv6_broken_routing` fix
+// recipe (used by `./ct fix`) covers the same case post-incident;
+// this helper is the BEFORE-the-rust-build version that prevents
+// the failure that ate ~30 minutes on a Vultr deploy 2026-05-15.
+//
+// Detection mirrors the recipe (no global IPv6 + no sysctl override
+// already in place). The fix path delegates to the recipe so the
+// two stay in sync.
+export async function checkIpv6Routing(): Promise<Ipv6PreflightResult> {
+    const skipEnv = process.env["CT_SKIP_IPV6_AUTO_DISABLE"] === "1";
+    if (skipEnv) {
+        return classifyIpv6Preflight({
+            skipEnv,
+            sysctlPresent: false,
+            hasGlobalIpv6: false,
+            canDetect: false,
+            fixResult: null,
+        });
+    }
+
+    const sysctlPresent = await Bun.file("/etc/sysctl.d/99-disable-ipv6.conf").exists();
+    if (sysctlPresent) {
+        return classifyIpv6Preflight({
+            skipEnv: false,
+            sysctlPresent: true,
+            hasGlobalIpv6: false,
+            canDetect: true,
+            fixResult: null,
+        });
+    }
+
+    // Detect via the recipe (single source of truth).
+    const { recipe } = await import("../tasks/recipes/ipv6_broken_routing");
+    const minimalCtx = {
+        cwd: process.cwd(),
+        env: process.env as Record<string, string>,
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+        json: false,
+        noBridge: true,
+        interactive: false,
+    };
+    const broken = await recipe.detect(minimalCtx);
+    if (!broken) {
+        return classifyIpv6Preflight({
+            skipEnv: false,
+            sysctlPresent: false,
+            hasGlobalIpv6: true,
+            canDetect: true,
+            fixResult: null,
+        });
+    }
+
+    const fixResult = await recipe.fix(minimalCtx);
+    return classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: false,
+        hasGlobalIpv6: false,
+        canDetect: true,
+        fixResult,
+    });
+}

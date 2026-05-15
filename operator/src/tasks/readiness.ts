@@ -118,13 +118,25 @@ const CHECKS: ReadinessCheck[] = [
         async run({ env }) {
             const pw = env["REDIS_PASSWORD"];
             if (!pw) return { ok: false, detail: "REDIS_PASSWORD unset" };
+            // v0.1.14 hardened against the v0.1.12 bug class. Pre-fix the
+            // password was concatenated into a 3-layer escape (Bun \$ →
+            // bash -c → docker compose exec sh -c '…json with \\\"…\\\"').
+            // A password containing `$`, backtick, or `"` would break
+            // tokenisation. `docker compose exec -e REDISCLI_AUTH` (no
+            // value) imports the var from Bun's env() — the secret
+            // never appears in argv. The `redis-cli` invocation runs
+            // directly (no nested `sh -c`) so the JSON-string single-
+            // quoting drops a layer of escape too.
+            const payload = JSON.stringify({ kind: "resync" });
             const publish = await capture(
-                $`bash -c "docker compose exec -T -e REDISCLI_AUTH=${pw} panel sh -c 'redis-cli -h redis --no-auth-warning publish cool_tunnel:revocations \"{\\\"kind\\\":\\\"resync\\\"}\" >/dev/null'"`,
+                $`docker compose exec -T -e REDISCLI_AUTH panel redis-cli -h redis --no-auth-warning publish cool_tunnel:revocations ${payload}`
+                    .env({ ...process.env, REDISCLI_AUTH: pw })
+                    .quiet(),
             );
             if (!publish.ok) return { ok: false, detail: "Could not publish to Redis" };
             await new Promise((r) => setTimeout(r, 3000));
             const logs = await capture(
-                $`bash -c "docker compose logs --since=5s panel 2>/dev/null"`,
+                $`docker compose logs --since=5s panel`.quiet(),
             );
             return /sing-?box reload(ed)?|caddy reloaded|revocation received/i.test(logs.stdout)
                 ? { ok: true, detail: "Redis bridge alive (daemon ack'd a resync)" }
