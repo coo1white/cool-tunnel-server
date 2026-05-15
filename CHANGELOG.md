@@ -22,6 +22,71 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.9] — 2026-05-15 — Foolproof first-deploy: sing-box DoH bootstrap + cheap-VPS IPv6 ban + ct-caddy zombie cleanup
+
+Three deployment-killers found on a real v0.1.7 first-deploy that
+ate ~6 hours of operator time. All three were project-level bugs
+that no amount of operator skill could route around without
+source-reading.
+
+### Fixed
+
+  **`sing-box/config.json.tpl` had no bootstrap DNS resolver.**
+  The DB migration ships the DoH default as
+  `https://dns.alidns.com/dns-query` (hostname-form, chosen for
+  GFW reachability — see `docs/going-to-china.md`). sing-box 1.13
+  refuses hostname-form DNS servers without a per-server
+  `domain_resolver` to bootstrap from. Every fresh deploy
+  crash-looped on:
+
+  ```
+  FATAL: create service: initialize DNS server[0]:
+         missing domain resolver for domain server address
+  ```
+
+  Fixed by adding an IP-based bootstrap entry (`223.5.5.5` — AliDNS
+  IP, reachable both inside and outside the GFW) and binding the
+  doh server's `domain_resolver: "bootstrap"` on the server entry
+  itself (Dial Fields schema — the `dns` block has no top-level
+  default-resolver field in sing-box 1.13). Any value of
+  `{{ .DohServer }}` — IP-form or hostname-form — now renders
+  to a config sing-box accepts without operator intervention.
+
+  **`scripts/install.sh` step 12 didn't clean up stuck `ct-caddy`
+  containers.** A failed-then-retried install leaves `ct-caddy` in
+  `Created` state. Docker reserves host port 80 at CREATE time —
+  not at START — so every subsequent `compose up -d caddy` fails
+  with `bind 0.0.0.0:80: address already in use`, with `ss -tlnp`
+  showing nothing actually listening. Operators reach for
+  `iptables -F` / reboot / blame the network stack and burn hours.
+  install.sh now `docker rm -f ct-caddy` before `compose up -d
+  caddy` when the existing container is in
+  Created / Exited / Dead state. Surgical: a Running ct-caddy is
+  untouched.
+
+  **Cheap-VPS broken IPv6 routing.** Vultr / RackNerd / similar
+  cheap-VPS images advertise IPv6 in the kernel but have no
+  working global IPv6 route. Docker buildkit prefers IPv6 for
+  outbound HTTPS, then dies on `static.rust-lang.org` during the
+  Rust build step with `Network unreachable (os error 101)`.
+  Detected via `ip -6 addr show scope global` being empty.
+  `scripts/bootstrap.sh` and `scripts/install.sh::Pre-flight`
+  now disable IPv6 at the sysctl + docker daemon layers when the
+  detection fires. Idempotent; skippable via
+  `CT_SKIP_IPV6_AUTO_DISABLE=1` for operators whose IPv6 actually
+  works.
+
+### Added
+
+  `scripts/lib.sh::disable_ipv6_if_broken` — shared helper used by
+  both `bootstrap.sh` and `install.sh` pre-flight steps.
+
+  `scripts/lib.sh::sudo_if_needed` — wraps `sudo` for paths that
+  may run as root (bootstrap.sh) or non-root (install.sh from
+  inside `/opt/cool-tunnel-server`).
+
+---
+
 ## [0.1.8] — 2026-05-15 — Hot-fix: `caddy-acme` + `singbox-admin` check designs + operator/package.json version bump
 
 Second iteration of Phase-9 dogfood. After v0.1.6 fixed the
