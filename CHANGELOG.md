@@ -22,6 +22,129 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.11] — 2026-05-15 — Robustness audit landings: render safety, secret-leak guards, privacy hardening, defense-in-depth
+
+Output of a parallel-agent codebase audit (Laravel/Filament/FrankenPHP,
+Rust core, Bun adoption, privacy/redaction) run after v0.1.10. Six
+focused PRs covering the highest-impact findings. No behaviour change
+for healthy deploys; every fix moves a silent-failure mode into a
+visible / actionable one.
+
+### Fixed
+
+  **Render safety: JSON-validate before write + last-known-good
+  preservation (#110).** `singbox::render` now parse-validates the
+  rendered body with `serde_json::from_str` before the atomic_write,
+  and copies the previous config to `<path>.bak` before replacing
+  it. Catches malformed templates at O(µs) instead of letting them
+  replace a working config. The `.bak` is what would have unstuck
+  the 2026-05-15 hostname-form DoH crash-loop in seconds
+  (`mv config.json.bak config.json && docker compose restart
+  sing-box`) instead of an hour of `sed` patches.
+
+  **Daemon render+validate+lock as one atomic wire dispatch (#111).**
+  The `RenderCaddyfile` wire handler now runs `singbox::render` →
+  `singbox::validate` → `credentials::assert_locked` as one
+  transaction. Closes the post-render gap where the daemon Ok-ed a
+  config that was either semantically broken or already drifted from
+  the live DB, and only the subsequent `ReloadCaddy` surfaced the
+  failure — by which time the panel had already told the operator
+  "Reload queued" with no warning.
+
+  **Narrow `\Throwable` catch in panel generators (#112).** The
+  thin `SingBoxConfigGenerator` / `CaddyfileGenerator` shell-out
+  wrappers caught `\Throwable` and returned null on any failure,
+  treating PHP code defects (TypeError, undefined-method,
+  class-not-found) the same as transient runtime hiccups. Post-fix,
+  `\Error` re-throws so the surrounding save fails with a 500;
+  `\Exception` keeps the soft-fail return-null path. The v0.0.9
+  `renderCaddyfile()`-by-typo bug that lived for weeks would
+  surface immediately under the new boundary.
+
+  **FrankenPHP worker-mode DB connection recycle (#109).** Re-enabled
+  `DisconnectFromDatabases` in `OperationTerminated`. Without it,
+  the upstream MySQL `wait_timeout` (8h default) silently closed
+  connections out from under workers; the next request on that
+  worker hit "MySQL server has gone away" with no recovery. Per-
+  request reconnect cost is negligible on a 1 vCPU admin panel.
+
+  **Panel reload-transport pre-flight (#110).** `ServerConfigPage::save`
+  now pings Redis after the row commits and renders a persistent
+  warning notification when Redis is unreachable, replacing the
+  unconditional "Reload queued" success banner. Also fixes the
+  notification's hint pointing operators at a log key
+  (`serverconfig.reload.job_failed`) that doesn't exist anywhere in
+  the codebase; the actual key is `serverconfig.reload.dispatch_failed`.
+
+### Security
+
+  **Plaintext-password `Debug` redacted on `CredentialTuple` and
+  `ProxyAccount` (#109).** Auto-derived `Debug` printed passwords
+  inline; a future `dbg!()` or panic message would have leaked
+  cleartext to stderr. Replaced with hand-written impls that
+  redact password / password_hash / cleartext_password while
+  keeping username visible for operator drift-debugging. Also
+  dropped the (unused) `Serialize` derive from `CredentialTuple`
+  since it never crosses a wire or persistence boundary.
+
+  **Usernames dropped from subscription-fallthrough logs (#109).**
+  `Log::warning('subscription.fallthrough.account_disabled')` and
+  `Log::critical('subscription.fallthrough.cleartext_decrypt_failed')`
+  no longer carry the `username` field. `account_id` is sufficient
+  for operator DB-lookup, and the project's `CONTRIBUTING.md`
+  privacy policy is explicit: usernames never get logged.
+
+  **Redis password no longer in `docker inspect` Cmd[] (#114).**
+  Pre-fix, `command: ["redis-server", "--requirepass",
+  "${REDIS_PASSWORD}"]` baked the resolved plaintext into the
+  container's command array — readable by anyone with docker
+  socket access, plus `/proc/1/cmdline` inside the container. Now
+  the password reaches redis-server via stdin (`redis-server -`,
+  documented stdin-config mode); argv contains nothing sensitive,
+  and an empty `$REDIS_PASSWORD` fails fast instead of silently
+  starting redis without auth.
+
+  **Explicit `->authorize()` on three custom Filament actions
+  (#113).** `regenerate_password`, `show_subscription_url`,
+  `activate` now declare `->authorize(fn (): bool =>
+  auth()->check())` instead of relying solely on the panel's auth
+  middleware. Defense-in-depth for a future multi-tenant policy or
+  routing refactor.
+
+### Changed
+
+  **`scripts/sbom.sh`: prefer `bunx` over `npm install -g` (#109).**
+  Drops the only `npm install -g` in the scripts tree. Falls back
+  to system `cdxgen` or `npx --yes` if Bun isn't on PATH.
+
+  **Generator constructors type-hint the interface (#112).** Both
+  `SingBoxConfigGenerator` and `CaddyfileGenerator` now type their
+  `$core` parameter as `CtServerCoreInterface` (the existing
+  interface already bound to the concrete in `AppServiceProvider`).
+  Required for the new test coverage — PHPUnit can't double the
+  `final` concrete class. Runtime DI graph unchanged.
+
+### Added
+
+  **`panel/tests/Unit/GeneratorErrorBoundaryTest.php` (#112).** 6
+  tests pinning the catch-narrowing contract for both generators:
+  `\RuntimeException` → soft-fail, `\Error` → re-throw, plus the
+  hash-return / null-return happy paths.
+
+  **4 new unit tests for sing-box render safety helpers (#110).**
+  Brings the Rust core test count from 132 to 136.
+
+### Operator note
+
+  No deployment migration is required. `./ct update` picks up the
+  changes; `docker compose up -d` rolls them in. The redis
+  container's command changed (now `sh -c <wrapper>` instead of
+  direct `redis-server`); the wrapper pre-flights an empty
+  `REDIS_PASSWORD` and refuses to start without auth — a
+  pre-existing bug fix as a side effect.
+
+---
+
 ## [0.1.10] — 2026-05-15 — Smarter `ct fix`: 4 new pure-TS recipes for the v0.1.7 debug-session classes + `--auto` mode
 
 v0.1.9 fixed the three deployment-killers at the source. v0.1.10
