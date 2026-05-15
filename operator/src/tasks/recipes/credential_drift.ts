@@ -4,18 +4,19 @@
 //
 // Detect: `ct-server-core guard credential-lock` exits non-zero,
 // meaning at least one of db / rendered / manifest / mac-config has
-// drifted. Fix: delegate to scripts/auto_sync.sh, which re-renders
-// sing-box config from current DB state, restarts sing-box, and
-// re-verifies the guard.
+// drifted. Fix: run the credential-sync audit + correct cycle
+// in-process (same logic the standalone `ct-operator auto-sync`
+// task uses).
 
 import type { Recipe } from "./types";
 import { $, capture, which } from "../../util/sh";
+import { runCredentialSync } from "../../util/credential-sync";
 
 const DESCRIBE = `The credential-lock guard reports NG: at least one of the four
 surfaces (db / rendered / manifest / mac-config) has drifted
 away from the others.
 
-Fix: delegates to auto_sync.sh — re-render sing-box config
+Fix: run the credential-sync cycle — re-render sing-box config
 from current DB state, restart sing-box, re-verify the guard.`;
 
 async function guardPasses(): Promise<boolean> {
@@ -35,14 +36,21 @@ export const recipe: Recipe = {
     describe: async () => DESCRIBE,
     detect: detectDrift,
     async fix() {
-        const r = await capture($`./scripts/auto_sync.sh`);
-        if (!r.ok) {
-            return {
-                ok: false,
-                detail: r.stderr.split("\n")[0] || `auto_sync.sh exited ${r.code}`,
-            };
-        }
-        return { ok: true };
+        const r = await runCredentialSync({
+            logger: {
+                // The fix walker already prints its own framing
+                // ("[fix] credential_drift") and operators don't
+                // need the timestamped auto-sync log lines here —
+                // route them to stderr where they're available if
+                // the operator wants to look but don't clutter the
+                // walker's stdout.
+                info: (line) => process.stderr.write(line + "\n"),
+                err: (line) => process.stderr.write(line + "\n"),
+                raw: (text) => process.stderr.write(text + "\n"),
+            },
+        });
+        if (r.ok) return { ok: true };
+        return { ok: false, detail: r.detail ?? r.outcome };
     },
     async verify() {
         return await guardPasses();

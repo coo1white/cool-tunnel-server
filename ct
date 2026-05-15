@@ -287,7 +287,7 @@ case "$cmd" in
     readiness)    dispatch_via_operator readiness ./scripts/late-night-comeback.sh "$@" ;;
     ballast)      dispatch_via_operator ballast   ""                                "$@" ;;
     render)       render_subcommand "$@" ;;
-    auto-sync)    exec ./scripts/auto_sync.sh           "$@" ;;
+    auto-sync)    dispatch_via_operator auto-sync ./scripts/auto_sync.sh "$@" ;;
     auto-update)  auto_update_subcommand "$@" ;;
     status)       exec make status ;;
     logs)         exec make logs ;;
