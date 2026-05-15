@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# .gitleaks.toml — Cool Tunnel Server gitleaks overlay.
+#
+# `extend.useDefault = true` keeps every detector from the bundled
+# gitleaks 8.x config active. This file ONLY adds a narrow allowlist
+# for synthetic test fixtures the project ships intentionally.
+#
+# When adding entries here: prefer exact-string regexes over file-
+# globbed allowlists so the rule keeps protecting the rest of the
+# file from real secrets that happen to land near a fixture.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic test fixtures designed to exercise our own redaction / parser code."
+regexes = [
+  # operator/tests/bridge.test.ts: synthetic JWT used to assert that
+  # bridge.ts::redact() emits the [jwt] marker for free-standing
+  # JWT-shaped strings. This is the canonical HS256 example from
+  # RFC 7519 / jwt.io documentation, signed with the literal key
+  # "your-256-bit-secret" — not a real credential.
+  '''eyJhbGciOiJIUzI1NiIs\.eyJzdWIiOiIxMjM0NSJ9\.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c''',
+]
