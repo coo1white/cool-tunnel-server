@@ -10,8 +10,7 @@
 // Stages preserved from the bash original:
 //   1. acquireOpLock (per-project flock)
 //   2. preflight: network, disk space, stack-up, clean tree
-//      (non-interactive: dirty tree dies — bash fallback offers
-//      the interactive stash/discard/abort prompt)
+//      (TTY: interactive stash/discard/abort; non-TTY: dies)
 //   3. git pull --ff-only
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
 //   5. compose build core-builder (Rust)
@@ -36,6 +35,7 @@ import { waitFor } from "./src/util/wait";
 import { checkNetwork, checkDiskSpace, checkStackUp } from "./src/util/preflight";
 import { migrateEnv } from "./src/util/env-migrate";
 import { runComponentCheckStrict } from "./src/util/component-check";
+import { promptChoice, promptYn } from "./src/util/prompt";
 
 const { step, ok, warn } = makeTerm();
 
@@ -50,11 +50,6 @@ async function preflightCleanTree(): Promise<void> {
         ok("working tree clean");
         return;
     }
-    // Non-interactive: print stat + preview, then die with diag.
-    // The interactive stash/discard/abort prompt only exists in
-    // the bash fallback (scripts/update.sh); operators on the
-    // operator-binary path either commit/stash first or invoke
-    // the bash version.
     process.stderr.write(`\n  ${ANSI.yellow}!${ANSI.reset} Working tree has uncommitted changes:\n\n`);
     const stat = await capture($`git diff --stat HEAD`);
     if (stat.ok) for (const l of stat.stdout.split("\n")) if (l) process.stderr.write(`    ${l}\n`);
@@ -62,22 +57,83 @@ async function preflightCleanTree(): Promise<void> {
     const diff = await capture($`git diff HEAD`);
     if (diff.ok) for (const l of diff.stdout.split("\n").slice(0, 30)) process.stderr.write(`    ${l}\n`);
     process.stderr.write(`\n`);
-    dieWithDiag(
-        "uncommitted changes block git pull",
-        `Operator-binary update path is non-interactive. To preserve
-the edits and proceed, run on the host:
 
+    // Interactive prompt (matches scripts/lib.sh::preflight_clean_tree).
+    // Non-TTY (cron, CI) → dies with a diagnostic that points at
+    // the manual recovery commands; same shape as before.
+    if (!process.stdin.isTTY) {
+        dieWithDiag(
+            "uncommitted changes block git pull",
+            `Running non-interactively, so this script will not auto-decide.
+
+To preserve the edits and proceed:
   git stash push -u -m "preflight-$(date -u +%Y%m%dT%H%M%SZ)"
   ./ct update
 
 To discard the edits and proceed:
   git checkout -- .
-  ./ct update
+  ./ct update`,
+        );
+    }
 
-For the legacy interactive prompt (stash / discard / abort),
-fall through to the bash version:
-  ./scripts/update.sh`,
-    );
+    for (;;) {
+        const choice = await promptChoice(
+            [
+                "  How do you want to proceed?",
+                "    [s] stash with timestamp label (preserves edits, recoverable via 'git stash pop')",
+                "    [d] discard local edits (NOT recoverable)",
+                "    [a] abort — I'll handle it manually",
+            ],
+            "  choice [s/d/a]: ",
+            ["s", "d", "a"],
+            "a",
+        );
+        if (choice === "s") {
+            const label = `preflight-${new Date().toISOString().replace(/[-:.]/g, "").replace(/\..*/, "").replace("T", "T")}Z`;
+            const stash = await capture($`git stash push -u -m ${label}`);
+            if (stash.ok) {
+                ok(`stashed as '${label}' (recover with: git stash pop)`);
+                return;
+            }
+            dieWithDiag(
+                "git stash failed",
+                `git refused to stash — usually means the index is in a
+broken state. Inspect with:
+  git status
+  git stash list
+If you see an in-progress merge / rebase / cherry-pick:
+  git merge --abort  (or rebase --abort, etc.)`,
+            );
+        }
+        if (choice === "d") {
+            if (
+                await promptYn(
+                    "Discard ALL uncommitted changes to TRACKED files? (untracked files preserved)",
+                    "n",
+                )
+            ) {
+                const checkout = await capture($`git checkout -- .`);
+                if (!checkout.ok) {
+                    dieWithDiag(
+                        "git checkout -- . failed",
+                        checkout.stderr.split("\n")[0] ?? "",
+                    );
+                }
+                ok("tracked-file changes reverted (untracked files left alone)");
+                return;
+            }
+            // user declined the second confirmation; re-prompt the
+            // top-level menu.
+            continue;
+        }
+        // 'a' (abort) — or fallback when prompt returned null.
+        dieWithDiag(
+            "aborted on uncommitted changes",
+            `You chose to handle this manually. The diff is shown above.
+When ready to retry, run:
+  ./ct update`,
+        );
+    }
 }
 
 async function gitPullFfOnly(): Promise<void> {
