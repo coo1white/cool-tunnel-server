@@ -277,6 +277,68 @@ require_docker() {
                "Install with: apt install -y docker-compose-plugin"
 }
 
+# disable_ipv6_if_broken
+#
+# v0.1.9: many cheap VPSes (Vultr, RackNerd, …) advertise IPv6 in the
+# kernel but have no working global routing. Docker buildkit prefers
+# IPv6 for outbound DNS / HTTPS, then dies on `static.rust-lang.org`
+# during the Rust build step with `Network unreachable`. We detect
+# this by checking for any global-scope IPv6 address; absence means
+# the host has no usable IPv6. In that case we permanently disable
+# it at sysctl + docker daemon layers.
+#
+# Idempotent — safe to call from bootstrap.sh and install.sh; second
+# invocation is a no-op because the config files already exist.
+# Honours CT_SKIP_IPV6_AUTO_DISABLE=1 for operators who explicitly
+# want to keep IPv6 enabled despite a missing global address.
+disable_ipv6_if_broken() {
+    [[ "${CT_SKIP_IPV6_AUTO_DISABLE:-}" == "1" ]] && return 0
+    # Already disabled? Nothing to do.
+    if [[ -f /etc/sysctl.d/99-disable-ipv6.conf ]]; then
+        return 0
+    fi
+    # Has at least one globally-routable IPv6 address? Keep IPv6 enabled.
+    if ip -6 addr show scope global 2>/dev/null | grep -q 'inet6'; then
+        return 0
+    fi
+    # No working IPv6 — disable to prevent buildkit / rustup failures.
+    warn "no global IPv6 address detected → disabling IPv6 to keep docker buildkit"
+    warn "from preferring it (Vultr/RackNerd-class cheap-VPS protection)"
+    sudo_if_needed tee /etc/sysctl.d/99-disable-ipv6.conf >/dev/null <<'EOF'
+# v0.1.9 — auto-written by scripts/lib.sh::disable_ipv6_if_broken
+# because the host has no global IPv6 address. Remove to re-enable
+# (and also delete the "ipv6" key in /etc/docker/daemon.json).
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+    sudo_if_needed sysctl --system >/dev/null 2>&1 || true
+    sudo_if_needed mkdir -p /etc/docker
+    if [[ ! -f /etc/docker/daemon.json ]]; then
+        sudo_if_needed tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "ipv6": false,
+  "dns": ["1.1.1.1", "8.8.8.8"]
+}
+EOF
+        sudo_if_needed systemctl restart docker >/dev/null 2>&1 || true
+    else
+        warn "/etc/docker/daemon.json exists; not modifying. Manually add:"
+        warn '    "ipv6": false, "dns": ["1.1.1.1","8.8.8.8"]'
+    fi
+}
+
+# Helper: invoke `sudo` only if we're not already root, to keep both
+# bootstrap.sh (often run as root via curl|bash) and install.sh (run
+# from /opt/cool-tunnel-server) able to share this code path.
+sudo_if_needed() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 # compose <args>
 #
 # Wrapper so all compose calls go through one place — easier to add
