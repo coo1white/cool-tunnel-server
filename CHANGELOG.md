@@ -22,6 +22,44 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.17] — 2026-05-15 — UX hot-fix: stream BuildKit progress live in update's rebuild steps
+
+v0.1.13's port-everything-to-Bun batch wrapped the Rust + image
+builds in `capture()`, which calls `.quiet()` on Bun's shell to
+buffer stdout/stderr until subprocess exit. The pre-port
+`update.sh` let `docker buildx` stream BuildKit progress lines
+to the terminal in real time (`[+] Building 31.6s (17/23) ...`).
+Post-port the same 60-180s build emitted ZERO output until
+completion — looking like the script was hung. Reported
+2026-05-15 on the v0.1.16 Vultr update where step 4 ("Rebuild
+ct-server-core (Rust)") sat with no output for ~3 minutes.
+
+### Fixed
+
+  New `runStreaming(p)` helper in `operator/src/util/sh.ts`. Same
+  nothrow semantics as `capture()` but skips `.quiet()`, so
+  stdout/stderr flow live to the operator's terminal. Returns
+  only `{ok, code}` — no captured strings; appropriate for the
+  build callers that fall through to a generic `dieWithDiag`
+  remediation hint anyway.
+
+  Switched 2 update.ts call sites:
+    rebuildCore     docker compose build core-builder (Rust)
+    rebuildImages   docker compose build sing-box panel haproxy
+
+  Other long-running captures (`docker compose up -d`, `php
+  artisan migrate`) keep `capture()` because their dieWithDiag
+  handlers reference `r.stderr`; they're also fast on the typical
+  re-update path (cached image swap + idempotent migrate =
+  seconds).
+
+### Operator note
+
+  UX-only. No correctness change. v0.1.16 deploys can wait for
+  v0.1.17 binary on next auto-fetch.
+
+---
+
 ## [0.1.16] — 2026-05-15 — Critical hot-fix: op-lock re-exec passed `/$bunfs` argv to lock-holding child
 
 Second `/$bunfs` bug from the v0.1.13 Bun-migration aftermath.
