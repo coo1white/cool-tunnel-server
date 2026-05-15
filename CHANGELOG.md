@@ -64,6 +64,28 @@ three layers of defense-in-depth.
   classifier; 14 unit tests covering happy / mismatch /
   unreadable / edge paths.
 
+### Fixed
+
+  **`ct update` post-swap component check failed on every binary
+  in v0.1.13–v0.1.17.** `operator/src/util/component-check.ts`
+  invoked `ct-server-core component check --manifests-dir <path>`,
+  but the Rust CLI flag is `--manifests <path>` (no `-dir`
+  suffix). Bun port typo — the two other call sites (doctor +
+  readiness) already had it right. Caught on the v0.1.18 Vultr
+  update.
+
+  **Spurious "another cool-tunnel operator script is already
+  running" after every failed task.** `op-lock.ts` checked
+  `result.status === 1` for `flock -n`'s lock-busy signal, but
+  flock by default PASSES THROUGH the child's exit code AND
+  exits 1 when lock-acquire fails — indistinguishable. Every
+  child task that died via `dieWithDiag()` (which exits 1)
+  triggered the parent to spuriously print the lock-busy
+  diagnostic AFTER the real failure surface. Switched to
+  `flock -n -E 75` (75 = EX_TEMPFAIL from sysexits.h) so
+  lock-busy has a distinct exit code; child failures pass
+  through cleanly.
+
 ### Operator note
 
   Today's bug, replayed under v0.1.18:

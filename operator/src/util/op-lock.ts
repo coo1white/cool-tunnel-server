@@ -76,6 +76,22 @@ export interface AcquireOpts {
     readonly markerName?: string;
 }
 
+// Distinguished exit code for "flock couldn't acquire the lock"
+// (the `-E` flag). Pre-this-fix the parent checked
+// `result.status === 1` for lock-busy, but flock's default
+// behaviour is to PASS THROUGH the child's exit code on success
+// AND exit 1 when -n's lock-acquire fails — making the two
+// indistinguishable. Every child task that died via dieWithDiag()
+// (which always exits 1) made the parent spuriously print
+// "another cool-tunnel operator script is already running"
+// AFTER the real failure diagnostic, confusing operators into
+// thinking they had a parallel-invocation problem. Reported
+// 2026-05-15 on the v0.1.18 Vultr update.
+//
+// 75 = EX_TEMPFAIL from sysexits.h — flock's own documentation
+// uses it in examples for the "lock busy" case.
+const LOCK_BUSY_EXIT_CODE = 75;
+
 export async function acquireOpLock(opts: AcquireOpts = {}): Promise<never> {
     const project = opts.project ?? (await composeProjectName());
     const lockPath = opts.lockPath ?? `/tmp/cool-tunnel-ops-${project}.lock`;
@@ -85,10 +101,17 @@ export async function acquireOpLock(opts: AcquireOpts = {}): Promise<never> {
     }
     const result = spawnSync(
         "flock",
-        ["-n", lockPath, process.execPath, ...resolveReExecArgs(process.argv)],
+        [
+            "-n",
+            "-E",
+            String(LOCK_BUSY_EXIT_CODE),
+            lockPath,
+            process.execPath,
+            ...resolveReExecArgs(process.argv),
+        ],
         { stdio: "inherit", env: { ...process.env, [marker]: "1" } },
     );
-    if (result.status === 1 && result.signal == null) {
+    if (result.status === LOCK_BUSY_EXIT_CODE && result.signal == null) {
         if (opts.softSkip) {
             process.stderr.write(
                 (opts.busyMessage ??
