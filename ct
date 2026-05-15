@@ -292,13 +292,7 @@ case "$cmd" in
     auto-update)  auto_update_subcommand "$@" ;;
     status)       exec make status ;;
     logs)         exec make logs ;;
-    help)
-        if [[ $# -eq 0 ]]; then
-            exec ./scripts/help.sh
-        else
-            exec ./scripts/help.sh "$@"
-        fi
-        ;;
+    help)         dispatch_via_operator help ./scripts/help.sh "$@" ;;
     version|--version|-V) show_version ;;
     -h|--help|"")
         show_help
