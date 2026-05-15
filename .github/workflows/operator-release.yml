@@ -4,8 +4,22 @@
 # Builds the operator/ Bun CLI for every supported target, generates
 # SHA256SUMS for the binaries, signs the manifest with the project's
 # offline ed25519 signing key, and uploads everything to the GitHub
-# release the workflow fires on (or, for manual dispatch, just leaves
-# the artifacts in the workflow run).
+# release matching the tag the workflow was invoked on.
+#
+# Upload routing is by ref, not by event:
+#   - ref is a tag (`refs/tags/v*`)  → attach to the existing release
+#                                       at that tag. This is the path
+#                                       for `release: published` AND
+#                                       for `workflow_dispatch --ref
+#                                       vX.Y.Z` (the recovery flow
+#                                       used 2026-05-15 after GitHub-
+#                                       hosted runner-queue starvation
+#                                       failed the original three
+#                                       release runs).
+#   - ref is NOT a tag (e.g. main)   → publish a 14-day workflow
+#                                       artifact instead. Useful when
+#                                       smoke-testing pipeline changes
+#                                       on a branch.
 #
 # Required secrets:
 #   CT_OPERATOR_SIGNING_KEY  PEM-encoded ed25519 private key. Generated
@@ -105,17 +119,18 @@ jobs:
             -rawin -in SHA256SUMS \
             -sigfile SHA256SUMS.sig
 
-      - name: Upload artifacts to release
-        if: github.event_name == 'release'
+      - name: Upload artifacts to release (tag ref)
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             operator/bin/ct-operator-*
             operator/bin/SHA256SUMS
             operator/bin/SHA256SUMS.sig
 
-      - name: Upload artifacts (workflow_dispatch)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload artifacts (non-tag ref — workflow artifact)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: ct-operator-release
