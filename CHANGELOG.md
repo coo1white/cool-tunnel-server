@@ -22,6 +22,59 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.6] — 2026-05-15 — Hot-fix: `ct ballast` primitives surfaced by the v0.1.4 live-VPS run
+
+First Phase-9 validation against v0.1.4 on a deployed VPS lit up
+every ballast check as WARN / FAIL — but most were false positives
+produced by a broken PATH-lookup primitive. Three real bugs found
+and fixed.
+
+### Fixed
+
+  **`util/sh.ts::which()` was always returning false.** It called
+  `command -v <bin>`, but `command` is a shell builtin — not a
+  binary on PATH — and `Bun.$` execs directly without a shell, so
+  the lookup failed for everything. Every "<tool> not on PATH"
+  warn (docker, nc, socat, cargo, redis-cli, …) on a v0.1.4
+  deploy was wrong. Replaced with `Bun.which()` — the proper
+  PATH-walking primitive — which is also synchronous and
+  subprocess-free.
+
+  **Path bugs in three ballast checks.** `sot-parity`,
+  `sqlx-cache`, and `ct-core-version` hard-coded `${ctx.cwd}/../`
+  prefixes that assumed cwd was `operator/`. On a deployed VPS
+  cwd is the repo root, so the `../` walked out of the repo
+  entirely. Replaced with a `tryPaths()` helper that searches
+  both `${cwd}/<rel>` and `${cwd}/../<rel>`.
+
+  **`ct-core-version` was reading the wrong Cargo.toml.** v0.1.4
+  pointed at `core/ct-server-core/Cargo.toml`, which uses
+  `version.workspace = true`; the actual version field lives in
+  the workspace root `core/Cargo.toml`. Re-pointed.
+
+  **`panel-octane-up` default port was 8000.** Host-side
+  FrankenPHP bind is `127.0.0.1:9000` (matches
+  `scripts/doctor.sh::check_up_endpoint`). Re-pointed and
+  switched the literal host from `localhost` to `127.0.0.1`.
+
+  **`redis-ping` didn't pass `REDISCLI_AUTH`.** Production Redis
+  has a password (`REDIS_PASSWORD` in `.env`); the bare
+  `redis-cli ping` failed with NOAUTH. Now reads from
+  `ctx.env` and passes via `REDISCLI_AUTH` env (project
+  canonical pattern — see `make secrets-argv`). Matches
+  `scripts/late-night-comeback.sh`'s discipline.
+
+### Changed
+
+  **`diag/capture.ts` loads `.env` before running collectors.**
+  Bridge-triggered ballast (incident path) previously saw only
+  `process.env`, so checks that depend on `DOMAIN` /
+  `PANEL_DOMAIN` / `REDIS_PASSWORD` degraded to WARN even when
+  those values existed in `.env`. Now consistent with direct
+  `ct ballast` invocation.
+
+---
+
 ## [0.1.4] — 2026-05-15 — `ct-operator` Bun CLI + AI incident bridge + signed self-update
 
 Three of the heavier operator scripts (`fix.sh` 1154 LOC,
