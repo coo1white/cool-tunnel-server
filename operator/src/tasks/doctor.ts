@@ -438,11 +438,24 @@ async function infoReleaseVersion(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function infoActiveUsers(_c: CheckCtx): Promise<CheckLine> {
+    // v0.1.12 unnested the shell layering. Pre-this-fix the snippet
+    // travelled through Bun's $ template → bash -c → tinker
+    // --execute's single-quoted argv → PHP, with eight-deep
+    // backslash escaping for the `\App\Models\ProxyAccount`
+    // namespace path. Reality on a live deploy: PHP received a
+    // string beginning with bare `\` and emitted
+    // `T_NS_SEPARATOR on line 1`. The `tr -d` then folded the
+    // multi-line PHP error onto the info banner. Passing the
+    // PHP snippet as a single argv arg lets Bun shell-escape it
+    // properly; PHP's tinker resolves `App\Models\ProxyAccount`
+    // in the global namespace just fine without a leading
+    // backslash.
+    const snippet = "echo App\\Models\\ProxyAccount::where('enabled', true)->count();";
     const r = await capture(
-        $`bash -c "docker compose exec -T panel php artisan tinker --execute 'echo \\\\App\\\\Models\\\\ProxyAccount::where(\\\"enabled\\\", true)->count();' 2>/dev/null | tr -d '[:space:]'"`,
+        $`docker compose exec -T panel php artisan tinker --execute=${snippet}`,
     );
-    const n = r.ok && r.stdout.trim() ? r.stdout.trim() : "?";
-    return { group: G_INFO, label: "Active users", severity: "info", detail: `${n} proxy accounts enabled` };
+    const n = r.ok ? r.stdout.replace(/\s+/g, "") : "?";
+    return { group: G_INFO, label: "Active users", severity: "info", detail: `${n || "?"} proxy accounts enabled` };
 }
 
 async function infoMessengerDepth(c: CheckCtx): Promise<CheckLine> {
