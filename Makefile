@@ -531,7 +531,7 @@ set-component-version: ## bump component version across compose + Dockerfile + m
 .PHONY: pin-images
 pin-images: ## resolve current docker base-image tags to digests; updates Dockerfiles in place
 	@if ! command -v docker >/dev/null; then echo 'docker not on PATH'; exit 1; fi
-	@./scripts/pin-images.sh
+	cd operator && bun run pin-images.ts
 
 .PHONY: sbom
 sbom: ## generate CycloneDX SBOMs for cargo + composer + docker
