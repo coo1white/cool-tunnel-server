@@ -14,6 +14,7 @@
 
 import { $ } from "bun";
 import { die, makeTerm } from "./src/util/term";
+import { ensureRepoRoot } from "./src/util/repo-root";
 
 const { step, ok, warn } = makeTerm();
 
@@ -123,10 +124,7 @@ async function main(): Promise<number> {
     if (!docker) {
         die("required command 'docker' is not on PATH", "Install per docs/installation-debian.md");
     }
-    // Resolve cwd to the repo root so relative Dockerfile paths
-    // work regardless of where the script is invoked from.
-    const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+    ensureRepoRoot(import.meta.url);
 
     for (const { file, image } of MAPPINGS) {
         await pin(file, image);
