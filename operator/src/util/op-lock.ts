@@ -15,6 +15,7 @@
 import { spawnSync } from "node:child_process";
 import { composeProjectName } from "./compose";
 import { die } from "./term";
+import { isBunFsUrl } from "./repo-root";
 
 // Re-exec the current process under `flock -n` and exit when the
 // child completes. Skip when the held-marker env var is already
@@ -24,6 +25,30 @@ import { die } from "./term";
 //   if (!process.env[LOCK_HELD_MARKER]) await acquireOpLock();
 //   // ... lock-protected work ...
 export const LOCK_HELD_MARKER = "CT_OPS_FLOCK_HELD";
+
+// Resolve the argv to re-pass to a flock-wrapped self-re-exec.
+//
+//   Dev (`bun run operator/update.ts update`):
+//     argv = [<bun-path>, "operator/update.ts", "update"]
+//     Re-exec needs ["operator/update.ts", "update"] — bun expects
+//     the script path first.
+//
+//   Compiled binary (`./ct update`):
+//     argv = [<binary-path>, "/$bunfs/root/<binary-name>", "update"]
+//     argv[1] is Bun's SYNTHETIC virtual-fs path to the embedded
+//     entry point; the binary's own dispatcher ignores it. Re-
+//     execing with that string as the first arg made the dispatcher
+//     in the lock-holding child interpret `/$bunfs/...` as a
+//     subcommand → `error: unknown command: /$bunfs/...`.
+//     Surfaced 2026-05-15 on the v0.1.15 Vultr deploy: `./ct
+//     update` died inside acquireOpLock with that exact message
+//     before any update work ran. Drop argv[1] in this mode.
+//
+// Exported for tests.
+export function resolveReExecArgs(argv: readonly string[]): readonly string[] {
+    const compiled = isBunFsUrl(argv[1] ?? "");
+    return compiled ? argv.slice(2) : argv.slice(1);
+}
 
 export interface AcquireOpts {
     // Override the project name (defaults to `composeProjectName()`).
@@ -60,7 +85,7 @@ export async function acquireOpLock(opts: AcquireOpts = {}): Promise<never> {
     }
     const result = spawnSync(
         "flock",
-        ["-n", lockPath, process.execPath, ...process.argv.slice(1)],
+        ["-n", lockPath, process.execPath, ...resolveReExecArgs(process.argv)],
         { stdio: "inherit", env: { ...process.env, [marker]: "1" } },
     );
     if (result.status === 1 && result.signal == null) {
