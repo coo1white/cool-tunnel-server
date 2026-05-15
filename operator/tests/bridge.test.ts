@@ -56,7 +56,7 @@ test("redact masks standalone JWT-shaped strings", () => {
     // When the JWT appears free-standing (not as `key=<jwt>`), the JWT
     // pattern emits [jwt]. In key=value position the generic rule wins
     // and emits [redacted] — also safe, just a different marker.
-    const jwt = "eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    const jwt = "eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // gitleaks:allow
     expect(redact(`free-form ${jwt} in body`)).toContain("[jwt]");
 });
 
