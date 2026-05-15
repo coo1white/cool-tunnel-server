@@ -22,6 +22,45 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.12] — 2026-05-15 — Hot-fix: doctor's caddy-acme + active-users checks (Bun shell-escape unnest)
+
+Two cosmetic ct-operator regressions caught on the first v0.1.11
+production deploy. Neither affected the running proxy (Components
+verified 12/12 OK in the same run); both surfaced as parse errors
+in the `./ct doctor` display where values were expected.
+
+### Fixed
+
+  **`caddy-acme` ballast check threw `expected a command or
+  assignment but got: "CmdSubstEnd"`.** The expiry probe used
+  bash arithmetic `$((7*86400))` inside a Bun \$ template literal.
+  Bun's parser saw `$((` and tried to read it as command
+  substitution `$(...)`, failing on the doubled paren. Fixed by
+  pre-computing `7 * 86400` in TypeScript and dropping the
+  redundant `bash -c "docker compose exec sh -c \"...\""` wrapper
+  — `docker compose exec` already runs in a shell.
+
+  **`Active users` info line displayed PHP parse error instead of
+  a count.** The snippet `\\\\App\\\\Models\\\\ProxyAccount`
+  travelled through 4 layers of escape: Bun \$ → bash -c → tinker
+  --execute single-quoted argv → PHP. The eight-deep backslash
+  escaping was meant to deliver `\App\Models\` but PHP received
+  bare `\`, emitted `T_NS_SEPARATOR`. `tr -d '[:space:]'` then
+  folded the multi-line PHP backtrace onto the info banner.
+  Fixed by passing the PHP snippet as a single Bun-escaped argv
+  arg (`--execute=${snippet}`) and dropping the leading
+  backslash on the namespace path — tinker's global scope
+  resolves `App\Models\ProxyAccount` without it.
+
+### Operator note
+
+  Both fixes are operator-binary only (`operator/src/diag/collectors/ballast.ts`
+  + `operator/src/tasks/doctor.ts`). Existing v0.1.11 deploys
+  pick up the new binary automatically on next `./ct update`
+  (step 15 — auto-fetch added in v0.1.7). No service downtime.
+
+---
+
 ## [0.1.11] — 2026-05-15 — Robustness audit landings: render safety, secret-leak guards, privacy hardening, defense-in-depth
 
 Output of a parallel-agent codebase audit (Laravel/Filament/FrankenPHP,
