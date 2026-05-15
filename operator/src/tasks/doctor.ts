@@ -10,6 +10,7 @@ import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
+import { collectBallast } from "../diag/collectors/ballast";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -27,6 +28,7 @@ const G_APP = "Application";
 const G_COMPOSE = "Compose stack";
 const G_RES = "Resources";
 const G_INFO = "Info (no PASS/FAIL contribution)";
+const G_BALLAST = "Ballast Stones (critical invariants)";
 const G_ERR = "Errors";
 
 const isTty = process.stdout.isTTY === true;
@@ -509,7 +511,30 @@ export class DoctorTask implements Task {
             }
         }
 
-        for (const g of [G_PREREQ, G_STRUCT, G_APP, G_COMPOSE, G_RES, G_INFO, G_ERR]) {
+        // Ballast stones — same collector used by the incident bridge,
+        // surfaced here so a clean doctor pass also asserts the
+        // critical-invariant set. Listed as its own group so operators
+        // can see at a glance whether the must-pass items are green.
+        try {
+            const ballast = await collectBallast({ ...ctx, env });
+            for (const b of ballast.checks) {
+                const detail = `${b.title}${b.detail ? ` — ${b.detail}` : ""}`;
+                const line: CheckLine = { group: G_BALLAST, label: b.slug, severity: b.status, detail };
+                if (!grouped.has(line.group)) grouped.set(line.group, []);
+                grouped.get(line.group)!.push(line);
+                if (b.status === "pass") pass++;
+                else if (b.status === "warn") warn++;
+                else fail++;
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const line: CheckLine = { group: G_ERR, label: "ballast", severity: "fail", detail: `collector threw: ${msg}` };
+            if (!grouped.has(line.group)) grouped.set(line.group, []);
+            grouped.get(line.group)!.push(line);
+            fail++;
+        }
+
+        for (const g of [G_PREREQ, G_STRUCT, G_APP, G_COMPOSE, G_RES, G_BALLAST, G_INFO, G_ERR]) {
             const lines = grouped.get(g);
             if (!lines || lines.length === 0) continue;
             process.stdout.write(`\n${BOLD}${g}${RESET}\n`);
