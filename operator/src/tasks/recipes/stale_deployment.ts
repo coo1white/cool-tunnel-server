@@ -13,45 +13,13 @@
 // stay pinned.
 
 import type { Recipe } from "./types";
-import { $, capture, which } from "../../util/sh";
-
-const VERSION_FILE = "panel/config/cool-tunnel.php";
-
-interface VersionState {
-    latest: string;
-    current: string;
-}
-
-async function probeVersions(): Promise<VersionState | null> {
-    if (!(await which("git"))) return null;
-    const inWt = await capture($`git rev-parse --is-inside-work-tree`);
-    if (!inWt.ok) return null;
-
-    // Fetch tags + main quietly. Treat network blips as "no upgrade
-    // available" — the recipe should not flap on a transient outage.
-    const fetched = await capture($`git fetch --quiet --tags origin`);
-    if (!fetched.ok) return null;
-
-    const describe = await capture($`git describe --tags --abbrev=0 origin/main`);
-    const latest = describe.ok ? describe.stdout.trim() : "";
-    if (!latest) return null;
-
-    const f = Bun.file(VERSION_FILE);
-    if (!(await f.exists())) return null;
-    const phpText = await f.text();
-    // Match the canonical PHP config line:  'version' => '0.1.14',
-    const m = phpText.match(/^\s*'version'\s*=>\s*'([0-9.]+)'/m);
-    const current = m ? m[1]! : "";
-    if (!current) return null;
-
-    return { latest, current };
-}
+import { $, capture } from "../../util/sh";
+import { probeVersions, upgradeAvailable, type VersionState } from "../../util/release";
 
 async function detectStale(): Promise<boolean> {
     const v = await probeVersions();
     if (!v) return false;
-    // Latest is like 'v0.1.13'; current is like '0.1.13'. Strip 'v'.
-    return v.latest.replace(/^v/, "") !== v.current;
+    return upgradeAvailable(v);
 }
 
 function describeText(v: VersionState | null): string {
