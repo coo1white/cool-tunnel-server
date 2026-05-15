@@ -77,7 +77,7 @@ verify-sot-vps: ## VPS-side SoT parity check via docker compose exec (v0.0.56)
 # `make ci` so drift surfaces on every PR.
 .PHONY: verify-supervisord
 verify-supervisord: ## supervisord.conf lifecycle-invariants drift detector (round-22)
-	./scripts/verify_supervisord.sh
+	cd operator && bun run verify-supervisord.ts
 
 # v0.0.79 robustness-review fix: enforce backup.sh's v0.0.17
 # MYSQL_PWD / REDISCLI_AUTH discipline across every script that
