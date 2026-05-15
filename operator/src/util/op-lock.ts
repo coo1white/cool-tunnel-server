@@ -25,13 +25,29 @@ import { die } from "./term";
 //   // ... lock-protected work ...
 export const LOCK_HELD_MARKER = "CT_OPS_FLOCK_HELD";
 
-export async function acquireOpLock(opts?: {
+export interface AcquireOpts {
     // Override the project name (defaults to `composeProjectName()`).
     // Tests pin this to avoid spawning docker.
     readonly project?: string;
-}): Promise<never> {
-    const project = opts?.project ?? (await composeProjectName());
-    const lockPath = `/tmp/cool-tunnel-ops-${project}.lock`;
+    // Override the lock path (defaults to
+    // `/tmp/cool-tunnel-ops-${project}.lock`). Auto-update uses a
+    // dedicated path so a scheduled run doesn't block on a backup /
+    // install / restore — and vice versa.
+    readonly lockPath?: string;
+    // Override the "already held" die message. Useful when the
+    // caller wants a context-specific hint (e.g. "another
+    // auto-update is already running — skipping this tick").
+    readonly busyMessage?: string;
+    readonly busyHint?: string;
+    // If the lock is busy and `softSkip` is true, exit 0 instead of
+    // calling die(). Used by cron-triggered auto-update so missing
+    // the lock isn't logged as an error.
+    readonly softSkip?: boolean;
+}
+
+export async function acquireOpLock(opts: AcquireOpts = {}): Promise<never> {
+    const project = opts.project ?? (await composeProjectName());
+    const lockPath = opts.lockPath ?? `/tmp/cool-tunnel-ops-${project}.lock`;
     if (!Bun.which("flock")) {
         die("required command 'flock' is not on PATH", "apt install -y util-linux");
     }
@@ -40,12 +56,19 @@ export async function acquireOpLock(opts?: {
         ["-n", lockPath, process.execPath, ...process.argv.slice(1)],
         { stdio: "inherit", env: { ...process.env, [LOCK_HELD_MARKER]: "1" } },
     );
-    // flock exits 1 on EWOULDBLOCK. The bash original `die`s with
-    // an "already running" message in that case; pass through.
     if (result.status === 1 && result.signal == null) {
+        if (opts.softSkip) {
+            process.stderr.write(
+                (opts.busyMessage ??
+                    `another cool-tunnel operator script is already running for project '${project}'`) +
+                    "\n",
+            );
+            process.exit(0);
+        }
         die(
-            `another cool-tunnel operator script is already running for project '${project}'`,
-            `lockfile: ${lockPath}  (try: lsof '${lockPath}' to see who holds it)`,
+            opts.busyMessage ??
+                `another cool-tunnel operator script is already running for project '${project}'`,
+            opts.busyHint ?? `lockfile: ${lockPath}  (try: lsof '${lockPath}' to see who holds it)`,
         );
     }
     process.exit(result.status ?? 1);

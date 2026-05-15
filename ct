@@ -119,7 +119,8 @@ auto_update_subcommand() {
     local sub="${1:-status}"
     case "$sub" in
         now|run|"")
-            exec ./scripts/auto_update.sh
+            shift || true
+            dispatch_via_operator auto-update ./scripts/auto_update.sh "$@"
             ;;
         enable)
             if [[ -L "$CRON_SYMLINK" || -e "$CRON_SYMLINK" ]]; then
