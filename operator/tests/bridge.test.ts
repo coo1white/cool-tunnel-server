@@ -34,6 +34,7 @@ function makeCtx(overrides: Partial<IncidentContext> = {}): IncidentContext {
             },
         },
         proctree: { name: "proctree", ok: true, duration_ms: 5, data: { lines: [] } },
+        compose: { name: "compose", ok: true, duration_ms: 5, data: { services: [] } },
     };
     return { ...base, ...overrides };
 }
@@ -79,4 +80,48 @@ test("formatBridge produces JSON inside a fenced ctx block with the schema versi
     expect(out).toContain("</ctx>");
     expect(out).toContain('"task": "doctor"');
     expect(out).toContain('"exit_code": 1');
+});
+
+// Dogfood — reconstructs the diagnostic shape for the v0.1.3 haproxy
+// SIGHUP incident (CHANGELOG.md::[0.1.3]). haproxy exited; ballast
+// haproxy-stats fails; compose state shows haproxy with state "exited"
+// and a non-zero exit code; everything else still up.
+test("haproxy-exited incident fixture exposes the deciding evidence", () => {
+    const ctx = makeCtx({
+        task: "readiness",
+        ballast: {
+            name: "ballast", ok: true, duration_ms: 12,
+            data: {
+                overall_ok: false,
+                checks: [
+                    { slug: "panel-octane-up",  title: "Panel Octane responds on /up", status: "pass" },
+                    { slug: "haproxy-stats",    title: "HAProxy stats socket",         status: "fail", detail: "stats socket unreachable" },
+                    { slug: "redis-ping",       title: "Redis reachable",              status: "pass" },
+                ],
+            },
+        },
+        compose: {
+            name: "compose", ok: true, duration_ms: 8,
+            data: {
+                services: [
+                    { service: "panel",    name: "ct-panel",    state: "running", status: "Up 2 hours (healthy)" },
+                    { service: "haproxy",  name: "ct-haproxy",  state: "exited",  status: "Exited (137) 30 seconds ago", exit_code: 137 },
+                    { service: "caddy",    name: "ct-caddy",    state: "running", status: "Up 2 hours" },
+                    { service: "sing-box", name: "ct-sing-box", state: "running", status: "Up 2 hours (healthy)" },
+                    { service: "redis",    name: "ct-redis",    state: "running", status: "Up 2 hours" },
+                ],
+            },
+        },
+    });
+    const out = formatBridge(ctx);
+    // The reader should see the failing ballast check.
+    expect(out).toContain('"slug": "haproxy-stats"');
+    expect(out).toContain('"status": "fail"');
+    // The reader should see the compose state showing haproxy exited.
+    expect(out).toContain('"service": "haproxy"');
+    expect(out).toContain('"state": "exited"');
+    expect(out).toContain('"exit_code": 137');
+    // The new prompt header should be intact.
+    expect(out).toContain("diagnosis grounded in specific evidence");
+    expect(out).toContain("ballast check slug");
 });

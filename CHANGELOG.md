@@ -85,7 +85,13 @@ have to run on a fresh VPS before any operator binary exists.
   egress, no API keys; output goes to stdout (or stderr in
   `--json` mode) for the operator to paste into their AI of
   choice. Fires automatically on any task failure (suppress
-  with `--no-bridge`).
+  with `--no-bridge`). Collectors: `host`, `ballast`, `journal`,
+  `metrics`, `proctree`, `compose` (parses `docker compose ps
+  --format json` per service — catches the "container is just
+  gone" failure mode that bit v0.1.3, where `proctree` and
+  `journal` only show negative space). The prompt asks the AI
+  to ground its diagnosis in specific evidence and to state
+  what additional data it would need rather than guess.
 
   **`docs/operator.md`** — install (from release or source),
   ballast list, bridge schema, self-update trust model, keygen

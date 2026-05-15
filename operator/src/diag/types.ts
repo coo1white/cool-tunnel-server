@@ -43,6 +43,20 @@ export interface ProcTreeSnapshot {
     lines: string[];
 }
 
+export interface ComposeService {
+    service: string;
+    name: string;
+    state: string;
+    status: string;
+    health?: string;
+    exit_code?: number;
+}
+
+export interface ComposeState {
+    services: ComposeService[];
+    note?: string;
+}
+
 export type CheckStatus = "pass" | "warn" | "fail";
 
 export interface BallastCheckResult {
@@ -69,4 +83,5 @@ export interface IncidentContext {
     journal: CollectorOutput<Record<string, JournalSlice>>;
     metrics: CollectorOutput<SysMetrics>;
     proctree: CollectorOutput<ProcTreeSnapshot>;
+    compose: CollectorOutput<ComposeState>;
 }
