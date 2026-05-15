@@ -22,6 +22,66 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.18] — 2026-05-15 — Cross-layer version-bridge: detect + auto-heal PHP/Rust/Bun version skew
+
+Three runtime layers ship from the same repo and must agree on
+what version a deployment is running: panel/config/cool-tunnel.php
+(PHP, canonical truth), ct-server-core inside the panel container
+(Rust core), and operator/bin/ct-operator-<os>-<arch> (Bun CLI).
+
+The v0.1.12 → v0.1.13 deploy-skew failure mode that ate hours on
+2026-05-15: the operator binary on disk was v0.1.12 but the wrapper
+(post-git-pull) dispatched `update` — a subcommand v0.1.12 didn't
+have. Result: `error: unknown command: update`, no auto-recovery,
+manual `curl` required to bootstrap. v0.1.18 closes the hole at
+three layers of defense-in-depth.
+
+### Added
+
+  **`ct version-bridge` subcommand.** Surfaces all three layers'
+  versions side-by-side with a `!` marker on the diverging ones.
+  Exit codes: 0 = agreed, 1 = skew, 2 = no readable layer.
+  `--json` mode emits the structured `BridgeReport` for cron/CI
+  consumption.
+
+  **`ct-operator-version` ballast check.** Mirrors the existing
+  `ct-core-version` check. Compares the binary's compiled-in
+  `BUILD_VERSION` against `panel/config/cool-tunnel.php`. Fails
+  with an actionable hint (`./ct update` or `make operator-fetch`)
+  when they disagree.
+
+  **`ct` wrapper self-bootstrap.** Before dispatching to the
+  binary, the wrapper compares its version to
+  `panel/config/cool-tunnel.php`. On mismatch it curl-fetches
+  the matching binary from GitHub Releases (SHA-256 verified
+  against `SHA256SUMS`), atomic-renames into place, then
+  proceeds with the original dispatch. Skippable via
+  `CT_SKIP_OPERATOR_BOOTSTRAP=1`; failure is non-fatal (leaves
+  the stale binary in place and dispatch proceeds).
+
+  **`operator/src/util/version-bridge.ts`** — pure-logic helper
+  shared by all three of the above. Three readers + one
+  classifier; 14 unit tests covering happy / mismatch /
+  unreadable / edge paths.
+
+### Operator note
+
+  Today's bug, replayed under v0.1.18:
+
+      $ git pull   # main jumped from v0.1.12 to v0.1.18
+      $ ./ct update
+      ct: operator binary v0.1.12 ≠ deployed v0.1.18;
+            fetching matching binary…
+      ct: bootstrapped operator binary to v0.1.18
+      [update] start
+      ==> 1. Pre-flight
+          ...
+
+  No manual `curl` step. No `unknown command: update`. Hours of
+  recovery → seconds.
+
+---
+
 ## [0.1.17] — 2026-05-15 — UX hot-fix: stream BuildKit progress live in update's rebuild steps
 
 v0.1.13's port-everything-to-Bun batch wrapped the Rust + image
