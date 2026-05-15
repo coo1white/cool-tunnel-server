@@ -319,14 +319,14 @@ operator-keygen: ## generate ed25519 signing keypair for SHA256SUMS (writes oper
 
 .PHONY: help-topics
 help-topics: ## list operator mini-manual topics (then run `make help-<topic>`)
-	@./scripts/help.sh
+	@cd operator && bun run help.ts
 
 # Per-topic help dispatch. The `%` is the topic name (e.g.
-# `make help-update` -> `./scripts/help.sh update`). Pattern
+# `make help-update` -> `bun run help.ts update`). Pattern
 # rules don't show in `make help`'s table -- run `make
 # help-topics` to see the list.
 help-%:
-	@./scripts/help.sh $*
+	@cd operator && bun run help.ts $*
 
 .PHONY: logs
 logs: ## tail all container logs
