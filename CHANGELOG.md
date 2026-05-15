@@ -22,6 +22,48 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.19] — 2026-05-15 — Hot-fix: post-swap `component check` + flock false-positive lock-busy
+
+Two bugs surfaced by a real end-to-end `./ct update` on the Vultr
+deploy after the v0.1.16 binary unblocked startup. v0.1.18 shipped
+the cross-layer version-bridge but didn't catch these two.
+
+### Fixed
+
+  **`ct update` post-swap component check failed on every binary
+  in v0.1.13–v0.1.18.** `operator/src/util/component-check.ts`
+  invoked `ct-server-core component check --manifests-dir <path>`,
+  but the Rust CLI flag is `--manifests <path>` (no `-dir`
+  suffix). Bun port typo — the two other call sites (doctor +
+  readiness) already had it right. Caught on the v0.1.18 Vultr
+  update where the post-swap step died with:
+
+      error: unexpected argument '--manifests-dir' found
+        tip: a similar argument exists: '--manifests'
+
+  **Spurious "another cool-tunnel operator script is already
+  running" after every failed task.** `op-lock.ts` checked
+  `result.status === 1` for `flock -n`'s lock-busy signal, but
+  flock by default PASSES THROUGH the child's exit code AND
+  exits 1 when lock-acquire fails — indistinguishable. Every
+  child task that died via `dieWithDiag()` (which exits 1)
+  triggered the parent to spuriously print the lock-busy
+  diagnostic AFTER the real failure surface, confusing
+  operators into thinking they had a parallel-invocation
+  problem. Switched to `flock -n -E 75` (75 = `EX_TEMPFAIL`
+  from sysexits.h, used in flock's own lock-busy examples) so
+  lock-busy has a distinct exit code; child failures pass
+  through cleanly.
+
+### Operator note
+
+  Operator-binary only. v0.1.18 deploys pick up the new binary
+  automatically on next `./ct update` step 15 (auto-fetch from
+  v0.1.7), AND now also via v0.1.18's wrapper self-bootstrap
+  on the first invocation — no manual `curl` needed.
+
+---
+
 ## [0.1.18] — 2026-05-15 — Cross-layer version-bridge: detect + auto-heal PHP/Rust/Bun version skew
 
 Three runtime layers ship from the same repo and must agree on
@@ -63,28 +105,6 @@ three layers of defense-in-depth.
   shared by all three of the above. Three readers + one
   classifier; 14 unit tests covering happy / mismatch /
   unreadable / edge paths.
-
-### Fixed
-
-  **`ct update` post-swap component check failed on every binary
-  in v0.1.13–v0.1.17.** `operator/src/util/component-check.ts`
-  invoked `ct-server-core component check --manifests-dir <path>`,
-  but the Rust CLI flag is `--manifests <path>` (no `-dir`
-  suffix). Bun port typo — the two other call sites (doctor +
-  readiness) already had it right. Caught on the v0.1.18 Vultr
-  update.
-
-  **Spurious "another cool-tunnel operator script is already
-  running" after every failed task.** `op-lock.ts` checked
-  `result.status === 1` for `flock -n`'s lock-busy signal, but
-  flock by default PASSES THROUGH the child's exit code AND
-  exits 1 when lock-acquire fails — indistinguishable. Every
-  child task that died via `dieWithDiag()` (which exits 1)
-  triggered the parent to spuriously print the lock-busy
-  diagnostic AFTER the real failure surface. Switched to
-  `flock -n -E 75` (75 = EX_TEMPFAIL from sysexits.h) so
-  lock-busy has a distinct exit code; child failures pass
-  through cleanly.
 
 ### Operator note
 
