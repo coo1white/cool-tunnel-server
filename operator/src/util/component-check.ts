@@ -72,11 +72,19 @@ update -- your users are NOT impacted. You can roll back with:
 // Run the strict component check. The bash original uses
 // `/srv/manifests` as the manifests-dir default; we mirror that
 // here as the standard production path.
+//
+// Pre-v0.1.18 the Bun port passed `--manifests-dir <path>`, but
+// the Rust CLI flag is just `--manifests <path>` (clap's flag
+// definition; see `core/ct-server-core/src/cli.rs`). The mismatch
+// only surfaced in the final post-swap step of `./ct update`,
+// because the two other call sites (doctor + readiness) already
+// used `--manifests` correctly. Reported 2026-05-15 on the
+// v0.1.16 Vultr update.
 export async function runComponentCheckStrict(
     manifestsDir = "/srv/manifests",
 ): Promise<ComponentCheckResult> {
     const r = await capture(
-        $`docker compose exec -T panel ct-server-core component check --manifests-dir ${manifestsDir}`,
+        $`docker compose exec -T panel ct-server-core component check --manifests ${manifestsDir}`,
     );
     // The CLI prints to stdout; mix in stderr just in case a
     // future version dumps NG rows there.
