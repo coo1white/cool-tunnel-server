@@ -128,6 +128,20 @@ class ProxyAccountResource extends Resource
                     ->icon('heroicon-o-key')
                     ->color('warning')
                     ->requiresConfirmation()
+                    // Defense-in-depth: the Filament panel sits behind
+                    // its own auth middleware so unauthenticated callers
+                    // never reach this Livewire action under normal
+                    // routing. The explicit closure exists as a
+                    // belt-and-braces guard for the case where a future
+                    // refactor exposes the Livewire component via a
+                    // different route, or a future multi-tenant
+                    // ProxyAccountPolicy adds a per-record scope. Today
+                    // single-admin makes every authenticated user the
+                    // admin, so a simple auth-check is sufficient.
+                    // (Audit hardening — separate from the existing
+                    // RateLimiter login throttle, which gates the
+                    // panel-entry step.)
+                    ->authorize(fn (): bool => auth()->check())
                     ->action(function (ProxyAccount $record) {
                         $pw = PasswordGenerator::make();
                         $record->setCleartextPassword($pw['cleartext']);
@@ -169,6 +183,12 @@ class ProxyAccountResource extends Resource
                     ->label('Subscription URL')
                     ->icon('heroicon-o-link')
                     ->color('info')
+                    // Mirror the regenerate_password guard above. The
+                    // generated URL embeds the per-account HMAC token —
+                    // exposing it without authz would let an attacker
+                    // who reaches this Livewire endpoint enumerate
+                    // active subscription URLs.
+                    ->authorize(fn (): bool => auth()->check())
                     ->action(function (ProxyAccount $record) {
                         $url = $record->subscriptionUrl();
                         if ($url === null) {

@@ -85,6 +85,19 @@ class FakeWebsiteResource extends Resource
                     ->requiresConfirmation()
                     ->modalHeading(fn (FakeWebsite $record): string => "Activate '{$record->name}'?")
                     ->modalDescription('This deactivates the currently-active cover site (if any) and switches the apex domain to render this one. Render + reload happen via the saved-hook chain.')
+                    // Defense-in-depth: the Filament panel sits behind
+                    // its own auth middleware so unauthenticated callers
+                    // never reach this Livewire action under normal
+                    // routing. The explicit closure exists as a
+                    // belt-and-braces guard against a future refactor
+                    // exposing the Livewire component via a different
+                    // route. Switching the active cover site is a
+                    // public-facing behavioural change (apex domain
+                    // renders a different page) — worth authorizing
+                    // explicitly. Mirrors ProxyAccountResource's
+                    // regenerate_password / show_subscription_url
+                    // guards.
+                    ->authorize(fn (): bool => auth()->check())
                     ->action(function (FakeWebsite $record): void {
                         $record->is_active = true;
                         $record->save();
