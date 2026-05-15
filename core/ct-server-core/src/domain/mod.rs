@@ -7,6 +7,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
@@ -23,7 +24,7 @@ pub struct ServerConfig {
     pub last_rendered_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProxyAccount {
     pub id: i64,
     pub username: String,
@@ -40,6 +41,29 @@ pub struct ProxyAccount {
     pub quota_bytes: Option<i64>,
     pub used_bytes: i64,
     pub expires_at: Option<DateTime<Utc>>,
+}
+
+// Custom Debug — auto-derive would print `password_hash` (bcrypt) and
+// `cleartext_password` (plaintext) inline. The project's
+// CONTRIBUTING.md privacy policy is "never log credentials". Username
+// is left visible so operator debugging of `ct fix` / drift checks
+// stays useful in stderr (the daemon's stderr is operator-only).
+impl fmt::Debug for ProxyAccount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProxyAccount")
+            .field("id", &self.id)
+            .field("username", &self.username)
+            .field("password_hash", &"<redacted>")
+            .field(
+                "cleartext_password",
+                &self.cleartext_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("enabled", &self.enabled)
+            .field("quota_bytes", &self.quota_bytes)
+            .field("used_bytes", &self.used_bytes)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl ProxyAccount {

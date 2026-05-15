@@ -164,9 +164,11 @@ class SubscriptionController extends Controller
             // "why is user X complaining". Cardinality is bounded
             // by the legitimate-user count, NOT the probe rate.
             // (Round-12 observability.)
+            // Username is intentionally omitted — `account_id` is sufficient
+            // for operator DB-lookup, and project privacy policy forbids
+            // logging usernames (CONTRIBUTING.md "What never gets logged").
             Log::warning('subscription.fallthrough.account_disabled', [
                 'account_id' => $account->id,
-                'username' => $account->username,
             ]);
 
             return (new FakeSiteController)->show($request);
@@ -198,7 +200,6 @@ class SubscriptionController extends Controller
             // rate. (Round-12 observability.)
             Log::critical('subscription.fallthrough.cleartext_decrypt_failed', [
                 'account_id' => $account->id,
-                'username' => $account->username,
             ]);
 
             return (new FakeSiteController)->show($request);

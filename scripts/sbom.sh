@@ -34,16 +34,29 @@ ok "wrote sbom/cargo.cdx.json"
 # ---------- Composer panel ---------------------------------------
 
 step "Generating PHP SBOM (cdxgen)"
-if ! command -v cdxgen >/dev/null 2>&1; then
-    warn "cdxgen not on PATH; installing globally via npm"
-    npm install -g @cyclonedx/cdxgen
+# Run cdxgen via `bunx` so we don't carry a global `npm install -g`
+# dependency on hosts that already have Bun (which the operator/ CLI
+# build needs). Falls back to `cdxgen` on PATH or `npx` if Bun isn't
+# present — keeps the script useful on minimal-tooling boxes.
+cdxgen_cmd=()
+if command -v cdxgen >/dev/null 2>&1; then
+    cdxgen_cmd=(cdxgen)
+elif command -v bunx >/dev/null 2>&1; then
+    cdxgen_cmd=(bunx --bun @cyclonedx/cdxgen)
+elif command -v npx >/dev/null 2>&1; then
+    cdxgen_cmd=(npx --yes @cyclonedx/cdxgen)
+else
+    warn "no cdxgen / bunx / npx on PATH; skipping PHP SBOM"
 fi
-( cd panel && cdxgen -t php -o ../sbom/composer.cdx.json --spec-version 1.5 --no-recurse )
-ok "wrote sbom/composer.cdx.json"
+
+if [ ${#cdxgen_cmd[@]} -gt 0 ]; then
+    ( cd panel && "${cdxgen_cmd[@]}" -t php -o ../sbom/composer.cdx.json --spec-version 1.5 --no-recurse )
+    ok "wrote sbom/composer.cdx.json"
+fi
 
 # ---------- Docker images (only if docker is available) ----------
 
-if command -v docker >/dev/null 2>&1; then
+if command -v docker >/dev/null 2>&1 && [ ${#cdxgen_cmd[@]} -gt 0 ]; then
     step "Generating Docker SBOMs (cdxgen)"
     for image in cool-tunnel-server-caddy cool-tunnel-server-singbox \
                  cool-tunnel-server-panel cool-tunnel-server-core; do
@@ -51,14 +64,14 @@ if command -v docker >/dev/null 2>&1; then
             warn "skipping $image (image not built locally)"
             continue
         fi
-        if cdxgen -t docker -o "sbom/${image}.cdx.json" --spec-version 1.5 \
+        if "${cdxgen_cmd[@]}" -t docker -o "sbom/${image}.cdx.json" --spec-version 1.5 \
                 "$image:latest" >/dev/null 2>&1; then
             ok "wrote sbom/${image}.cdx.json"
         else
             warn "cdxgen failed on $image"
         fi
     done
-else
+elif ! command -v docker >/dev/null 2>&1; then
     warn "docker not on PATH; skipping image SBOMs"
 fi
 

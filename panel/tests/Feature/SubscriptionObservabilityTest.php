@@ -102,7 +102,13 @@ class SubscriptionObservabilityTest extends TestCase
         $this->assertCount(1, $hits, 'disabled account must log exactly once per request');
         $this->assertSame('warning', $hits[0]['level']);
         $this->assertSame($account->id, $hits[0]['context']['account_id']);
-        $this->assertSame($account->username, $hits[0]['context']['username']);
+        // Privacy invariant (CONTRIBUTING.md): usernames are NEVER logged.
+        // account_id is sufficient for operator DB-lookup.
+        $this->assertArrayNotHasKey(
+            'username',
+            $hits[0]['context'],
+            'username MUST NOT appear in subscription-fallthrough logs',
+        );
     }
 
     #[Test]
@@ -123,7 +129,12 @@ class SubscriptionObservabilityTest extends TestCase
         $this->assertCount(1, $hits, 'broken cleartext must log exactly once per request');
         $this->assertSame('critical', $hits[0]['level']);
         $this->assertSame($account->id, $hits[0]['context']['account_id']);
-        $this->assertSame($account->username, $hits[0]['context']['username']);
+        // Privacy invariant (CONTRIBUTING.md): usernames are NEVER logged.
+        $this->assertArrayNotHasKey(
+            'username',
+            $hits[0]['context'],
+            'username MUST NOT appear in subscription-fallthrough logs',
+        );
     }
 
     #[Test]
