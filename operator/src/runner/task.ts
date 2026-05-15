@@ -13,6 +13,10 @@ export interface TaskResult {
     readonly summary?: string;
     // Optional structured payload for --json mode (e.g. doctor's PASS/WARN/FAIL table).
     readonly json?: unknown;
+    // Set to true for known-clean failures (usage errors, missing
+    // prerequisites) so the runner skips the incident-bridge dump,
+    // which is only useful when the deployment itself is broken.
+    readonly skipBridge?: boolean;
 }
 
 export interface Task {
@@ -43,8 +47,10 @@ export class TaskRunner {
 
         // Phase 2 hook: on failure, capture incident context and print
         // the AI bridge unless suppressed. Centralised here so no per-task
-        // plumbing is required.
-        if (!result.ok && !this.ctx.noBridge) {
+        // plumbing is required. `result.skipBridge` lets a task mark its
+        // own known-clean failures (e.g. usage errors) as not worth the
+        // bridge collection.
+        if (!result.ok && !this.ctx.noBridge && !result.skipBridge) {
             await this.maybeEmitBridge(task, result);
         }
 

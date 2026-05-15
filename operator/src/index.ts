@@ -22,6 +22,7 @@ Commands:
   fix            Detect and interactively repair common issues
   readiness      Strict >=9/10 readiness gate; cron/CI suitable
   ballast        Critical-invariant check only (no narration; cron-friendly)
+  render         Re-render caddyfile/haproxy/singbox config from the DB
   self-update    Pull a new signed binary from GitHub Releases
   version        Print version and exit
 
@@ -64,6 +65,10 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "ballast": {
             const { BallastTask } = await import("./tasks/ballast");
             return new BallastTask();
+        }
+        case "render": {
+            const { RenderTask } = await import("./tasks/render");
+            return new RenderTask();
         }
         case "self-update": {
             const { SelfUpdateTask } = await import("./tasks/self-update");

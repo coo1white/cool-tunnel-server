@@ -13,6 +13,7 @@
 #   ct backup       snapshot db + .env + caddy data
 #   ct restore      recover from a backup tarball
 #   ct readiness    strict ≥9/10 ship-readiness gate
+#   ct render <t>   re-render caddyfile/haproxy/singbox config
 #   ct auto-sync    credential-lock audit + auto-correct
 #   ct help [topic] plain-English topic docs (no args = list topics)
 #   ct version      print the deployed release tag + git sha
@@ -62,6 +63,7 @@ DEEPER COMMANDS
   restore <f>    recover from a backup tarball
   readiness      strict ≥9/10 ship-readiness gate (cron-friendly)
   ballast        critical-invariant check only (no narration; cron-friendly; requires ct-operator binary)
+  render <tgt>   re-render caddyfile/haproxy/singbox config from the DB
   auto-sync      credential-lock audit + auto-correct
   auto-update    unattended release-pulling agent (default OFF)
                    `ct auto-update enable`   add daily cron entry
@@ -231,6 +233,45 @@ dispatch_via_operator() {
     exec "$fallback" "$@"
 }
 
+# ---------- render subcommand ------------------------------------
+#
+# `ct render <target> [args]` is the operator-friendly path to the
+# three scripts/render-{caddyfile,haproxy,singbox}.sh wrappers.
+# Prefer the compiled ct-operator binary when present; fall back to
+# the matching shell script otherwise. Both paths end at the same
+# `ct-server-core --json <target> render` call inside the panel.
+render_subcommand() {
+    local target="${1:-}"
+    [[ -n "$target" ]] && shift
+    case "$target" in
+        caddyfile|haproxy|singbox) ;;
+        ""|-h|--help)
+            printf 'ct render — re-render caddyfile/haproxy/singbox config from the DB\n\n' >&2
+            printf 'usage: ct render <caddyfile|haproxy|singbox> [--if-changed]\n' >&2
+            [[ -z "$target" ]] && exit 2 || exit 0
+            ;;
+        *)
+            printf 'ct render: unknown target: %s\n' "$target" >&2
+            printf 'usage: ct render <caddyfile|haproxy|singbox>\n' >&2
+            exit 2
+            ;;
+    esac
+    local arch=""
+    case "$(uname -m)" in
+        x86_64)        arch=x64 ;;
+        aarch64|arm64) arch=arm64 ;;
+    esac
+    if [[ -n "$arch" ]]; then
+        local os
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        local op_bin="$SCRIPT_DIR/operator/bin/ct-operator-${os}-${arch}"
+        if [[ -x "$op_bin" ]]; then
+            exec "$op_bin" render "$target" "$@"
+        fi
+    fi
+    exec "./scripts/render-${target}.sh" "$@"
+}
+
 # ---------- Dispatch ---------------------------------------------
 
 cmd="${1:-help}"
@@ -245,6 +286,7 @@ case "$cmd" in
     restore)      exec ./scripts/restore.sh            "$@" ;;
     readiness)    dispatch_via_operator readiness ./scripts/late-night-comeback.sh "$@" ;;
     ballast)      dispatch_via_operator ballast   ""                                "$@" ;;
+    render)       render_subcommand "$@" ;;
     auto-sync)    exec ./scripts/auto_sync.sh           "$@" ;;
     auto-update)  auto_update_subcommand "$@" ;;
     status)       exec make status ;;
