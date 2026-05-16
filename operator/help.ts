@@ -618,6 +618,107 @@ That's enough for almost any diagnosis.
 Topics:  ./scripts/help.sh   (list all)
 `,
     },
+    "drift": {
+        title: "drift — three-way cleartext drift check",
+        body: `What it does:
+  Audits whether the cleartext password an account has is byte-
+  equal across three layers:
+
+      DB              ProxyAccount::password_cleartext_encrypted,
+                      decrypted via Laravel Crypt.
+      sing-box        users[].password in /etc/sing-box/config.json,
+                      what naive-in actually checks incoming
+                      CONNECTs against.
+      subscription    The password field clients import from
+                      https://<panel>/api/v1/subscription/<token>.
+
+  Drift between any pair means clients see a "200 OK Padding:..." +
+  RST cover-site response when they try to connect — the exact
+  symptom that looks like 'tunnel doesn't work' with no actionable
+  error in the macOS client.
+
+When to run:
+  - After any credential rotation (operator-driven or auto-sync)
+  - After a restore (the DB cleartext might not match the rendered
+    sing-box config)
+  - When a client reports auth-fail despite a fresh subscription
+    import (today's incident class)
+  - On a schedule (cron-friendly; exit 0 = clean, 1 = drift)
+
+What it does NOT do:
+  - Run the actual wire negotiation (see 'ct wire-probe' for that).
+    Drift checks values; wire-probe checks PROTOCOL behaviour.
+  - Decrypt or print cleartext to the terminal. The table column
+    is 'same' / 'DIFF' / 'absent' only.
+
+Output:
+  - Human: table with one row per (account_id, username) tuple.
+  - JSON:  pass --json (or ct --json drift) for a machine-readable
+           DriftReport. Cleartext is OMITTED from the JSON view
+           — only equality/inequality.
+
+Repair recipes (per finding):
+  db↔singbox drift          ./ct render singbox
+  db↔subscription drift     re-fetch from panel (clients) OR
+                            check APP_KEY rotation
+  sing-box absent           ./ct render singbox
+  phantom singbox user      Filament UI -> delete or
+                            ./ct render singbox
+`,
+    },
+    "wire-probe": {
+        title: "wire-probe — wire-protocol drift detection",
+        body: `What it does:
+  Spawns a real NaiveProxy client against your deployment's upstream,
+  pushes a real CONNECT through it via curl-over-SOCKS, and reports
+  whether the NaiveProxy 'Padding:' extension negotiated. Catches
+  the class of bug where a naive binary advertises the right
+  '--version' but is a build that doesn't emit the padding header
+  the server requires.
+
+  Today's exact incident: a bundled macOS naive binary tested fine
+  with --version, ran fine with --help, but auth always failed
+  against sing-box because no Padding header was emitted. This
+  task would have caught the regression on a developer machine
+  before release.
+
+When to run:
+  - Before tagging a release of either the client or the server
+  - After updating sing-box or the bundled NaiveProxy
+  - On a schedule against staging if you have a stable account
+  - When a client reports auth-fail despite 'ct drift' showing OK
+
+Usage:
+  ct wire-probe --username U --password PW [flags]
+
+  Flags:
+    --binary PATH      naive binary to test (default: 'naive' on
+                       PATH; pass the bundled .app/Contents/Resources/
+                       naive when validating a client build)
+    --server HOST      upstream hostname (default: \$DOMAIN from .env)
+    --port N           upstream port (default: 443)
+    --target HOST:PORT what to fetch through the tunnel
+                       (default: www.google.com:443)
+
+Outcomes the task reports:
+  padding_negotiated      naive client + server protocol agree;
+                          tunnel works end-to-end. PASS.
+  missing_padding         curl saw RST + naive never logged
+                          'negotiated padding type'. The binary
+                          is the bug. FAIL.
+  auth_failure_cover_site naive negotiated padding but credentials
+                          rejected. Run 'ct drift' next. FAIL.
+  tls_handshake_failed    Never reached the CONNECT layer. Check
+                          haproxy SNI + caddy ACME. FAIL.
+  connect_timeout         Upstream port blackholed by firewall. FAIL.
+  naive_didnt_start       Listener never bound. Bad binary path. FAIL.
+
+Security:
+  The cleartext password lands in a 0700 temp dir's 0600 config
+  file, removed on exit. It does NOT appear in argv (ps -ef-safe)
+  and does NOT appear in the report output.
+`,
+    },
 };
 
 export const TOPIC_SLUGS: readonly string[] = Object.keys(TOPICS);

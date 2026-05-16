@@ -5,7 +5,7 @@
 import { test, expect } from "bun:test";
 import { TOPICS, TOPIC_SLUGS, renderTopic, renderTopicList } from "../help";
 
-test("TOPIC_SLUGS matches scripts/help.sh's 11 topics", () => {
+test("TOPIC_SLUGS covers the legacy 11 scripts/help.sh topics plus the binary-only drift+wire-probe pair", () => {
     expect(TOPIC_SLUGS).toEqual([
         "getting-started",
         "install",
@@ -18,6 +18,10 @@ test("TOPIC_SLUGS matches scripts/help.sh's 11 topics", () => {
         "backup",
         "restore",
         "troubleshooting",
+        // Bun-native operator verbs (no scripts/help.sh counterpart;
+        // these wrap operator/src/tasks/drift.ts + wire-probe.ts).
+        "drift",
+        "wire-probe",
     ]);
 });
 
