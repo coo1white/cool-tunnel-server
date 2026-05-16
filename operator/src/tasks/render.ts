@@ -1,22 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/render.ts — one-shot config render subcommand.
 //
-// Consolidates the three scripts/render-{caddyfile,haproxy,singbox}.sh
-// thin wrappers. All three do the same thing: forward to
-// `ct-server-core --json <target> render` inside the panel container.
-// The shell scripts remain in place for back-compat; this task is the
-// Bun-native path used when the operator binary is available.
+// v0.2.0+ Caddy is the single front door (ACME + forward_proxy +
+// reverse_proxy in one container), so `caddyfile` is the only
+// render target left. Pre-v0.2.0 callers passed `haproxy` or
+// `singbox` here; both are rejected with a "target retired in
+// v0.2.0" hint so an operator running a half-migrated stack sees
+// a clear message instead of an obscure subcommand error.
 //
 // Usage:
-//   ct-operator render <target> [--if-changed]
-//   target = caddyfile | haproxy | singbox
+//   ct-operator render caddyfile [--if-changed]
 
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 
-const TARGETS = ["caddyfile", "haproxy", "singbox"] as const;
+const TARGETS = ["caddyfile"] as const;
 type Target = typeof TARGETS[number];
+
+// Targets that were valid in v0.1.x but no longer have a backing
+// service. Surface a v0.2.0-cut hint rather than a generic "unknown
+// target" error so operators reading old runbooks know what changed.
+const RETIRED_TARGETS = new Set(["haproxy", "singbox"]);
 
 function isTarget(s: string): s is Target {
     return (TARGETS as readonly string[]).includes(s);
@@ -30,6 +35,9 @@ export function parseArgs(argv: readonly string[]): { target: Target; passthroug
         return `render: target required (one of: ${TARGETS.join(", ")})`;
     }
     const [target, ...passthrough] = rest;
+    if (target && RETIRED_TARGETS.has(target)) {
+        return `render: target "${target}" was retired in v0.2.0 (sing-box + HAProxy collapsed into Caddy+forwardproxy). Use: render caddyfile`;
+    }
     if (!target || !isTarget(target)) {
         return `render: unknown target "${target}" (one of: ${TARGETS.join(", ")})`;
     }

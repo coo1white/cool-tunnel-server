@@ -264,7 +264,9 @@ async function checkComponents(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
-    const services = ["panel", "sing-box", "haproxy", "caddy", "db", "redis"];
+    // v0.2.0+: caddy + panel + db + redis only. sing-box and haproxy
+    // retired (collapsed into Caddy+forwardproxy).
+    const services = ["caddy", "panel", "db", "redis"];
     const ps = await capture($`docker compose ps --format json`);
     if (!ps.ok || !ps.stdout.trim()) {
         return {
