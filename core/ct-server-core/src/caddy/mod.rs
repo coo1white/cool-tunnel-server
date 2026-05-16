@@ -30,8 +30,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::MySqlPool;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 
 #[derive(Debug, Serialize)]
 pub struct CaddyRenderOutcome {
@@ -254,6 +256,67 @@ pub fn probe_resistance_secret(domain: &str) -> String {
     hasher.update(domain.as_bytes());
     let hex = hex::encode(hasher.finalize());
     format!("{}.localhost", &hex[..16])
+}
+
+/// Tell Caddy to reload the on-disk Caddyfile.
+///
+/// v0.2.0+ replacement for the v0.1.x `server reload` path that
+/// PUT the rendered sing-box config to sing-box's clash API.
+/// Caddy supports graceful, zero-downtime reload via either:
+///
+///   - `caddy reload --config <path>` from inside the container
+///     (the command talks to Caddy's loopback admin API at :2019)
+///   - HTTP POST /load to the same admin API
+///
+/// We choose the CLI form via `docker exec ct-caddy caddy reload …`
+/// because:
+///
+///   - It's the same pattern singbox::validate already established
+///     (the panel container has access to the docker socket via
+///     the `docker compose exec` invocation chain).
+///   - It doesn't require widening Caddy's `admin` binding past
+///     loopback. (Our Caddyfile pins `admin 127.0.0.1:2019` — the
+///     POST /load path would need either a docker-network bind or
+///     a per-call docker exec into curl, neither of which is
+///     simpler.)
+///   - `caddy reload` validates the new config BEFORE swapping; a
+///     syntactically-invalid Caddyfile leaves the running config
+///     in place. Same fail-closed posture sing-box's
+///     `admin_client.reload` had.
+///
+/// 15s timeout: the reload itself is sub-second in practice; the
+/// ceiling exists to surface a wedged docker daemon. Matches the
+/// posture of singbox::validate's 30s timeout, tightened because
+/// we control the work the inner command does (single config
+/// reload, not a full schema validation of a multi-MiB
+/// sing-box config).
+pub async fn reload(caddyfile_path: &str) -> Result<()> {
+    let mut cmd = Command::new("docker");
+    cmd.args([
+        "exec",
+        "ct-caddy",
+        "caddy",
+        "reload",
+        "--config",
+        caddyfile_path,
+    ]);
+    let out = tokio::time::timeout(Duration::from_secs(15), cmd.output())
+        .await
+        .map_err(|_| Error::ExternalCommandTimedOut {
+            command: "docker exec ct-caddy caddy reload",
+            timeout: Duration::from_secs(15),
+            hint: "`caddy reload` via docker exec timed out after 15s. \
+                       Is the ct-caddy container running? `docker compose ps caddy`"
+                .to_owned(),
+        })??;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(Error::ExternalCommandFailed {
+            command: "docker exec ct-caddy caddy reload",
+            stderr: stderr.into_owned(),
+        });
+    }
+    Ok(())
 }
 
 async fn atomic_write(path: &str, body: &str) -> Result<()> {

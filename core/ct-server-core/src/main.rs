@@ -284,6 +284,20 @@ enum CaddyfileOp {
         #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
         output: String,
     },
+    /// Tell Caddy to reload the on-disk Caddyfile in place.
+    ///
+    /// v0.2.0+: replaces the `server reload` path that used to PUT
+    /// the rendered sing-box config to sing-box's clash API. Now
+    /// runs `caddy reload --config /etc/caddy/Caddyfile` inside
+    /// the ct-caddy container via `docker exec`. Graceful — Caddy
+    /// drains in-flight connections, swaps the new config in, and
+    /// resumes serving with no dropped TLS handshakes.
+    Reload {
+        /// Override Caddyfile path (must match what the ct-caddy
+        /// container reads — typically /etc/caddy/Caddyfile).
+        #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
+        output: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -447,6 +461,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 let pool = db::connect(&cli.database_url).await?;
                 caddy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
+            CaddyfileOp::Reload { output } => caddy::reload(&output).await,
         },
         Cmd::Haproxy { op } => match op {
             HaproxyOp::Render {
