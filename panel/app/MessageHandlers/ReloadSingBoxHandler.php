@@ -6,7 +6,7 @@ declare(strict_types=1);
 
 namespace App\MessageHandlers;
 
-use App\Contracts\SingboxConfigGeneratorInterface;
+use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Messages\ReloadSingBox;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
@@ -37,7 +37,7 @@ use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 final class ReloadSingBoxHandler
 {
     public function __construct(
-        private readonly SingboxConfigGeneratorInterface $generator,
+        private readonly SingBoxConfigGeneratorInterface $generator,
         private readonly LoggerInterface $logger,
     ) {}
 

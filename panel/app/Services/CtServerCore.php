@@ -106,20 +106,17 @@ final class CtServerCore implements CtServerCoreInterface
         return substr($s, 0, self::MAX_CAPTURE_BYTES).'…[truncated]';
     }
 
-    public function renderSingBoxConfig(): array
-    {
-        return $this->run(['singbox', 'render']);
-    }
-
     public function renderCaddyfile(): array
     {
         return $this->run(['caddyfile', 'render']);
     }
 
-    // renderNaive() removed in v0.4.0 — sing-box rendering is now
-    // done by SingboxConfigGenerator shelling directly to the
-    // singbox-core binary; ct-server-core (Rust) no longer renders
-    // proxy configs at all.
+    // renderSingBoxConfig() / renderNaive() removed in v0.4.0 —
+    // sing-box rendering is done by SingBoxConfigGenerator shelling
+    // directly to /usr/local/bin/singbox-core render-server (the
+    // Bun-compiled binary in the panel container), bypassing
+    // ct-server-core entirely. The Rust core no longer renders proxy
+    // configs at all; only the Caddyfile path remains here.
 
     public function reloadSingBox(): array
     {

@@ -39,14 +39,13 @@ interface CtServerCoreInterface
     public function run(array $args, int $timeoutSec = 30): array;
 
     /** @return array<mixed> */
-    public function renderSingBoxConfig(): array;
-
-    /** @return array<mixed> */
     public function renderCaddyfile(): array;
 
-    // renderNaive() removed in v0.4.0 — replaced by
-    // SingboxConfigGenerator which shells directly to the
-    // singbox-core binary, not to ct-server-core.
+    // renderSingBoxConfig() removed in v0.4.0 — SingBoxConfigGenerator
+    // now shells directly to /usr/local/bin/singbox-core render-server
+    // (the Bun-compiled binary bundled in the panel container) rather
+    // than going through ct-server-core's Rust renderer. See the
+    // SingBoxConfigGenerator head comment for the rationale.
 
     /** @return array<mixed> */
     public function reloadSingBox(): array;

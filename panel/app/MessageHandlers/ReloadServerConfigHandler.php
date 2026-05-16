@@ -7,7 +7,7 @@ declare(strict_types=1);
 namespace App\MessageHandlers;
 
 use App\Contracts\CaddyfileGeneratorInterface;
-use App\Contracts\SingboxConfigGeneratorInterface;
+use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Contracts\SingBoxReloaderInterface;
 use App\Messages\ReloadServerConfig;
 use Psr\Log\LoggerInterface;
@@ -24,7 +24,7 @@ use Symfony\Component\Messenger\Attribute\AsMessageHandler;
  *   2. If the Caddyfile changed, reload Caddy (legacy
  *      SingBoxReloader::reload() interface that now shells to
  *      caddy-reload).
- *   3. Render /data/config/singbox.json via SingboxConfigGenerator
+ *   3. Render /data/config/singbox.json via SingBoxConfigGenerator
  *      (shells to `singbox-core render-server`). A ServerConfig
  *      change can affect the Reality keypair / dest_host / domain
  *      embedded in the singbox config, so we always re-render.
@@ -39,7 +39,7 @@ final class ReloadServerConfigHandler
 {
     public function __construct(
         private readonly CaddyfileGeneratorInterface $caddy,
-        private readonly SingboxConfigGeneratorInterface $singbox,
+        private readonly SingBoxConfigGeneratorInterface $singbox,
         private readonly SingBoxReloaderInterface $reloader,
         private readonly LoggerInterface $logger,
     ) {}

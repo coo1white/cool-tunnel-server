@@ -10,15 +10,15 @@ use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\ComponentCheckerInterface;
 use App\Contracts\CtServerCoreInterface;
 use App\Contracts\RevocationBusInterface;
-use App\Contracts\SingboxConfigGeneratorInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
+use App\Contracts\SingboxPinReaderInterface;
 use App\Contracts\SingBoxReloaderInterface;
 use App\Services\CaddyfileGenerator;
 use App\Services\ComponentChecker;
 use App\Services\CtServerCore;
 use App\Services\RedisRevocationBus;
-use App\Services\SingboxConfigGenerator;
 use App\Services\SingBoxConfigGenerator;
+use App\Services\SingboxPinReader;
 use App\Services\SingBoxReloader;
 use App\Services\TrafficCollector;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -46,21 +46,21 @@ class AppServiceProvider extends ServiceProvider
      * the interface in `$this->app->bind(...)`.
      */
     private const SERVICE_BINDINGS = [
-        // SingBoxConfigGenerator (the legacy v0.1.x sing-box-on-the-
-        // wire renderer) is kept as dead-code-no-effect for transitional
-        // ct-server-core compatibility; full removal is a future
-        // v0.4.x followup. The active v0.4.0+ renderer is
-        // SingboxConfigGeneratorInterface (lowercase 'b') which
-        // shells to singbox-core for VLESS+Reality config.json.
+        // v0.4.0+ — SingBoxConfigGenerator shells directly to
+        // /usr/local/bin/singbox-core (Bun-compiled binary bundled in
+        // the panel container via docker/panel/Dockerfile). The
+        // pre-v0.4.0 dual-interface ("SingBox" capital B vs "Singbox"
+        // lowercase b for staged migration) was YAGNI — v0.4.0 has
+        // exactly one renderer, and capital-B is the canonical name
+        // throughout consumers + tests.
         SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
         SingBoxReloaderInterface::class => SingBoxReloader::class,
         CaddyfileGeneratorInterface::class => CaddyfileGenerator::class,
-        // v0.4.0+ — singbox.json renderer (replaces v0.3.x
-        // NaiveConfigGenerator). See SingboxConfigGeneratorInterface
-        // for the lifecycle docs. Note the lowercase 'b' in
-        // Singbox* — the sing-box upstream brand is hyphenated
-        // (sing-box), conventionally rendered as Singbox in code.
-        SingboxConfigGeneratorInterface::class => SingboxConfigGenerator::class,
+        // v0.4.0+ — splices the pinned sing-box upstream tag into
+        // SubscriptionController's server_singbox_pin block. Reads
+        // once via `singbox-core version --json`, caches for the
+        // worker's lifetime; binary is immutable until redeploy.
+        SingboxPinReaderInterface::class => SingboxPinReader::class,
         RevocationBusInterface::class => RedisRevocationBus::class,
         CtServerCoreInterface::class => CtServerCore::class,
         ComponentCheckerInterface::class => ComponentChecker::class,
@@ -74,7 +74,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SingBoxConfigGenerator::class);
         $this->app->singleton(SingBoxReloader::class);
         $this->app->singleton(CaddyfileGenerator::class);
-        $this->app->singleton(SingboxConfigGenerator::class);
+        $this->app->singleton(SingboxPinReader::class);
         $this->app->singleton(TrafficCollector::class);
         $this->app->singleton(ComponentChecker::class);
         $this->app->singleton(RedisRevocationBus::class);

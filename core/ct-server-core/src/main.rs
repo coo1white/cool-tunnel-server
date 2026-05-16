@@ -42,7 +42,6 @@ mod redis_bridge;
 // migrates metrics::collect (clash-API → Caddy /metrics) and
 // quota::enforce (clash reload → caddy::reload).
 mod singbox;
-mod subscription;
 mod template;
 mod util;
 
@@ -179,11 +178,6 @@ enum Cmd {
         /// (v0.0.67.)
         #[arg(long, env = "CT_METRICS_BIND", default_value = "")]
         metrics_bind: String,
-    },
-    /// Emit a SubscriptionManifestV1 to stdout for `account_id`.
-    Subscription {
-        #[arg(long)]
-        account_id: i64,
     },
     /// Component-as-machine-part: list / check installed components.
     Component {
@@ -573,10 +567,6 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 metrics_registry,
             )
             .await
-        }
-        Cmd::Subscription { account_id } => {
-            let pool = db::connect(&cli.database_url).await?;
-            subscription::emit(&pool, account_id).await
         }
         Cmd::Component { op } => match op {
             ComponentOp::List { manifests } => {
