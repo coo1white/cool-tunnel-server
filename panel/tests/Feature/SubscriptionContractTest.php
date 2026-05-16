@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Contracts\NaivePinReaderInterface;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
@@ -317,6 +318,116 @@ class SubscriptionContractTest extends TestCase
             'expires_at - issued_at must be EXACTLY 30 days; '
             .'a non-30-day delta means the controller is calling time() '
             .'twice and racing the second boundary',
+        );
+    }
+
+    /**
+     * Stub NaivePinReader so the controller emits a deterministic
+     * server_naive_pin block without touching the real manifest file
+     * or shelling out to `naive --version`. Mirrors the half-truthy-
+     * read decision rule the production reader uses: returning null
+     * collapses to the field-omitted-on-the-wire branch.
+     *
+     * @param  array{upstream_tag:string, naive_version:string}|null  $pin
+     */
+    private function stubNaivePin(?array $pin): void
+    {
+        $stub = new class($pin) implements NaivePinReaderInterface
+        {
+            public function __construct(private readonly ?array $pin) {}
+
+            public function read(bool $useCache = true): ?array
+            {
+                return $this->pin;
+            }
+        };
+        $this->app->instance(NaivePinReaderInterface::class, $stub);
+    }
+
+    #[Test]
+    public function manifest_carries_server_naive_pin_when_reader_returns_one(): void
+    {
+        // v0.3.x runtime cross-end confirmation: when the reader can
+        // see BOTH halves (manifest tag + running binary version),
+        // the controller splices them into the manifest BEFORE
+        // signing. The signature must still verify after the field
+        // is included — i.e. the splice happened before the HMAC.
+        $this->seedActiveCover();
+        $this->stubNaivePin([
+            'upstream_tag' => 'v148.0.7778.96-5',
+            'naive_version' => '148.0.7778.96',
+        ]);
+
+        $account = ProxyAccount::factory()->create();
+        $account->setCleartextPassword('s3cr3t-actual');
+        $account->save();
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $served = $response->getContent();
+        $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertArrayHasKey('server_naive_pin', $decoded);
+        $this->assertSame('v148.0.7778.96-5', $decoded['server_naive_pin']['upstream_tag']);
+        $this->assertSame('148.0.7778.96', $decoded['server_naive_pin']['naive_version']);
+
+        // Order: server_naive_pin appears AFTER expires_at and BEFORE
+        // signature — matches the Rust struct's field-declaration
+        // order, which is part of the wire contract.
+        $posExpires = strpos($served, '"expires_at"');
+        $posPin = strpos($served, '"server_naive_pin"');
+        $posSig = strpos($served, '"signature"');
+        $this->assertNotFalse($posPin, 'served body must contain server_naive_pin');
+        $this->assertNotFalse($posExpires);
+        $this->assertNotFalse($posSig);
+        $this->assertLessThan($posPin, $posExpires);
+        $this->assertLessThan($posSig, $posPin);
+
+        // HMAC still verifies — server_naive_pin is INSIDE the
+        // signed body.
+        $sig = $decoded['signature'];
+        unset($decoded['signature']);
+        $canonical = json_encode(
+            $decoded,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+        $expected = hash_hmac('sha256', $canonical, (string) config('app.key'));
+        $this->assertSame($expected, $sig);
+    }
+
+    #[Test]
+    public function manifest_omits_server_naive_pin_when_reader_returns_null(): void
+    {
+        // Half-truthy reads (manifest missing, binary unparseable,
+        // exec failure) → reader returns null → controller omits
+        // the field entirely. Old clients (pre-v0.3.x naive-pin
+        // awareness) see exactly what they used to see.
+        $this->seedActiveCover();
+        $this->stubNaivePin(null);
+
+        $account = ProxyAccount::factory()->create();
+        $account->setCleartextPassword('s3cr3t');
+        $account->save();
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $served = $response->getContent();
+        $this->assertStringNotContainsString('"server_naive_pin"', $served);
+        $this->assertStringNotContainsString('server_naive_pin', $served);
+
+        // Sanity: signature still verifies in the absent-field branch.
+        $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
+        $sig = $decoded['signature'];
+        unset($decoded['signature']);
+        $canonical = json_encode(
+            $decoded,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+        $this->assertSame(
+            hash_hmac('sha256', $canonical, (string) config('app.key')),
+            $sig,
         );
     }
 
