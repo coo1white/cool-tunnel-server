@@ -533,6 +533,14 @@ pin-images: ## resolve current docker base-image tags to digests; updates Docker
 	@if ! command -v docker >/dev/null; then echo 'docker not on PATH'; exit 1; fi
 	cd operator && bun run pin-images.ts
 
+.PHONY: sync-naive-pin
+sync-naive-pin: ## rewrite docker/{naive,panel}/Dockerfile ARG defaults to match manifests/naive.upstream.json (the v0.3.0 single-source-of-truth)
+	cd operator && bun run sync-naive-pin.ts
+
+.PHONY: check-naive-pin
+check-naive-pin: ## verify docker/{naive,panel}/Dockerfile ARG defaults match manifests/naive.upstream.json; exit non-zero on drift (CI / pre-build gate)
+	cd operator && bun run sync-naive-pin.ts --check
+
 .PHONY: sbom
 sbom: ## generate CycloneDX SBOMs for cargo + composer + docker
 	cd operator && bun run sbom.ts

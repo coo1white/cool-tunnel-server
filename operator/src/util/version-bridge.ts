@@ -30,7 +30,12 @@
 import { $, capture } from "./sh";
 
 export interface LayerVersion {
-    readonly layer: "panel-config" | "operator-binary" | "rust-core";
+    readonly layer:
+        | "panel-config"
+        | "operator-binary"
+        | "rust-core"
+        | "naive-server"
+        | "naive-client";
     readonly version: string | null;
     readonly source: string;
     readonly error?: string;
@@ -41,6 +46,17 @@ export interface BridgeReport {
     readonly agreed: boolean;
     readonly canonical: string | null;
     readonly mismatches: readonly LayerVersion[];
+}
+
+/**
+ * `naive --version` prints `naive <X.Y.Z.W>` (no `v` prefix, no
+ * release-suffix). The manifest pin is `vX.Y.Z.W-N` (asset tag),
+ * so normalisation strips the leading `v` and the trailing `-N`
+ * before comparison. Both sides go through the same normaliser so
+ * a future format change moves them together.
+ */
+export function normaliseNaiveVersion(v: string): string {
+    return v.replace(/^v/, "").replace(/-\d+$/, "").trim();
 }
 
 // ---------- pure parsers ----------
@@ -121,6 +137,128 @@ export function operatorBinaryVersion(buildVersion: string): LayerVersion {
  * `docker compose exec -T panel ct-server-core --version` →
  * parse the "ct-server-core X.Y.Z" line.
  */
+/**
+ * Parse `naive --version` output. Upstream prints `naive 148.0.7778.96`
+ * (single line, no `v` prefix, no rebuild suffix). Tolerant of leading
+ * whitespace and trailing build metadata.
+ */
+export function parseNaiveVersionOutput(out: string): string | null {
+    const m = out.trim().match(/^naive\s+(\S+)/);
+    return m && m[1] ? m[1] : null;
+}
+
+/**
+ * Read the manifest's canonical naive tag. Returns null if the file
+ * is missing/malformed (treated as a "warn" by the caller — drift
+ * detection still works between the two running layers).
+ */
+export async function readNaiveCanonical(cwd: string): Promise<LayerVersion> {
+    const path = `${cwd}/manifests/naive.upstream.json`;
+    const f = Bun.file(path);
+    if (!(await f.exists())) {
+        return {
+            layer: "naive-server",
+            version: null,
+            source: path,
+            error: "file not found",
+        };
+    }
+    try {
+        const j = JSON.parse(await f.text());
+        const tag = typeof j.upstream_tag === "string" ? j.upstream_tag : null;
+        if (!tag) {
+            return {
+                layer: "naive-server",
+                version: null,
+                source: path,
+                error: "upstream_tag missing",
+            };
+        }
+        return {
+            layer: "naive-server",
+            version: normaliseNaiveVersion(tag),
+            source: `${path} (upstream_tag, normalised)`,
+        };
+    } catch (e) {
+        return {
+            layer: "naive-server",
+            version: null,
+            source: path,
+            error: e instanceof Error ? e.message : String(e),
+        };
+    }
+}
+
+/**
+ * `docker compose exec -T naive naive --version` →
+ * `naive X.Y.Z.W`. Surfaces the server-side running binary.
+ */
+export async function readNaiveServerVersion(): Promise<LayerVersion> {
+    const r = await capture($`docker compose exec -T naive naive --version`);
+    const source = "docker compose exec naive naive --version";
+    if (!r.ok) {
+        return {
+            layer: "naive-server",
+            version: null,
+            source,
+            error: r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`,
+        };
+    }
+    const version = parseNaiveVersionOutput(r.stdout);
+    if (version === null) {
+        return { layer: "naive-server", version: null, source, error: "unexpected output shape" };
+    }
+    return { layer: "naive-server", version, source };
+}
+
+/**
+ * `docker compose exec -T panel /usr/local/bin/naive --version` →
+ * `naive X.Y.Z.W`. Surfaces the client-side running binary (the one
+ * the anti-tracking probe shells out to).
+ */
+export async function readNaiveClientVersion(): Promise<LayerVersion> {
+    const r = await capture($`docker compose exec -T panel /usr/local/bin/naive --version`);
+    const source = "docker compose exec panel /usr/local/bin/naive --version";
+    if (!r.ok) {
+        return {
+            layer: "naive-client",
+            version: null,
+            source,
+            error: r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`,
+        };
+    }
+    const version = parseNaiveVersionOutput(r.stdout);
+    if (version === null) {
+        return { layer: "naive-client", version: null, source, error: "unexpected output shape" };
+    }
+    return { layer: "naive-client", version, source };
+}
+
+/**
+ * Compare naive layers against the manifest's canonical tag. Unlike
+ * classifyBridge (which picks panel-config as canonical), this one
+ * uses the manifest tag as canonical — it's the single source of
+ * truth for both the running binaries.
+ *
+ * A null canonical (manifest missing/unreadable) falls back to
+ * "do the two running binaries agree with each other?" — the
+ * fundamental invariant still holds when the manifest is absent.
+ */
+export function classifyNaiveBridge(
+    canonical: LayerVersion,
+    server: LayerVersion,
+    client: LayerVersion,
+): BridgeReport {
+    const layers = [canonical, server, client] as const;
+    const readable = layers.filter((l) => l.version !== null);
+    if (readable.length === 0) {
+        return { layers, agreed: false, canonical: null, mismatches: [] };
+    }
+    const canon = canonical.version ?? readable[0]!.version!;
+    const mismatches = readable.filter((l) => l.version !== canon);
+    return { layers, agreed: mismatches.length === 0, canonical: canon, mismatches };
+}
+
 export async function readRustCoreVersion(): Promise<LayerVersion> {
     const r = await capture($`docker compose exec -T panel ct-server-core --version`);
     if (!r.ok) {

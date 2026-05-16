@@ -180,6 +180,41 @@ async function autoMigrateEnv(): Promise<void> {
     for (const c of r.changes) ok(c.summary);
 }
 
+/**
+ * v0.3.0+ invariant: the upstream naive binary that ships in the
+ * panel image (anti-tracking probe / client side) and the binary
+ * that ships in the ct-naive container (server side) MUST be the
+ * same version. manifests/naive.upstream.json is the canonical pin;
+ * docker/{naive,panel}/Dockerfile ARG defaults are auto-managed.
+ *
+ * Drift between manifest and Dockerfile defaults already burned us
+ * once — refuse to rebuild until it's resolved.
+ */
+async function checkNaivePinLockstep(): Promise<void> {
+    step("Verify naive pin lockstep (server ↔ client)");
+    const r = await runStreaming($`bun run operator/sync-naive-pin.ts --check`);
+    if (!r.ok) {
+        dieWithDiag(
+            "naive pin drift between manifests/naive.upstream.json and the Dockerfile ARG defaults",
+            `The v0.3.0 architecture requires the server-side naive
+(docker/naive/Dockerfile) and the client-side naive bundled in the
+panel image (docker/panel/Dockerfile) to be the SAME upstream tag —
+this is what prevents the v0.2.x padding-protocol drift class of
+bugs from re-appearing.
+
+Fix:
+
+    bun run operator/sync-naive-pin.ts        # rewrites both Dockerfiles
+    # or:
+    make sync-naive-pin
+
+then re-run \`ct update\`. If you intended to bump the naive version,
+edit manifests/naive.upstream.json first, then run the sync.`,
+        );
+    }
+    ok("naive pin in lockstep");
+}
+
 async function rebuildCore(): Promise<void> {
     step("Rebuild ct-server-core (Rust)");
     // Streams BuildKit progress live (`[+] Building 31.6s (17/23)...`).
@@ -228,7 +263,7 @@ async function rebuildImages(): Promise<void> {
                                 GitHub Releases at build time. A
                                 transient github.com hiccup will
                                 fail it; the SHA pin in
-                                docker/naive/naive.upstream.json
+                                manifests/naive.upstream.json
                                 ensures integrity.)
   - Composer.lock conflict  ->  this was the v0.0.95 class
                                 of bug -- check the entrypoint
@@ -463,6 +498,7 @@ export async function runUpdate(): Promise<number> {
     // caddy image build doesn't race the old caddy's :443 with
     // haproxy's stale :443 binding).
     await stopLegacyV01Containers();
+    await checkNaivePinLockstep();
     await rebuildCore();
     await rebuildImages();
     await bringNewImagesUp();

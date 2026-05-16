@@ -212,12 +212,27 @@ jobs:
       # a no-change rerun completes in ~30s.
       - name: Build custom Caddy image
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           docker build -t ct-caddy-test docker/caddy
           docker run --rm ct-caddy-test caddy version
-          docker run --rm ct-caddy-test caddy list-modules \
-              | grep -q '^layer4$' \
-              || { echo "::error::layer4 module did not load into custom Caddy"; exit 1; }
+          # Capture the full module list to a file so a failed
+          # assertion below can dump it — the previous `grep -q`
+          # form gave no postmortem signal (layer4 either present
+          # or "absent", with no way to see what WAS loaded). The
+          # in-Dockerfile RUN already asserts layer4 at build time;
+          # this CI-level re-assertion guards against BuildKit
+          # cache anomalies and upstream `caddy:2.11.3-alpine`
+          # base-image drift, both of which have no fingerprint
+          # in the build log without the dump-on-fail.
+          modules=$(mktemp)
+          docker run --rm ct-caddy-test caddy list-modules > "$modules"
+          if ! grep -q '^layer4$' "$modules"; then
+              echo "::group::caddy list-modules (full)"
+              cat "$modules"
+              echo "::endgroup::"
+              echo "::error::layer4 module did not load into custom Caddy (see grouped log above for the actual module list)"
+              exit 1
+          fi
 
       - name: Render and validate the Caddyfile
         run: |
