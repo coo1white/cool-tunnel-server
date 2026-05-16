@@ -227,55 +227,7 @@ prompt_yn() {
     done
 }
 
-# prompt_secret "Admin password"
-#
-# Read a secret without echoing. Echoes a newline after.
-prompt_secret() {
-    local q="$1"
-    if [[ ! -t 0 ]]; then
-        die "cannot read $q without a TTY"
-    fi
-    printf "    %s: " "$q" >&2
-    local secret
-    IFS= read -rs secret
-    printf "\n" >&2
-    printf "%s" "$secret"
-}
-
-# ---------- Portable filesystem helpers ----------------------------
-
-# file_mode_octal <path>
-#
-# Print the file's mode as an octal string (e.g. `0600`, `644`).
-# Portable across GNU coreutils (`stat -c '%a'`) and BSD/macOS
-# (`stat -f '%OLp'`). Round-21 cross-platform audit: install.sh
-# previously used `stat -c '%a'` directly, which fails on macOS
-# (and any BSD) with `stat: illegal option -- c` — confusing for
-# a developer trying to run install.sh outside Linux for testing.
-# Same invariant on output (octal digits) regardless of host
-# coreutils flavour.
-file_mode_octal() {
-    local path="$1"
-    if stat -c '%a' "$path" 2>/dev/null; then
-        return 0
-    fi
-    if stat -f '%OLp' "$path" 2>/dev/null; then
-        return 0
-    fi
-    return 1
-}
-
 # ---------- Docker helpers -----------------------------------------
-
-# require_docker
-#
-# Verify Docker + Compose v2 are usable.
-require_docker() {
-    require_cmd docker "Install per docs/installation-debian.md (uses Docker's official apt repo)."
-    docker compose version >/dev/null 2>&1 \
-        || die "docker compose v2 not available" \
-               "Install with: apt install -y docker-compose-plugin"
-}
 
 # disable_ipv6_if_broken
 #
@@ -345,67 +297,6 @@ sudo_if_needed() {
 # logging or `--env-file` overrides later.
 compose() {
     docker compose "$@"
-}
-
-# compose_project_name
-#
-# Print the docker-compose project name docker-compose itself will
-# use for THIS working directory. Honours `COMPOSE_PROJECT_NAME`
-# env override + any `name:` field in compose files; falls back to
-# directory basename otherwise (which is docker-compose's default).
-#
-# Round-24 operator-workflow audit: backup.sh + restore.sh
-# previously hardcoded `cool-tunnel-server_caddy_data` as the
-# volume name, assuming the project name is exactly
-# `cool-tunnel-server`. An operator running parallel deployments
-# (e.g. `/opt/ct-prod/` and `/opt/ct-staging/`) would get
-# different project names per deployment, but both backup/restore
-# scripts would still target `cool-tunnel-server_caddy_data` —
-# silently overwriting one deployment's ACME certs with the
-# other's on restore. This helper sources the truth from
-# docker-compose itself.
-#
-# Requires `compose ps` to work (i.e. valid compose files in the
-# CWD). Caller should `require_docker` first.
-compose_project_name() {
-    local name
-    name=$(docker compose config --format json 2>/dev/null \
-        | jq -r '.name // empty' 2>/dev/null) || true
-    if [[ -z "$name" ]]; then
-        # Fallback: docker-compose's default project-name rule is
-        # the basename of the project directory, lowercased and
-        # stripped of any non-alphanumeric chars (cf. compose v2
-        # docs). Most repo dirs match the rule already; the
-        # transform here is a defensive cleanup.
-        name="$(basename "$(pwd)" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')"
-    fi
-    printf '%s\n' "$name"
-}
-
-# acquire_op_lock
-#
-# Take an exclusive, non-blocking flock for the lifetime of the
-# calling script. Per-project (round-24 multi-deploy: prod and
-# staging on the same host don't serialise against each other);
-# shared across install/update/backup/restore so any of them
-# blocks the others. fd 9 is well outside typical script use; the
-# kernel releases the lock on process exit, so no manual cleanup
-# is needed (even on `kill -9` the fd closes and flock drops).
-# See CHANGELOG [0.0.80].
-acquire_op_lock() {
-    require_cmd flock "apt install -y util-linux"
-    local project lock_path
-    project=$(compose_project_name)
-    lock_path="/tmp/cool-tunnel-ops-${project}.lock"
-
-    # shellcheck disable=SC2188  # the redirect IS the side effect (fd 9 open)
-    exec 9>"$lock_path" \
-        || die "could not open lock file $lock_path" \
-               "check /tmp permissions and disk space"
-    if ! flock -n 9; then
-        die "another cool-tunnel operator script is already running for project '${project}'" \
-            "lockfile: $lock_path  (try: lsof '$lock_path' to see who holds it)"
-    fi
 }
 
 # component_check_strict [<manifests-dir>]
@@ -588,63 +479,6 @@ EOF
     done
 }
 
-# preflight_disk_space [<min_repo_gb>] [<min_docker_gb>]
-#
-# Refuse to proceed when free disk under the repo path OR under
-# docker's data-root is below the threshold. Defaults: 2 GB repo,
-# 4 GB docker. Override per-invocation via CT_MIN_REPO_GB /
-# CT_MIN_DOCKER_GB env vars. Running out of disk mid-build is the
-# messiest failure class — half-built panel image, confused
-# composer install, ENOSPC sentinel in the entrypoint log.
-preflight_disk_space() {
-    local min_repo_gb="${1:-${CT_MIN_REPO_GB:-2}}"
-    local min_docker_gb="${2:-${CT_MIN_DOCKER_GB:-4}}"
-
-    local repo_free_kb repo_free_gb
-    repo_free_kb=$(df -k . 2>/dev/null | awk 'NR==2 {print $4}')
-    repo_free_gb=$(( ${repo_free_kb:-0} / 1024 / 1024 ))
-    if (( repo_free_gb < min_repo_gb )); then
-        local repo_disk_diag
-        read -r -d '' repo_disk_diag <<'EOF' || true
-Compose build, git pull, and composer install all need scratch
-space; running out mid-update corrupts the build cache.
-
-What to free (priority order, most-impact first):
-  docker system prune -af        # stopped containers + dangling images
-  docker builder prune -af       # buildkit cache (1-3 GB typical)
-  rm -rf core/target             # Rust build cache (2-5 GB)
-  du -h --max-depth=1 / | sort -rh | head    # find the actual offender
-
-Re-run ./scripts/update.sh after freeing space.
-EOF
-        die_with_diag "low disk under repo path: ${repo_free_gb}G free, need >= ${min_repo_gb}G" \
-            "$repo_disk_diag"
-    fi
-
-    local docker_root docker_free_kb docker_free_gb
-    docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
-    docker_free_kb=$(df -k "$docker_root" 2>/dev/null | awk 'NR==2 {print $4}')
-    docker_free_gb=$(( ${docker_free_kb:-0} / 1024 / 1024 ))
-    if (( docker_free_gb < min_docker_gb )); then
-        local docker_disk_diag
-        docker_disk_diag=$(printf '%s\n' \
-            "Compose pull + build will store image layers under $docker_root." \
-            "Out-of-space mid-build typically surfaces as 'no space left on" \
-            "device' partway through, leaving a half-built panel image and a" \
-            "confused stack." \
-            "" \
-            "What to free (priority order):" \
-            "  docker system prune -af" \
-            "  docker builder prune -af" \
-            "  docker volume ls -qf dangling=true | xargs -r docker volume rm" \
-            "  du -sh $docker_root/overlay2/*  | sort -rh | head")
-        die_with_diag "low disk under docker root ($docker_root): ${docker_free_gb}G free, need >= ${min_docker_gb}G" \
-            "$docker_disk_diag"
-    fi
-
-    ok "disk space OK (repo: ${repo_free_gb}G, docker: ${docker_free_gb}G)"
-}
-
 # preflight_stack_up <service...>
 #
 # Verify each named compose service has at least one container in
@@ -701,62 +535,4 @@ preflight_stack_up() {
 
     warn "stack is partially up — these services are NOT running: ${missing[*]}"
     warn "update will try to bring them back up alongside the rebuild"
-}
-
-# preflight_network [<host>...]
-#
-# Verify outbound HTTPS reachability to github.com (for git pull)
-# and registry-1.docker.io (for image pulls + buildkit). Caller
-# can override the host list. Update fails mysteriously on offline
-# VPSes; surfacing this up front saves the operator from a 5-
-# minute wait for compose to time out twice.
-#
-# v0.0.97 — drop the `-f` flag from the curl call. Pre-v0.0.97
-# used `curl -fsSI`, which `-f` makes return non-zero on any HTTP
-# 4xx/5xx response. registry-1.docker.io/ returns 401 to an
-# unauthenticated request — perfectly valid behaviour, the
-# registry IS reachable — but `-f` rejected that as a connection
-# failure. Operators on a freshly-rebuilt VPS hit "cannot reach
-# registry-1.docker.io" even though the network was fine.
-# The reachability check should pass on ANY HTTP response code
-# (the network round-trip completed); it should only fail on
-# real connection-level errors (DNS NXDOMAIN, connection refused,
-# TLS handshake timeout). `curl -sS` without `-f` returns 0 for
-# any successful HTTP transaction regardless of status code, so
-# the single-call form below is both simpler and more correct
-# than the two-call fallback ladder it replaces.
-preflight_network() {
-    local hosts=("$@")
-    if (( ${#hosts[@]} == 0 )); then
-        hosts=(github.com registry-1.docker.io)
-    fi
-
-    local unreachable=()
-    for h in "${hosts[@]}"; do
-        if ! curl -sS --connect-timeout 5 --max-time 10 \
-                 -o /dev/null "https://$h/" 2>/dev/null; then
-            unreachable+=("$h")
-        fi
-    done
-
-    if (( ${#unreachable[@]} > 0 )); then
-        local network_diag
-        read -r -d '' network_diag <<'EOF' || true
-Update needs to git pull (github.com) and pull image layers
-(registry-1.docker.io). One or both is unreachable.
-
-What to check (in priority order):
-  ping -c 3 1.1.1.1                  # internet reachable at all?
-  dig +short github.com              # DNS resolving?
-  curl -v https://github.com/        # outbound 443 not blocked?
-  printenv HTTPS_PROXY               # corporate proxy needed?
-  docker info | grep -A3 Registry    # registry mirror configured?
-
-When the network is back, re-run:
-  ./scripts/update.sh
-EOF
-        die_with_diag "network: cannot reach ${unreachable[*]}" "$network_diag"
-    fi
-
-    ok "network reachable (${hosts[*]})"
 }
