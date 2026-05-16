@@ -57,6 +57,20 @@ pub struct SubscriptionManifestV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 
+    /// Naive-pin metadata for the v0.3.0+ "same binary on both ends"
+    /// invariant. Lets the client confirm at runtime that the server
+    /// is pinned to the same upstream `klzgrad/naiveproxy` tag as the
+    /// client itself, even though the two halves ship different
+    /// binaries (linux-x64/arm64 server-side, darwin-arm64/x64
+    /// client-side). Binary signatures differ; `upstream_tag` is the
+    /// semantic identity. Optional — `None` on outbound when the
+    /// server is unable to introspect its own pin (e.g. manifest file
+    /// missing in the panel container). Clients treat absence as
+    /// "unknown, soft-warn" rather than as a hard mismatch — older
+    /// servers won't emit this field at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_naive_pin: Option<NaivePinV1>,
+
     /// HMAC-SHA-256 of the canonical JSON body with this field set
     /// to None / null. Hex-encoded. None on outbound when the
     /// server is constructing the body to sign; populated when
@@ -186,6 +200,39 @@ pub enum AntiTrackingFeature {
     Http3,
 }
 
+/// Naive-pin block carried in `SubscriptionManifestV1::server_naive_pin`.
+///
+/// `upstream_tag` is the canonical pin from the server's
+/// `manifests/naive.upstream.json` (e.g. `v148.0.7778.96-5`) — the
+/// build-time invariant the operator chose. `naive_version` is the
+/// runtime output of `naive --version` (e.g. `148.0.7778.96` — no
+/// `v` prefix, no rebuild suffix) on whichever naive binary the
+/// server has on hand to introspect (in panel-side codepaths that's
+/// the bundled probe-client binary, which the build-time
+/// `operator/sync-naive-pin.ts` keeps in lockstep with the
+/// ct-naive server-side binary).
+///
+/// Client-side decision rule:
+///   - normaliseNaiveVersion(client_pin.upstream_tag) ==
+///     server_naive_pin.naive_version → ✓ wire-compatible.
+///   - upstream_tag-vs-upstream_tag string equality across repos →
+///     stricter check, matches the v0.3.0 "same upstream tag both
+///     ends" invariant verbatim.
+///   - Mismatch → soft-warn in client UI ("server is running an
+///     unexpected naive version — wire compatibility may be broken").
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NaivePinV1 {
+    /// Canonical upstream tag the SERVER was built against.
+    /// Format: `vMAJOR.MINOR.BUILD.PATCH-REBUILD` (the upstream
+    /// release tag verbatim, e.g. `v148.0.7778.96-5`).
+    pub upstream_tag: String,
+
+    /// Runtime version of the naive binary, as reported by
+    /// `naive --version`. Format: `MAJOR.MINOR.BUILD.PATCH`
+    /// (no `v` prefix, no rebuild suffix).
+    pub naive_version: String,
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -220,6 +267,7 @@ mod tests {
             issued_at: 0,
             expires_at: 0,
             note: None,
+            server_naive_pin: None,
             signature: Some("0011223344".into()),
         };
         let s = serde_json::to_string(&m).unwrap();
@@ -241,6 +289,7 @@ mod tests {
             issued_at: 0,
             expires_at: 0,
             note: None,
+            server_naive_pin: None,
             signature: None,
         };
         let s = serde_json::to_string(&m).unwrap();
@@ -297,6 +346,7 @@ mod tests {
             issued_at: 1000,
             expires_at: 2000,
             note: None,                            // omitted on the wire
+            server_naive_pin: None,                // omitted on the wire
             signature: Some("deadbeef".repeat(8)), // 64-hex-char placeholder
         };
 
@@ -359,12 +409,16 @@ mod tests {
             issued_at: 1,
             expires_at: 2,
             note: Some("n".into()),
+            server_naive_pin: Some(NaivePinV1 {
+                upstream_tag: "v148.0.7778.96-5".into(),
+                naive_version: "148.0.7778.96".into(),
+            }),
             signature: Some("sig".into()),
         };
         let s = serde_json::to_string(&m).unwrap();
         // Find each key's position; keys must appear in the
         // exact order: version, server, profiles, capabilities,
-        // issued_at, expires_at, note, signature.
+        // issued_at, expires_at, note, server_naive_pin, signature.
         let order = [
             "\"version\"",
             "\"server\"",
@@ -373,6 +427,7 @@ mod tests {
             "\"issued_at\"",
             "\"expires_at\"",
             "\"note\"",
+            "\"server_naive_pin\"",
             "\"signature\"",
         ];
         let mut last_pos = 0;
@@ -401,6 +456,7 @@ mod tests {
             issued_at,
             expires_at,
             note: None,
+            server_naive_pin: None,
             signature: None,
         }
     }
@@ -624,5 +680,79 @@ mod tests {
             "must NOT escape `/` to `\\/` — would diverge from PHP \
              JSON_UNESCAPED_SLASHES: {s}"
         );
+    }
+
+    // ----- server_naive_pin (v0.3.x cross-end pin confirmation) -----
+
+    #[test]
+    fn server_naive_pin_omitted_when_none() {
+        let m = manifest_with_times(0, 0);
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(
+            !s.contains("server_naive_pin"),
+            "server_naive_pin must be omitted when None (skip_if_none contract): {s}"
+        );
+    }
+
+    #[test]
+    fn server_naive_pin_emitted_when_some_and_round_trips() {
+        let mut m = manifest_with_times(0, 0);
+        m.server_naive_pin = Some(NaivePinV1 {
+            upstream_tag: "v148.0.7778.96-5".into(),
+            naive_version: "148.0.7778.96".into(),
+        });
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(s.contains("\"server_naive_pin\""));
+        assert!(s.contains("\"upstream_tag\":\"v148.0.7778.96-5\""));
+        assert!(s.contains("\"naive_version\":\"148.0.7778.96\""));
+
+        let m2: SubscriptionManifestV1 = serde_json::from_str(&s).unwrap();
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn server_naive_pin_canonical_roundtrips_under_signature_strip() {
+        // Same property as canonical_roundtrips_under_signature_strip
+        // but with server_naive_pin present — every HMAC verification
+        // must round-trip byte-for-byte through the strip-and-re-
+        // serialise dance.
+        let served = SubscriptionManifestV1 {
+            server_naive_pin: Some(NaivePinV1 {
+                upstream_tag: "v148.0.7778.96-5".into(),
+                naive_version: "148.0.7778.96".into(),
+            }),
+            signature: Some("ab".repeat(32)),
+            ..manifest_with_times(1000, 2000)
+        };
+
+        let server_canonical_struct = SubscriptionManifestV1 {
+            signature: None,
+            ..served.clone()
+        };
+        let server_canonical = serde_json::to_string(&server_canonical_struct).unwrap();
+
+        let served_json = serde_json::to_string(&served).unwrap();
+        let mut from_wire: SubscriptionManifestV1 = serde_json::from_str(&served_json).unwrap();
+        from_wire.signature = None;
+        let client_canonical = serde_json::to_string(&from_wire).unwrap();
+
+        assert_eq!(server_canonical, client_canonical);
+    }
+
+    #[test]
+    fn deserialiser_tolerates_old_manifest_without_server_naive_pin() {
+        // Forwards-compat: an old server (pre-v0.3.x) emits a manifest
+        // with NO server_naive_pin key at all. The Rust deserialiser
+        // must accept it as `None`, not error out.
+        let old_wire = r#"{
+            "version": 1,
+            "server": "s",
+            "profiles": [],
+            "capabilities": { "anti_tracking": [], "http3": false },
+            "issued_at": 1,
+            "expires_at": 2
+        }"#;
+        let m: SubscriptionManifestV1 = serde_json::from_str(old_wire).unwrap();
+        assert!(m.server_naive_pin.is_none());
     }
 }

@@ -10,6 +10,7 @@ use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\ComponentCheckerInterface;
 use App\Contracts\CtServerCoreInterface;
 use App\Contracts\NaiveConfigGeneratorInterface;
+use App\Contracts\NaivePinReaderInterface;
 use App\Contracts\RevocationBusInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Contracts\SingBoxReloaderInterface;
@@ -17,6 +18,7 @@ use App\Services\CaddyfileGenerator;
 use App\Services\ComponentChecker;
 use App\Services\CtServerCore;
 use App\Services\NaiveConfigGenerator;
+use App\Services\NaivePinReader;
 use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
 use App\Services\SingBoxReloader;
@@ -55,6 +57,11 @@ class AppServiceProvider extends ServiceProvider
         RevocationBusInterface::class => RedisRevocationBus::class,
         CtServerCoreInterface::class => CtServerCore::class,
         ComponentCheckerInterface::class => ComponentChecker::class,
+        // v0.3.x — naive-pin reader used by SubscriptionController
+        // to splice server_naive_pin into the subscription manifest.
+        // Tests bind a stub against the interface so they don't
+        // touch the real /srv/manifests file or shell out to naive.
+        NaivePinReaderInterface::class => NaivePinReader::class,
     ];
 
     public function register(): void
@@ -69,6 +76,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(TrafficCollector::class);
         $this->app->singleton(ComponentChecker::class);
         $this->app->singleton(RedisRevocationBus::class);
+        $this->app->singleton(NaivePinReader::class);
 
         // Interface → concrete bindings. `$this->app->bind` (not
         // `singleton`) is enough here because the concrete is

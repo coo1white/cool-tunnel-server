@@ -113,6 +113,11 @@ pub async fn emit(pool: &MySqlPool, account_id: i64) -> Result<()> {
              splice in the cleartext before signing and serving."
                 .into(),
         ),
+        // server_naive_pin is computed and spliced in by the PHP
+        // controller (it has access to manifests/naive.upstream.json
+        // and the runtime `naive --version` from the panel's bundled
+        // probe binary). The Rust-side scaffold leaves it None.
+        server_naive_pin: None,
         signature: None,
     };
 
