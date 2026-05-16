@@ -203,10 +203,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # v0.2.0: validate the Caddyfile against the SAME custom Caddy
-      # image we ship (xcaddy + klzgrad/forwardproxy@naive). Stock
-      # `caddy:2.8.4-alpine` rejects the `forward_proxy` directive
-      # because the plugin isn't compiled in.
+      # v0.3.0: validate the Caddyfile against the SAME custom Caddy
+      # image we ship (xcaddy + mholt/caddy-l4). Stock
+      # `caddy:2.11.3-alpine` rejects the `layer4` directive because
+      # the plugin isn't compiled in.
       #
       # The build is cached by docker's layer cache in CI runners;
       # a no-change rerun completes in ~30s.
@@ -216,27 +216,21 @@ jobs:
           docker build -t ct-caddy-test docker/caddy
           docker run --rm ct-caddy-test caddy version
           docker run --rm ct-caddy-test caddy list-modules \
-              | grep -q '^http.handlers.forward_proxy$' \
-              || { echo "::error::forward_proxy module did not load into custom Caddy"; exit 1; }
+              | grep -q '^layer4$' \
+              || { echo "::error::layer4 module did not load into custom Caddy"; exit 1; }
 
       - name: Render and validate the Caddyfile
         run: |
           set -euo pipefail
           rendered=$(mktemp)
-          # Substitute every binding the renderer emits.
-          # ForwardProxyBasicAuthLines: feed one sample line so the
-          # forward_proxy block parses (an empty block is rejected
-          # by klzgrad's parser as "expecting at least one auth /
-          # probe directive"). ProbeResistanceSecret: a deterministic
-          # value matching the renderer's sha256(domain)[..16].localhost
-          # shape; the value here doesn't have to match production,
-          # just has to be a valid hostname.
+          # Substitute every binding the v0.3.0 renderer emits. No
+          # more ForwardProxyBasicAuthLines / ProbeResistanceSecret —
+          # the per-account credentials and probe-resistance secret
+          # live in /data/config/naive.json now (ct-naive's input).
           sed -e 's|{{ \.Domain }}|test.local|g' \
               -e 's|{{ \.PanelDomain }}|panel.test.local|g' \
               -e 's|{{ \.AcmeEmail }}|t@x.com|g' \
               -e 's|{{ \.AcmeDirectory }}|https://acme-staging-v02.api.letsencrypt.org/directory|g' \
-              -e 's|{{ \.ForwardProxyBasicAuthLines }}|            basic_auth alice apw|g' \
-              -e 's|{{ \.ProbeResistanceSecret }}|abc123def456.localhost|g' \
               caddy/Caddyfile.tpl > "$rendered"
           docker run --rm -v "$rendered":/etc/caddy/Caddyfile ct-caddy-test \
               caddy validate --config /etc/caddy/Caddyfile

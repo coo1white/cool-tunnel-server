@@ -1,0 +1,20 @@
+{
+  "$comment": [
+    "Pinned upstream naive Linux x64 build. v0.3.0+ ct-naive container",
+    "fetches and integrity-checks this exact tarball at image-build",
+    "time. The upstream_tag MUST match COOL-TUNNEL/naive.upstream.json",
+    "in the macOS client repo — wire-level compatibility is the whole",
+    "point of the v0.3.0 architecture cut. Bump both sides together.",
+    "",
+    "How to refresh on a naive version bump (run from the repo root):",
+    "  TAG=v149.x.y.z-N",
+    "  gh api repos/klzgrad/naiveproxy/releases/tags/$TAG \\",
+    "    --jq '.assets[] | select(.name == \"naiveproxy-'\"$TAG\"'-linux-x64.tar.xz\") | {url:.browser_download_url, sha:(.digest|sub(\"^sha256:\";\"\")), size}'",
+    "  # paste url/sha/size below + bump upstream_tag + fetched_at"
+  ],
+  "upstream_tag": "v148.0.7778.96-5",
+  "linux_x64_url": "https://github.com/klzgrad/naiveproxy/releases/download/v148.0.7778.96-5/naiveproxy-v148.0.7778.96-5-linux-x64.tar.xz",
+  "linux_x64_sha256": "ca6958dcbbfb7b1b38c55a213dab6927ce3c1417d969b815657513b81fc7352d",
+  "linux_x64_size_bytes": 5084780,
+  "fetched_at": "2026-05-16T09:10:00Z"
+}

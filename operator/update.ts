@@ -205,28 +205,37 @@ number are usually enough to diagnose.`,
 }
 
 async function rebuildImages(): Promise<void> {
-    step("Rebuild caddy + panel images");
-    // v0.2.0+: caddy + panel only. sing-box and haproxy services
-    // retired in the architecture cut. Same live-streaming rationale
-    // as rebuildCore.
-    const r = await runStreaming($`docker compose build caddy panel`);
+    step("Rebuild caddy + naive + panel images");
+    // v0.3.0+: caddy (now with mholt/caddy-l4 instead of
+    // klzgrad/forwardproxy@naive) + naive (NEW — runs the same
+    // klzgrad/naiveproxy binary the macOS client bundles) + panel.
+    // sing-box and haproxy services were retired in v0.2.0.
+    const r = await runStreaming($`docker compose build caddy naive panel`);
     if (!r.ok) {
         dieWithDiag(
-            "caddy / panel build failed",
+            "caddy / naive / panel build failed",
             `Common causes (in priority order):
   - Out of disk             ->  df -h /var/lib/docker
                                 then docker system prune -af
   - xcaddy / Go transient   ->  retry: ./ct update
                                 (Caddy is built with the
-                                klzgrad/forwardproxy plugin via
-                                xcaddy; first build pulls a Go
-                                dep graph from proxy.golang.org)
+                                mholt/caddy-l4 plugin via xcaddy;
+                                first build pulls a Go dep graph
+                                from proxy.golang.org.)
+  - naive tarball fetch     ->  retry: ./ct update
+                                (ct-naive's Dockerfile fetches the
+                                upstream naive Linux build from
+                                GitHub Releases at build time. A
+                                transient github.com hiccup will
+                                fail it; the SHA pin in
+                                docker/naive/naive.upstream.json
+                                ensures integrity.)
   - Composer.lock conflict  ->  this was the v0.0.95 class
                                 of bug -- check the entrypoint
                                 output for "platform-req" errors
 
 The build prints which Dockerfile step failed; that pinpoints
-which image (caddy / panel) and which line.`,
+which image (caddy / naive / panel) and which line.`,
         );
     }
 }
@@ -280,16 +289,24 @@ async function panelEntrypointDone(): Promise<boolean> {
 }
 
 async function bringNewImagesUp(): Promise<void> {
-    step("Bring new panel + caddy images up (entrypoint runs migrate + render)");
-    // v0.2.0+: caddy + panel only. sing-box + haproxy are no longer in
-    // compose. The panel container's entrypoint shells out to
-    // ct-server-core caddyfile render on startup, so by the time
-    // bringNewImagesUp returns, /etc/caddy/Caddyfile is on disk and
-    // caddy is reading from it.
-    const r = await capture($`docker compose up -d panel caddy`);
+    step("Bring new panel + caddy + naive images up (entrypoint runs migrate + render)");
+    // v0.3.0+: caddy + naive + panel. Panel's entrypoint shells out
+    // to `ct-server-core caddyfile render` AND `ct-server-core naive
+    // render` on startup, so by the time bringNewImagesUp returns,
+    // /etc/caddy/Caddyfile + /data/config/naive.json are both on
+    // disk. caddy reads the Caddyfile directly; ct-naive's
+    // supervisor file-watches /data/config/naive.json and spawns
+    // naive once both file + cert are present.
+    //
+    // --remove-orphans cleans up containers from removed services
+    // (e.g. ct-singbox / ct-haproxy lingering from a v0.1.x box
+    // that never ran stopLegacyV01Containers, or a future service
+    // we retire). Safer than the v0.2.x default that left orphans
+    // mapping ports.
+    const r = await capture($`docker compose up -d --remove-orphans panel caddy naive`);
     if (!r.ok) {
         dieWithDiag(
-            "compose up -d panel caddy failed",
+            "compose up -d panel caddy naive failed",
             r.stderr.split("\n").slice(0, 5).join("\n") || "check `docker compose ps`",
         );
     }
@@ -323,11 +340,11 @@ async function migrateDb(): Promise<void> {
 
 async function renderCaddyfile(): Promise<void> {
     step("Re-render Caddyfile");
-    // v0.2.0+: a single render covers the role formerly split across
-    // singbox render + haproxy render. The renderer pulls
-    // ProxyAccount rows + ServerConfig and emits the consolidated
-    // Caddyfile (panel reverse_proxy + forward_proxy basic_auth +
-    // probe_resistance). See core/ct-server-core/src/caddy/mod.rs.
+    // v0.3.0+: Caddyfile is now mostly-static (Domain / PanelDomain /
+    // ACME email / ACME directory only); per-account credentials
+    // moved to naive.json. The renderer is still wired up so a
+    // domain/email change picks up cleanly. See
+    // core/ct-server-core/src/caddy/mod.rs.
     const r = await capture(
         $`docker compose exec -T panel ct-server-core --json caddyfile render`,
     );
@@ -336,15 +353,33 @@ async function renderCaddyfile(): Promise<void> {
     }
 }
 
+async function renderNaiveJson(): Promise<void> {
+    step("Render /data/config/naive.json (ct-naive supervisor input)");
+    // v0.3.0+ NEW. Renderer reads ServerConfig + first active
+    // ProxyAccount, writes /data/config/naive.json. ct-naive's
+    // Bun supervisor file-watches this path and respawns naive
+    // within ~250 ms. No separate reload primitive — the file
+    // write IS the reload trigger.
+    const r = await capture(
+        $`docker compose exec -T panel ct-server-core --json naive render`,
+    );
+    if (!r.ok) {
+        dieWithDiag("ct-server-core naive render failed", r.stderr.split("\n")[0] ?? "");
+    }
+}
+
 async function reloadCaddy(): Promise<void> {
     step("Reload Caddy (graceful — drains in-flight connections)");
-    // v0.2.0+ replacement for the v0.1.x reloadSingBox + reloadHaproxy
-    // chain. Caddy's reload is graceful + zero-downtime — in-flight
-    // forward_proxy connections drain naturally as the new config
-    // picks up new ones. Implementation: `docker exec ct-caddy caddy
-    // reload --config /etc/caddy/Caddyfile`. Caddy validates the
-    // new config BEFORE swapping; a parse error leaves the running
-    // config in place (fail-closed; matches singbox::reload's posture).
+    // v0.3.0+ unchanged from v0.2.x in shape: Caddy's reload is
+    // graceful + zero-downtime. Implementation:
+    // `docker exec ct-caddy caddy reload --config /etc/caddy/Caddyfile`.
+    // Note: from inside the panel container this currently fails
+    // because docker CLI is absent — a known v0.2.x carry-over.
+    // When `update` runs from the host (this code path) the docker
+    // CLI is on the host PATH and the exec succeeds. The "from
+    // panel" path is exercised on credential changes via the
+    // Filament UI; we ignore failure there until the admin-API
+    // reload follow-up lands.
     const r = await capture(
         $`docker compose exec -T panel ct-server-core caddyfile reload`,
     );
@@ -434,6 +469,12 @@ export async function runUpdate(): Promise<number> {
     await migrateDb();
     await renderCaddyfile();
     await reloadCaddy();
+    // v0.3.0 NEW: render naive.json AFTER caddy is up (so caddy
+    // has had a chance to acquire the naive.<DOMAIN> cert that
+    // ct-naive will pick up via the shared /data/caddy volume).
+    // ct-naive's supervisor will see the new naive.json and the
+    // freshly-acquired cert, then spawn the naive child.
+    await renderNaiveJson();
 
     step("Component check (post-swap)");
     const cc = await runComponentCheckStrict();

@@ -6,64 +6,59 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use App\Contracts\SingBoxConfigGeneratorInterface;
-use App\Contracts\SingBoxReloaderInterface;
+use App\Contracts\NaiveConfigGeneratorInterface;
 use App\MessageHandlers\ReloadSingBoxHandler;
 use App\Messages\ReloadSingBox;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
-// v0.0.94 cutover. ReloadSingBoxJob's `failed()` hook + tests are
-// gone; the equivalent failure-surfacing concern in Symfony
-// Messenger is the `failure_transport` mechanism (Messenger's
-// retry strategy + dedicated failed-message transport). That's
-// deferred to a later release — Phase 3 retains correctness by
-// pinning the handler's *invocation contract* against fakes of
-// the two service collaborators it depends on.
+// v0.3.0 cutover. The handler now renders /data/config/naive.json
+// via NaiveConfigGenerator; the file write IS the reload primitive
+// (ct-naive's Bun supervisor file-watches the path and respawns
+// naive automatically). The v0.2.x SingBoxReloader::reload() step
+// is gone — there's no explicit reload-side shell-out anymore.
+//
+// Class name "ReloadSingBox*" preserved through both architecture
+// cuts (sing-box → caddy forwardproxy → naive container) because
+// renaming the message + symfony bindings would cascade through
+// every external dispatch site.
 
 class ReloadSingBoxHandlerTest extends TestCase
 {
     #[Test]
-    public function handler_renders_and_reloads_when_hash_changes(): void
+    public function handler_renders_when_invoked(): void
     {
-        $generator = new FakeSingBoxGenerator('sha256-of-new-content');
-        $reloader = new FakeSingBoxReloader;
-        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
-        $this->app->instance(SingBoxReloaderInterface::class, $reloader);
+        $generator = new FakeNaiveGenerator('sha256-of-new-content');
+        $this->app->instance(NaiveConfigGeneratorInterface::class, $generator);
 
         $this->app->make(ReloadSingBoxHandler::class)(new ReloadSingBox(reason: 'test:hash-changed'));
 
-        $this->assertSame(1, $generator->renderCalls);
         $this->assertSame(
             1,
-            $reloader->reloadCalls,
-            'When renderToFile returns a non-null hash, the handler MUST call reload() exactly once.',
+            $generator->renderCalls,
+            'The handler MUST call renderToFile() exactly once per invocation.',
         );
     }
 
     #[Test]
-    public function handler_skips_reload_when_render_returns_null(): void
+    public function handler_tolerates_unchanged_render_no_op(): void
     {
-        $generator = new FakeSingBoxGenerator(null);  // "unchanged"
-        $reloader = new FakeSingBoxReloader;
-        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
-        $this->app->instance(SingBoxReloaderInterface::class, $reloader);
+        // null from the generator means "file unchanged on disk".
+        // Supervisor file-watch won't fire; nothing else to do.
+        // Handler must NOT throw; this test pins that posture.
+        $generator = new FakeNaiveGenerator(null);
+        $this->app->instance(NaiveConfigGeneratorInterface::class, $generator);
 
         $this->app->make(ReloadSingBoxHandler::class)(new ReloadSingBox(reason: 'test:render-null'));
 
         $this->assertSame(1, $generator->renderCalls);
-        $this->assertSame(
-            0,
-            $reloader->reloadCalls,
-            'When renderToFile returns null, the handler MUST NOT call reload() — the file is unchanged so a reload would be wasted I/O.',
-        );
     }
 }
 
-// Local test doubles. Plain classes (not anonymous) so the
-// `app->instance(...)` binding retains the same object identity
-// for assertion access after `handle()` runs.
-final class FakeSingBoxGenerator implements SingBoxConfigGeneratorInterface
+// Local test double. Plain class (not anonymous) so
+// app->instance(...) retains the same object identity for the
+// renderCalls assertion after the handler runs.
+final class FakeNaiveGenerator implements NaiveConfigGeneratorInterface
 {
     public int $renderCalls = 0;
 
@@ -74,17 +69,5 @@ final class FakeSingBoxGenerator implements SingBoxConfigGeneratorInterface
         $this->renderCalls++;
 
         return $this->hash;
-    }
-}
-
-final class FakeSingBoxReloader implements SingBoxReloaderInterface
-{
-    public int $reloadCalls = 0;
-
-    public function reload(): bool
-    {
-        $this->reloadCalls++;
-
-        return true;
     }
 }

@@ -2,9 +2,16 @@
 // operator/src/tasks/drift.ts — ct-operator drift task.
 //
 // Runs the three-way cleartext drift check (DB ⇄ rendered
-// Caddyfile ⇄ subscription endpoint). Surfaces drifts that the strict
-// component check / credential-lock guard misses because those only
-// compare lock-hashes, not values.
+// naive.json ⇄ subscription endpoint). Surfaces drifts that the
+// strict component check / credential-lock guard misses because
+// those only compare lock-hashes, not values.
+//
+// v0.3.0+: the proxy server is ct-naive (klzgrad/naiveproxy run
+// as server); the credentials it accepts come from
+// /data/config/naive.json which the panel renders via
+// `ct-server-core naive render`. Pre-v0.3.x the source of truth
+// was the Caddyfile's basic_auth lines; pre-v0.2.x it was
+// sing-box's user list.
 //
 // Exit codes (cron / CI suitable):
 //   0   every account's three layers agree
@@ -18,7 +25,7 @@ import {
     type DriftRow,
     type DriftReport,
     buildReport,
-    parseCaddyfileBasicAuth,
+    parseNaiveJsonAuth,
     parseSubscriptionResponse,
     renderTable,
 } from "../util/drift-check";
@@ -99,16 +106,16 @@ async function dumpDbRows(): Promise<DbRow[]> {
     return out;
 }
 
-// Read the rendered Caddyfile straight off the panel container —
-// the same /etc/caddy mount Caddy itself reads. Returns null if
-// the file isn't there (render hasn't run yet, or pre-v0.2.0
-// stack still mounting at /etc/sing-box/).
+// Read the rendered naive.json off the panel container — the
+// same /data/config/naive.json mount ct-naive reads. Returns null
+// if the file isn't there (render hasn't run yet, or pre-v0.3.0
+// stack mounting at /etc/caddy/Caddyfile / /etc/sing-box/).
 //
-// We deliberately read it via the panel container (not the caddy
-// container) because the panel is the one with the bind-mount of
-// caddy_etc that ct-server-core writes into; it's always running.
-async function dumpCaddyfile(): Promise<string | null> {
-    const r = await capture($`docker compose exec -T panel cat /etc/caddy/Caddyfile`);
+// We deliberately read it via the panel container (not the
+// ct-naive container) because the panel is the one with RW on
+// naive_config; it's always running and is the writer.
+async function dumpNaiveJson(): Promise<string | null> {
+    const r = await capture($`docker compose exec -T panel cat /data/config/naive.json`);
     if (!r.ok) return null;
     return r.stdout;
 }
@@ -142,11 +149,11 @@ function resolvePanelDomain(env: NodeJS.ProcessEnv): string {
 
 async function collectRows(panelDomain: string): Promise<DriftRow[]> {
     const dbRows = await dumpDbRows();
-    const caddyfileRaw = await dumpCaddyfile();
-    const caddyfileUsers = caddyfileRaw === null ? [] : parseCaddyfileBasicAuth(caddyfileRaw);
-    const caddyfileByUsername = new Map<string, string>();
-    for (const u of caddyfileUsers) {
-        caddyfileByUsername.set(u.username, u.password);
+    const naiveRaw = await dumpNaiveJson();
+    const naiveUsers = naiveRaw === null ? [] : parseNaiveJsonAuth(naiveRaw);
+    const naiveByUsername = new Map<string, string>();
+    for (const u of naiveUsers) {
+        naiveByUsername.set(u.username, u.password);
     }
 
     // Subscription fetch is the slowest layer (HTTPS round-trip per
@@ -180,30 +187,30 @@ async function collectRows(panelDomain: string): Promise<DriftRow[]> {
             subParsed === null
                 ? null
                 : (subParsed.profiles.find((p) => p.username === dbRow.username)?.password ?? null);
-        const cfForRow = caddyfileByUsername.has(dbRow.username)
-            ? caddyfileByUsername.get(dbRow.username)!
+        const naiveForRow = naiveByUsername.has(dbRow.username)
+            ? naiveByUsername.get(dbRow.username)!
             : null;
         rows.push({
             accountId: dbRow.id,
             username: dbRow.username,
             db: dbRow.cleartext,
-            caddyfile: cfForRow,
+            naive: naiveForRow,
             subscription: subForRow,
         });
     }
 
-    // Phantom Caddyfile users: basic_auth lines in the rendered
-    // Caddyfile whose username has no DB row at all. Typically a
-    // deleted account whose Caddyfile wasn't re-rendered. Surface
-    // as rows with db=null.
+    // Phantom naive users: a user/password baked into naive.json
+    // whose username has no DB row. Typically a deleted account
+    // whose naive.json wasn't re-rendered. Surface as rows with
+    // db=null.
     const dbUsernames = new Set(dbRows.map((r) => r.username));
-    for (const u of caddyfileUsers) {
+    for (const u of naiveUsers) {
         if (!dbUsernames.has(u.username)) {
             rows.push({
                 accountId: -1,
                 username: u.username,
                 db: null,
-                caddyfile: u.password,
+                naive: u.password,
                 subscription: null,
             });
         }
@@ -252,7 +259,7 @@ export class DriftTask implements Task {
             } else {
                 process.stdout.write(
                     `\nFAIL: ${drifted} drift, ${warned} warn across ${report.findings.length} accounts\n` +
-                        `Repair: ./ct render caddyfile     # if caddyfile drifts from DB\n` +
+                        `Repair: ./ct render naive          # if naive.json drifts from DB\n` +
                         `        Filament UI Regenerate-pw  # if DB cleartext is stale\n`,
                 );
             }

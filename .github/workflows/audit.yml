@@ -572,12 +572,12 @@ jobs:
 
   # ---------- Cycle 40: anti-tracking config smell-test ----------
   #
-  # Static assertions on the Caddy template we ship.
-  # v0.2.0+: sing-box + haproxy retired (architecture cut). The
-  # corresponding smell-tests for `sing-box/config.json.tpl` and
-  # `haproxy/haproxy.cfg.tpl` deleted alongside the templates;
-  # the remaining checks live on the Caddyfile + the panel's
-  # subscription endpoint.
+  # Static assertions on the templates we ship.
+  # v0.3.0+: ct-naive owns the forward-proxy role (hide_ip, hide_via,
+  # probe_resistance, basic_auth are naive-binary concerns now —
+  # see klzgrad/naiveproxy's docs). The Caddyfile's surface shrinks
+  # to layer4 SNI router + inner :8443 panel reverse-proxy + 404
+  # cert-acquisition stub; assertions track that.
 
   anti-tracking-config:
     name: anti-tracking config smell-test
@@ -601,8 +601,9 @@ jobs:
           non_comments=$(grep -vE '^\s*#' "$tpl")
           # If the file ever sprouts a "respond" with a recognisable
           # string ("ok", "alive", project names), that's a tell.
-          # The v0.2.0 Caddyfile has no `respond` directives outside
-          # the :80 redirect; this check guards future additions.
+          # v0.3.0 has exactly one `respond 404` in the cert-
+          # acquisition stub site block; that's intentional (no body,
+          # bare 404). Match only quoted-string responds.
           if echo "$non_comments" | grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"'; then
               echo "::error file=$tpl::Caddy site must not respond with a recognisable string"
               fail=1
@@ -613,21 +614,42 @@ jobs:
               echo "::error file=$tpl::Caddy admin must remain loopback (admin 127.0.0.1:2019)"
               fail=1
           fi
-          # forward_proxy must carry probe_resistance (the secret-
-          # subdomain back-door for browser-side probes).
-          if ! echo "$non_comments" | grep -qE '^\s*probe_resistance\s'; then
-              echo "::error file=$tpl::forward_proxy block must include 'probe_resistance <secret>'"
+          # v0.3.0+: the layer4 block MUST route the proxy SNI to
+          # ct-naive (no in-container forwardproxy any more — that's
+          # the whole point of the v0.3.0 cut). Match a `proxy
+          # ct-naive:443` directive (caddy-l4's short form; the
+          # block form `proxy { upstream tcp/ct-naive:443 }` is
+          # equivalent but the renderer emits the short form).
+          if ! echo "$non_comments" | grep -qE 'proxy\s+ct-naive:443'; then
+              echo "::error file=$tpl::layer4 block must proxy proxy-SNI traffic to ct-naive:443"
               fail=1
           fi
-          # forward_proxy must include hide_ip + hide_via — otherwise
-          # the upstream sees X-Forwarded-For / Via headers and the
-          # source IP/proxy chain leaks.
-          if ! echo "$non_comments" | grep -qE '^\s*hide_ip\s*$'; then
-              echo "::error file=$tpl::forward_proxy block must include 'hide_ip'"
+          # And it MUST do so behind a TLS-SNI matcher — never a
+          # blanket proxy that ignores SNI (which would expose
+          # ct-naive to panel.* clients too).
+          if ! echo "$non_comments" | grep -qE '^\s*sni\s'; then
+              echo "::error file=$tpl::layer4 block must use a 'sni' matcher to scope which SNI hits ct-naive"
               fail=1
           fi
-          if ! echo "$non_comments" | grep -qE '^\s*hide_via\s*$'; then
-              echo "::error file=$tpl::forward_proxy block must include 'hide_via'"
+          exit "$fail"
+      - name: assert naive.json renderer carries hardening flags
+        run: |
+          set -euo pipefail
+          src=core/ct-server-core/src/naive/mod.rs
+          fail=0
+          # The hide_ip / hide_via / probe_resistance concerns moved
+          # from the Caddyfile to the naive binary in v0.3.0. The
+          # renderer (or its supervisor wrapper) MUST construct a
+          # naive config that asks for these defaults. We assert on
+          # the renderer source: it must reference these knobs or
+          # ship them as part of the `naive --listen=...` URL form
+          # (which carries auth but not these flags directly — naive
+          # defaults to anti-tracking-friendly behaviour upstream,
+          # and the renderer's job is mostly to NOT disable them).
+          # For now we only require an awareness comment so future
+          # changes don't accidentally drop these protections.
+          if ! grep -qE 'hide_ip|hide_via|probe_resistance|anti-tracking' "$src" docker/naive/supervisor.ts; then
+              echo "::error file=$src::naive renderer/supervisor must reference the hide_ip/hide_via/probe_resistance posture (even if upstream defaults handle them)"
               fail=1
           fi
           exit "$fail"

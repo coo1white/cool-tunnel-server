@@ -22,6 +22,120 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.3.0] — 2026-05-16 — Split naive server out of Caddy (eliminate padding-protocol drift)
+
+v0.1.x bundled sing-box as the NaiveProxy server. v0.2.x replaced
+sing-box with Caddy + klzgrad/forwardproxy@naive. Both designs put
+a NON-naive server between the macOS client (which speaks the
+bleeding-edge `klzgrad/naiveproxy` wire format) and the destination.
+Each drifted from the client over time:
+
+- v0.1.x → sing-box's naive plugin lags upstream klzgrad/naiveproxy
+  on padding format. Caused intermittent connect failures.
+- v0.2.x → klzgrad/forwardproxy@naive's `naive` branch has been
+  frozen at commit `d62c80d` (2025-01-18, "Add Naive padding
+  protocol v1") for 16+ months. Recent macOS clients (v148+) emit
+  a preamble + Variant1 padding the v1-only server doesn't speak;
+  tunnel completes CONNECT but immediately closes "before target
+  replied" (klzgrad/naiveproxy issues #793 + #785).
+
+v0.3.0 sidesteps the whole class of bugs by running the **same**
+naive binary on both ends. The server-side `naive` Linux binary is
+pinned to the SAME tag the macOS client's
+`COOL-TUNNEL/naive.upstream.json` bundles (currently
+`v148.0.7778.96-5`). Bumping the macOS client and the server in
+lockstep is the only compatibility surface left.
+
+### Added
+
+- **`ct-naive` container** running `klzgrad/naiveproxy` as server
+  (`docker/naive/Dockerfile`). Multi-stage build: stage 1 fetches +
+  SHA-256-verifies the Linux x64 tarball pinned in
+  `docker/naive/naive.upstream.json`; stage 2 is an alpine + Bun
+  runtime that runs `supervisor.ts`.
+- **`docker/naive/supervisor.ts`** — Bun TypeScript watcher inside
+  ct-naive. Reads `/data/config/naive.json`, locates the matching
+  cert pair under `/data/caddy/certificates/`, spawns naive with
+  `--config=<runtime>`. Watches both inputs and respawns naive
+  (~250 ms debounce) on any change. Healthz on 127.0.0.1:9091.
+- **`mholt/caddy-l4`** plugin in Caddy (replaces
+  `klzgrad/forwardproxy@naive`). Caddy now runs as a pure L4 SNI
+  router on `:443`: `<DOMAIN>` SNI → raw TCP forward to
+  ct-naive:443, anything else → fall-through to an inner
+  127.0.0.1:8443 HTTPS listener that terminates TLS and
+  reverse-proxies the panel.
+- **`core/ct-server-core/src/naive/`** — new Rust module rendering
+  `/data/config/naive.json` (the supervisor's input). Wired into
+  the CLI as `ct-server-core naive render`.
+- **`app/Services/NaiveConfigGenerator.php`** + interface —
+  thin PHP shell-out paralleling `CaddyfileGenerator`. Hooked into
+  `ReloadSingBoxHandler` and `ReloadServerConfigHandler` so every
+  credential change re-renders naive.json (and the supervisor
+  auto-respawns naive).
+- **Operator `./ct drift`** extended: now parses naive.json (was
+  Caddyfile basic_auth). `DriftRow.naive` replaces
+  `DriftRow.caddyfile`. Legacy `parseCaddyfileBasicAuth` retained
+  for migration-window operators with stale Caddyfile + fresh
+  naive.json.
+
+### Changed
+
+- **`caddy/Caddyfile.tpl`** rewritten around `layer4`. No more
+  `forward_proxy` block, no more `basic_auth` directives, no more
+  `probe_resistance` (the naive binary on ct-naive carries those
+  concerns now). Caddy's role shrinks to ACME + L4 SNI router +
+  inner panel reverse-proxy.
+- **`core/ct-server-core/src/caddy/mod.rs`** simplified: the
+  Caddyfile renderer no longer reads the proxy_accounts table or
+  computes basic_auth lines. `CaddyRenderOutcome.active_users`
+  stays in the JSON wire shape but is fixed at 0 (the accurate
+  account count lives on `NaiveRenderOutcome.active_users`).
+- **`operator/update.ts`** builds + brings up the new `naive`
+  service alongside caddy + panel; renders `naive.json` after
+  Caddy is up so the cert path is in place before ct-naive's
+  supervisor looks for it. `bringNewImagesUp` now passes
+  `--remove-orphans` to clean up stale container mappings.
+- **`docker-compose.yml`** — adds `naive` service (mem_limit 192m,
+  pids_limit 96, NET_BIND_SERVICE), `naive_config` named volume
+  shared RW from panel and RO into ct-naive, no published ports
+  (only reachable via Caddy's L4 router). Drops the orphaned
+  `ipam:` block left behind from the v0.2.0 ct-clash removal.
+
+### Fixed
+
+- **End-to-end tunnel from recent macOS naive (v148+) → server
+  works again.** The v0.2.x symptom (`post-CONNECT tunnel closed
+  before target replied`, 100+ "successful NOP CONNECT" entries
+  in caddy logs that carry zero application bytes) is rooted in
+  preamble/padding incompatibility between current naiveproxy and
+  the frozen klzgrad/forwardproxy@naive plugin. v0.3.0 eliminates
+  the version-skew surface — same binary, same wire format, same
+  release cadence on both sides.
+
+### Limitations / followups
+
+- **Single active account per ct-naive.** klzgrad/naiveproxy's
+  server mode supports one basic-auth credential per listener.
+  v0.3.0 selects the first active account; the drift detector
+  surfaces "DB has N accounts, naive.json carries 1" as a real
+  finding. Multi-account is a future v0.3.x change (N naive
+  processes on N internal ports + SNI subdomains, OR a thin
+  authproxy in front).
+- **Caddyfile reload from inside panel container still fails.**
+  Carried forward from v0.2.x: `docker exec ct-caddy caddy reload`
+  needs a docker CLI the panel image doesn't have. From the host
+  (via `./ct update`) the reload works fine; from the Filament UI
+  it errors silently. Admin-API-over-ct-net replacement remains a
+  pending v0.3.x followup. ct-naive does NOT have this problem —
+  the supervisor's file-watch is the reload primitive.
+- **Cert renewal forces a ~1-2 s ct-naive restart** every ~60 days
+  when Caddy renews the `<DOMAIN>` cert. The supervisor sees the
+  mtime change and respawns naive; in-flight tunnels drop.
+  Hot-reload of TLS material without a process restart is a
+  future optimisation.
+
+---
+
 ## [0.2.1] — 2026-05-16 — Hot-fix: re-apply cap_net_bind_service to the xcaddy binary
 
 Critical v0.2.0 first-deploy bug. The new docker/caddy/Dockerfile
@@ -10824,7 +10938,9 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.77...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.0...v0.2.1
 [0.0.77]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.76...v0.0.77
 [0.0.76]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.75...v0.0.76
 [0.0.75]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.74...v0.0.75

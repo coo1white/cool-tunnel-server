@@ -6,40 +6,40 @@ declare(strict_types=1);
 
 namespace App\MessageHandlers;
 
-use App\Contracts\SingBoxConfigGeneratorInterface;
-use App\Contracts\SingBoxReloaderInterface;
+use App\Contracts\NaiveConfigGeneratorInterface;
 use App\Messages\ReloadSingBox;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 
 /**
- * Slow-path render+reload handler for sing-box. Symfony Messenger
- * equivalent of the legacy `App\Jobs\ReloadSingBoxJob::handle()`,
- * with the same contracts:
+ * Per-account credential change handler.
  *
- *   - Hash-idempotent at the renderer layer — racing two
- *     handlers back-to-back is a no-op-after-first.
- *   - `null` from the generator means "nothing changed; skip
- *     the clash-API call". The handler emits a `debug`-level
- *     trace line so an operator inspecting logs can see the
- *     no-op without noise.
- *   - Domain-level failures (Redis publish error, clash-API
- *     timeout) bubble out of the handler as exceptions —
- *     Messenger's retry-on-error path picks them up via the
- *     retry strategy configured in `MessengerServiceProvider`.
- *     Permanent-failure surfacing (the equivalent of the legacy
- *     `failed()` hook + `Log::critical('singbox.reload.job_failed')`)
- *     happens via the `failure_transport` once retries are
- *     exhausted; until then this handler stays narrow.
+ * Class name preserved (still `ReloadSingBox*`) because the message
+ * type + symfony bindings are referenced from external dispatch
+ * sites; renaming would force a coordinated churn. The behaviour
+ * underneath has shifted twice:
  *
- * Introduced in v0.0.93 as Phase 2 of the Symfony-infusion arc.
+ *   v0.1.x  — render sing-box config.json; PUT to clash-API for
+ *             a live reload.
+ *   v0.2.x  — render Caddyfile basic_auth block; reload Caddy.
+ *   v0.3.0+ — render /data/config/naive.json. ct-naive's Bun
+ *             supervisor file-watches the path and respawns naive
+ *             within ~250 ms. NO reload-side shell-out is needed
+ *             here — the file write IS the reload trigger. This
+ *             also means we no longer depend on the broken
+ *             docker-exec path in CtServerCore::reloadCaddy()
+ *             (the panel container lacks the docker CLI, a known
+ *             v0.2.x limitation).
+ *
+ *   - Hash-idempotent at the renderer layer.
+ *   - `null` from the generator means "nothing changed".
+ *   - Domain-level failures bubble out for Messenger's retry.
  */
 #[AsMessageHandler]
 final class ReloadSingBoxHandler
 {
     public function __construct(
-        private readonly SingBoxConfigGeneratorInterface $generator,
-        private readonly SingBoxReloaderInterface $reloader,
+        private readonly NaiveConfigGeneratorInterface $generator,
         private readonly LoggerInterface $logger,
     ) {}
 
@@ -47,15 +47,18 @@ final class ReloadSingBoxHandler
     {
         $hash = $this->generator->renderToFile();
         if ($hash !== null) {
-            $this->reloader->reload();
+            // File write is the reload primitive. ct-naive's
+            // supervisor will respawn naive on its next debounced
+            // file-watch tick (~250 ms).
+            $this->logger->info('naive.reload.rendered', [
+                'hash' => $hash,
+                'reason' => $message->reason,
+            ]);
 
             return;
         }
 
-        // Generator already logged at critical on real failure;
-        // this debug line gives the operator a per-message
-        // timeline cross-ref for the no-change case.
-        $this->logger->debug('singbox.reload.handler_no_op_on_render_null', [
+        $this->logger->debug('naive.reload.handler_no_op_on_render_null', [
             'reason' => $message->reason,
         ]);
     }

@@ -45,6 +45,9 @@ interface CtServerCoreInterface
     public function renderCaddyfile(): array;
 
     /** @return array<mixed> */
+    public function renderNaive(): array;
+
+    /** @return array<mixed> */
     public function reloadSingBox(): array;
 
     /** @return array<mixed> */
