@@ -47,7 +47,7 @@ import {
     type ProbeOutcome,
     type ProbeResult,
 } from "../util/wire-probe";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
