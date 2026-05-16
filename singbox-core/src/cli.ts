@@ -13,7 +13,11 @@
 // Subcommands are implemented in src/subcommands/ — this file only
 // dispatches.
 
+import { runInstall } from "./subcommands/install.ts";
+import { runRealityKeygen } from "./subcommands/reality-keygen.ts";
+import { runRenderClient } from "./subcommands/render-client.ts";
 import { runRenderServer } from "./subcommands/render-server.ts";
+import { runSupervise } from "./subcommands/supervise.ts";
 import { runVersion } from "./subcommands/version.ts";
 
 type SubcommandRunner = (argv: readonly string[]) => Promise<number> | number;
@@ -21,22 +25,11 @@ type SubcommandRunner = (argv: readonly string[]) => Promise<number> | number;
 const SUBCOMMANDS: Record<string, SubcommandRunner> = {
     version: runVersion,
     "render-server": runRenderServer,
-    // The remaining subcommands are stubbed for v0.4.0-alpha.0 and
-    // will land in subsequent commits. Keep the names registered so
-    // operators get a useful "not yet implemented" error rather than
-    // "unknown subcommand".
-    "render-client": stub("render-client"),
-    supervise: stub("supervise"),
-    install: stub("install"),
-    "reality-keygen": stub("reality-keygen"),
+    "render-client": runRenderClient,
+    "reality-keygen": runRealityKeygen,
+    install: runInstall,
+    supervise: runSupervise,
 };
-
-function stub(name: string): SubcommandRunner {
-    return () => {
-        console.error(`singbox-core ${name}: not yet implemented in v0.4.0-alpha.0`);
-        return 64; // EX_USAGE
-    };
-}
 
 function usage(): string {
     return [
