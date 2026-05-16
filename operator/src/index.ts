@@ -32,6 +32,8 @@ Commands:
   self-update    Pull a new signed binary from GitHub Releases
   version        Print version and exit
   version-bridge Check that PHP / Rust / Bun layers agree on version
+  drift          Three-way cleartext drift check (DB ⇄ sing-box ⇄ subscription)
+  wire-probe     Wire-protocol probe — confirm naive negotiates padding with upstream
 
 Options:
   --json         Emit structured JSON to stdout instead of human output
@@ -108,6 +110,14 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "version-bridge": {
             const { VersionBridgeTask } = await import("./tasks/version-bridge");
             return new VersionBridgeTask(VERSION);
+        }
+        case "drift": {
+            const { DriftTask } = await import("./tasks/drift");
+            return new DriftTask();
+        }
+        case "wire-probe": {
+            const { WireProbeTask } = await import("./tasks/wire-probe");
+            return new WireProbeTask();
         }
         default:
             return null;

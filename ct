@@ -64,6 +64,12 @@ DEEPER COMMANDS
   readiness      strict ≥9/10 ship-readiness gate (cron-friendly)
   ballast        critical-invariant check only (no narration; cron-friendly; requires ct-operator binary)
   version-bridge cross-layer (PHP/Rust/Bun) version-skew check (requires ct-operator binary)
+  drift          three-way cleartext drift check: DB ⇄ sing-box ⇄ subscription endpoint
+                 (catches cleartext divergence the credential-lock guard misses;
+                  requires ct-operator binary)
+  wire-probe     wire-protocol probe: spawn naive client, confirm Padding negotiates
+                 (catches client-binary regressions before release;
+                  requires ct-operator binary; see `ct wire-probe --help` for flags)
   render <tgt>   re-render caddyfile/haproxy/singbox config from the DB
   auto-sync      credential-lock audit + auto-correct
   auto-update    unattended release-pulling agent (default OFF)
@@ -356,6 +362,8 @@ case "$cmd" in
     logs)         exec make logs ;;
     help)         dispatch_via_operator help ./scripts/help.sh "$@" ;;
     version-bridge) dispatch_via_operator version-bridge ""                       "$@" ;;
+    drift)        dispatch_via_operator drift     ""                                "$@" ;;
+    wire-probe)   dispatch_via_operator wire-probe ""                                "$@" ;;
     version|--version|-V) show_version ;;
     -h|--help|"")
         show_help
