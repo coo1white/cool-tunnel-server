@@ -38,6 +38,7 @@ use Symfony\Component\Process\Process;
 final class NaivePinReader implements NaivePinReaderInterface
 {
     private const CACHE_KEY = 'naive.pin';
+
     private const CACHE_TTL_SECONDS = 30;
 
     public function __construct(
