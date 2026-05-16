@@ -9,12 +9,14 @@ namespace App\Providers;
 use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\ComponentCheckerInterface;
 use App\Contracts\CtServerCoreInterface;
+use App\Contracts\NaiveConfigGeneratorInterface;
 use App\Contracts\RevocationBusInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Contracts\SingBoxReloaderInterface;
 use App\Services\CaddyfileGenerator;
 use App\Services\ComponentChecker;
 use App\Services\CtServerCore;
+use App\Services\NaiveConfigGenerator;
 use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
 use App\Services\SingBoxReloader;
@@ -47,6 +49,9 @@ class AppServiceProvider extends ServiceProvider
         SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
         SingBoxReloaderInterface::class => SingBoxReloader::class,
         CaddyfileGeneratorInterface::class => CaddyfileGenerator::class,
+        // v0.3.0+ — naive.json renderer. See
+        // App\Contracts\NaiveConfigGeneratorInterface for lifecycle.
+        NaiveConfigGeneratorInterface::class => NaiveConfigGenerator::class,
         RevocationBusInterface::class => RedisRevocationBus::class,
         CtServerCoreInterface::class => CtServerCore::class,
         ComponentCheckerInterface::class => ComponentChecker::class,
@@ -60,6 +65,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SingBoxConfigGenerator::class);
         $this->app->singleton(SingBoxReloader::class);
         $this->app->singleton(CaddyfileGenerator::class);
+        $this->app->singleton(NaiveConfigGenerator::class);
         $this->app->singleton(TrafficCollector::class);
         $this->app->singleton(ComponentChecker::class);
         $this->app->singleton(RedisRevocationBus::class);

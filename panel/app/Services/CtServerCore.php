@@ -116,6 +116,18 @@ final class CtServerCore implements CtServerCoreInterface
         return $this->run(['caddyfile', 'render']);
     }
 
+    /**
+     * v0.3.0+ — render /data/config/naive.json (consumed by
+     * ct-naive's Bun supervisor). The supervisor file-watches the
+     * path and respawns the naive child within ~250ms of the write,
+     * so there's no separate "reloadNaive" shell-out: the file
+     * write IS the reload trigger.
+     */
+    public function renderNaive(): array
+    {
+        return $this->run(['naive', 'render']);
+    }
+
     public function reloadSingBox(): array
     {
         return $this->run(['server', 'reload'], timeoutSec: 60);

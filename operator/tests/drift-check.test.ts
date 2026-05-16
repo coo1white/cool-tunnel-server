@@ -2,26 +2,96 @@
 // operator/tests/drift-check.test.ts — pure-logic tests for the
 // three-way cleartext drift detector.
 //
-// v0.2.0+ pulls the proxy-side credentials from the rendered
-// Caddyfile (forward_proxy { basic_auth USER PASS }) instead of
-// the v0.1.x sing-box config.json. Tests in this file pin both
-// the Caddyfile parser shape AND the drift-classifier behaviour
-// against a representative real-world Caddyfile fragment.
+// v0.3.0+ pulls the proxy-side credentials from the rendered
+// /data/config/naive.json (the supervisor's file-watch input)
+// instead of v0.2.x's Caddyfile basic_auth lines or v0.1.x's
+// sing-box config.json. The legacy parser parseCaddyfileBasicAuth
+// is retained for migration windows where the operator still has
+// a v0.2.x Caddyfile sitting next to a v0.3.x naive.json; its
+// tests stay green.
 
 import { test, expect } from "bun:test";
 import {
     classifyRow,
     parseCaddyfileBasicAuth,
+    parseNaiveJsonAuth,
     parseSubscriptionResponse,
     buildReport,
     renderTable,
     type DriftRow,
 } from "../src/util/drift-check";
 
-// ---------- parseCaddyfileBasicAuth ----------
+// ---------- parseNaiveJsonAuth (v0.3.0+) ----------
 
-// A Caddyfile fragment shaped exactly like the one
-// core/ct-server-core/src/caddy/mod.rs::render emits.
+const REPRESENTATIVE_NAIVE_JSON = JSON.stringify({
+    schema: 1,
+    domain: "naive.example.com",
+    listen_port: 443,
+    user: "alice",
+    password: "pw-alice",
+    acme_directory_dir: "acme-v02.api.letsencrypt.org-directory",
+});
+
+test("parseNaiveJsonAuth extracts (user, password) from the rendered naive.json", () => {
+    expect(parseNaiveJsonAuth(REPRESENTATIVE_NAIVE_JSON)).toEqual([
+        { username: "alice", password: "pw-alice" },
+    ]);
+});
+
+test("parseNaiveJsonAuth returns [] on stub renderer output (empty user/password)", () => {
+    // Stub form the renderer emits when no active account exists —
+    // supervisor refuses to spawn naive until the next render fills
+    // these in. Drift checker treats this as "naive carries no
+    // credentials" rather than "naive carries empty credentials".
+    const stub = JSON.stringify({
+        schema: 1,
+        domain: "naive.example.com",
+        listen_port: 443,
+        user: "",
+        password: "",
+        acme_directory_dir: "acme-v02.api.letsencrypt.org-directory",
+    });
+    expect(parseNaiveJsonAuth(stub)).toEqual([]);
+});
+
+test("parseNaiveJsonAuth returns [] on parse error (malformed JSON, cover-site, etc.)", () => {
+    expect(parseNaiveJsonAuth("not json at all")).toEqual([]);
+    expect(parseNaiveJsonAuth("")).toEqual([]);
+    expect(parseNaiveJsonAuth("[]")).toEqual([]);
+    expect(parseNaiveJsonAuth("null")).toEqual([]);
+});
+
+test("parseNaiveJsonAuth ignores extra fields (schema-forward-compat)", () => {
+    const future = JSON.stringify({
+        schema: 1,
+        domain: "naive.example.com",
+        listen_port: 443,
+        user: "alice",
+        password: "pw-alice",
+        acme_directory_dir: "acme-v02.api.letsencrypt.org-directory",
+        // Hypothetical v0.4.x additions:
+        rate_limit_per_user: 100,
+        cert_renew_strategy: "alpn",
+    });
+    expect(parseNaiveJsonAuth(future)).toEqual([
+        { username: "alice", password: "pw-alice" },
+    ]);
+});
+
+test("parseNaiveJsonAuth rejects type-mismatched user/password", () => {
+    const bad = JSON.stringify({
+        user: 42,
+        password: "pw",
+    });
+    expect(parseNaiveJsonAuth(bad)).toEqual([]);
+});
+
+// ---------- parseCaddyfileBasicAuth (v0.2.x legacy) ----------
+
+// Kept around so a v0.3.0-upgrade operator with a stale Caddyfile
+// next to a fresh naive.json still gets a clean tooling experience.
+// New v0.3.x call sites use parseNaiveJsonAuth above.
+
 const REPRESENTATIVE_CADDYFILE = `
 {
     email admin@example.com
@@ -56,55 +126,11 @@ test("parseCaddyfileBasicAuth extracts every basic_auth in the forward_proxy blo
     ]);
 });
 
-test("parseCaddyfileBasicAuth ignores basic_auth outside a forward_proxy block", () => {
-    const fragment = `
-proxy.example.com {
-    basic_auth not-forward-proxy pw-stray
-    route {
-        forward_proxy {
-            basic_auth real-user pw-real
-        }
-    }
-}
-`;
-    // basic_auth outside forward_proxy is uninteresting (and not
-    // something our renderer would emit). Only the inner one
-    // gets pulled.
-    expect(parseCaddyfileBasicAuth(fragment)).toEqual([
-        { username: "real-user", password: "pw-real" },
-    ]);
-});
-
-test("parseCaddyfileBasicAuth returns [] when no forward_proxy block exists", () => {
-    const fragment = `
-proxy.example.com {
-    reverse_proxy backend:80
-}
-`;
-    expect(parseCaddyfileBasicAuth(fragment)).toEqual([]);
-});
-
 test("parseCaddyfileBasicAuth never throws on malformed Caddyfile (degrades to [])", () => {
     expect(parseCaddyfileBasicAuth("{{{{ not a caddyfile")).toEqual([]);
 });
 
-test("parseCaddyfileBasicAuth ignores comments inside the block", () => {
-    const fragment = `
-proxy.example.com {
-    forward_proxy {
-        # basic_auth commented-out pw-commented
-        basic_auth alice pw-alice
-    }
-}
-`;
-    expect(parseCaddyfileBasicAuth(fragment)).toEqual([
-        { username: "alice", password: "pw-alice" },
-    ]);
-});
-
 test("parseCaddyfileBasicAuth handles multiple forward_proxy blocks (defence-in-depth)", () => {
-    // Our renderer emits only one forward_proxy site, but the
-    // parser shouldn't choke on a future config that has two.
     const fragment = `
 a.example.com {
     forward_proxy {
@@ -156,46 +182,44 @@ function row(opts: Partial<DriftRow> & { username: string; accountId?: number })
         accountId: opts.accountId ?? 1,
         username: opts.username,
         db: opts.db ?? null,
-        caddyfile: opts.caddyfile ?? null,
+        naive: opts.naive ?? null,
         subscription: opts.subscription ?? null,
     };
 }
 
 test("classifyRow ok when all three layers agree", () => {
-    const r = row({ username: "alice", db: "pw", caddyfile: "pw", subscription: "pw" });
+    const r = row({ username: "alice", db: "pw", naive: "pw", subscription: "pw" });
     expect(classifyRow(r).severity).toBe("ok");
 });
 
-test("classifyRow fails on db↔caddyfile drift (today's exact incident shape)", () => {
-    // DB has the rotated value, caddyfile never re-rendered.
-    const r = row({ username: "alice", db: "new-pw", caddyfile: "old-pw", subscription: "new-pw" });
+test("classifyRow fails on db↔naive drift (the credential-rotation-not-rendered case)", () => {
+    const r = row({ username: "alice", db: "new-pw", naive: "old-pw", subscription: "new-pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("db↔caddyfile");
+    expect(f.summary).toContain("db↔naive");
 });
 
 test("classifyRow fails on db↔subscription drift", () => {
-    // caddyfile re-rendered, panel got rolled back somehow.
-    const r = row({ username: "alice", db: "new-pw", caddyfile: "new-pw", subscription: "old-pw" });
+    const r = row({ username: "alice", db: "new-pw", naive: "new-pw", subscription: "old-pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
     expect(f.summary).toContain("db↔subscription");
 });
 
-test("classifyRow fails when caddyfile has no user but DB does", () => {
-    const r = row({ username: "alice", db: "pw", caddyfile: null, subscription: "pw" });
+test("classifyRow fails when naive has no user but DB does", () => {
+    const r = row({ username: "alice", db: "pw", naive: null, subscription: "pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("render caddyfile");
+    expect(f.summary).toContain("render naive");
 });
 
 test("classifyRow warns when subscription returns cover-site (null)", () => {
-    const r = row({ username: "alice", db: "pw", caddyfile: "pw", subscription: null });
+    const r = row({ username: "alice", db: "pw", naive: "pw", subscription: null });
     expect(classifyRow(r).severity).toBe("warn");
 });
 
-test("classifyRow fails on phantom caddyfile user (DB row absent)", () => {
-    const r = row({ username: "ghost", db: null, caddyfile: "pw" });
+test("classifyRow fails on phantom naive user (DB row absent)", () => {
+    const r = row({ username: "ghost", db: null, naive: "pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
     expect(f.summary).toContain("phantom");
@@ -205,16 +229,16 @@ test("classifyRow fails on phantom caddyfile user (DB row absent)", () => {
 
 test("buildReport ok = false if any finding is fail", () => {
     const r = buildReport([
-        row({ username: "alice", db: "pw", caddyfile: "pw", subscription: "pw" }),
-        row({ username: "bob", accountId: 2, db: "x", caddyfile: "y", subscription: "z" }),
+        row({ username: "alice", db: "pw", naive: "pw", subscription: "pw" }),
+        row({ username: "bob", accountId: 2, db: "x", naive: "y", subscription: "z" }),
     ]);
     expect(r.ok).toBe(false);
 });
 
 test("buildReport ok = true when every row is ok", () => {
     const r = buildReport([
-        row({ username: "alice", db: "pw", caddyfile: "pw", subscription: "pw" }),
-        row({ username: "bob", accountId: 2, db: "pw2", caddyfile: "pw2", subscription: "pw2" }),
+        row({ username: "alice", db: "pw", naive: "pw", subscription: "pw" }),
+        row({ username: "bob", accountId: 2, db: "pw2", naive: "pw2", subscription: "pw2" }),
     ]);
     expect(r.ok).toBe(true);
 });
@@ -224,7 +248,7 @@ test("renderTable never leaks cleartext", () => {
         row({
             username: "alice",
             db: "super-secret-cleartext",
-            caddyfile: "different-secret",
+            naive: "different-secret",
             subscription: "super-secret-cleartext",
         }),
     ]);

@@ -12,41 +12,31 @@
 //
 // This module pins the **cleartext** values at all three layers
 // to be byte-equal. If they aren't, that's a real drift the
-// operator must repair (`./ct render caddyfile` or a Filament
+// operator must repair (`./ct render naive` or a Filament
 // regenerate-password) before any client can connect.
 //
-// v0.2.0+: the proxy server is Caddy with the klzgrad/forwardproxy
-// plugin; the rendered config is the Caddyfile. v0.1.x was sing-box
-// + /etc/sing-box/config.json. The drift-check field is named
-// `caddyfile` accordingly. (Pre-v0.2.0 callers read
-// `DriftRow.singbox`; that name was retired with the architecture
-// cut.)
+// Naming history (the field name has tracked architecture cuts):
 //
-// Layers checked:
+//   v0.1.x  DriftRow.singbox    — /etc/sing-box/config.json
+//   v0.2.x  DriftRow.caddyfile  — /etc/caddy/Caddyfile basic_auth
+//   v0.3.x  DriftRow.naive      — /data/config/naive.json
 //
-//   db          ProxyAccount::password_cleartext_encrypted, decrypted via
-//               Laravel Crypt inside `docker compose exec panel
-//               php artisan tinker` (same primitive auto-sync uses).
-//
-//   caddyfile   The literal password emitted into the rendered
-//               Caddyfile's `forward_proxy { basic_auth … }` block
-//               — what Caddy actually compares incoming CONNECTs
-//               against.
-//
-//   subscription
-//               The cleartext field inside the panel's
-//               /api/v1/subscription/{token} JSON response — what
-//               clients import and store in config.json.
+// The v0.3.x source of truth is the ct-naive supervisor's input
+// file: a JSON blob carrying the single active account's user +
+// password. (Naive's server mode supports one credential per
+// listener; the multi-account drift detector currently surfaces
+// "DB has N accounts, naive.json carries 1" as a finding — once
+// multi-account-on-naive lands the parser will extend to cover N
+// users.)
 //
 // Pure functions only. Anything that touches docker / fetch lives
-// in tasks/drift.ts; the parsing, comparison, and reporting
-// shapes are pinned here so tests can exercise them without a
-// running compose stack.
+// in tasks/drift.ts; the parsing, comparison, and reporting shapes
+// are pinned here so tests can exercise them without a running
+// compose stack.
 
-// One (username, password) pair extracted from a rendered
-// Caddyfile's `forward_proxy { basic_auth USER PASS }` directives.
-// Same shape v0.1.x called `SingBoxUser`; renamed at the v0.2.0
-// architecture cut.
+// One (username, password) pair extracted from the naive.json
+// rendered at /data/config/naive.json. Same shape v0.2.x called
+// BasicAuthUser; renamed remains compatible.
 export interface BasicAuthUser {
     readonly username: string;
     readonly password: string;
@@ -73,13 +63,13 @@ export interface DriftRow {
     readonly accountId: number;
     readonly username: string;
     // null means "the layer could not produce a value" — the row
-    // missed in DB, or the Caddyfile has no matching basic_auth
-    // directive, or the subscription endpoint returned cover-site /
-    // 404. Distinct from "" (empty string), which means a layer
-    // EXPLICITLY produced an empty password — that's still a drift
-    // if the others have a value.
+    // missed in DB, or naive.json carries a different username, or
+    // the subscription endpoint returned cover-site / 404. Distinct
+    // from "" (empty string), which means a layer EXPLICITLY
+    // produced an empty password — that's still a drift if the
+    // others have a value.
     readonly db: string | null;
-    readonly caddyfile: string | null;
+    readonly naive: string | null;
     readonly subscription: string | null;
 }
 
@@ -99,58 +89,57 @@ export interface DriftReport {
     readonly ok: boolean;
 }
 
-// Parse `basic_auth USER PASS` directives out of a rendered
-// Caddyfile's forward_proxy block.
+// Parse the v0.3.x naive.json into a BasicAuthUser[] for shape
+// compatibility with v0.2.x's parseCaddyfileBasicAuth. Returns an
+// empty array on any parse / shape error — degrades to "no
+// credentials found" so the upstream classifier can surface that
+// as a real drift instead of throwing here and breaking the whole
+// audit.
 //
-// We hand-tokenise rather than impose a full Caddyfile grammar
-// — the renderer is free to grow new forward_proxy options
-// without breaking the credential extractor. The rules:
+// Schema mirror: core/ct-server-core/src/naive/mod.rs::NaiveConfig
+// + docker/naive/supervisor.ts::NaiveCtConfig. The drift checker
+// only cares about (user, password) — other fields are ignored.
+export function parseNaiveJsonAuth(rawText: string): BasicAuthUser[] {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(rawText);
+    } catch {
+        return [];
+    }
+    if (typeof parsed !== "object" || parsed === null) return [];
+    const user = (parsed as { user?: unknown }).user;
+    const password = (parsed as { password?: unknown }).password;
+    if (typeof user !== "string" || typeof password !== "string") return [];
+    // An empty user OR empty password means "the renderer wrote the
+    // stub" — naive supervisor will refuse to spawn until both are
+    // populated, and drift should treat that as "naive layer has no
+    // credentials" (== absent), not "naive carries empty creds".
+    if (user === "" || password === "") return [];
+    return [{ username: user, password }];
+}
+
+// Legacy parser — kept for migration windows where the operator
+// still has a v0.2.x Caddyfile on disk while the v0.3.x naive.json
+// hasn't been rendered yet. New v0.3.x call sites use
+// parseNaiveJsonAuth above. Tests still cover this for the
+// transitional period.
 //
-//   - Track `{` / `}` depth to know we're inside a
-//     `forward_proxy` block (depth becomes "interesting" when the
-//     directive opens, returns "uninteresting" when the matching
-//     `}` closes).
-//   - At every line, after stripping leading whitespace, match
-//     `^basic_auth\s+(\S+)\s+(\S+)\s*$`. Comments and other
-//     directives are ignored. `basic_auth` outside a forward_proxy
-//     block is ignored too — there's no legitimate place for it
-//     in our rendered Caddyfile, but skipping it costs nothing.
-//   - Quoted username/password (`basic_auth "a b" "c d"`) is
-//     out of scope: our renderer emits unquoted whitespace-free
-//     tokens by design (see core/ct-server-core/src/caddy/mod.rs::
-//     is_caddyfile_password_safe). A future renderer that emits
-//     quoted forms would extend this parser.
-//
-// Returns [] for a Caddyfile with no forward_proxy block or no
-// `basic_auth` lines inside one. Never throws — even on malformed
-// Caddyfile content we degrade to "no credentials found", because
-// the upstream classifier already encodes "rendered config has
-// no users" as a drift finding.
+// Parses `basic_auth USER PASS` directives out of a v0.2.x
+// rendered Caddyfile's forward_proxy block. Hand-tokenised rather
+// than imposing a full Caddyfile grammar; tracks `{` / `}` depth
+// to know we're inside a forward_proxy block.
 export function parseCaddyfileBasicAuth(rawText: string): BasicAuthUser[] {
     const out: BasicAuthUser[] = [];
-    // Stack of `{` opens we're inside, paired with whether the
-    // most recent open was the `forward_proxy { ... }` we care
-    // about. We don't care about other block types — just track
-    // whether we're inside ONE forward_proxy somewhere up the stack.
     let depth = 0;
     let forwardProxyOpenAtDepth: number | null = null;
     for (const rawLine of rawText.split("\n")) {
-        // Strip line comments (`# …`). Caddyfile allows comments
-        // anywhere whitespace is allowed; the simple-substring
-        // approach is correct because passwords containing `#`
-        // are rejected upstream by is_caddyfile_password_safe.
         const commentIdx = rawLine.indexOf("#");
         const line = (commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine).trim();
         if (line.length === 0) continue;
-        // Detect opening / closing braces. A line can carry both a
-        // directive AND a `{` (e.g. `forward_proxy {`), or be a
-        // bare `}`. We process bracket transitions per character.
         let consumed = "";
         for (let i = 0; i < line.length; i++) {
             const ch = line[i]!;
             if (ch === "{") {
-                // The "consumed so far" is the directive token
-                // that's opening this block. Strip trailing space.
                 const directive = consumed.trim();
                 depth++;
                 if (
@@ -170,9 +159,6 @@ export function parseCaddyfileBasicAuth(rawText: string): BasicAuthUser[] {
                 consumed += ch;
             }
         }
-        // The "consumed" tail is the directive on this line (if
-        // any). Check it for basic_auth, but only if we're
-        // currently inside a forward_proxy block.
         if (forwardProxyOpenAtDepth === null) continue;
         const m = consumed.trim().match(/^basic_auth\s+(\S+)\s+(\S+)\s*$/);
         if (m) {
@@ -224,29 +210,29 @@ export function parseSubscriptionResponse(rawBody: string): SubscriptionResponse
 //
 //   - All three layers reported the same non-empty string → ok.
 //   - Any pair of present-non-empty layers disagree           → fail.
-//   - DB has cleartext, Caddyfile rendered an empty/missing → fail
+//   - DB has cleartext, naive rendered an empty/missing       → fail
 //     (next CONNECT will be rejected for "no such user").
 //   - DB has cleartext, subscription returned cover-site
 //     (null body)                                              → warn
 //     (token may be expired, account disabled, or the panel
 //     rate-limited us — investigate but not necessarily fatal).
 //   - DB row missing entirely                                  → fail
-//     (Caddyfile has a phantom user; remove via the panel).
+//     (naive.json has a phantom user; remove via the panel).
 //
 // The summary string names which layers carry which values, NOT
 // the values themselves — leaking cleartext into operator output
 // is a separate audit failure even on a local terminal.
 export function classifyRow(row: DriftRow): DriftFinding {
     const db = row.db;
-    const cf = row.caddyfile;
+    const nv = row.naive;
     const sub = row.subscription;
 
-    if (db === null && cf === null && sub === null) {
+    if (db === null && nv === null && sub === null) {
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "no layer carries this account — phantom row, run `./ct render caddyfile`",
+            summary: "no layer carries this account — phantom row, run `./ct render naive`",
         };
     }
 
@@ -255,16 +241,16 @@ export function classifyRow(row: DriftRow): DriftFinding {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "DB row missing but caddyfile/subscription still reference it; phantom account",
+            summary: "DB row missing but naive/subscription still reference it; phantom account",
         };
     }
 
-    if (cf === null || cf === "") {
+    if (nv === null || nv === "") {
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "DB has cleartext, caddyfile rendered no password — `./ct render caddyfile` needed",
+            summary: "DB has cleartext, naive.json rendered no password — `./ct render naive` needed",
         };
     }
 
@@ -281,11 +267,11 @@ export function classifyRow(row: DriftRow): DriftFinding {
     }
 
     // All three present. The actual drift test.
-    if (db !== cf || db !== sub) {
+    if (db !== nv || db !== sub) {
         const which: string[] = [];
-        if (db !== cf) which.push("db↔caddyfile");
+        if (db !== nv) which.push("db↔naive");
         if (db !== sub) which.push("db↔subscription");
-        if (cf !== sub && db === cf) which.push("caddyfile↔subscription");
+        if (nv !== sub && db === nv) which.push("naive↔subscription");
         return {
             accountId: row.accountId,
             username: row.username,
@@ -312,20 +298,20 @@ export function buildReport(rows: readonly DriftRow[]): DriftReport {
 // printed — only present/absent status and same/diff vs DB.
 export function renderTable(report: DriftReport): string {
     const lines: string[] = [];
-    lines.push("account_id  username                    db        caddyfile  subscription  finding");
-    lines.push("──────────  ──────────────────────────  ────────  ─────────  ────────────  ──────────────────────────────────");
+    lines.push("account_id  username                    db        naive     subscription  finding");
+    lines.push("──────────  ──────────────────────────  ────────  ────────  ────────────  ──────────────────────────────────");
     for (const row of report.rows) {
         const finding = report.findings.find(
             (f) => f.accountId === row.accountId && f.username === row.username,
         );
         const tag = ({ ok: "  OK", warn: "WARN", fail: "FAIL" } as const)[finding?.severity ?? "fail"];
         const cellDb = row.db === null ? "absent" : row.db === "" ? "EMPTY" : "present";
-        const cellCf = row.caddyfile === null ? "absent" : row.caddyfile === "" ? "EMPTY" :
-            (row.db !== null && row.caddyfile === row.db ? "same" : "DIFF");
+        const cellNv = row.naive === null ? "absent" : row.naive === "" ? "EMPTY" :
+            (row.db !== null && row.naive === row.db ? "same" : "DIFF");
         const cellSub = row.subscription === null ? "absent" : row.subscription === "" ? "EMPTY" :
             (row.db !== null && row.subscription === row.db ? "same" : "DIFF");
         lines.push(
-            `${String(row.accountId).padEnd(10)}  ${row.username.slice(0, 26).padEnd(26)}  ${cellDb.padEnd(8)}  ${cellCf.padEnd(9)}  ${cellSub.padEnd(12)}  ${tag}  ${finding?.summary ?? ""}`,
+            `${String(row.accountId).padEnd(10)}  ${row.username.slice(0, 26).padEnd(26)}  ${cellDb.padEnd(8)}  ${cellNv.padEnd(8)}  ${cellSub.padEnd(12)}  ${tag}  ${finding?.summary ?? ""}`,
         );
     }
     return lines.join("\n");

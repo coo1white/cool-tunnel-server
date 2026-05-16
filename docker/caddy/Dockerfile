@@ -1,57 +1,70 @@
 # syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Cool Tunnel Server — Caddy (single-process front door, v0.2.0+).
+# Cool Tunnel Server — Caddy front door (v0.3.0+).
 #
-# Until v0.1.20 the architecture put three containers in front of
-# the panel: HAProxy SNI-routed :443 to either sing-box (NaiveProxy
-# server) or a "ghost" Caddy on :8444. Sing-box bumps kept drifting
-# the NaiveProxy padding wire format vs the macOS client's bundled
-# naive binary; HAProxy SNI added a TCP-mode buffer with no real
-# operational value.
+# Architecture evolution:
 #
-# v0.2.0 collapses all three roles into a single Caddy container,
-# matching the klzgrad/naiveproxy README's own recommended
-# deployment (Caddy + forwardproxy plugin with the Padding
-# extension). This Caddy:
+#   v0.1.x: HAProxy SNI :443 → sing-box (NaiveProxy server) | ghost
+#           Caddy on :8444 (panel). Three containers. Sing-box bumps
+#           kept drifting the NaiveProxy padding wire format vs the
+#           macOS client's bundled naive binary.
+#   v0.2.x: collapsed to one Caddy with klzgrad/forwardproxy@naive
+#           plugin baked in. Worked for ~weeks but klzgrad's fork has
+#           been effectively frozen since 2025-01-18 (commit d62c80d
+#           "Add Naive padding protocol v1") while klzgrad/naiveproxy
+#           kept iterating on the client-side preamble + padding
+#           protocols. By v148 (May 2026) the bundled Mac naive
+#           emitted a preamble that the v1-only server doesn't
+#           recognise; the tunnel set up the CONNECT and then closed
+#           before any target bytes flowed — exactly the same class
+#           of drift v0.2.0 was supposed to fix.
+#   v0.3.0: Caddy stops being the NaiveProxy server entirely. It
+#           keeps ACME + panel reverse-proxy + SNI routing, but the
+#           naive forward-proxy role moves to a sibling ct-naive
+#           container that runs the actual `naive` binary (same
+#           upstream tag the macOS client bundles). Same binary on
+#           both ends → guaranteed wire compatibility forever, no
+#           padding-protocol drift surface.
 #
-#   - binds :80  (HTTP-01 challenges + http→https redirect)
-#   - binds :443 (TLS termination + SNI-routed handling)
-#       SNI = panel.<DOMAIN>  →  reverse_proxy → panel:9000 (FrankenPHP)
-#       SNI = <DOMAIN>        →  forward_proxy (Padding-emitting CONNECT)
+# v0.3.0 Caddy roles:
 #
-# We compile Caddy with `klzgrad/forwardproxy@naive` baked in via
-# xcaddy. The plugin re-exports the canonical
-# `caddyserver/forwardproxy` module path with the Padding extension
-# merged in (the original "klzgrad fork" was upstreamed; its go.mod
-# now redeclares the canonical path, so we redirect at the xcaddy
-# command line — without the redirect, `go get` complains
-#   "module declares its path as: caddyserver/forwardproxy
-#    but was required as: klzgrad/forwardproxy").
+#   - binds :80 (HTTP-01 ACME challenges + http→https redirect)
+#   - binds :443 with mholt/caddy-l4 layer4 SNI router:
+#       SNI = <DOMAIN>        → raw TCP proxy to ct-naive:443
+#                               (ct-naive terminates TLS with the
+#                                naive.<DOMAIN> cert it reads from
+#                                the shared /data volume)
+#       SNI = <PANEL_DOMAIN>  → fall-through to inner Caddy HTTP
+#                               server on 127.0.0.1:8443, which
+#                               terminates TLS and reverse_proxies
+#                               panel:9000
+#   - manages BOTH TLS certs via auto-https; ct-naive reads its
+#     cert from the shared volume (read-only mount).
 #
-# Why Caddy 2.8.4: matches the version Phase-0 validation was
-# operationalised under for the rest of the stack. The Phase 0
-# interop test on 2026-05-16 actually used 2.11.3 (the
-# caddy:builder default) and worked, but mixing a Caddy bump and
-# a forwardproxy adoption in one release would broaden the blast
-# radius. Bump 2.8.4 → 2.11.x as a separate change.
+# Plugin: github.com/mholt/caddy-l4 baked in via xcaddy. The
+# klzgrad/forwardproxy@naive plugin is GONE — its wire format is
+# the very thing v0.3.0 routes around.
+#
+# Why Caddy 2.8.4: matches the version operationalised under v0.2.x;
+# bumping Caddy + adopting layer4 in one release would broaden the
+# blast radius. Bump 2.8.4 → current as a separate change.
 
 # ----------------------------------------------------------------------
-# Stage 1 — build Caddy with the forwardproxy plugin
+# Stage 1 — build Caddy with the layer4 plugin
 # ----------------------------------------------------------------------
 FROM caddy:2.8.4-builder AS build
 
-# xcaddy resolves `caddyserver/forwardproxy@caddy2` as the canonical
-# Go module path; the `=` redirect points it at klzgrad's `naive`
-# branch which carries the Padding-extension implementation. Both
-# pieces are required — the path mismatch alone produces the
-# "module declares its path as: caddyserver/forwardproxy" failure
-# documented in the head comment.
+# xcaddy fetches and links mholt/caddy-l4. The plugin exposes
+# `layer4.matchers.tls` (SNI/ALPN matching), `layer4.handlers.proxy`
+# (raw TCP forward), `layer4.handlers.tls` (in-place termination),
+# and `layer4.handlers.subroute` — enough to build the SNI router
+# the Caddyfile.tpl uses without further redirects or replacements.
 RUN xcaddy build \
-        --with github.com/caddyserver/forwardproxy@caddy2=github.com/klzgrad/forwardproxy@naive \
+        --with github.com/mholt/caddy-l4 \
         --output /out/caddy \
     && /out/caddy version \
-    && /out/caddy list-modules | grep -q '^http.handlers.forward_proxy$'
+    && /out/caddy list-modules | grep -q '^layer4$'
 
 # ----------------------------------------------------------------------
 # Stage 2 — runtime
@@ -92,17 +105,16 @@ RUN setcap cap_net_bind_service=+ep /usr/bin/caddy \
 # panel-rendered file (from caddy/Caddyfile.tpl) into /etc/caddy.
 VOLUME ["/etc/caddy", "/data", "/config"]
 
-# Public ports. :80 stays for ACME HTTP-01. :443 is NEW vs v0.1.x —
-# Caddy now does TLS termination for both the panel reverse-proxy
-# and the naive forward_proxy, SNI-routed inside Caddy itself.
+# Public ports. :80 stays for ACME HTTP-01. :443 is the layer4
+# SNI router on the front door.
 EXPOSE 80
 EXPOSE 443
 
 # Periodic liveness probe via the loopback admin API. Caddy's
 # /config/ endpoint returns 200 + the live config JSON whenever
 # the process is alive enough to answer. We do NOT publish :2019
-# externally — the host-firewall + the `admin off` setting
-# inside the Caddyfile globals is belt-and-braces.
+# externally — the host-firewall + the `admin 127.0.0.1:2019`
+# directive inside the Caddyfile globals is belt-and-braces.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1
 
