@@ -22,6 +22,68 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.1.20] — 2026-05-16 — `ct drift` + `ct wire-probe`: close gaps the credential-lock guard misses
+
+Two new operator verbs born from a real macOS-client debugging
+session on 2026-05-16 that bounced between layers for hours
+because every static check was green yet clients still hit
+cover-site auth-fail. The existing `credential-lock` guard
+compares lock-HASHES across layers but does not pin the
+cleartext VALUE; the strict component check is structurally
+unaware of wire-protocol drift. Two distinct drift classes,
+two new detectors.
+
+### Added
+
+  **`ct drift` — three-way cleartext drift check.** Audits
+  whether the cleartext password is byte-equal across:
+  ProxyAccount::password_cleartext_encrypted (decrypted via
+  Laravel Crypt), users[].password inside
+  /etc/sing-box/config.json (what naive-in actually compares
+  CONNECTs against), and the password field inside
+  /api/v1/subscription/{token} (what clients import).
+  Drift between any pair manifests as 200+Padding+RST
+  cover-site responses — the exact symptom that looks like
+  "tunnel doesn't work" with no actionable client-side error.
+  Human + `--json` output. Cleartext never printed (table
+  emits `same` / `DIFF` / `absent` only). Exit 0 / 1 / 2.
+
+  **`ct wire-probe` — wire-protocol drift detection.** Spawns
+  a real NaiveProxy client against the deployment's upstream,
+  pushes a real CONNECT via curl-over-SOCKS, and reports
+  whether the NaiveProxy `Padding:` extension negotiated.
+  Catches the class of bug where a naive binary advertises
+  the right `--version` but is a build that doesn't emit the
+  padding header sing-box now requires. Seven distinct
+  outcomes (padding_negotiated / missing_padding /
+  auth_failure_cover_site / tls_handshake_failed /
+  connect_timeout / naive_didnt_start / unknown_failure)
+  each map to a specific operator next-step printed on
+  failure. Cleartext password lands in a 0700 temp dir's
+  0600 config file only; never in argv, never in stdout.
+
+  **`ct help drift` and `ct help wire-probe` topics.** New
+  entries in the binary-only topic registry. Walk through
+  each repair recipe by failure mode.
+
+### Operator note
+
+  Both verbs are binary-only (no shell fallback), same shape
+  as `ballast` and `version-bridge`. Operators see them via
+  `./ct drift` / `./ct wire-probe` only AFTER the wrapper
+  bootstrap fetches the v0.1.20 binary. Until that auto-fetch
+  fires, the same logic is reachable via
+  `bun run operator/drift.ts` and `bun run operator/wire-probe.ts`
+  directly.
+
+### Test coverage
+
+  32 new tests in `operator/tests/{drift-check,wire-probe}.test.ts`
+  pin the parsers + classifiers + the "cleartext never leaks
+  into output" contract. Full operator suite: 196 pass / 0 fail.
+
+---
+
 ## [0.1.19] — 2026-05-15 — Hot-fix: post-swap `component check` + flock false-positive lock-busy
 
 Two bugs surfaced by a real end-to-end `./ct update` on the Vultr
