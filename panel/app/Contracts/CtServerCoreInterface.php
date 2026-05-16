@@ -47,14 +47,11 @@ interface CtServerCoreInterface
     // than going through ct-server-core's Rust renderer. See the
     // SingBoxConfigGenerator head comment for the rationale.
 
-    /** @return array<mixed> */
-    public function reloadSingBox(): array;
-
-    /** @return array<mixed> */
-    public function collectTraffic(): array;
-
-    /** @return array<mixed> */
-    public function enforceQuota(): array;
+    // reloadSingBox / collectTraffic / enforceQuota removed in
+    // v0.4.0 — all three shelled into ct-server-core clash-API paths
+    // that sing-box VLESS+Reality doesn't expose. Caddy reload moved
+    // to renderCaddyfile + the artisan `caddyfile:reload` (which
+    // shells to `ct-server-core caddyfile reload`, still alive).
 
     /** @return array<mixed> */
     public function componentList(string $manifestsDir = '/srv/manifests'): array;

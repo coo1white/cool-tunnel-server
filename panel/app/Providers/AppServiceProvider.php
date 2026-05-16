@@ -20,7 +20,6 @@ use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
 use App\Services\SingboxPinReader;
 use App\Services\SingBoxReloader;
-use App\Services\TrafficCollector;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -75,7 +74,6 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SingBoxReloader::class);
         $this->app->singleton(CaddyfileGenerator::class);
         $this->app->singleton(SingboxPinReader::class);
-        $this->app->singleton(TrafficCollector::class);
         $this->app->singleton(ComponentChecker::class);
         $this->app->singleton(RedisRevocationBus::class);
 

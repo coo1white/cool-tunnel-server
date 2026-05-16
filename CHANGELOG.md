@@ -16,6 +16,33 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+### Removed
+
+- **ct-server-core: delete v0.3.x clash-API surface.** The
+  `src/singbox/`, `src/quota.rs`, `src/metrics.rs`, `src/admin.rs`,
+  `src/credentials.rs`, and `src/laravel_crypt.rs` modules are gone;
+  the v0.4.0 sing-box VLESS+Reality server exposes no clash admin
+  API, so per-user traffic + quota enforcement + cleartext-password
+  decryption all lose their callable side. Cascading deletions:
+  `Cmd::{Singbox,Server,Traffic,Quota,Guard}` + their sub-enums +
+  `Cmd::Admin::ClashSecret` removed from the CLI; the daemon's
+  `WireRequestV1::{RenderCaddyfile,CollectTraffic,EnforceQuota}` arms
+  now return `UnsupportedOperation`; `redis_bridge::fire_reload` is
+  a logged no-op (panel-side `SingBoxConfigGenerator` does the actual
+  render via singbox-core); the orphaned `db::active_proxy_accounts /
+  record_caddyfile_hash / upsert_traffic / add_used_bytes` queries +
+  their `.sqlx/` offline cache entries are gone. CLI flags
+  `--template / --output / --admin-url / --admin-secret` removed
+  from the top-level Cli (their env vars become silently-ignored
+  no-ops).
+- **panel: drop the artisan + Laravel-scheduler entries** that fed
+  the deleted Rust surface — `traffic:rollup` (every-minute) and
+  `quota:enforce` (hourly) cron entries removed from
+  `routes/console.php`; `app/Console/Commands/{QuotaEnforce,
+  TrafficRollup}.php` + `app/Services/TrafficCollector.php` deleted.
+  `CtServerCoreInterface::{reloadSingBox,collectTraffic,enforceQuota}`
+  + their concrete implementations gone (no remaining callers).
+
 ### Fixed
 
 ### Security

@@ -27,7 +27,7 @@ use crate::observability::{
     crosses_80pct_threshold, duration_crosses_80pct_threshold, duration_ms_u64, otel_key,
     packet_header_dump, DAEMON_TURN_LATENCY_BUDGET,
 };
-use crate::{admin, caddy, credentials, metrics, singbox, Error, Result};
+use crate::{Error, Result};
 use bytes::{BufMut, BytesMut};
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use sqlx::MySqlPool;
@@ -133,9 +133,6 @@ trait WireRequestDispatcher {
 
 struct DaemonDispatcher<'a> {
     pool: &'a MySqlPool,
-    template: &'a str,
-    output: &'a str,
-    admin_url: &'a str,
 }
 
 impl ContractBoundary for DaemonDispatcher<'_> {
@@ -146,16 +143,13 @@ impl ContractBoundary for DaemonDispatcher<'_> {
 
 impl WireRequestDispatcher for DaemonDispatcher<'_> {
     async fn dispatch_wire(&self, req: WireRequestV1) -> Result<WireResponseV1> {
-        handle(req, self.pool, self.template, self.output, self.admin_url).await
+        handle(req, self.pool).await
     }
 }
 
 pub async fn serve(
     socket_path: &str,
     pool: MySqlPool,
-    template: &str,
-    output: &str,
-    admin_url: &str,
     permits: Arc<Semaphore>,
     metrics: Option<Arc<MetricsRegistry>>,
 ) -> Result<()> {
@@ -189,10 +183,6 @@ pub async fn serve(
         read_timeout_s = READ_TIMEOUT.as_secs(),
         "ct-server-core daemon listening"
     );
-
-    let template = template.to_owned();
-    let output = output.to_owned();
-    let admin_url = admin_url.to_owned();
 
     // Concurrent-handler permit cap (T-1, v0.0.65). Each accept
     // acquires one permit before spawning its handler task; the
@@ -264,9 +254,6 @@ pub async fn serve(
                 // refcount and shares the underlying connection set.
                 // No new TCP connections are opened on clone.
                 let pool = pool.clone();
-                let template = template.clone();
-                let output = output.clone();
-                let admin_url = admin_url.clone();
                 let metrics = metrics.clone();
                 spawn_observed("daemon client handler", async move {
                     // Permit is held by the spawned task; dropped
@@ -275,7 +262,7 @@ pub async fn serve(
                     // for the next accept.
                     let _permit = permit;
                     if let Err(e) =
-                        handle_client(stream, &pool, &template, &output, &admin_url, metrics.as_ref()).await
+                        handle_client(stream, &pool, metrics.as_ref()).await
                     {
                         tracing::warn!(error = %e, "client handler errored");
                     }
@@ -332,9 +319,6 @@ async fn shutdown_signal() {
 async fn handle_client(
     stream: UnixStream,
     pool: &MySqlPool,
-    template: &str,
-    output: &str,
-    admin_url: &str,
     metrics: Option<&Arc<MetricsRegistry>>,
 ) -> Result<()> {
     let (mut rd, mut wr) = stream.into_split();
@@ -518,12 +502,7 @@ async fn handle_client(
         advance_or_reset(&fsm, metrics, ConnectionEvent::JsonDecoded)?;
         let method = wire_method_name(&req);
         span.record(otel_key::RPC_METHOD, method);
-        let dispatcher = DaemonDispatcher {
-            pool,
-            template,
-            output,
-            admin_url,
-        };
+        let dispatcher = DaemonDispatcher { pool };
         tracing::trace!(
             contract = dispatcher.contract().id(),
             "daemon dispatch boundary selected"
@@ -668,80 +647,46 @@ async fn send<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-async fn handle(
-    req: WireRequestV1,
-    pool: &MySqlPool,
-    template: &str,
-    output: &str,
-    admin_url: &str,
-) -> Result<WireResponseV1> {
+async fn handle(req: WireRequestV1, pool: &MySqlPool) -> Result<WireResponseV1> {
     match req {
-        WireRequestV1::RenderCaddyfile => {
-            // Wire-protocol name is historical (the v0.0.1 stack
-            // used Caddy + forwardproxy). Today this dispatches to
-            // sing-box render — sing-box owns :443 / proxy traffic
-            // since v0.0.2; Caddy is ACME-only since v0.0.4.
-            // Renaming the variant is a v0.1 task (it'd break
-            // every connected client core that speaks WireV1).
-            singbox::render(pool, template, output, false, false).await?;
-
-            // Render-and-validate: the wire request is treated as one
-            // atomic operation. Pre-this-change, render() could write
-            // a syntactically-valid but semantically-broken config
-            // (the 2026-05-15 hostname-form DoH case), the daemon
-            // would Ok the response, and only the subsequent
-            // ReloadCaddy request would surface the failure — by
-            // which time the panel had already declared the change
-            // successful to the operator.
-            //
-            // `validate()` runs `sing-box check` in the ct-singbox
-            // container (30s ceiling, see singbox::validate). A
-            // failure here means the new config is on disk but
-            // unloadable; the `.bak` preserved by render lets the
-            // operator roll back cheaply.
-            singbox::validate(output).await?;
-
-            // Drift re-check: assert_locked compares the live DB
-            // active-account tuple against what we just rendered.
-            // Even with this handler's own render serialised by the
-            // daemon's per-connection FSM, another caller (the
-            // every-5-min `singbox:render --if-changed --reload`
-            // scheduler, or quota-driven re-render) could have
-            // raced between our write and this read. If the rendered
-            // bytes don't match the DB at this instant, we surface
-            // it instead of letting the next subscription manifest
-            // hand out credentials that aren't in the proxy config.
-            credentials::assert_locked(pool, output).await?;
-
-            Ok(WireResponseV1::Ok)
-        }
-        WireRequestV1::ReloadCaddy => {
-            // v0.2.0+: actually reloads Caddy (the variant name is
-            // finally honest after the sing-box → Caddy+forwardproxy
-            // cut; pre-v0.2.0 this PUT the rendered config to
-            // sing-box's clash API, hence the "Caddy" misnomer
-            // preserved for WireV1 compat across the rename).
-            //
-            // Caddy reload is graceful + zero-downtime; in-flight
-            // forward_proxy connections drain naturally as the new
-            // config picks up new ones. Implementation runs
-            // `docker exec ct-caddy caddy reload --config <output>`;
-            // see caddy::reload for the rationale.
-            let started = std::time::Instant::now();
-            caddy::reload(output).await?;
-            Ok(WireResponseV1::CaddyReloaded {
-                duration_ms: duration_ms_u64(started.elapsed()),
-            })
-        }
-        WireRequestV1::CollectTraffic => {
-            let secret = singbox::current_clash_secret()?;
-            metrics::collect(pool, &admin::ClashAdmin::new(admin_url, &secret)).await?;
-            Ok(WireResponseV1::Ok)
-        }
-        WireRequestV1::EnforceQuota => {
-            crate::quota::enforce(pool, template, output, admin_url).await?;
-            Ok(WireResponseV1::Ok)
-        }
+        // v0.4.0 — RenderCaddyfile / ReloadCaddy / CollectTraffic /
+        // EnforceQuota are all wire-protocol dead letters:
+        //
+        // - The panel's SingBoxConfigGenerator shells directly to
+        //   /usr/local/bin/singbox-core render-server; it does NOT
+        //   dispatch through the daemon's unix socket.
+        // - CaddyfileGenerator + the artisan caddy:reload path call
+        //   `ct-server-core caddyfile {render,reload}` (the CLI
+        //   subcommand), not this daemon wire path.
+        // - CollectTraffic + EnforceQuota relied on sing-box's clash
+        //   admin API, which sing-box VLESS+Reality does not expose.
+        //
+        // The WireRequestV1 enum variants stay in ct-protocol for
+        // wire compatibility — old panel builds and the macOS client
+        // both speak WireV1 — but every dispatch arm here returns
+        // UnsupportedOperation so an out-of-band caller gets a clear
+        // error rather than a silent no-op.
+        WireRequestV1::RenderCaddyfile => Err(Error::UnsupportedOperation {
+            operation: "render_caddyfile",
+            message: "v0.4.0: panel-side SingBoxConfigGenerator renders directly via singbox-core; \
+                      no daemon-side renderer remains. Use `ct-server-core caddyfile render` for \
+                      Caddyfile-only renders.",
+        }),
+        WireRequestV1::ReloadCaddy => Err(Error::UnsupportedOperation {
+            operation: "reload_caddy",
+            message: "v0.4.0: reload via `ct-server-core caddyfile reload` (CLI subcommand) \
+                      rather than the daemon wire path; that subcommand still works.",
+        }),
+        WireRequestV1::CollectTraffic => Err(Error::UnsupportedOperation {
+            operation: "collect_traffic",
+            message: "v0.4.0: sing-box VLESS+Reality exposes no clash admin API; per-user \
+                      traffic counters are operator-side via the panel's revocation bus.",
+        }),
+        WireRequestV1::EnforceQuota => Err(Error::UnsupportedOperation {
+            operation: "enforce_quota",
+            message: "v0.4.0: quota enforcement happens at the panel layer (ProxyAccount::\
+                      isActive) and propagates to ct-singbox via singbox.json regeneration.",
+        }),
         WireRequestV1::ProbeAntiTracking => Err(Error::UnsupportedOperation {
             operation: "probe_anti_tracking",
             message: "anti-tracking probe needs a `via` URL; use the CLI for now",

@@ -58,8 +58,10 @@ pub enum Error {
     Redis(redis::RedisError),
     /// Template syntax or binding failure.
     Template(crate::template::RenderError),
-    /// Laravel Crypt decode/decrypt failure.
-    Crypt(crate::laravel_crypt::CryptError),
+    // v0.4.0 — `Crypt` variant removed alongside the laravel_crypt
+    // module. APP_KEY-bearing decrypts moved to the panel layer
+    // (Laravel's `encrypted` cast on ServerConfig.reality_private_key);
+    // ct-server-core no longer touches the encrypted-at-rest column.
     /// Operator-controlled configuration is missing or invalid.
     Config { message: String },
     /// Input failed a domain-specific validator.
@@ -230,7 +232,6 @@ impl Error {
             | Self::ProcessSpawn { .. }
             | Self::ProcessExitedEarly { .. }
             | Self::ProcessStartTimeout { .. } => "process_error",
-            Self::Crypt(_) => "crypt_error",
             Self::SemaphoreClosed { .. } => "internal_backpressure_error",
             Self::TaskJoin { .. } => "internal_task_error",
             Self::Io { .. } | Self::FromUtf8(_) | Self::ParseInt(_) | Self::AtomicWrite { .. } => {
@@ -256,7 +257,6 @@ impl fmt::Display for Error {
             Self::Http(e) => write!(f, "HTTP client error: {e}"),
             Self::Redis(e) => write!(f, "Redis error: {e}"),
             Self::Template(e) => write!(f, "template error: {e}"),
-            Self::Crypt(e) => write!(f, "crypt error: {e}"),
             Self::Config { message } => f.write_str(message),
             Self::Validation { component, message } => {
                 write!(f, "{component} validation failed: {message}")
@@ -344,7 +344,6 @@ impl std::error::Error for Error {
             Self::Http(e) => Some(e),
             Self::Redis(e) => Some(e),
             Self::Template(e) | Self::TemplateRender { source: e, .. } => Some(e),
-            Self::Crypt(e) => Some(e),
             Self::TaskJoin { source, .. } => Some(source),
             Self::AtomicWrite { source, .. } => Some(source),
             Self::ProcessSpawn { source, .. } => Some(source),
@@ -427,11 +426,8 @@ impl From<crate::template::RenderError> for Error {
     }
 }
 
-impl From<crate::laravel_crypt::CryptError> for Error {
-    fn from(e: crate::laravel_crypt::CryptError) -> Self {
-        Self::Crypt(e)
-    }
-}
+// laravel_crypt::CryptError From-impl removed in v0.4.0 (see Error
+// variant comment above for the rationale).
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
