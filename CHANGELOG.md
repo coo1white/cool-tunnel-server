@@ -22,6 +22,126 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.2.0] — 2026-05-16 — Architecture cut: sing-box + HAProxy collapse into Caddy+forwardproxy
+
+Real-incident-driven simplification. After the 2026-05-16 macOS-
+client debug session bounced between layers for hours with every
+static check green but clients still hitting cover-site auth-fail
+(turned out to be NaiveProxy padding-extension drift between the
+sing-box plugin and the bundled macOS naive binary), we pivoted
+to the klzgrad/naiveproxy README's own recommended deployment:
+Caddy with the klzgrad/forwardproxy plugin baked in via xcaddy.
+**Three services collapse to one. The drift surface that
+recurringly bit us is gone.**
+
+### Changed — architecture
+
+  **Front door collapses HAProxy + sing-box + ghost-Caddy into a
+  single Caddy container.** Caddy now binds :80 (ACME HTTP-01 +
+  http→https) and :443 (TLS termination + SNI-routed handling:
+  naive.example.com → forward_proxy with Padding extension;
+  panel.naive.example.com → reverse_proxy panel:9000).
+
+  **`docker/caddy/Dockerfile`** is now a multi-stage xcaddy build
+  pinning `caddy:2.8.4-builder` → `caddy:2.8.4-alpine`. xcaddy
+  pulls `github.com/caddyserver/forwardproxy@caddy2`
+  redirected to `github.com/klzgrad/forwardproxy@naive` (klzgrad's
+  fork was upstreamed; its go.mod redeclares the canonical
+  module path, requiring the redirect at build time).
+
+  **`docker-compose.yml`** retires `sing-box` and `haproxy`
+  services. Volumes retired: `singbox_etc`, `singbox_data`,
+  `haproxy_etc`, `haproxy_admin`. Network retired: `ct-clash`
+  (was sing-box management-plane). Caddy service: mem 64m → 192m,
+  pids 32 → 96 (absorbed sing-box's budget); `+:443` port mapping.
+
+  **`caddy/Caddyfile.tpl`** rewritten as the consolidated front-
+  door config. Global stanza + `:80` ACME site + `{{ Domain }}`
+  forward_proxy site + `{{ PanelDomain }}` reverse_proxy site.
+
+  **`core/ct-server-core/src/caddy/`** renderer extended: pulls
+  active ProxyAccount rows, pre-renders basic_auth lines into a
+  `ForwardProxyBasicAuthLines` binding, derives a deterministic
+  `probe_resistance` secret (`sha256(domain)[..16].localhost`).
+  New `caddy::reload()` helper runs `docker exec ct-caddy caddy
+  reload --config /etc/caddy/Caddyfile` for graceful, zero-downtime
+  config swaps.
+
+  **`SingBoxReloader::reload()`** now calls `CtServerCore::reload-
+  Caddy()` instead of the v0.1.x `reloadSingBox()`. PHP class
+  name preserved for AppServiceProvider binding compatibility.
+  Daemon's `WireRequestV1::ReloadCaddy` handler also routes
+  through `caddy::reload()` (replaces `admin::ClashAdmin::reload`),
+  so the redis_bridge subscriber path picks up Caddy
+  automatically.
+
+  **`operator/update.ts`** v0.2.0 migration pipeline adds
+  `stopLegacyV01Containers()` (idempotent — stops + removes
+  ct-singbox + ct-haproxy if present, no-op otherwise) between
+  `gitPullFfOnly` and `rebuildImages`. Render + reload steps
+  collapse from singbox + haproxy pairs to a single
+  `renderCaddyfile` + `reloadCaddy`.
+
+  **`operator/src/util/drift-check.ts`** drift detector now reads
+  `basic_auth` lines from the rendered Caddyfile instead of
+  `inbounds[].users[]` from `/etc/sing-box/config.json`. Same
+  three-way semantic (DB ⇄ caddyfile ⇄ subscription endpoint).
+  `DriftRow.singbox` renamed to `DriftRow.caddyfile`.
+
+  **`./ct render`** subcommand now accepts only `caddyfile` as
+  a target; `haproxy` and `singbox` produce a friendly
+  `retired in v0.2.0` hint.
+
+### Removed
+
+  - `docker/sing-box/Dockerfile`, `docker/haproxy/Dockerfile`
+  - `sing-box/config.json.tpl`, `haproxy/haproxy.cfg.tpl`
+  - `manifests/sing-box.upstream.json`, `manifests/haproxy.upstream.json`
+  - `core/ct-server-core/src/haproxy/mod.rs` + the `Cmd::Haproxy`
+    CLI subcommand + the `enum HaproxyOp`
+  - `scripts/render-singbox.sh`, `scripts/render-haproxy.sh`
+
+  The `core/ct-server-core/src/singbox/` module and
+  `core/ct-server-core/src/admin.rs` are kept as dead-code-no-
+  runtime-effect for v0.2.0 (still referenced by `metrics::collect`
+  and `quota::enforce` which aren't migrated to Caddy equivalents
+  yet); full removal lands in a v0.2.1 tidy.
+
+### Operator migration
+
+  `./ct update` on a v0.1.x deploy detects the legacy `ct-singbox`
+  and `ct-haproxy` containers and stops + removes them in the new
+  `stopLegacyV01Containers` step, then brings up the new caddy
+  service on :443. Atomic for the wire-protocol path: at no point
+  does both old + new bind :443.
+
+  Rollback: no automatic image-tag preservation in this release.
+  The clean downgrade path is `git checkout v0.1.20 && ./ct
+  update`, which re-introduces the legacy services via the v0.1.x
+  compose. Operators expecting to downgrade should
+  `docker image tag cool-tunnel-server-singbox:latest cool-tunnel-
+  server-singbox:v0.1.20-rollback` BEFORE the upgrade. (Auto-
+  tagging is a v0.2.1+ feature.)
+
+### Validated
+
+  Phase-0 wire-protocol interop test on 2026-05-16 against the
+  live Vultr box: vanilla Caddy 2.11.3 + klzgrad/forwardproxy on
+  port `:8443` (alongside production sing-box on :443), pointed
+  the macOS client's bundled naive binary at it. Result:
+  `code=200`, tunneled public IP `207.148.75.238`, end-to-end
+  645ms. Caddy stdout: `forward_proxy negotiated padding type:
+  Variant1`. The wire protocol path is proven.
+
+### Test coverage
+
+  141 ct-server-core (was 142; deleted haproxy renderer's single
+  test). 200 operator (was 198; +2 retired-target tests for the
+  render parser, +12 Caddyfile-basic-auth parser tests, replacing
+  the sing-box-JSON-shape tests). All green.
+
+---
+
 ## [0.1.20] — 2026-05-16 — `ct drift` + `ct wire-probe`: close gaps the credential-lock guard misses
 
 Two new operator verbs born from a real macOS-client debugging
