@@ -22,6 +22,129 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.0] — 2026-05-16 — Pivot from naive to sing-box (VLESS + Reality); shared singbox-core package on both ends
+
+v0.1 → v0.3 burned hours on "the server's wire format doesn't match
+the client's wire format" bugs. naive client + klzgrad/forwardproxy
+server were two repos on independent release cadences; one froze
+while the other kept moving. v0.3.0 attempted to fix the class by
+running the SAME naive binary on both ends, but the premise was
+wrong: naive is a client-only binary (its `--listen` flag does NOT
+accept https://). Reading naive's own help output earlier would
+have saved a day.
+
+v0.4.0 drops naive entirely and pivots both server and client to
+SagerNet/sing-box (VLESS + Reality protocol). Single upstream
+project, server + client modes from the same binary, active
+maintenance. Wire-format drift is now structurally impossible:
+both server and client are rebuilt against the SAME upstream tag
+pinned in `singbox-core/singbox.upstream.json`.
+
+### Why VLESS + Reality
+
+Reality preserves the "looks like a vanilla HTTPS request to a real
+CDN" cover-site property that drew this project to naive originally.
+The TLS handshake LOOKS like microsoft.com (or whichever
+ServerConfig.reality_dest_host the operator picks); Reality
+cryptography establishes a covert channel for authorized clients
+under that cover.
+
+### Added
+
+- **`singbox-core/`** — new Bun TypeScript package, compiled via
+  `bun build --compile` to a self-contained ~50 MB binary embedded
+  in BOTH cool-tunnel-server (ct-singbox container) and cool-tunnel
+  (Cool Tunnel.app on macOS). Six subcommands:
+  - `version` — print singbox-core + pinned sing-box version
+  - `reality-keygen` — X25519 keypair via WebCrypto
+  - `install` — fetch + SHA-256 verify the pinned sing-box tarball
+  - `render-server` — emit sing-box server config.json from DB inputs
+  - `render-client` — emit sing-box client config.json (macOS app)
+  - `supervise` — long-running watcher; spawns + respawns sing-box
+    on config-file change with debounced fs.watch, healthz on
+    127.0.0.1:9091
+- **`docker/singbox/`** — new ct-singbox container Dockerfile.
+  Three-stage build: bun-build → singbox-fetch (SHA-256 verify) →
+  runtime (alpine + ca-certificates + libcap + drop privileges).
+- **`docker-compose.yml`** — new `singbox` service mirroring the
+  shape of the v0.3.x ct-naive service it replaces; new
+  `singbox_config` volume (panel RW, ct-singbox RO).
+- **panel: `SingboxConfigGenerator` + `SingboxConfigGeneratorInterface`** —
+  shells to `singbox-core render-server` with the DB-derived input
+  as stdin JSON. Reality private key Laravel-decrypted at the
+  DB-read boundary; never written to disk in cleartext.
+- **panel: `php artisan singbox:render`** — first-boot render +
+  manual operator re-render.
+
+### Changed
+
+- **`caddy/Caddyfile.tpl`** — Caddy's role shrinks to ACME for the
+  panel subdomain + L4 SNI splitter. Two routes only: panel SNI →
+  inner Caddy HTTPS; everything else → tcp/ct-singbox:443. No more
+  cert acquisition for the proxy domain (Reality fakes its own
+  cert).
+- **`docker/caddy/Dockerfile`** — head comment rewritten to
+  document the v0.1 → v0.4 architecture evolution. Build chain
+  unchanged (caddy:2.11.3 + mholt/caddy-l4 plugin).
+- **`docker-compose.yml`** — head comment + per-service comments
+  rewritten. caddy now manages ONE cert (panel) instead of two.
+- **panel handlers** — `ReloadSingBoxHandler` +
+  `ReloadServerConfigHandler` rebound to the new
+  `SingboxConfigGeneratorInterface`. Class names preserved
+  (`ReloadSingBox*`) for backward-compatible message dispatch.
+- **panel entrypoint** — `php artisan naive:render` →
+  `php artisan singbox:render` for first-boot.
+
+### Removed
+
+- **`docker/naive/`** — Dockerfile + supervisor.ts (v0.3.x).
+- **`core/ct-server-core/src/naive/`** — Rust render module +
+  `naive` CLI subcommand. ct-server-core (Rust) no longer renders
+  proxy configs at all; that responsibility moved to singbox-core
+  (Bun).
+- **`manifests/{naive,naiveproxy,naiveproxy-client}.upstream.json`** —
+  obsolete upstream pins.
+- **`operator/sync-naive-pin.ts`** + test — was tracking the v0.3.x
+  naive pin between server + client; superseded by
+  `singbox-core/singbox.upstream.json` which both repos share.
+- **panel: `NaiveConfigGenerator` + interface, `NaivePinReader` +
+  interface, `NaiveRender` artisan, `NaivePinReaderTest`** — all
+  v0.3.x naive scaffolding.
+- **`SubscriptionController::server_naive_pin`** — field stripped
+  from manifest (the cross-end pin moves to a sing-box equivalent
+  in a follow-up coordinated client cut).
+- **`CtServerCoreInterface::renderNaive()` +
+  `CtServerCore::renderNaive()`** — removed. PHP now calls
+  singbox-core directly instead of routing through ct-server-core.
+
+### Known followups (not in v0.4.0)
+
+- Schema migration: add `reality_private_key`,
+  `reality_public_key`, `reality_dest_host`, `reality_short_ids`
+  to `ServerConfig`; replace `password`/`password_hash` with
+  `uuid` on `ProxyAccount`.
+- Filament admin UI: surface Reality keypair fields (read-only,
+  generated server-side via `reality-keygen`); replace password
+  fields with UUID display.
+- Operator rewrite: `drift-check.ts`, `tasks/drift.ts`,
+  `version-bridge.ts` parse the new sing-box config + version
+  surface.
+- Panel test rewrite: `SubscriptionContractTest`,
+  `ReloadSingBoxHandlerTest`, `ReloadServerConfigHandlerTest`
+  updated to the v0.4.0 schema.
+- `docker/panel/Dockerfile` — bundle the compiled singbox-core
+  binary (currently SingboxConfigGenerator assumes the binary is
+  at `/usr/local/bin/singbox-core`; a Bun-compile stage needs
+  adding).
+- CI workflow updates for the new layout.
+- **Coordinated client release**: cool-tunnel v3.0.0 must ship
+  alongside server v0.4.0 — the macOS app's bundled binary changes
+  from naive to sing-box, the orchestrator's spawn command
+  changes, and the subscription manifest schema changes to
+  sing-box's config shape.
+
+---
+
 ## [0.3.0] — 2026-05-16 — Split naive server out of Caddy (eliminate padding-protocol drift)
 
 v0.1.x bundled sing-box as the NaiveProxy server. v0.2.x replaced
@@ -10938,7 +11061,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.0...v0.2.1
 [0.0.77]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.76...v0.0.77
