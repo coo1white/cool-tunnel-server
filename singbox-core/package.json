@@ -1,0 +1,27 @@
+{
+  "name": "singbox-core",
+  "version": "0.4.0-alpha.0",
+  "description": "Shared sing-box management core for Cool Tunnel server + client. VLESS+Reality config renderer, binary fetcher/verifier, process supervisor. Compiled via `bun build --compile` to a single executable embedded in both repos.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "bin": {
+    "singbox-core": "src/cli.ts"
+  },
+  "scripts": {
+    "build:linux-x64": "bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/singbox-core-linux-x64",
+    "build:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/singbox-core-darwin-arm64",
+    "build:darwin-x64": "bun build --compile --target=bun-darwin-x64 src/cli.ts --outfile dist/singbox-core-darwin-x64",
+    "build:all": "bun run build:linux-x64 && bun run build:darwin-arm64 && bun run build:darwin-x64",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "start": "bun run src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.4.0"
+  }
+}
