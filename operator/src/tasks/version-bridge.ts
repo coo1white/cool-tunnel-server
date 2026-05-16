@@ -17,10 +17,15 @@ import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import {
     classifyBridge,
+    classifyNaiveBridge,
     operatorBinaryVersion,
+    readNaiveCanonical,
+    readNaiveClientVersion,
+    readNaiveServerVersion,
     readPanelConfigVersion,
     readRustCoreVersion,
     type BridgeReport,
+    type LayerVersion,
 } from "../util/version-bridge";
 
 export class VersionBridgeTask implements Task {
@@ -29,16 +34,30 @@ export class VersionBridgeTask implements Task {
     constructor(private readonly operatorVersion: string) {}
 
     async run(ctx: RunContext): Promise<TaskResult> {
-        const layers = await Promise.all([
+        const [panelConfig, opBin, rustCore, naiveCanon, naiveSrv, naiveCli] = await Promise.all([
             readPanelConfigVersion(ctx.cwd),
             Promise.resolve(operatorBinaryVersion(this.operatorVersion)),
             readRustCoreVersion(),
+            readNaiveCanonical(ctx.cwd),
+            readNaiveServerVersion(),
+            readNaiveClientVersion(),
         ]);
-        const report = classifyBridge(layers);
+        const report = classifyBridge([panelConfig, opBin, rustCore]);
+        // The naive bridge tracks the v0.3.0+ invariant that the
+        // running server-side and client-side naive binaries match
+        // each other AND the manifest pin. Separate canonical from
+        // the ct-* report because the version-strings are unrelated
+        // (ct-* lives in 0.x; naive lives in 14x.x).
+        const naiveCanonLabel: LayerVersion = { ...naiveCanon, layer: "naive-server" };
+        const naiveReport = classifyNaiveBridge(
+            { ...naiveCanonLabel, source: naiveCanon.source + " [canonical]" },
+            naiveSrv,
+            naiveCli,
+        );
 
         if (ctx.json) {
-            process.stdout.write(JSON.stringify(report) + "\n");
-            return reportToResult(report);
+            process.stdout.write(JSON.stringify({ ct: report, naive: naiveReport }) + "\n");
+            return mergedResult(report, naiveReport);
         }
 
         // Human-readable side-by-side table.
@@ -84,22 +103,74 @@ export class VersionBridgeTask implements Task {
             );
         }
 
-        return reportToResult(report);
+        // Second table: naive server ↔ client lockstep.
+        process.stdout.write(
+            `\nNaive binary bridge (v0.3.0+ — server == client invariant)\n` +
+                `  layer            version           source\n` +
+                `  ---------------  ----------------  --------------------\n`,
+        );
+        for (const l of naiveReport.layers) {
+            const marker = l.version === naiveReport.canonical ? " " : "!";
+            const v = l.version ?? "?";
+            process.stdout.write(
+                ` ${marker}${l.layer.padEnd(15)}  ${v.padEnd(16)}  ${l.source}` +
+                    (l.error ? `   (${l.error})` : "") +
+                    `\n`,
+            );
+        }
+        if (naiveReport.agreed) {
+            process.stdout.write(
+                `\n✓ server-side and client-side naive agree on ${naiveReport.canonical ?? "?"}\n`,
+            );
+        } else if (naiveReport.canonical === null) {
+            process.stdout.write(`\n✗ could not read any naive layer\n`);
+        } else {
+            process.stdout.write(
+                `\n✗ naive drift; canonical = ${naiveReport.canonical}\n` +
+                    `  Mismatched layers:\n`,
+            );
+            for (const l of naiveReport.mismatches) {
+                process.stdout.write(`    ${l.layer} reports ${l.version}\n`);
+            }
+            process.stdout.write(
+                `\n  Likely fix:\n` +
+                    `    make sync-naive-pin && ./ct update   # rebuild both containers in lockstep\n` +
+                    `    # or, if the manifest itself is wrong:\n` +
+                    `    $EDITOR manifests/naive.upstream.json # fix the canonical pin first\n`,
+            );
+        }
+
+        return mergedResult(report, naiveReport);
     }
 }
 
-function reportToResult(report: BridgeReport): TaskResult {
+function reportToResult(report: BridgeReport, label: string): TaskResult {
     if (report.agreed) {
-        return { ok: true, code: 0, summary: `all layers agree on ${report.canonical}` };
+        return { ok: true, code: 0, summary: `${label}: all layers agree on ${report.canonical}` };
     }
     if (report.canonical === null) {
-        return { ok: false, code: 2, summary: "no readable version layer" };
+        return { ok: false, code: 2, summary: `${label}: no readable version layer` };
     }
     const m = report.mismatches.map((l) => `${l.layer}=${l.version}`).join(", ");
     return {
         ok: false,
         code: 1,
-        summary: `version skew: canonical=${report.canonical} mismatched=[${m}]`,
+        summary: `${label} skew: canonical=${report.canonical} mismatched=[${m}]`,
         skipBridge: true,
     };
+}
+
+function mergedResult(ct: BridgeReport, naive: BridgeReport): TaskResult {
+    const ctR = reportToResult(ct, "ct");
+    const naiveR = reportToResult(naive, "naive");
+    if (ctR.ok && naiveR.ok) {
+        return { ok: true, code: 0, summary: `${ctR.summary}; ${naiveR.summary}` };
+    }
+    // Worst-of: ct drift (code 1) is more actionable than "could not
+    // read" (code 2); the merged exit code is max(ctR.code, naiveR.code)
+    // EXCEPT we prefer 1 (skew) over 2 (unreadable) because skew has a
+    // remediation and unreadable usually means "stack isn't up".
+    const code = ctR.code === 1 || naiveR.code === 1 ? 1 : Math.max(ctR.code, naiveR.code);
+    const parts = [ctR, naiveR].filter((r) => !r.ok).map((r) => r.summary);
+    return { ok: false, code, summary: parts.join("; "), skipBridge: true };
 }

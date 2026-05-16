@@ -5,8 +5,11 @@
 import { test, expect } from "bun:test";
 import {
     classifyBridge,
+    classifyNaiveBridge,
+    normaliseNaiveVersion,
     operatorBinaryVersion,
     parseCoreVersionOutput,
+    parseNaiveVersionOutput,
     parsePanelConfigVersion,
     type LayerVersion,
 } from "../src/util/version-bridge";
@@ -130,4 +133,91 @@ test("classifyBridge: no layer readable → canonical=null, agreed=false", () =>
     ]);
     expect(r.canonical).toBeNull();
     expect(r.agreed).toBe(false);
+});
+
+// ---------- normaliseNaiveVersion ----------
+
+test("normaliseNaiveVersion strips leading 'v' and trailing rebuild suffix", () => {
+    expect(normaliseNaiveVersion("v148.0.7778.96-5")).toBe("148.0.7778.96");
+});
+
+test("normaliseNaiveVersion is idempotent on already-normalised input", () => {
+    expect(normaliseNaiveVersion("148.0.7778.96")).toBe("148.0.7778.96");
+});
+
+test("normaliseNaiveVersion does NOT strip trailing version segments (4-part)", () => {
+    // The 4th `.96` is part of the version, not a rebuild suffix.
+    // Only `-N` after the last digit is a rebuild suffix.
+    expect(normaliseNaiveVersion("v148.0.7778.96")).toBe("148.0.7778.96");
+});
+
+// ---------- parseNaiveVersionOutput ----------
+
+test("parseNaiveVersionOutput extracts the version from `naive X.Y.Z.W`", () => {
+    expect(parseNaiveVersionOutput("naive 148.0.7778.96\n")).toBe("148.0.7778.96");
+});
+
+test("parseNaiveVersionOutput is tolerant of trailing build metadata", () => {
+    expect(parseNaiveVersionOutput("naive 148.0.7778.96 (custom build)")).toBe("148.0.7778.96");
+});
+
+test("parseNaiveVersionOutput rejects unrelated output", () => {
+    expect(parseNaiveVersionOutput("bash: naive: command not found")).toBeNull();
+});
+
+// ---------- classifyNaiveBridge ----------
+
+test("classifyNaiveBridge: manifest agrees with server + client → agreed", () => {
+    const r = classifyNaiveBridge(
+        layer("naive-server", "148.0.7778.96"),
+        layer("naive-server", "148.0.7778.96"),
+        layer("naive-client", "148.0.7778.96"),
+    );
+    expect(r.agreed).toBe(true);
+    expect(r.canonical).toBe("148.0.7778.96");
+});
+
+test("classifyNaiveBridge: client drifts → mismatch flagged", () => {
+    const r = classifyNaiveBridge(
+        layer("naive-server", "148.0.7778.96"),
+        layer("naive-server", "148.0.7778.96"),
+        layer("naive-client", "147.0.0.0"),
+    );
+    expect(r.agreed).toBe(false);
+    expect(r.canonical).toBe("148.0.7778.96");
+    expect(r.mismatches.map((l) => l.layer)).toEqual(["naive-client"]);
+});
+
+test("classifyNaiveBridge: manifest missing, both running agree → still agreed", () => {
+    // Manifest absent doesn't break the fundamental server==client
+    // invariant; we fall back to the running binaries.
+    const r = classifyNaiveBridge(
+        layer("naive-server", null),
+        layer("naive-server", "148.0.7778.96"),
+        layer("naive-client", "148.0.7778.96"),
+    );
+    expect(r.agreed).toBe(true);
+    expect(r.canonical).toBe("148.0.7778.96");
+});
+
+test("classifyNaiveBridge: manifest missing AND running binaries disagree → mismatch", () => {
+    const r = classifyNaiveBridge(
+        layer("naive-server", null),
+        layer("naive-server", "148.0.7778.96"),
+        layer("naive-client", "147.0.0.0"),
+    );
+    expect(r.agreed).toBe(false);
+    // Canonical falls back to the first readable layer.
+    expect(r.canonical).toBe("148.0.7778.96");
+    expect(r.mismatches.map((l) => l.layer)).toEqual(["naive-client"]);
+});
+
+test("classifyNaiveBridge: nothing readable → no canonical", () => {
+    const r = classifyNaiveBridge(
+        layer("naive-server", null),
+        layer("naive-server", null),
+        layer("naive-client", null),
+    );
+    expect(r.agreed).toBe(false);
+    expect(r.canonical).toBeNull();
 });

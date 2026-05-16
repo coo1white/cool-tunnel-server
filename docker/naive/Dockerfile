@@ -5,11 +5,17 @@
 #
 # Runs klzgrad/naiveproxy's `naive` Linux binary as the server-side
 # proxy. Same binary the macOS client bundles, version-pinned to the
-# tag in COOL-TUNNEL/naive.upstream.json (mirrored here in
-# docker/naive/naive.upstream.json). Same binary on both ends → no
-# padding-protocol drift surface; this is the v0.3.0 architecture's
-# central premise. See docker/caddy/Dockerfile head comment for the
-# v0.1→v0.2→v0.3 drift history.
+# tag in manifests/naive.upstream.json — the canonical single source
+# of truth for BOTH the server-side binary (here) and the panel-image
+# client-side binary (docker/panel/Dockerfile). Same binary on both
+# ends → no padding-protocol drift surface; this is the v0.3.0
+# architecture's central premise. See docker/caddy/Dockerfile head
+# comment for the v0.1→v0.2→v0.3 drift history.
+#
+# The ARG defaults below are AUTO-MANAGED by operator/sync-naive-pin.ts.
+# Do NOT bump them by hand — edit manifests/naive.upstream.json and
+# run `make sync-naive-pin` (or `bun run operator/sync-naive-pin.ts`).
+# `ct update` preflight runs `--check` and refuses to build on drift.
 #
 # Lifecycle:
 #
@@ -39,13 +45,10 @@ FROM alpine:3.21 AS fetch
 
 RUN apk add --no-cache curl xz tar
 
-# Pin args. Default values match docker/naive/naive.upstream.json at
-# the time this image was built; CI / operator can override per build.
-# Mismatch between ARG and the json file is caught by the verify step
-# inside the panel container's pin-check job (not in this Dockerfile,
-# because we don't want the image build to pull the json at build
-# time — the operator's snapshot of the json is authoritative for
-# release-cut purposes).
+# Pin args. AUTO-MANAGED — values are mirrored from
+# manifests/naive.upstream.json by operator/sync-naive-pin.ts. Editing
+# them here by hand will be overwritten on the next `make sync-naive-
+# pin` and flagged as drift by `ct update --check`.
 ARG NAIVE_TAG=v148.0.7778.96-5
 ARG NAIVE_URL=https://github.com/klzgrad/naiveproxy/releases/download/v148.0.7778.96-5/naiveproxy-v148.0.7778.96-5-linux-x64.tar.xz
 ARG NAIVE_SHA256=ca6958dcbbfb7b1b38c55a213dab6927ce3c1417d969b815657513b81fc7352d

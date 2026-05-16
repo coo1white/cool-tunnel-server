@@ -159,30 +159,25 @@ COPY --from=redis:7.4.8-alpine /usr/local/bin/redis-cli /usr/local/bin/redis-cli
 
 # Bundle the upstream naive client binary so the anti-tracking probe
 # (core/ct-server-core/src/probe.rs) can speak NaiveProxy's HTTP/2-
-# with-padding extension. Vanilla reqwest is dropped at sing-box's
-# `naive` inbound with "missing naive padding" (R4-3 in the
-# 2026-05-04 audit); the upstream client speaks the padding
-# correctly. Pinned to a specific release tag + per-arch tarball
-# SHA-256; bumps are explicit, version-controlled events.
+# with-padding extension. v0.3.0+ this is the SAME binary the
+# ct-naive container runs as the server — the v0.3.0 architecture
+# cut eliminates padding-protocol drift by making "server naive ==
+# client naive" a build-time invariant.
+#
+# AUTO-MANAGED. The ARG defaults below mirror manifests/naive.upstream.json,
+# the canonical single source of truth for both this image's client
+# binary AND ct-naive's server binary. `operator/sync-naive-pin.ts`
+# keeps the three ARG lines in lockstep with the manifest's upstream_tag
+# and per-arch SHA-256s. Do NOT edit by hand — bump the manifest and
+# run `make sync-naive-pin`. `ct update` preflight runs `--check` and
+# refuses to build on drift; CI runs the same check.
+#
+# The arm64 SHA covers cross-builds against the GitHub-hosted tarball
+# (bytes-in → bytes-out, host-architecture-independent). Bumps must
+# update both arches together — the manifest schema requires both.
 ARG TARGETARCH
-# v0.0.89: bumped from v148.0.7778.96-2 → -5. Upstream maintainer
-# deleted the release assets for -2 after publication; production
-# `make update` runs hit `curl: (22) error 404` until this bump.
-# Same upstream binary (`naive --version` still prints
-# `naive 148.0.7778.96`), only the rebuild suffix changed, so the
-# manifest pin in manifests/naiveproxy-client.upstream.json stays
-# `148.0.7778.96`. The `make manifest-lockstep` rule from v0.0.74
-# already accepts the asset tag as `version` OR `version + suffix`,
-# so no change there either.
 ARG NAIVE_VERSION=v148.0.7778.96-5
 ARG NAIVE_SHA256_AMD64=ca6958dcbbfb7b1b38c55a213dab6927ce3c1417d969b815657513b81fc7352d
-# Round-18 supply-chain pin: arm64 hash for the same release tag
-# as AMD64. Computed against the GitHub-hosted tarball; bytes-in →
-# bytes-out, so the value is host-architecture-independent — the
-# pin protects against the upstream CDN serving different bits at
-# build time, which is the same threat model the AMD64 pin closes.
-# Bumps must update both arches together (or only the one being
-# bumped if upstream ever ships per-arch independently).
 ARG NAIVE_SHA256_ARM64=88fb88340d70b763cdf66586e056d78cb0877b62899f3194abc30d41e5d18763
 RUN set -eux; \
     cd /tmp; \
