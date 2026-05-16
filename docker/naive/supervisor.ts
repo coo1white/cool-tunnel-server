@@ -47,7 +47,18 @@ import {
 import { join } from "node:path";
 
 const CONFIG_PATH = "/data/config/naive.json";
-const CERT_ROOT = "/data/caddy/certificates";
+// CERT_ROOT carries an extra `caddy/` segment vs. ct-caddy's view of the
+// same volume. Inside ct-caddy the volume is mounted at /data, and Caddy
+// writes its storage to /data/caddy/certificates/... (Caddy's default
+// XDG_DATA_HOME-relative path). Inside ct-naive the SAME volume is
+// mounted at /data/caddy (so /data/config can also be a separate mount
+// without a read-only-mount collision), which makes the volume root
+// land at /data/caddy and the actual cert path
+// /data/caddy/caddy/certificates/. The double `caddy/` is the
+// alignment cost of keeping the two mount points distinct. v0.3.0
+// expected `/data/caddy/certificates/` and silently failed every
+// findCertPair on the 2026-05-16 first-deploy.
+const CERT_ROOT = "/data/caddy/caddy/certificates";
 const RUNTIME_DIR = "/tmp/naive-runtime";
 const RUNTIME_CONFIG = join(RUNTIME_DIR, "naive.config.json");
 const HEALTHZ_PORT = 9091;

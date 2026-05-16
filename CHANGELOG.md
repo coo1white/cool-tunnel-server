@@ -22,6 +22,49 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.3.2] — 2026-05-16 — Hot-fix: ct-naive deploy unblockers (libcap + layer4 + CERT_ROOT)
+
+v0.3.0 first-deploy on the 2026-05-16 Vultr cut surfaced three
+bugs in sequence, each blocking the next. v0.3.2 rolls all three
+fixes (including the v0.3.1 libcap fix that never shipped on its
+own) into one release.
+
+### Fixed
+
+- **`docker/naive/Dockerfile`** — `RUN setcap …` failed at exit
+  127 with `setcap: not found` because `oven/bun:1.1-alpine`
+  doesn't ship `libcap`. Added `libcap` to the `apk add` line in
+  the runtime stage. (Was queued as v0.3.1 in PR #153; rolled
+  into v0.3.2.)
+- **`caddy/Caddyfile.tpl`** — `layer4 { … }` was placed inside
+  the `{ … }` globals block on the strength of an out-of-date
+  caddy-l4 doc. Caddy's Caddyfile adapter parses unknown global
+  options silently, so the layer4 app never loaded — confirmed
+  via the admin API (`apps: ['http', 'tls']`, layer4 absent).
+  Effect: :443 served by the regular HTTP server only, no SNI
+  routing, naive.<DOMAIN> traffic never reached ct-naive. v0.3.2
+  moves the stanza to TOP level (server-block-address scope),
+  where caddy-l4 registers it as a real layer4 server.
+- **`docker/naive/supervisor.ts`** — `CERT_ROOT` corrected from
+  `/data/caddy/certificates` to `/data/caddy/caddy/certificates`.
+  The two containers mount the same `caddy_data` volume at
+  different paths (ct-caddy at `/data` so Caddy stores at
+  `/data/caddy/...`; ct-naive at `/data/caddy:ro` so the volume
+  root lands at `/data/caddy/`). The supervisor's lookup path
+  needs the extra `caddy/` segment to match where Caddy actually
+  writes inside the volume.
+
+### Operator note
+
+If you applied the band-aid `sed -i 's|- caddy_data:/data/caddy:ro|- caddy_data:/data:ro|' docker-compose.yml`
+during the v0.3.0 deploy, revert it before `./ct update` —
+mounting `caddy_data` at `/data` conflicts with the
+`naive_config:/data/config` submount (read-only-mount blocks the
+mkdir). v0.3.2 keeps the original `/data/caddy` mount; the
+supervisor.ts CERT_ROOT change is the alignment.
+
+---
+
 ## [0.3.1] — 2026-05-16 — Hot-fix: apk-install libcap in ct-naive's runtime stage
 
 v0.3.0 first-deploy regression. `docker/naive/Dockerfile`'s
@@ -10969,7 +11012,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...v0.3.2
 [0.3.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.0...v0.2.1

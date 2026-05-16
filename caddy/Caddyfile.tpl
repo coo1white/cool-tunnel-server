@@ -45,14 +45,6 @@
 #   only compatibility surface.
 
 # ---------- globals --------------------------------------------------
-#
-# layer4 lives INSIDE the global block — it's a Caddy app, not a
-# top-level site. caddy-l4's Caddyfile dialect requires the
-# `layer4 { … }` stanza to appear here; placing it outside is the
-# parse error "unrecognized directive: :443" because the parser
-# treats `layer4 { … }` as a site address with body, then sees
-# `:443 { … }` and has no way to interpret it. See
-# https://github.com/mholt/caddy-l4/blob/master/docs/servers.md.
 
 {
     email {{ .AcmeEmail }}
@@ -77,40 +69,43 @@
         metrics
         trusted_proxies static private_ranges
     }
+}
 
-    # ----- layer4 — public :443 SNI router (caddy-l4) ----------------
-    #
-    # caddy-l4 plugin baked in via docker/caddy/Dockerfile. Two
-    # routes — the first matches the proxy SNI exactly and TCP-
-    # proxies raw bytes to ct-naive; the second is the unconditional
-    # fallback for anything else (panel.*, or any random scanner)
-    # and forwards to the inner HTTPS server on 127.0.0.1:8443 where
-    # Caddy's HTTP app multiplexes by SNI/Host as normal.
-    #
-    # Why raw TCP for naive: we want naive to terminate TLS itself
-    # (so the wire format matches what the macOS client speaks end-
-    # to-end with NO intermediary parsing the TLS stream). Caddy
-    # never sees the decrypted bytes; it's a transparent SNI
-    # splitter.
-    layer4 {
-        :443 {
-            @naive_sni tls {
-                sni {{ .Domain }}
-            }
-            route @naive_sni {
-                proxy ct-naive:443
-            }
+# ---------- layer4 — public :443 SNI router (caddy-l4) ---------------
+#
+# caddy-l4 is registered as a TOP-LEVEL server-block address — it
+# is NOT a Caddyfile global directive. v0.3.0 had this inside the
+# `{ … }` globals block following an out-of-date doc; Caddy parsed
+# it silently as an unknown global option and never loaded the
+# layer4 app at all, leaving :443 served by the regular HTTP
+# server. Confirmed via the admin API on the 2026-05-16 Vultr
+# deploy: `apps: ['http', 'tls']` only. v0.3.2 moves the stanza
+# out to top level so it registers as a real server.
+#
+# Two routes: the first matches the proxy SNI exactly and TCP-
+# proxies raw bytes to ct-naive; the second is the unconditional
+# fallback (panel.<DOMAIN> + every probe) and forwards to the
+# inner HTTPS server on 127.0.0.1:8443 where Caddy's HTTP app
+# multiplexes by SNI/Host as normal.
+#
+# Why raw TCP for naive: we want naive to terminate TLS itself
+# (so the wire format matches what the macOS client speaks end-
+# to-end with NO intermediary parsing the TLS stream). Caddy
+# never sees the decrypted bytes; it's a transparent SNI splitter.
 
-            # Catch-all: panel.* SNI + every probe. Forward raw
-            # bytes to the inner Caddy HTTPS listener on
-            # 127.0.0.1:8443. The inner listener has the panel cert
-            # (and the dummy naive cert-acquisition block); SNI
-            # mismatch falls through to Caddy's default-host
-            # behaviour, which for an unknown SNI returns the cover-
-            # site default site (currently empty 404).
-            route {
-                proxy 127.0.0.1:8443
-            }
+layer4 {
+    :443 {
+        @naive_sni tls {
+            sni {{ .Domain }}
+        }
+        route @naive_sni {
+            proxy ct-naive:443
+        }
+
+        # Catch-all: panel.* SNI + every probe. Forward raw bytes
+        # to the inner Caddy HTTPS listener on 127.0.0.1:8443.
+        route {
+            proxy 127.0.0.1:8443
         }
     }
 }
