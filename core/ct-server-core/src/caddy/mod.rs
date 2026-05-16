@@ -440,8 +440,14 @@ mod tests {
             .set("PanelDomain", "panel.proxy.example.com")
             .set("AcmeEmail", &cfg().acme_email)
             .set("AcmeDirectory", &cfg().acme_directory)
-            .set("ForwardProxyBasicAuthLines", &render_basic_auth_lines(&accounts))
-            .set("ProbeResistanceSecret", &probe_resistance_secret(&cfg().domain))
+            .set(
+                "ForwardProxyBasicAuthLines",
+                &render_basic_auth_lines(&accounts),
+            )
+            .set(
+                "ProbeResistanceSecret",
+                &probe_resistance_secret(&cfg().domain),
+            )
             .into_map();
         let body = template::render(&tpl, &bindings).unwrap();
         // Global stanza.
@@ -554,6 +560,9 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert!(v.get("changed").is_some(), "panel reads `changed`: {s}");
         assert!(v.get("hash").is_some(), "panel reads `hash`: {s}");
-        assert!(v.get("active_users").is_some(), "panel reads `active_users`: {s}");
+        assert!(
+            v.get("active_users").is_some(),
+            "panel reads `active_users`: {s}"
+        );
     }
 }
