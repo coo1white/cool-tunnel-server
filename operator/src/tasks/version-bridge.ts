@@ -2,30 +2,29 @@
 // operator/src/tasks/version-bridge.ts — `ct-operator version-bridge`.
 //
 // Surface the version each runtime layer reports for the deployment.
-// Three layers must agree for a healthy deploy: panel-config (PHP),
-// rust-core (binary inside the panel container), operator-binary
-// (this CLI). When they disagree the operator typically can't
-// dispatch correctly: the wrapper invokes subcommands the binary
-// doesn't have, or the panel renders configs the daemon can't load.
+// Three "ct-*" layers must agree for a healthy deploy: panel-config
+// (PHP), rust-core (binary inside the panel container), and
+// operator-binary (this CLI). Separately, the sing-box layer must
+// match the pin in singbox-core/singbox.upstream.json (canonical for
+// the running ct-singbox binary AND for the Cool Tunnel.app's
+// embedded binary, after the coordinated v3.0.0 client cut).
 //
 // Exit codes:
-//   0  every readable layer agreed on the version
+//   0  every readable layer agreed
 //   1  at least one layer disagreed
-//   2  could not read any version (no panel/config, no binary, etc.)
+//   2  could not read any version (no panel/config, stack down, etc.)
 
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import {
     classifyBridge,
-    classifyNaiveBridge,
+    classifySingboxBridge,
     operatorBinaryVersion,
-    readNaiveCanonical,
-    readNaiveClientVersion,
-    readNaiveServerVersion,
     readPanelConfigVersion,
     readRustCoreVersion,
+    readSingboxCanonical,
+    readSingboxServerVersion,
     type BridgeReport,
-    type LayerVersion,
 } from "../util/version-bridge";
 
 export class VersionBridgeTask implements Task {
@@ -34,30 +33,24 @@ export class VersionBridgeTask implements Task {
     constructor(private readonly operatorVersion: string) {}
 
     async run(ctx: RunContext): Promise<TaskResult> {
-        const [panelConfig, opBin, rustCore, naiveCanon, naiveSrv, naiveCli] = await Promise.all([
+        const [panelConfig, opBin, rustCore, singboxCanon, singboxSrv] = await Promise.all([
             readPanelConfigVersion(ctx.cwd),
             Promise.resolve(operatorBinaryVersion(this.operatorVersion)),
             readRustCoreVersion(),
-            readNaiveCanonical(ctx.cwd),
-            readNaiveServerVersion(),
-            readNaiveClientVersion(),
+            readSingboxCanonical(ctx.cwd),
+            readSingboxServerVersion(),
         ]);
         const report = classifyBridge([panelConfig, opBin, rustCore]);
-        // The naive bridge tracks the v0.3.0+ invariant that the
-        // running server-side and client-side naive binaries match
-        // each other AND the manifest pin. Separate canonical from
-        // the ct-* report because the version-strings are unrelated
-        // (ct-* lives in 0.x; naive lives in 14x.x).
-        const naiveCanonLabel: LayerVersion = { ...naiveCanon, layer: "naive-server" };
-        const naiveReport = classifyNaiveBridge(
-            { ...naiveCanonLabel, source: naiveCanon.source + " [canonical]" },
-            naiveSrv,
-            naiveCli,
-        );
+        // The sing-box bridge tracks the v0.4.0+ invariant that the
+        // running server-side sing-box matches the pin in
+        // singbox-core/singbox.upstream.json. The two version-string
+        // spaces are unrelated (ct-* in 0.x; sing-box in 1.x), so we
+        // run them as separate classifications.
+        const singboxReport = classifySingboxBridge(singboxCanon, singboxSrv);
 
         if (ctx.json) {
-            process.stdout.write(JSON.stringify({ ct: report, naive: naiveReport }) + "\n");
-            return mergedResult(report, naiveReport);
+            process.stdout.write(JSON.stringify({ ct: report, singbox: singboxReport }) + "\n");
+            return mergedResult(report, singboxReport);
         }
 
         // Human-readable side-by-side table.
@@ -103,14 +96,14 @@ export class VersionBridgeTask implements Task {
             );
         }
 
-        // Second table: naive server ↔ client lockstep.
+        // Second table: sing-box pin ↔ running server-side binary.
         process.stdout.write(
-            `\nNaive binary bridge (v0.3.0+ — server == client invariant)\n` +
+            `\nSing-box bridge (v0.4.0+ — running binary must match the pin)\n` +
                 `  layer            version           source\n` +
                 `  ---------------  ----------------  --------------------\n`,
         );
-        for (const l of naiveReport.layers) {
-            const marker = l.version === naiveReport.canonical ? " " : "!";
+        for (const l of singboxReport.layers) {
+            const marker = l.version === singboxReport.canonical ? " " : "!";
             const v = l.version ?? "?";
             process.stdout.write(
                 ` ${marker}${l.layer.padEnd(15)}  ${v.padEnd(16)}  ${l.source}` +
@@ -118,29 +111,29 @@ export class VersionBridgeTask implements Task {
                     `\n`,
             );
         }
-        if (naiveReport.agreed) {
+        if (singboxReport.agreed) {
             process.stdout.write(
-                `\n✓ server-side and client-side naive agree on ${naiveReport.canonical ?? "?"}\n`,
+                `\n✓ ct-singbox is running ${singboxReport.canonical ?? "?"} matching the pin\n`,
             );
-        } else if (naiveReport.canonical === null) {
-            process.stdout.write(`\n✗ could not read any naive layer\n`);
+        } else if (singboxReport.canonical === null) {
+            process.stdout.write(`\n✗ could not read any sing-box layer\n`);
         } else {
             process.stdout.write(
-                `\n✗ naive drift; canonical = ${naiveReport.canonical}\n` +
+                `\n✗ sing-box drift; canonical pin = ${singboxReport.canonical}\n` +
                     `  Mismatched layers:\n`,
             );
-            for (const l of naiveReport.mismatches) {
+            for (const l of singboxReport.mismatches) {
                 process.stdout.write(`    ${l.layer} reports ${l.version}\n`);
             }
             process.stdout.write(
                 `\n  Likely fix:\n` +
-                    `    make sync-naive-pin && ./ct update   # rebuild both containers in lockstep\n` +
-                    `    # or, if the manifest itself is wrong:\n` +
-                    `    $EDITOR manifests/naive.upstream.json # fix the canonical pin first\n`,
+                    `    ./ct update                          # rebuild ct-singbox at the current pin\n` +
+                    `    # or, if the pin itself needs bumping:\n` +
+                    `    $EDITOR singbox-core/singbox.upstream.json   # then ./ct update\n`,
             );
         }
 
-        return mergedResult(report, naiveReport);
+        return mergedResult(report, singboxReport);
     }
 }
 
@@ -160,17 +153,16 @@ function reportToResult(report: BridgeReport, label: string): TaskResult {
     };
 }
 
-function mergedResult(ct: BridgeReport, naive: BridgeReport): TaskResult {
+function mergedResult(ct: BridgeReport, singbox: BridgeReport): TaskResult {
     const ctR = reportToResult(ct, "ct");
-    const naiveR = reportToResult(naive, "naive");
-    if (ctR.ok && naiveR.ok) {
-        return { ok: true, code: 0, summary: `${ctR.summary}; ${naiveR.summary}` };
+    const singboxR = reportToResult(singbox, "singbox");
+    if (ctR.ok && singboxR.ok) {
+        return { ok: true, code: 0, summary: `${ctR.summary}; ${singboxR.summary}` };
     }
-    // Worst-of: ct drift (code 1) is more actionable than "could not
-    // read" (code 2); the merged exit code is max(ctR.code, naiveR.code)
-    // EXCEPT we prefer 1 (skew) over 2 (unreadable) because skew has a
+    // Worst-of: skew (code 1) is more actionable than unreadable
+    // (code 2); merged exit prefers 1 over 2 because skew has a
     // remediation and unreadable usually means "stack isn't up".
-    const code = ctR.code === 1 || naiveR.code === 1 ? 1 : Math.max(ctR.code, naiveR.code);
-    const parts = [ctR, naiveR].filter((r) => !r.ok).map((r) => r.summary);
+    const code = ctR.code === 1 || singboxR.code === 1 ? 1 : Math.max(ctR.code, singboxR.code);
+    const parts = [ctR, singboxR].filter((r) => !r.ok).map((r) => r.summary);
     return { ok: false, code, summary: parts.join("; "), skipBridge: true };
 }

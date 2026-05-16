@@ -1,46 +1,47 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/src/util/drift-check.ts — three-way cleartext drift detection.
+// operator/src/util/drift-check.ts — three-way credential drift detection.
 //
 // Original incident: the credential-lock guard reported OK (hashes
-// and manifests matched) but the *cleartext* password the DB
-// stored, the password the rendered proxy config carried, and the
-// password the panel's subscription endpoint handed back to clients
-// had silently diverged on prior credential rotations. The strict
-// component check is structurally unaware of that divergence — it
-// compares lock-hashes, not the values clients actually authenticate
-// with.
+// and manifests matched) but the *cleartext* credential the DB
+// stored, the credential the rendered proxy config carried, and
+// the credential the panel's subscription endpoint handed back to
+// clients had silently diverged on prior credential rotations. The
+// strict component check is structurally unaware of that divergence
+// — it compares lock-hashes, not values clients authenticate with.
 //
-// This module pins the **cleartext** values at all three layers
-// to be byte-equal. If they aren't, that's a real drift the
-// operator must repair (`./ct render naive` or a Filament
-// regenerate-password) before any client can connect.
+// This module pins the **cleartext** value at all three layers to
+// be byte-equal. If they aren't, that's a real drift the operator
+// must repair (`./ct render singbox` or a Filament regenerate-UUID)
+// before any client can connect.
 //
 // Naming history (the field name has tracked architecture cuts):
 //
-//   v0.1.x  DriftRow.singbox    — /etc/sing-box/config.json
+//   v0.1.x  DriftRow.singbox    — /etc/sing-box/config.json (legacy)
 //   v0.2.x  DriftRow.caddyfile  — /etc/caddy/Caddyfile basic_auth
 //   v0.3.x  DriftRow.naive      — /data/config/naive.json
+//   v0.4.x  DriftRow.singbox    — /data/config/singbox.json (NEW)
 //
-// The v0.3.x source of truth is the ct-naive supervisor's input
-// file: a JSON blob carrying the single active account's user +
-// password. (Naive's server mode supports one credential per
-// listener; the multi-account drift detector currently surfaces
-// "DB has N accounts, naive.json carries 1" as a finding — once
-// multi-account-on-naive lands the parser will extend to cover N
-// users.)
-//
-// Pure functions only. Anything that touches docker / fetch lives
-// in tasks/drift.ts; the parsing, comparison, and reporting shapes
-// are pinned here so tests can exercise them without a running
-// compose stack.
+// The v0.4.x "credential" is the VLESS UUID per ProxyAccount (which
+// replaced the cleartext password in v0.4.0's schema migration).
+// All three layers carry the UUID; drift means the running sing-box
+// is authenticating a different UUID than the DB stores or the
+// subscription endpoint hands out.
 
-// One (username, password) pair extracted from the naive.json
-// rendered at /data/config/naive.json. Same shape v0.2.x called
-// BasicAuthUser; renamed remains compatible.
-export interface BasicAuthUser {
+/**
+ * One (username, uuid) pair extracted from /data/config/singbox.json.
+ * Username comes from the inbound user's `name` field; uuid is the
+ * VLESS credential.
+ */
+export interface SingboxUser {
     readonly username: string;
-    readonly password: string;
+    readonly uuid: string;
 }
+
+/**
+ * Back-compat alias — v0.3.x called the same shape BasicAuthUser.
+ * Tests using the old name keep compiling.
+ */
+export type BasicAuthUser = SingboxUser;
 
 // The minimum shape the subscription endpoint emits.
 // SubscriptionManifestV1 carries more, but the drift check only
@@ -49,7 +50,13 @@ export interface SubscriptionProfile {
     readonly host: string;
     readonly port: number;
     readonly username: string;
-    readonly password: string;
+    /**
+     * v0.4.x: this is the VLESS UUID. v0.3.x called it "password".
+     * The wire-shape change to sing-box config snippet is a separate
+     * concern handled by the manifest schema; this field tracks
+     * whatever credential the client uses.
+     */
+    readonly uuid: string;
 }
 
 export interface SubscriptionResponse {
@@ -62,14 +69,12 @@ export interface SubscriptionResponse {
 export interface DriftRow {
     readonly accountId: number;
     readonly username: string;
-    // null means "the layer could not produce a value" — the row
-    // missed in DB, or naive.json carries a different username, or
-    // the subscription endpoint returned cover-site / 404. Distinct
-    // from "" (empty string), which means a layer EXPLICITLY
-    // produced an empty password — that's still a drift if the
-    // others have a value.
+    // null = layer could not produce a value (row missed in DB,
+    // singbox.json has no user with that username, subscription
+    // endpoint returned cover-site). Distinct from "" which means
+    // a layer EXPLICITLY produced an empty value.
     readonly db: string | null;
-    readonly naive: string | null;
+    readonly singbox: string | null;
     readonly subscription: string | null;
 }
 
@@ -79,7 +84,6 @@ export interface DriftFinding {
     readonly accountId: number;
     readonly username: string;
     readonly severity: DriftSeverity;
-    // Human-readable single-line explanation.
     readonly summary: string;
 }
 
@@ -89,17 +93,57 @@ export interface DriftReport {
     readonly ok: boolean;
 }
 
-// Parse the v0.3.x naive.json into a BasicAuthUser[] for shape
-// compatibility with v0.2.x's parseCaddyfileBasicAuth. Returns an
-// empty array on any parse / shape error — degrades to "no
-// credentials found" so the upstream classifier can surface that
-// as a real drift instead of throwing here and breaking the whole
-// audit.
-//
-// Schema mirror: core/ct-server-core/src/naive/mod.rs::NaiveConfig
-// + docker/naive/supervisor.ts::NaiveCtConfig. The drift checker
-// only cares about (user, password) — other fields are ignored.
-export function parseNaiveJsonAuth(rawText: string): BasicAuthUser[] {
+/**
+ * Parse the v0.4.x sing-box config.json into a SingboxUser[].
+ * Returns an empty array on any parse / shape error — degrades
+ * to "no credentials found" so the upstream classifier surfaces
+ * that as a real drift rather than throwing here and breaking the
+ * whole audit.
+ *
+ * Schema mirror: singbox-core/src/config/render.ts ::
+ *   SingboxConfig.inbounds[] of type "vless" carries users[],
+ *   each { name, uuid, flow }.
+ *
+ * We extract from EVERY vless inbound (multi-account multi-port is
+ * a hypothetical v0.4.x followup; today's render produces one
+ * inbound with all users, but the parser is forward-compatible).
+ */
+export function parseSingboxJsonUsers(rawText: string): SingboxUser[] {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(rawText);
+    } catch {
+        return [];
+    }
+    if (typeof parsed !== "object" || parsed === null) return [];
+    const inbounds = (parsed as { inbounds?: unknown }).inbounds;
+    if (!Array.isArray(inbounds)) return [];
+
+    const out: SingboxUser[] = [];
+    for (const inb of inbounds) {
+        if (typeof inb !== "object" || inb === null) continue;
+        if ((inb as { type?: unknown }).type !== "vless") continue;
+        const users = (inb as { users?: unknown }).users;
+        if (!Array.isArray(users)) continue;
+        for (const u of users) {
+            if (typeof u !== "object" || u === null) continue;
+            const name = (u as { name?: unknown }).name;
+            const uuid = (u as { uuid?: unknown }).uuid;
+            if (typeof name !== "string" || typeof uuid !== "string") continue;
+            if (name === "" || uuid === "") continue;
+            out.push({ username: name, uuid });
+        }
+    }
+    return out;
+}
+
+/**
+ * Legacy v0.3.x parser — kept for migration windows when an
+ * operator still has a v0.3.x `naive.json` on disk while the
+ * v0.4.x `singbox.json` hasn't been rendered yet. New call sites
+ * use parseSingboxJsonUsers above.
+ */
+export function parseNaiveJsonAuth(rawText: string): SingboxUser[] {
     let parsed: unknown;
     try {
         parsed = JSON.parse(rawText);
@@ -110,26 +154,20 @@ export function parseNaiveJsonAuth(rawText: string): BasicAuthUser[] {
     const user = (parsed as { user?: unknown }).user;
     const password = (parsed as { password?: unknown }).password;
     if (typeof user !== "string" || typeof password !== "string") return [];
-    // An empty user OR empty password means "the renderer wrote the
-    // stub" — naive supervisor will refuse to spawn until both are
-    // populated, and drift should treat that as "naive layer has no
-    // credentials" (== absent), not "naive carries empty creds".
     if (user === "" || password === "") return [];
-    return [{ username: user, password }];
+    // v0.3.x's "password" is mapped to v0.4.x's "uuid" for shape
+    // compatibility. Drift detector logic doesn't actually care
+    // about the credential type, only whether the strings agree.
+    return [{ username: user, uuid: password }];
 }
 
-// Legacy parser — kept for migration windows where the operator
-// still has a v0.2.x Caddyfile on disk while the v0.3.x naive.json
-// hasn't been rendered yet. New v0.3.x call sites use
-// parseNaiveJsonAuth above. Tests still cover this for the
-// transitional period.
-//
-// Parses `basic_auth USER PASS` directives out of a v0.2.x
-// rendered Caddyfile's forward_proxy block. Hand-tokenised rather
-// than imposing a full Caddyfile grammar; tracks `{` / `}` depth
-// to know we're inside a forward_proxy block.
-export function parseCaddyfileBasicAuth(rawText: string): BasicAuthUser[] {
-    const out: BasicAuthUser[] = [];
+/**
+ * Even older v0.2.x parser — kept for forensic post-mortems. Pulls
+ * `basic_auth USER PASS` lines from a rendered Caddyfile's
+ * forward_proxy block.
+ */
+export function parseCaddyfileBasicAuth(rawText: string): SingboxUser[] {
+    const out: SingboxUser[] = [];
     let depth = 0;
     let forwardProxyOpenAtDepth: number | null = null;
     for (const rawLine of rawText.split("\n")) {
@@ -162,15 +200,14 @@ export function parseCaddyfileBasicAuth(rawText: string): BasicAuthUser[] {
         if (forwardProxyOpenAtDepth === null) continue;
         const m = consumed.trim().match(/^basic_auth\s+(\S+)\s+(\S+)\s*$/);
         if (m) {
-            out.push({ username: m[1]!, password: m[2]! });
+            out.push({ username: m[1]!, uuid: m[2]! });
         }
     }
     return out;
 }
 
-// Parse the subscription endpoint's JSON body. Returns null for
-// the cover-site path (the panel returns the FakeSite HTML on
-// any failure, which is not JSON) so callers can distinguish
+// Parse the subscription endpoint's JSON body.
+// Returns null on cover-site / non-JSON so callers distinguish
 // "endpoint refused us" from "endpoint returned credentials".
 export function parseSubscriptionResponse(rawBody: string): SubscriptionResponse | null {
     let parsed: unknown;
@@ -192,47 +229,36 @@ export function parseSubscriptionResponse(rawBody: string): SubscriptionResponse
         const host = (p as { host?: unknown }).host;
         const port = (p as { port?: unknown }).port;
         const username = (p as { username?: unknown }).username;
-        const password = (p as { password?: unknown }).password;
+        // The wire field on the subscription manifest is renamed
+        // from "password" (v0.3.x naive) to "uuid" (v0.4.x VLESS),
+        // but we accept either for the duration of the transition
+        // window — older client builds will be sending the old name.
+        const credential =
+            (p as { uuid?: unknown }).uuid ?? (p as { password?: unknown }).password;
         if (
             typeof host !== "string" ||
             typeof port !== "number" ||
             typeof username !== "string" ||
-            typeof password !== "string"
+            typeof credential !== "string"
         ) {
             continue;
         }
-        profiles.push({ host, port, username, password });
+        profiles.push({ host, port, username, uuid: credential });
     }
     return { version, server, profiles };
 }
 
-// Classify one row's three values into a finding. The contract:
-//
-//   - All three layers reported the same non-empty string → ok.
-//   - Any pair of present-non-empty layers disagree           → fail.
-//   - DB has cleartext, naive rendered an empty/missing       → fail
-//     (next CONNECT will be rejected for "no such user").
-//   - DB has cleartext, subscription returned cover-site
-//     (null body)                                              → warn
-//     (token may be expired, account disabled, or the panel
-//     rate-limited us — investigate but not necessarily fatal).
-//   - DB row missing entirely                                  → fail
-//     (naive.json has a phantom user; remove via the panel).
-//
-// The summary string names which layers carry which values, NOT
-// the values themselves — leaking cleartext into operator output
-// is a separate audit failure even on a local terminal.
 export function classifyRow(row: DriftRow): DriftFinding {
     const db = row.db;
-    const nv = row.naive;
+    const sb = row.singbox;
     const sub = row.subscription;
 
-    if (db === null && nv === null && sub === null) {
+    if (db === null && sb === null && sub === null) {
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "no layer carries this account — phantom row, run `./ct render naive`",
+            summary: "no layer carries this account — phantom row, run `./ct render singbox`",
         };
     }
 
@@ -241,42 +267,41 @@ export function classifyRow(row: DriftRow): DriftFinding {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "DB row missing but naive/subscription still reference it; phantom account",
+            summary:
+                "DB row missing but singbox/subscription still reference it; phantom account",
         };
     }
 
-    if (nv === null || nv === "") {
+    if (sb === null || sb === "") {
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "DB has cleartext, naive.json rendered no password — `./ct render naive` needed",
+            summary:
+                "DB has uuid, singbox.json has no matching user — `./ct render singbox` needed",
         };
     }
 
     if (sub === null) {
-        // Cover-site / non-JSON path. Could be: token wrong,
-        // rate-limit hit, account disabled, APP_KEY broken. Always
-        // worth a look but not a structural drift on its own.
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "warn",
-            summary: "subscription endpoint returned cover-site (token wrong, rate-limit, or APP_KEY?)",
+            summary:
+                "subscription endpoint returned cover-site (token wrong, rate-limit, or APP_KEY?)",
         };
     }
 
-    // All three present. The actual drift test.
-    if (db !== nv || db !== sub) {
+    if (db !== sb || db !== sub) {
         const which: string[] = [];
-        if (db !== nv) which.push("db↔naive");
+        if (db !== sb) which.push("db↔singbox");
         if (db !== sub) which.push("db↔subscription");
-        if (nv !== sub && db === nv) which.push("naive↔subscription");
+        if (sb !== sub && db === sb) which.push("singbox↔subscription");
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: `cleartext drift between ${which.join(" + ")}; clients will hit auth-fail cover-site until aligned`,
+            summary: `uuid drift between ${which.join(" + ")}; clients will hit auth-fail cover-site until aligned`,
         };
     }
 
@@ -284,7 +309,7 @@ export function classifyRow(row: DriftRow): DriftFinding {
         accountId: row.accountId,
         username: row.username,
         severity: "ok",
-        summary: "all three layers agree on cleartext",
+        summary: "all three layers agree on the VLESS UUID",
     };
 }
 
@@ -294,24 +319,46 @@ export function buildReport(rows: readonly DriftRow[]): DriftReport {
     return { rows, findings, ok };
 }
 
-// Render a human-readable table summary. Cleartext values are NEVER
-// printed — only present/absent status and same/diff vs DB.
+/**
+ * Render a human-readable table summary. UUIDs are NEVER printed —
+ * only present/absent status and same/diff vs DB.
+ */
 export function renderTable(report: DriftReport): string {
     const lines: string[] = [];
-    lines.push("account_id  username                    db        naive     subscription  finding");
-    lines.push("──────────  ──────────────────────────  ────────  ────────  ────────────  ──────────────────────────────────");
+    lines.push(
+        "account_id  username                    db        singbox   subscription  finding",
+    );
+    lines.push(
+        "──────────  ──────────────────────────  ────────  ────────  ────────────  ──────────────────────────────────",
+    );
     for (const row of report.rows) {
         const finding = report.findings.find(
             (f) => f.accountId === row.accountId && f.username === row.username,
         );
-        const tag = ({ ok: "  OK", warn: "WARN", fail: "FAIL" } as const)[finding?.severity ?? "fail"];
+        const tag = ({ ok: "  OK", warn: "WARN", fail: "FAIL" } as const)[
+            finding?.severity ?? "fail"
+        ];
         const cellDb = row.db === null ? "absent" : row.db === "" ? "EMPTY" : "present";
-        const cellNv = row.naive === null ? "absent" : row.naive === "" ? "EMPTY" :
-            (row.db !== null && row.naive === row.db ? "same" : "DIFF");
-        const cellSub = row.subscription === null ? "absent" : row.subscription === "" ? "EMPTY" :
-            (row.db !== null && row.subscription === row.db ? "same" : "DIFF");
+        const cellSb =
+            row.singbox === null
+                ? "absent"
+                : row.singbox === ""
+                  ? "EMPTY"
+                  : row.db !== null && row.singbox === row.db
+                    ? "same"
+                    : "DIFF";
+        const cellSub =
+            row.subscription === null
+                ? "absent"
+                : row.subscription === ""
+                  ? "EMPTY"
+                  : row.db !== null && row.subscription === row.db
+                    ? "same"
+                    : "DIFF";
         lines.push(
-            `${String(row.accountId).padEnd(10)}  ${row.username.slice(0, 26).padEnd(26)}  ${cellDb.padEnd(8)}  ${cellNv.padEnd(8)}  ${cellSub.padEnd(12)}  ${tag}  ${finding?.summary ?? ""}`,
+            `${String(row.accountId).padEnd(10)}  ${row.username
+                .slice(0, 26)
+                .padEnd(26)}  ${cellDb.padEnd(8)}  ${cellSb.padEnd(8)}  ${cellSub.padEnd(12)}  ${tag}  ${finding?.summary ?? ""}`,
         );
     }
     return lines.join("\n");

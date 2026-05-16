@@ -2,30 +2,35 @@
 // operator/src/util/version-bridge.ts — read + compare the version
 // each runtime layer reports for the deployment.
 //
-// Three runtimes ship from the same repo and must agree on what
-// version they're running:
+// v0.4.0+ runtimes:
 //
 //   - panel/config/cool-tunnel.php  → declared PHP runtime version
 //   - ct-server-core (Rust)          → core binary, inside panel container
 //   - operator/bin/ct-operator-<...> → the operator CLI itself
+//   - singbox-core/singbox.upstream.json → canonical sing-box tag pin
+//   - ct-singbox → running sing-box binary inside the proxy container
 //
 // (The `ct` wrapper script isn't a separate runtime — it just dispatches
-// to the operator binary or to bash fallbacks, so it has no independent
-// version string to surface.)
+// to the operator binary or to bash fallbacks.)
 //
-// What the v0.1.13-0.1.16 hot-fix chain proved: a wrapper that dispatches
-// to a stale binary is the #1 deploy-skew failure mode. The operator on
-// disk being older than panel/config/cool-tunnel.php means the wrapper
-// invokes subcommands that the binary doesn't have ("unknown command:
-// update"), with no auto-recovery in v0.1.12. This module surfaces that
-// mismatch as a first-class signal so:
+// What the v0.1.13-0.1.16 hot-fix chain proved: a wrapper that
+// dispatches to a stale binary is the #1 deploy-skew failure mode.
+// `ct version-bridge` surfaces that mismatch as a first-class signal:
 //
-//   1. `ct version-bridge` prints all three side-by-side
-//      and exits non-zero when they disagree (cron-friendly).
+//   1. Prints all readable layers side-by-side, exits non-zero on
+//      disagreement (cron-friendly).
 //   2. `ct doctor` includes a ballast check that fails on the same
 //      condition with an actionable hint.
-//   3. The `ct` wrapper itself can self-bootstrap by fetching the
-//      matching binary before dispatching when a skew is detected.
+//   3. The `ct` wrapper itself self-bootstraps a matching binary
+//      when a panel-config ↔ operator skew is detected.
+//
+// v0.4.0 collapsed three previous version-tracking surfaces (naive
+// manifest pin, naive server runtime, naive client runtime) into
+// ONE: the sing-box upstream tag pinned in
+// singbox-core/singbox.upstream.json. Both server (ct-singbox) and
+// client (cool-tunnel macOS app, after v3.0.0 cut) are rebuilt from
+// the SAME tag, so the "do the two running binaries agree?" check
+// becomes "do they both match the pin?".
 
 import { $, capture } from "./sh";
 
@@ -34,8 +39,8 @@ export interface LayerVersion {
         | "panel-config"
         | "operator-binary"
         | "rust-core"
-        | "naive-server"
-        | "naive-client";
+        | "singbox-pin"
+        | "singbox-server";
     readonly version: string | null;
     readonly source: string;
     readonly error?: string;
@@ -49,14 +54,16 @@ export interface BridgeReport {
 }
 
 /**
- * `naive --version` prints `naive <X.Y.Z.W>` (no `v` prefix, no
- * release-suffix). The manifest pin is `vX.Y.Z.W-N` (asset tag),
- * so normalisation strips the leading `v` and the trailing `-N`
- * before comparison. Both sides go through the same normaliser so
- * a future format change moves them together.
+ * sing-box's `version` subcommand prints
+ *   sing-box version 1.13.12
+ *   Environment: go1.22.x linux/amd64
+ *   Tags: ...
+ *
+ * Our pin is `v1.13.12` (with leading `v`). Normalise both to the
+ * bare semver so the comparator is straightforward.
  */
-export function normaliseNaiveVersion(v: string): string {
-    return v.replace(/^v/, "").replace(/-\d+$/, "").trim();
+export function normaliseSingboxVersion(v: string): string {
+    return v.replace(/^v/, "").trim();
 }
 
 // ---------- pure parsers ----------
@@ -64,9 +71,6 @@ export function normaliseNaiveVersion(v: string): string {
 /**
  * Extract the `'version' => 'X.Y.Z'` line from
  * panel/config/cool-tunnel.php. Returns null if absent or malformed.
- *
- * Match is anchored to the start of a key+arrow so a stray
- * comment containing the word "version" doesn't trip it.
  */
 export function parsePanelConfigVersion(php: string): string | null {
     const m = php.match(/'version'\s*=>\s*'([^']+)'/);
@@ -74,12 +78,20 @@ export function parsePanelConfigVersion(php: string): string | null {
 }
 
 /**
- * Extract `ct-server-core 0.1.x` (the version word) from
- * `ct-server-core --version` output. Tolerates trailing build
- * metadata.
+ * Extract `ct-server-core 0.x.y` (the version word) from
+ * `ct-server-core --version` output.
  */
 export function parseCoreVersionOutput(out: string): string | null {
     const m = out.trim().match(/^ct-server-core\s+(\S+)/);
+    return m && m[1] ? m[1] : null;
+}
+
+/**
+ * Parse `sing-box version` output. First line is
+ *   sing-box version 1.13.12
+ */
+export function parseSingboxVersionOutput(out: string): string | null {
+    const m = out.trim().match(/^sing-box\s+version\s+(\S+)/m);
     return m && m[1] ? m[1] : null;
 }
 
@@ -89,15 +101,14 @@ export function parseCoreVersionOutput(out: string): string | null {
  * Decide if all readable layers report the same version.
  *
  * "Readable" = `version !== null`. A layer that errored is reported
- * but doesn't gate agreement (e.g. docker not on PATH on a dev
- * laptop is a `warn`, not a mismatch).
+ * but doesn't gate agreement (docker not on PATH = `warn` not
+ * mismatch).
  */
 export function classifyBridge(layers: readonly LayerVersion[]): BridgeReport {
     const readable = layers.filter((l) => l.version !== null);
     if (readable.length === 0) {
         return { layers, agreed: false, canonical: null, mismatches: [] };
     }
-    // Canonical = panel-config when present; otherwise the first readable.
     const canonical =
         readable.find((l) => l.layer === "panel-config")?.version ??
         readable[0]!.version!;
@@ -134,30 +145,17 @@ export function operatorBinaryVersion(buildVersion: string): LayerVersion {
 }
 
 /**
- * `docker compose exec -T panel ct-server-core --version` →
- * parse the "ct-server-core X.Y.Z" line.
- */
-/**
- * Parse `naive --version` output. Upstream prints `naive 148.0.7778.96`
- * (single line, no `v` prefix, no rebuild suffix). Tolerant of leading
- * whitespace and trailing build metadata.
- */
-export function parseNaiveVersionOutput(out: string): string | null {
-    const m = out.trim().match(/^naive\s+(\S+)/);
-    return m && m[1] ? m[1] : null;
-}
-
-/**
- * Read the manifest's canonical naive tag. Returns null if the file
- * is missing/malformed (treated as a "warn" by the caller — drift
+ * Read the canonical sing-box tag pinned in
+ * singbox-core/singbox.upstream.json. Returns null if the file is
+ * missing/malformed (treated as a "warn" by the caller — drift
  * detection still works between the two running layers).
  */
-export async function readNaiveCanonical(cwd: string): Promise<LayerVersion> {
-    const path = `${cwd}/manifests/naive.upstream.json`;
+export async function readSingboxCanonical(cwd: string): Promise<LayerVersion> {
+    const path = `${cwd}/singbox-core/singbox.upstream.json`;
     const f = Bun.file(path);
     if (!(await f.exists())) {
         return {
-            layer: "naive-server",
+            layer: "singbox-pin",
             version: null,
             source: path,
             error: "file not found",
@@ -168,20 +166,20 @@ export async function readNaiveCanonical(cwd: string): Promise<LayerVersion> {
         const tag = typeof j.upstream_tag === "string" ? j.upstream_tag : null;
         if (!tag) {
             return {
-                layer: "naive-server",
+                layer: "singbox-pin",
                 version: null,
                 source: path,
                 error: "upstream_tag missing",
             };
         }
         return {
-            layer: "naive-server",
-            version: normaliseNaiveVersion(tag),
+            layer: "singbox-pin",
+            version: normaliseSingboxVersion(tag),
             source: `${path} (upstream_tag, normalised)`,
         };
     } catch (e) {
         return {
-            layer: "naive-server",
+            layer: "singbox-pin",
             version: null,
             source: path,
             error: e instanceof Error ? e.message : String(e),
@@ -190,66 +188,43 @@ export async function readNaiveCanonical(cwd: string): Promise<LayerVersion> {
 }
 
 /**
- * `docker compose exec -T naive naive --version` →
- * `naive X.Y.Z.W`. Surfaces the server-side running binary.
+ * `docker compose exec -T singbox sing-box version` →
+ * Surfaces the server-side running sing-box.
  */
-export async function readNaiveServerVersion(): Promise<LayerVersion> {
-    const r = await capture($`docker compose exec -T naive naive --version`);
-    const source = "docker compose exec naive naive --version";
+export async function readSingboxServerVersion(): Promise<LayerVersion> {
+    const r = await capture($`docker compose exec -T singbox sing-box version`);
+    const source = "docker compose exec singbox sing-box version";
     if (!r.ok) {
         return {
-            layer: "naive-server",
+            layer: "singbox-server",
             version: null,
             source,
             error: r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`,
         };
     }
-    const version = parseNaiveVersionOutput(r.stdout);
+    const version = parseSingboxVersionOutput(r.stdout);
     if (version === null) {
-        return { layer: "naive-server", version: null, source, error: "unexpected output shape" };
+        return { layer: "singbox-server", version: null, source, error: "unexpected output shape" };
     }
-    return { layer: "naive-server", version, source };
+    return { layer: "singbox-server", version, source };
 }
 
 /**
- * `docker compose exec -T panel /usr/local/bin/naive --version` →
- * `naive X.Y.Z.W`. Surfaces the client-side running binary (the one
- * the anti-tracking probe shells out to).
- */
-export async function readNaiveClientVersion(): Promise<LayerVersion> {
-    const r = await capture($`docker compose exec -T panel /usr/local/bin/naive --version`);
-    const source = "docker compose exec panel /usr/local/bin/naive --version";
-    if (!r.ok) {
-        return {
-            layer: "naive-client",
-            version: null,
-            source,
-            error: r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`,
-        };
-    }
-    const version = parseNaiveVersionOutput(r.stdout);
-    if (version === null) {
-        return { layer: "naive-client", version: null, source, error: "unexpected output shape" };
-    }
-    return { layer: "naive-client", version, source };
-}
-
-/**
- * Compare naive layers against the manifest's canonical tag. Unlike
+ * Compare sing-box running binary against the canonical pin. Unlike
  * classifyBridge (which picks panel-config as canonical), this one
  * uses the manifest tag as canonical — it's the single source of
- * truth for both the running binaries.
+ * truth for the running binary.
  *
- * A null canonical (manifest missing/unreadable) falls back to
- * "do the two running binaries agree with each other?" — the
- * fundamental invariant still holds when the manifest is absent.
+ * v0.4.0 only has ONE running sing-box on the server side
+ * (cool-tunnel-server); the v0.3.x naive-client-runtime layer is
+ * gone (sing-box on the client lives in the cool-tunnel macOS app
+ * and isn't reachable from the operator's docker context).
  */
-export function classifyNaiveBridge(
+export function classifySingboxBridge(
     canonical: LayerVersion,
     server: LayerVersion,
-    client: LayerVersion,
 ): BridgeReport {
-    const layers = [canonical, server, client] as const;
+    const layers = [canonical, server] as const;
     const readable = layers.filter((l) => l.version !== null);
     if (readable.length === 0) {
         return { layers, agreed: false, canonical: null, mismatches: [] };
