@@ -12,15 +12,27 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Symfony\Component\Messenger\MessageBusInterface;
 
 // One row per proxy user.
 //
-// Anytime an account is created, edited, or deleted we re-render the
-// sing-box config.json and ask sing-box to hot-reload via its clash
-// API. Two paths fire in sequence:
+// v0.4.0 — sing-box VLESS+Reality replaces NaiveProxy / HTTPS-CONNECT.
+// Each account authenticates by per-user UUID (the VLESS user_id field
+// inside sing-box's `vless` inbound users[] array), not by basic-auth
+// username/password.
+//
+// The UUID IS the credential, like an API key. We store it in plain
+// text on the same disk-protection posture as the rest of the DB; the
+// v0.3.x encrypt-at-rest dance for password_cleartext_encrypted
+// recovered to cleartext under APP_KEY exposure anyway (APP_KEY and
+// the DB live on the same volume), so the wrapper added complexity
+// without real defence-in-depth.
+//
+// Anytime an account is created, edited, or deleted we re-render
+// sing-box's config.json and ask sing-box to hot-reload. Two paths
+// fire in sequence:
 //
 //   1. Redis pub/sub → ct-server-core daemon picks it up within ~1ms,
 //      runs through the Coalescer (≤2 reloads per 100ms window
@@ -33,25 +45,14 @@ use Symfony\Component\Messenger\MessageBusInterface;
 //      to Symfony Messenger's Redis Streams transport (see
 //      App\Messages\ReloadSingBox + App\MessageHandlers\
 //      ReloadSingBoxHandler). [program:messenger] picks it up,
-//      renders, reloads. Pre-2026-05-05 this fired synchronously
-//      inside saved() / deleted(); a hung ct-server-core stalled
-//      the whole Filament request, and a bulk-delete fanned out N
-//      synchronous reloads. v0.0.84 introduced a queued backstop
-//      via Laravel Queue; v0.0.94 moved it onto Symfony Messenger.
-//      Both layers dedupe by SHA-256, so racing reloads (e.g.
-//      worker firing while another save is mid-flight) reduce to a
-//      no-op-after-first.
-//
-// password_cleartext_encrypted holds the cleartext sealed with
-// Laravel's Crypt — sing-box's `naive` inbound checks the password
-// directly (not as a hash), so we have to keep the cleartext at
-// rest. password_hash is preserved for audit/legacy purposes.
+//      renders, reloads. Both layers dedupe by SHA-256, so racing
+//      reloads (e.g. worker firing while another save is mid-flight)
+//      reduce to a no-op-after-first.
 
 /**
  * @property int $id
  * @property string $username
- * @property string $password_hash
- * @property string|null $password_cleartext_encrypted
+ * @property string $uuid
  * @property string|null $label
  * @property bool $enabled
  * @property int|null $quota_bytes
@@ -68,13 +69,13 @@ class ProxyAccount extends Model
     /**
      * Mass-assignable attributes.
      *
-     * password_hash and password_cleartext_encrypted are deliberately
-     * NOT in this list. Anything that needs to set them must go
-     * through {@see setCleartextPassword()}, which writes both
-     * consistently. This makes it impossible for a Filament form
-     * field, an API endpoint, or a stray array-fill to poison those
-     * columns by accident — Eloquent's MassAssignmentException
-     * fires immediately.
+     * `uuid` is deliberately NOT in this list. The VLESS credential
+     * MUST be created or rotated through {@see regenerateUuid()}, which
+     * generates a fresh v4 UUID and writes it consistently. This makes
+     * it impossible for a Filament form field, an API endpoint, or a
+     * stray array-fill to plant an attacker-controlled UUID into the
+     * column by accident — Eloquent's MassAssignmentException fires
+     * immediately.
      */
     protected $fillable = [
         'username', 'label', 'enabled',
@@ -83,13 +84,15 @@ class ProxyAccount extends Model
     ];
 
     /**
-     * Hidden from array / JSON serialisation. The cleartext column
-     * MUST stay hidden — leaking it in a panel response would defeat
-     * the encrypt-at-rest scheme entirely.
+     * Hidden from array / JSON serialisation. The `uuid` column MUST
+     * stay hidden — leaking it in a generic panel response (e.g. an
+     * accidental ->toArray() in a Livewire view) would defeat the
+     * credential-secrecy posture entirely. The SubscriptionController
+     * reads it explicitly via $account->uuid for its signed manifest;
+     * no other surface should serialise it.
      */
     protected $hidden = [
-        'password_hash',
-        'password_cleartext_encrypted',
+        'uuid',
     ];
 
     protected function casts(): array
@@ -136,15 +139,6 @@ class ProxyAccount extends Model
      * Cycle 3 / v0.0.55 single source of truth (mirrored byte-for-byte
      * by core/ct-server-core/src/util/domain.rs::panel_domain). The
      * resolution: PANEL_DOMAIN env > panel.<DOMAIN> env > fail-fast.
-     *
-     * Pre-v0.0.55 this method hardcoded "panel.{$domain}" inline,
-     * making it the third hardcoded site for the same logic (after
-     * APP_URL in .env and PanelDomain in haproxy.cfg.tpl). v0.0.53
-     * fixed the value (apex → panel subdomain) but kept the hardcode;
-     * v0.0.55 collapses the hardcode into the config helper. If the
-     * config throws (both PANEL_DOMAIN and DOMAIN unset), let the
-     * exception propagate — it surfaces as a clear operator-facing
-     * error rather than a silently-malformed URL.
      */
     public function subscriptionUrl(): ?string
     {
@@ -182,34 +176,38 @@ class ProxyAccount extends Model
     }
 
     /**
-     * Set the cleartext password. Stores the bcrypt hash and a
-     * Laravel-encrypted copy of the cleartext (sing-box needs it).
+     * Generate a fresh v4 UUID and assign it to this account. Returns
+     * the new UUID string for one-shot display in the Filament
+     * regenerate notification.
+     *
+     * Caller is responsible for ->save(). The booted() handlers
+     * downstream will re-render singbox.json + announce the change
+     * exactly as for any other save.
      */
-    public function setCleartextPassword(string $cleartext): void
+    public function regenerateUuid(): string
     {
-        $this->password_hash = password_hash($cleartext, PASSWORD_BCRYPT, ['cost' => 12]);
-        $this->password_cleartext_encrypted = Crypt::encryptString($cleartext);
-    }
+        $uuid = (string) Str::uuid();
+        $this->uuid = $uuid;
 
-    /**
-     * Decrypt and return the cleartext password — used by the
-     * SingBoxConfigGenerator at render time. Returns null if the
-     * row predates the cleartext column or decryption fails.
-     */
-    public function getCleartextPassword(): ?string
-    {
-        if (empty($this->password_cleartext_encrypted)) {
-            return null;
-        }
-        try {
-            return Crypt::decryptString($this->password_cleartext_encrypted);
-        } catch (\Throwable) {
-            return null;
-        }
+        return $uuid;
     }
 
     protected static function booted(): void
     {
+        // Auto-seed the UUID at the creating event so callers that
+        // forget to call regenerateUuid() before ->save() still get a
+        // valid credential. The DB column is char(36) UNIQUE; landing
+        // a row with uuid=NULL would either violate the unique-on-
+        // multi-NULL invariant in a multi-tenant deploy, or be
+        // silently inaccessible (sing-box's vless inbound rejects
+        // empty user_id at handshake time).
+        static::creating(function (self $account): void {
+            $current = (string) ($account->uuid ?? '');
+            if ($current === '') {
+                $account->regenerateUuid();
+            }
+        });
+
         // Both paths defer to DB::afterCommit so the announce + reload
         // dispatch only fire if the surrounding DB transaction
         // actually commits. Pre-v0.0.15 the announce ran inline in the
@@ -217,35 +215,13 @@ class ProxyAccount extends Model
         // BEFORE the transaction commits — a rollback later in the
         // same transaction would still leave a Redis "revoked" flag
         // and a queued ReloadSingBoxJob for a row that never landed.
-        // The daemon would re-render config.json from a DB snapshot
-        // missing that row (correct), but `account:status:<user>` in
-        // Redis would persist as "revoked" (incorrect ghost state),
-        // and the queue worker would dispatch to the clash API for
-        // a non-existent change (wasted work).
-        //
-        // DB::afterCommit semantics:
-        //   - inside a transaction: callback queued, fired after the
-        //     OUTERMOST transaction commits. If any nested transaction
-        //     rolls back, the callback never runs.
-        //   - outside a transaction: callback runs immediately. The
-        //     pre-v0.0.15 inline behaviour for non-transactional
-        //     saves is preserved.
         //
         // We snapshot $username and $status at saved-time so the
         // callback closure doesn't dereference a stale or
-        // post-rollback Eloquent instance — the values are frozen
-        // at the moment the row's intended state was decided, and
-        // the broadcast announces that frozen state when (and only
-        // if) the row actually persists.
-        //
-        // Hot path (Redis pub/sub) is still ~1ms fire-and-forget;
-        // cold path now dispatches directly to the Symfony Messenger
-        // bus (v0.0.94 cutover). MessageBusInterface routes the
-        // ReloadSingBox message to the `async` transport
-        // (cool_tunnel:messenger Redis stream); [program:messenger]
-        // picks it up and invokes ReloadSingBoxHandler. The
-        // two-hop path through the legacy ReloadSingBoxJob shim
-        // is gone.
+        // post-rollback Eloquent instance — the values are frozen at
+        // the moment the row's intended state was decided, and the
+        // broadcast announces that frozen state when (and only if)
+        // the row actually persists.
         static::saved(function (self $account): void {
             $username = $account->username;
             $status = $account->isActive() ? 'active'

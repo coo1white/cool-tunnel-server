@@ -8,7 +8,6 @@ namespace App\Filament\Resources\ProxyAccountResource\Pages;
 
 use App\Filament\Resources\ProxyAccountResource;
 use App\Models\ProxyAccount;
-use App\Services\PasswordGenerator;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
@@ -17,31 +16,31 @@ class CreateProxyAccount extends CreateRecord
 {
     protected static string $resource = ProxyAccountResource::class;
 
-    private ?string $generatedCleartext = null;
+    private ?string $generatedUuid = null;
 
     /**
-     * Set the cleartext password BEFORE the first INSERT — `password_hash`
-     * is NOT NULL in the schema and is deliberately outside $fillable,
-     * so the default `Model::create($data)` path would fail the NOT NULL
-     * constraint. We hand-build the model, seed both password columns
-     * via the dedicated setter, and save once.
+     * The VLESS UUID lives outside $fillable (must go through
+     * regenerateUuid() — see ProxyAccount::$fillable comment), so the
+     * default Model::create($data) path would land a row with no
+     * credential. We hand-build the model, seed the UUID through the
+     * canonical setter, and save once.
      */
     protected function handleRecordCreation(array $data): Model
     {
-        $pw = PasswordGenerator::make();
-        $this->generatedCleartext = $pw['cleartext'];
-
         /** @var ProxyAccount $record */
         $record = new (static::getModel())($data);
-        $record->setCleartextPassword($pw['cleartext']);
+        $this->generatedUuid = $record->regenerateUuid();
         $record->save();
 
         return $record;
     }
 
     /**
-     * Show the cleartext once. Never persisted in plaintext — the bcrypt
-     * hash + a Laravel-Crypt-encrypted copy are what land in the DB.
+     * Show the UUID once. The credential is also persisted in the DB
+     * as plain text (the column IS the credential — see ProxyAccount
+     * head comment for why encrypt-at-rest was dropped in v0.4.0).
+     * Recover via the "Regenerate UUID" action — there is no "show
+     * existing UUID" path by design.
      */
     protected function afterCreate(): void
     {
@@ -49,13 +48,13 @@ class CreateProxyAccount extends CreateRecord
         $record = $this->record;
 
         $subUrl = $record->subscriptionUrl();
-        $body = "Username: {$record->username}\nPassword: {$this->generatedCleartext}";
+        $body = "Username: {$record->username}\nUUID: {$this->generatedUuid}";
         if ($subUrl !== null) {
             $body .= "\n\nSubscription URL (import in the app — shown once):\n{$subUrl}";
         }
 
         Notification::make()
-            ->title('New password — copy now, shown once')
+            ->title('New UUID — copy now, shown once')
             ->body($body)
             ->success()
             ->persistent()

@@ -18,15 +18,20 @@ use Illuminate\Support\Facades\RateLimiter;
 // the proxy account whose token matches the URL. Signed with HMAC-
 // SHA-256 using a per-account secret.
 //
+// v0.4.0 — the profile body carries a `uuid` field (the VLESS
+// credential) instead of v0.3.x's `password`. The wider sing-box
+// manifest shape (Reality public key, dest host, short_id) is rolled
+// in by the subscription-endpoint pass (item 8); this controller's
+// item-7 cut is minimal — change the field key from `password` →
+// `uuid` and read it off ProxyAccount.uuid rather than the dropped
+// password_cleartext_encrypted column.
+//
 // Anti-tracking note: the response carries NO project-identifying
 // custom headers. The signature rides in the JSON body's
 // `signature` field (computed over the canonical body with that
-// field ABSENT — see the canonical-form note below; pre-v0.0.59
-// docs said "set to null" but that did not match the Rust spec
-// and broke client-side verification). On the wire this looks
-// like any other authenticated JSON API response, not a "Cool
-// Tunnel" tell. (v0.0.8 and earlier emitted X-CT-Signature /
-// X-CT-Protocol response headers; those are gone.)
+// field ABSENT — see the canonical-form note below). On the wire
+// this looks like any other authenticated JSON API response, not a
+// "Cool Tunnel" tell.
 //
 // Canonical form (v0.0.59+, must match
 // core/ct-protocol/src/subscription.rs serde behaviour):
@@ -47,18 +52,20 @@ use Illuminate\Support\Facades\RateLimiter;
 //   - The contract is pinned by SubscriptionContractTest +
 //     ct-protocol's canonical_roundtrips_under_signature_strip.
 //
-// HTTP/3 honesty: NaiveProxy is HTTP/2-only at the protocol level,
-// so the manifest's `capabilities.http3` is always false regardless
-// of any DB toggle. Advertising true would lead clients to attempt
-// QUIC, fail (no UDP listener), and fall back — a recognisable
-// network signature. See cross-platform-clients.md.
+// HTTP/3 honesty: sing-box VLESS+Reality currently runs over TCP only
+// in this stack (no QUIC listener wired), so `capabilities.http3`
+// stays false regardless of any DB toggle. Advertising true would
+// lead clients to attempt QUIC, fail, and fall back — a recognisable
+// network signature.
 //
 // Why a panel-side endpoint and not just `ct-server-core subscription`?
-// The cleartext password isn't in the DB (we only store the bcrypt
-// hash). The panel issues a one-time token at account creation that
-// also stores the cleartext encrypted with the HMAC secret; this
-// controller resolves the token, decrypts, splices the cleartext
-// into the manifest the Rust core emits, signs the body, and serves.
+// Historical: the v0.3.x cleartext password wasn't in the rendered
+// config. The panel issued a one-time token at account creation that
+// stored the cleartext encrypted with the HMAC secret; this
+// controller resolved the token, decrypted, spliced the cleartext
+// into the manifest. v0.4.0 keeps the panel-side endpoint for
+// continuity (the token-resolution path is identical) but now reads
+// the plaintext UUID directly off ProxyAccount.uuid.
 
 class SubscriptionController extends Controller
 {
@@ -178,29 +185,22 @@ class SubscriptionController extends Controller
 
         $cfg = ServerConfig::current();
 
-        // Refuse to emit a manifest with an empty cleartext
-        // password. Pre-fix the controller served `password => ''`
-        // when getCleartextPassword() returned null (legacy row
-        // pre-v0.0.5 cleartext column, or a Crypt::decryptString
-        // failure from APP_KEY rotation — see ProxyAccount.php:
-        // 192-202). The client would receive a valid-looking
-        // manifest, attempt the proxy connect with empty
-        // basic_auth, and get a sing-box 401 with no diagnostic
-        // surface. Falling through to the cover-site preserves
-        // the cover-site invariant AND surfaces the failure as
-        // an obvious "subscription URL not working" — the
-        // operator can debug via the panel's Regenerate-password
-        // flow. (Round-10 client-contract audit.)
-        $cleartext = $account->getCleartextPassword();
-        if ($cleartext === null || $cleartext === '') {
-            // Active, real account with a broken cleartext column —
-            // ALWAYS critical (this means an APP_KEY rotation or
-            // legacy-row issue is silently breaking THIS specific
-            // user's subscription). Operator must hit the
-            // Regenerate-password flow for this account. Cardinality
-            // is bounded by the broken-account count, not the probe
-            // rate. (Round-12 observability.)
-            Log::critical('subscription.fallthrough.cleartext_decrypt_failed', [
+        // Refuse to emit a manifest with an empty UUID. The booted()
+        // `creating` hook on ProxyAccount auto-seeds a UUID at first
+        // save, so this branch only fires for legacy rows that
+        // somehow predate that hook OR for a corrupt DB column.
+        // Falling through to the cover-site preserves the cover-site
+        // invariant AND surfaces the failure as an obvious
+        // "subscription URL not working" — the operator can debug
+        // via the panel's Regenerate-UUID flow.
+        $uuid = (string) ($account->uuid ?? '');
+        if ($uuid === '') {
+            // Active, real account with no UUID set — ALWAYS critical
+            // (a row without a credential cannot authenticate against
+            // sing-box's vless inbound). Operator must hit the
+            // Regenerate-UUID flow for this account. Cardinality is
+            // bounded by the broken-account count, not the probe rate.
+            Log::critical('subscription.fallthrough.uuid_missing', [
                 'account_id' => $account->id,
             ]);
 
@@ -249,7 +249,10 @@ class SubscriptionController extends Controller
                 'host' => $cfg->domain,
                 'port' => 443,
                 'username' => $account->username,
-                'password' => $cleartext,
+                // v0.4.0: VLESS UUID replaces v0.3.x's `password`
+                // field. Wider sing-box-shaped manifest (Reality
+                // public key, dest host, short_id) is item-8 work.
+                'uuid' => $uuid,
                 'label' => "{$cfg->domain} ({$account->username})",
             ]],
             'capabilities' => [
@@ -260,7 +263,8 @@ class SubscriptionController extends Controller
                     $cfg->anti_tracking_doh_resolver ? 'doh_resolver' : null,
                 ])),
                 // HTTP/3 always advertised as false — see class
-                // docstring. NaiveProxy does not do QUIC.
+                // docstring. The v0.4.0 sing-box stack runs VLESS
+                // over TCP only; no QUIC listener wired.
                 'http3' => false,
             ] + $optionalCaps,
             'issued_at' => $now,
