@@ -20,7 +20,8 @@ mod db;
 mod domain;
 mod err;
 mod frame;
-mod haproxy;
+// haproxy/ deleted in v0.2.0 (Caddy SNI-routes the panel reverse-proxy
+// itself; HAProxy front door is gone).
 mod internal_metrics;
 mod laravel_crypt;
 mod metrics;
@@ -28,6 +29,12 @@ mod observability;
 mod probe;
 mod quota;
 mod redis_bridge;
+// singbox/ retained as dead-code-no-runtime-effect for v0.2.0; the
+// metrics + quota modules still reference singbox::clash_secret /
+// admin::ClashAdmin for paths that aren't wired to a live service
+// anymore. Full removal lands in a v0.2.1 follow-up that also
+// migrates metrics::collect (clash-API → Caddy /metrics) and
+// quota::enforce (clash reload → caddy::reload).
 mod singbox;
 mod subscription;
 mod template;
@@ -110,15 +117,11 @@ enum Cmd {
         #[command(subcommand)]
         op: SingboxOp,
     },
-    /// Caddyfile generation (ACME-only Caddy — see docs/architecture.md).
+    /// Caddyfile generation + Caddy reload (v0.2.0+ Caddy is the
+    /// single front door: ACME + forward_proxy + reverse_proxy).
     Caddyfile {
         #[command(subcommand)]
         op: CaddyfileOp,
-    },
-    /// HAProxy SNI-router config generation (R1-1 / R1-2, v0.0.33).
-    Haproxy {
-        #[command(subcommand)]
-        op: HaproxyOp,
     },
     /// Talk to sing-box's clash API.
     Server {
@@ -284,30 +287,25 @@ enum CaddyfileOp {
         #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
         output: String,
     },
-}
-
-#[derive(Subcommand, Debug)]
-enum HaproxyOp {
-    /// Render template → /usr/local/etc/haproxy/haproxy.cfg (atomic).
-    Render {
-        #[arg(long)]
-        dry_run: bool,
-        /// Override template path.
-        #[arg(
-            long,
-            env = "HAPROXY_CONFIG_TEMPLATE",
-            default_value = "/srv/haproxy/haproxy.cfg.tpl"
-        )]
-        template: String,
-        /// Override output path.
-        #[arg(
-            long,
-            env = "HAPROXY_CONFIG_PATH",
-            default_value = "/usr/local/etc/haproxy/haproxy.cfg"
-        )]
+    /// Tell Caddy to reload the on-disk Caddyfile in place.
+    ///
+    /// v0.2.0+: replaces the `server reload` path that used to PUT
+    /// the rendered sing-box config to sing-box's clash API. Now
+    /// runs `caddy reload --config /etc/caddy/Caddyfile` inside
+    /// the ct-caddy container via `docker exec`. Graceful — Caddy
+    /// drains in-flight connections, swaps the new config in, and
+    /// resumes serving with no dropped TLS handshakes.
+    Reload {
+        /// Override Caddyfile path (must match what the ct-caddy
+        /// container reads — typically /etc/caddy/Caddyfile).
+        #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
         output: String,
     },
 }
+
+// HaproxyOp deleted in v0.2.0 (HAProxy SNI router replaced by Caddy
+// SNI routing). The `Cmd::Haproxy` dispatch arm + this enum landed
+// together in v0.0.33; both retired in the architecture cut.
 
 #[derive(Subcommand, Debug)]
 enum ServerOp {
@@ -447,18 +445,10 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 let pool = db::connect(&cli.database_url).await?;
                 caddy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
+            CaddyfileOp::Reload { output } => caddy::reload(&output).await,
         },
-        Cmd::Haproxy { op } => match op {
-            HaproxyOp::Render {
-                dry_run,
-                template,
-                output,
-            } => {
-                let panel_domain = resolve_panel_domain(&cli.panel_domain)?;
-                let pool = db::connect(&cli.database_url).await?;
-                haproxy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
-            }
-        },
+        // Cmd::Haproxy dispatch deleted in v0.2.0 (HAProxy retired —
+        // Caddy SNI-routes the panel reverse-proxy itself).
         Cmd::Server { op } => {
             // CLI Server.{Reload,Config} are operator-facing — they
             // don't read the DB; the clash bearer is now env-derived

@@ -13,7 +13,7 @@
 #   ct backup       snapshot db + .env + caddy data
 #   ct restore      recover from a backup tarball
 #   ct readiness    strict ≥9/10 ship-readiness gate
-#   ct render <t>   re-render caddyfile/haproxy/singbox config
+#   ct render <t>   re-render the Caddyfile from the DB
 #   ct auto-sync    credential-lock audit + auto-correct
 #   ct help [topic] plain-English topic docs (no args = list topics)
 #   ct version      print the deployed release tag + git sha
@@ -70,7 +70,7 @@ DEEPER COMMANDS
   wire-probe     wire-protocol probe: spawn naive client, confirm Padding negotiates
                  (catches client-binary regressions before release;
                   requires ct-operator binary; see `ct wire-probe --help` for flags)
-  render <tgt>   re-render caddyfile/haproxy/singbox config from the DB
+  render <tgt>   re-render the Caddyfile from the DB (target: caddyfile)
   auto-sync      credential-lock audit + auto-correct
   auto-update    unattended release-pulling agent (default OFF)
                    `ct auto-update enable`   add daily cron entry
@@ -304,24 +304,35 @@ dispatch_via_operator() {
 
 # ---------- render subcommand ------------------------------------
 #
-# `ct render <target> [args]` is the operator-friendly path to the
-# three scripts/render-{caddyfile,haproxy,singbox}.sh wrappers.
-# Prefer the compiled ct-operator binary when present; fall back to
-# the matching shell script otherwise. Both paths end at the same
-# `ct-server-core --json <target> render` call inside the panel.
+# `ct render caddyfile [args]` triggers a Caddyfile re-render in the
+# panel container. v0.1.x also had `render haproxy` and `render
+# singbox`; both retired in v0.2.0 (sing-box + HAProxy collapsed
+# into Caddy+forwardproxy). Operators running old runbook commands
+# get a friendly "retired in v0.2.0" hint from the ct-operator
+# binary rather than an opaque CLI error.
+#
+# Prefer the compiled ct-operator binary when present; the binary
+# carries the retirement-message logic. Fall back to
+# `scripts/render-caddyfile.sh` otherwise.
 render_subcommand() {
     local target="${1:-}"
     [[ -n "$target" ]] && shift
     case "$target" in
-        caddyfile|haproxy|singbox) ;;
+        caddyfile) ;;
+        haproxy|singbox)
+            printf 'ct render: target "%s" was retired in v0.2.0\n' "$target" >&2
+            printf '  (sing-box + HAProxy collapsed into Caddy+forwardproxy)\n' >&2
+            printf '  use:  ct render caddyfile\n' >&2
+            exit 2
+            ;;
         ""|-h|--help)
-            printf 'ct render — re-render caddyfile/haproxy/singbox config from the DB\n\n' >&2
-            printf 'usage: ct render <caddyfile|haproxy|singbox> [--if-changed]\n' >&2
+            printf 'ct render — re-render the Caddyfile from the DB\n\n' >&2
+            printf 'usage: ct render caddyfile [--if-changed]\n' >&2
             [[ -z "$target" ]] && exit 2 || exit 0
             ;;
         *)
             printf 'ct render: unknown target: %s\n' "$target" >&2
-            printf 'usage: ct render <caddyfile|haproxy|singbox>\n' >&2
+            printf 'usage: ct render caddyfile\n' >&2
             exit 2
             ;;
     esac

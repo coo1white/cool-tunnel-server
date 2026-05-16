@@ -121,6 +121,27 @@ final class CtServerCore implements CtServerCoreInterface
         return $this->run(['server', 'reload'], timeoutSec: 60);
     }
 
+    /**
+     * v0.2.0+ Caddy reload — graceful, zero-downtime config swap
+     * inside the ct-caddy container.
+     *
+     * Implementation in core/ct-server-core/src/caddy/mod.rs::reload
+     * shells out to `docker exec ct-caddy caddy reload --config <output>`.
+     * Caddy validates the new Caddyfile BEFORE swapping; a parse
+     * error leaves the running config in place. The TimeoutSec 30
+     * matches the Rust-side 15s ceiling on the inner docker exec
+     * with extra headroom for the docker round-trip.
+     *
+     * SingBoxReloader::reload() calls this in v0.2.0+ (the
+     * sing-box clash-API path is retired). Class name preserved
+     * for AppServiceProvider binding compatibility — see
+     * SingBoxReloader.php's head comment.
+     */
+    public function reloadCaddy(): array
+    {
+        return $this->run(['caddyfile', 'reload'], timeoutSec: 30);
+    }
+
     public function collectTraffic(): array
     {
         return $this->run(['traffic', 'collect']);

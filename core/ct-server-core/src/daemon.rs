@@ -27,7 +27,7 @@ use crate::observability::{
     crosses_80pct_threshold, duration_crosses_80pct_threshold, duration_ms_u64, otel_key,
     packet_header_dump, DAEMON_TURN_LATENCY_BUDGET,
 };
-use crate::{admin, credentials, metrics, singbox, Error, Result};
+use crate::{admin, caddy, credentials, metrics, singbox, Error, Result};
 use bytes::{BufMut, BytesMut};
 use ct_protocol::{WireRequestV1, WireResponseV1};
 use sqlx::MySqlPool;
@@ -716,14 +716,19 @@ async fn handle(
             Ok(WireResponseV1::Ok)
         }
         WireRequestV1::ReloadCaddy => {
-            // Same naming caveat as RenderCaddyfile: this reloads
-            // sing-box via its clash API. Variant name preserved
-            // for WireV1 compat.
+            // v0.2.0+: actually reloads Caddy (the variant name is
+            // finally honest after the sing-box → Caddy+forwardproxy
+            // cut; pre-v0.2.0 this PUT the rendered config to
+            // sing-box's clash API, hence the "Caddy" misnomer
+            // preserved for WireV1 compat across the rename).
+            //
+            // Caddy reload is graceful + zero-downtime; in-flight
+            // forward_proxy connections drain naturally as the new
+            // config picks up new ones. Implementation runs
+            // `docker exec ct-caddy caddy reload --config <output>`;
+            // see caddy::reload for the rationale.
             let started = std::time::Instant::now();
-            let secret = singbox::current_clash_secret()?;
-            admin::ClashAdmin::new(admin_url, &secret)
-                .reload(output)
-                .await?;
+            caddy::reload(output).await?;
             Ok(WireResponseV1::CaddyReloaded {
                 duration_ms: duration_ms_u64(started.elapsed()),
             })

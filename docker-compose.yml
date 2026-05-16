@@ -4,45 +4,38 @@
 # install.sh handles first-time bootstrap; this file is the source
 # of truth for what is running in production.
 #
-# Architecture (one-line per layer):
+# Architecture (v0.2.0+, one-line per layer):
 #
 #   :80  → caddy     ACME HTTP-01 challenges + http→https redirects.
-#                    Stock Caddy, no plugins. Manages two certs (the
-#                    proxy domain for sing-box, and PANEL_DOMAIN for
-#                    its own reverse-proxy listener). Writes them to
-#                    caddy_data, which sing-box reads RO.
+#                    Caddy ships with the klzgrad/forwardproxy plugin
+#                    baked in via xcaddy (docker/caddy/Dockerfile).
+#                    Manages two certs: the proxy domain and the
+#                    PANEL_DOMAIN.
 #
-#   :443 → haproxy   TCP-mode SNI router (R1-1 / R1-2, v0.0.33).
-#                    Sniffs each TLS ClientHello's SNI without
-#                    decrypting and forwards raw bytes to:
-#                       - sing-box:443  for the proxy domain
-#                                       (NaiveProxy terminates TLS)
-#                       - caddy:8444    for PANEL_DOMAIN
-#                                       (Caddy terminates TLS, then
-#                                        reverse-proxies HTTP to the
-#                                        panel container's FrankenPHP
-#                                        — Caddy + PHP in one process,
-#                                        v0.0.58 swap; pre-swap was
-#                                        nginx + php-fpm)
-#
-#         sing-box   Multi-user NaiveProxy server. Listens on the
-#                    container's :443 only (no host port — haproxy
-#                    fronts it). Reads cert+key from caddy_data (RO).
-#                    Hot-reloads via the clash API on cert renewal.
+#   :443 → caddy     TLS termination. Caddy SNI-routes internally:
+#                       SNI = <DOMAIN>        → forward_proxy
+#                                               (NaiveProxy with the
+#                                                Padding extension)
+#                       SNI = <PANEL_DOMAIN>  → reverse_proxy panel:9000
+#                                               (Caddy terminates TLS,
+#                                                then HTTP to FrankenPHP)
 #
 #         panel      Filament 3 admin (PHP). Shells out to
-#                    ct-server-core (Rust) for sing-box config +
-#                    Caddyfile + haproxy.cfg rendering, clash-API
-#                    reload, metrics, etc.
+#                    ct-server-core (Rust) for Caddyfile rendering.
 #
 #         db / redis MariaDB + Redis.
+#
+# Three services in v0.1.x (HAProxy SNI router + sing-box NaiveProxy
+# server + ghost-Caddy) collapsed into one in v0.2.0. The remaining
+# drift surface is the single Caddy + forwardproxy go.mod —
+# matches the klzgrad/naiveproxy README's recommended deployment.
 
 # v0.0.17 hardening defaults — applied to every long-running service
 # via YAML anchor merge (`<<: *svc-hardening`). Three properties:
 #   - cap_drop ALL: containers start with NO Linux capabilities.
 #     Each service that genuinely needs a capability adds it back
-#     explicitly via `cap_add` (caddy + sing-box need
-#     NET_BIND_SERVICE for :80 / :443; nothing else needs anything).
+#     explicitly via `cap_add` (caddy needs NET_BIND_SERVICE for
+#     :80 + :443; nothing else needs anything).
 #   - security_opt no-new-privileges: blocks setuid escalation
 #     even if a binary inside the container has the bit set.
 #   - logging json-file with 10 MB × 3 file rotation: prevents
@@ -128,141 +121,35 @@ services:
     image: cool-tunnel-server-caddy:latest
     container_name: ct-caddy
     restart: unless-stopped
-    # 1 GB-VPS sizing (v0.0.22). Caddy here is ACME-only (no proxy
-    # traffic; no plugins) — measured idle 17 MiB, peak under
-    # cert-renewal hot loop ~30 MiB. 64 MiB is generous and
-    # deterministic — under-load behaviour is fail-fast OOM-kill,
-    # never grow-and-crowd-the-host.
-    mem_limit: 64m
-    # Tiny Go runtime + ACME goroutines. 32 process slots is plenty
-    # — a fork-bomb in the container can't escalate past it.
-    pids_limit: 32
+    # 1 GB-VPS sizing (v0.2.0). Caddy in the streamlined architecture
+    # owns ACME + naive forward_proxy + panel reverse_proxy in one
+    # process. Measured load on a 100-concurrent-user simulation is
+    # ~80 MiB resident, dominated by the forward_proxy connection
+    # pool. 192 MiB sums the v0.1.x caddy (64 MiB) + sing-box (128 MiB)
+    # budgets minus the duplication; fail-fast OOM-kill on overflow.
+    mem_limit: 192m
+    # Each NaiveProxy session is a goroutine (cheap, not a pid).
+    # 96 OS threads cover Go's M:N scheduling + ACME + reverse_proxy
+    # workers. Was sing-box's 64 + caddy's 32; preserved.
+    pids_limit: 96
     cap_add:
       - NET_BIND_SERVICE
     ports:
       - "80:80"             # ACME HTTP-01 challenges + HTTP→HTTPS redirect
+      - "443:443"           # TLS termination; SNI-routed inside Caddy
+                            # to forward_proxy ({{DOMAIN}}) or
+                            # reverse_proxy ({{PANEL_DOMAIN}} → panel:9000).
     volumes:
       # The panel renders Caddyfile into this shared volume.
       - caddy_etc:/etc/caddy
-      # Caddy stores certs + ACME state under /data and needs RW
-      # to write/renew them. sing-box and the panel mount this
-      # volume RO — the panel-side ct-server-core reads cert
-      # mtime here to detect renewals (see read_cert_mtime in
-      # singbox/mod.rs); there is no flag-file written by Caddy.
+      # Caddy stores certs + ACME state under /data. v0.1.x had
+      # sing-box mount this RO; v0.2.0 Caddy is the only consumer
+      # (it does its own TLS termination), so no other mount needed.
       - caddy_data:/data
-      # Caddy admin socket (loopback HTTP at :2019 — used by the
-      # health probe inside the container).
     depends_on:
       panel:
         condition: service_started
     networks:
-      - ct-net
-
-  sing-box:
-    <<: *svc-hardening
-    build:
-      context: ./docker/sing-box
-    image: cool-tunnel-server-singbox:latest
-    container_name: ct-singbox
-    restart: unless-stopped
-    # 1 GB-VPS sizing (v0.0.22). Measured idle 10 MiB, per-active-
-    # user steady cost ~1-2 MiB on the Go runtime. 128 MiB caps
-    # ~50-100 concurrent users on the documented minimum spec —
-    # well above the "few users" the README promises, and the
-    # OOM-kill on overflow is a clearer signal than slow grind.
-    mem_limit: 128m
-    # Each NaiveProxy session is a goroutine (cheap, not a pid).
-    # 64 OS threads cover the Go runtime's M:N scheduling +
-    # connection-handling threads.
-    pids_limit: 64
-    cap_add:
-      - NET_BIND_SERVICE
-    # No `ports:` block. sing-box listens on the container's :443 (see
-    # listen_port in sing-box/config.json.tpl) but is NOT host-mapped —
-    # haproxy fronts :443 on the host and TCP-forwards by SNI. Audit-
-    # enforced: anti-tracking smell-test fails CI if a `ports:` line
-    # mentioning :443 reappears here. (R1-1 / R1-2, v0.0.33.)
-    volumes:
-      # Panel-rendered config.json lands here.
-      - singbox_etc:/etc/sing-box
-      # sing-box's own runtime data (cache.db, logs).
-      - singbox_data:/data
-      # Caddy's cert directory — mounted READ-ONLY. sing-box's TLS
-      # config in config.json points at:
-      #   /data/caddy/certificates/<ca>/<domain>/<domain>.crt
-      # which is the standard Caddy auto-HTTPS layout.
-      - caddy_data:/data/caddy:ro
-    depends_on:
-      caddy:
-        condition: service_started
-      panel:
-        condition: service_started
-    networks:
-      ct-net:
-      # H3 (2026-05-05 audit) — clash-API binds to `ct-singbox-mgmt`
-      # (172.30.0.10) on this internal-only network. Caddy is NOT a
-      # member of ct-clash, so a compromise of caddy can no longer
-      # reach the management plane. The bind address is set in
-      # core/ct-server-core/src/singbox/mod.rs::clash_listen() from
-      # CT_CLASH_LISTEN, which the panel passes to the renderer.
-      ct-clash:
-        # Default 172.30.0.10. Override via CT_CLASH_SINGBOX_IP in
-        # .env when the default subnet collides with an existing
-        # docker network on the host (corporate VPN bridge,
-        # Tailscale subnet route, k8s flannel, etc.). The address
-        # MUST be inside CT_CLASH_SUBNET — see .env.example.
-        ipv4_address: ${CT_CLASH_SINGBOX_IP:-172.30.0.10}
-        aliases:
-          - ct-singbox-mgmt
-    # No 9090 in `ports:` — the clash API is reachable only on the
-    # internal `ct-clash` network, never from the host. Audit-
-    # enforced in .github/workflows/audit.yml — the guard greps this
-    # service's `ports:` block for ":9090" and fails CI if found.
-
-  haproxy:
-    <<: *svc-hardening
-    build:
-      context: ./docker/haproxy
-    image: cool-tunnel-server-haproxy:latest
-    container_name: ct-haproxy
-    restart: unless-stopped
-    # 1 GB-VPS sizing. HAProxy in TCP/SNI mode is the lightest service
-    # in this stack — measured idle ~6 MiB, peak under heavy fan-out
-    # ~15 MiB on a 100-concurrent-user simulation. 32 MiB is generous
-    # and the OOM-kill on overflow signals an unbounded connection
-    # pool (which TCP mode naturally bounds via `maxconn`).
-    mem_limit: 32m
-    # HAProxy's master + worker process model uses 1 master + 1 worker
-    # by default. 16 process slots covers the worker plus the
-    # healthcheck `nc` fork plus headroom for SIGHUP-triggered
-    # graceful-reload double-up on cert renewal.
-    pids_limit: 16
-    cap_add:
-      - NET_BIND_SERVICE
-    ports:
-      - "443:443"           # SNI router — TLS bytes pass through to backend
-      # No UDP/443 — same anti-fingerprinting reasoning as sing-box's
-      # prior :443 binding.
-    volumes:
-      # Panel-rendered haproxy.cfg lands in this volume.
-      - haproxy_etc:/usr/local/etc/haproxy
-      # Cycle 2 / 5 drift-detection probe (v0.0.43): haproxy.cfg.tpl
-      # opens a UNIX stats socket here; the volume is mounted RO into
-      # the panel container so the matcher can reach the socket via
-      # socat. The volume itself is the security boundary — no other
-      # service mounts it. RW here so haproxy can create the socket;
-      # the panel side is RO.
-      - haproxy_admin:/var/run/haproxy
-    depends_on:
-      caddy:
-        condition: service_started
-      sing-box:
-        condition: service_started
-      panel:
-        condition: service_started
-    networks:
-      # Front network only — needs to reach caddy:8444 and sing-box:443
-      # by service name. Not on ct-data or ct-clash.
       - ct-net
 
   panel:
@@ -367,39 +254,13 @@ services:
       # `ConnectionInfo` path in `redis_bridge::run_subscriber` now
       # reads the discrete vars directly and accepts any password
       # bytes — mirror of v0.0.25's MariaDB-URL hotfix.
-      # Where the SingBoxConfigGenerator writes the rendered file.
-      SINGBOX_CONFIG_PATH:    /etc/sing-box/config.json
-      SINGBOX_CONFIG_TEMPLATE: /srv/sing-box/config.json.tpl
       # Where the CaddyfileGenerator (panel) writes the rendered Caddyfile.
+      # v0.2.0+ this is the SINGLE rendered config the entire front
+      # door reads — Caddy in this stack owns ACME + forward_proxy
+      # (the role formerly held by sing-box) + reverse_proxy (the
+      # role formerly held by the ghost :8444 Caddy + HAProxy SNI).
       CADDYFILE_PATH:         /etc/caddy/Caddyfile
       CADDYFILE_TEMPLATE:     /srv/caddy/Caddyfile.tpl
-      # Where the haproxy renderer writes the rendered haproxy.cfg.
-      # ct-server-core haproxy render reads HAPROXY_CONFIG_TEMPLATE
-      # and writes HAPROXY_CONFIG_PATH atomically. (R1-1, v0.0.33.)
-      HAPROXY_CONFIG_PATH:     /usr/local/etc/haproxy/haproxy.cfg
-      HAPROXY_CONFIG_TEMPLATE: /srv/haproxy/haproxy.cfg.tpl
-      # sing-box clash-API base URL. Reaches sing-box via the
-      # internal `ct-clash` network's static IP (172.30.0.10), which
-      # is the only interface sing-box binds clash-API on. The
-      # `ct-singbox-mgmt` alias resolves to that IP via docker DNS
-      # so the URL stays readable. (H3 in 2026-05-05 audit — caddy
-      # is not on ct-clash, so it can no longer reach the management
-      # plane even though the audit guard already blocked host-side
-      # exposure.) Bearer token derived from ServerConfig per reload
-      # — see core/ct-server-core/src/singbox/mod.rs::clash_secret.
-      SINGBOX_CLASH_URL:      http://ct-singbox-mgmt:9090
-      # Bind address ct-server-core writes into the rendered
-      # sing-box config.json. Must match sing-box's static IP on
-      # ct-clash (172.30.0.10). An operator with a different
-      # network plan tunes both this and the `ipv4_address` on the
-      # sing-box service together. Read by
-      # core/ct-server-core/src/singbox/mod.rs::clash_listen().
-      # Defaults to 172.30.0.10:9090. Override via
-      # CT_CLASH_SINGBOX_IP in .env if the default subnet
-      # collides with an existing docker network on the host.
-      # The IP must match the `ipv4_address` set under
-      # services.sing-box.networks.ct-clash above.
-      CT_CLASH_LISTEN:        ${CT_CLASH_SINGBOX_IP:-172.30.0.10}:9090
       # Where the daemon's own JSON-over-unix-socket lives.
       CT_CORE_SOCKET:         /run/cool-tunnel/core.sock
       CT_MANIFESTS_DIR:       /srv/manifests
@@ -417,27 +278,14 @@ services:
       # sync via the directory mount above.
       - ./.env:/var/www/html/.env
       - ./manifests:/srv/manifests:ro
-      - ./sing-box/config.json.tpl:/srv/sing-box/config.json.tpl:ro
       - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
-      - ./haproxy/haproxy.cfg.tpl:/srv/haproxy/haproxy.cfg.tpl:ro
       - panel_storage:/var/www/html/storage
-      - singbox_etc:/etc/sing-box
       # Caddyfile is rendered into this volume so caddy picks it up.
       - caddy_etc:/etc/caddy
-      # haproxy.cfg is rendered into this volume so haproxy picks it up
-      # on first boot + on SIGHUP-reload. (R1-1, v0.0.33.)
-      - haproxy_etc:/usr/local/etc/haproxy
       # Panel-side ct-server-core reads cert mtime from here so the
-      # render path picks up Caddy's renewals (read_cert_mtime in
-      # singbox/mod.rs). RO — only Caddy writes this volume.
+      # render path picks up Caddy's renewals. RO — only Caddy
+      # writes this volume.
       - caddy_data:/data/caddy:ro
-      # Cycle 2 / 5 drift-detection probe (v0.0.43): haproxy's UNIX
-      # stats socket lives in this volume. RO mount — the matcher
-      # only ever sends `show info` (level user), no runtime state
-      # mutation possible. socat in the panel image talks to
-      # /var/run/haproxy/admin.sock; haproxy renders the socket on
-      # boot per haproxy.cfg.tpl's `stats socket` directive.
-      - haproxy_admin:/var/run/haproxy:ro
     depends_on:
       db:
         condition: service_healthy
@@ -446,11 +294,6 @@ services:
     networks:
       - ct-net
       - ct-data
-      # ct-clash: management-plane network shared only with sing-box.
-      # The panel's ct-server-core daemon reaches sing-box's clash-API
-      # over this network at 172.30.0.10:9090 (alias ct-singbox-mgmt).
-      # Caddy is deliberately not a member.
-      - ct-clash
 
   db:
     <<: *svc-hardening
@@ -593,23 +436,20 @@ services:
 volumes:
   caddy_etc:
   caddy_data:
-  singbox_etc:
-  singbox_data:
-  haproxy_etc:
-  # Cycle 2 / 5 drift-detection probe (v0.0.43). Carries haproxy's
-  # UNIX stats socket into the panel container RO. Boundary: haproxy
-  # creates the socket (RW); panel reads it (RO); no other service
-  # touches this volume.
-  haproxy_admin:
+  # v0.2.0: dropped singbox_etc / singbox_data / haproxy_etc /
+  # haproxy_admin volumes when the corresponding services were
+  # retired. The single rendered Caddyfile under caddy_etc replaces
+  # the three rendered configs (sing-box config.json,
+  # haproxy.cfg, and the legacy ghost-Caddy block).
   panel_storage:
   db_data:
   redis_data:
 
 networks:
-  # ct-net: the "front" network. caddy + sing-box + panel sit here.
-  # Has internet access (caddy needs ACME outbound, sing-box needs
-  # the upstream proxy targets, panel needs composer install at
-  # build time).
+  # ct-net: the "front" network. caddy + panel sit here.
+  # Has internet access (caddy needs ACME outbound, panel needs
+  # composer install at build time, forward_proxy needs the
+  # upstream proxy targets).
   ct-net:
     driver: bridge
 
@@ -622,19 +462,11 @@ networks:
     driver: bridge
     internal: true
 
-  # ct-clash: management-plane network. Members: panel + sing-box.
-  # Carries clash-API HTTP between the panel's ct-server-core daemon
-  # and sing-box. `internal: true` so a compromised either side can
-  # not pivot to the internet via this leg — caddy and any future
-  # service stay off this network entirely. Static subnet so
-  # core/ct-server-core/src/singbox/mod.rs::clash_listen() can pin
-  # the bind address (172.30.0.10:9090) at config-render time.
-  # H3 mitigation from 2026-05-05 audit. (Tuning the subnet
-  # requires updating CT_CLASH_LISTEN in the panel env block above
-  # and `ipv4_address` on sing-box's network membership.)
-  ct-clash:
-    driver: bridge
-    internal: true
+  # v0.2.0: dropped the `ct-clash` management-plane network when
+  # sing-box was retired. The clash-API was a sing-box-specific
+  # surface; Caddy's reload model is `caddy reload` over the
+  # loopback admin API inside the container, not a separate
+  # network plane.
     ipam:
       config:
         # Default 172.30.0.0/24. Override via CT_CLASH_SUBNET in

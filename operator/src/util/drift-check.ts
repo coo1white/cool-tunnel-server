@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/util/drift-check.ts — three-way cleartext drift detection.
 //
-// Today's incident: the credential-lock guard reported OK (hashes
+// Original incident: the credential-lock guard reported OK (hashes
 // and manifests matched) but the *cleartext* password the DB
-// stored, the password the rendered sing-box config carried, and
-// the password the panel's subscription endpoint handed back to
-// clients had silently diverged on prior credential rotations.
-// The strict component check is structurally unaware of that
-// divergence — it compares lock-hashes, not the values clients
-// actually authenticate with.
+// stored, the password the rendered proxy config carried, and the
+// password the panel's subscription endpoint handed back to clients
+// had silently diverged on prior credential rotations. The strict
+// component check is structurally unaware of that divergence — it
+// compares lock-hashes, not the values clients actually authenticate
+// with.
 //
 // This module pins the **cleartext** values at all three layers
 // to be byte-equal. If they aren't, that's a real drift the
-// operator must repair (`./ct render singbox` or a Filament
+// operator must repair (`./ct render caddyfile` or a Filament
 // regenerate-password) before any client can connect.
+//
+// v0.2.0+: the proxy server is Caddy with the klzgrad/forwardproxy
+// plugin; the rendered config is the Caddyfile. v0.1.x was sing-box
+// + /etc/sing-box/config.json. The drift-check field is named
+// `caddyfile` accordingly. (Pre-v0.2.0 callers read
+// `DriftRow.singbox`; that name was retired with the architecture
+// cut.)
 //
 // Layers checked:
 //
@@ -21,10 +28,10 @@
 //               Laravel Crypt inside `docker compose exec panel
 //               php artisan tinker` (same primitive auto-sync uses).
 //
-//   sing-box    The literal password emitted into
-//               /etc/sing-box/config.json by the renderer — what
-//               the running naive-in actually compares incoming
-//               CONNECTs against.
+//   caddyfile   The literal password emitted into the rendered
+//               Caddyfile's `forward_proxy { basic_auth … }` block
+//               — what Caddy actually compares incoming CONNECTs
+//               against.
 //
 //   subscription
 //               The cleartext field inside the panel's
@@ -36,9 +43,11 @@
 // shapes are pinned here so tests can exercise them without a
 // running compose stack.
 
-// One row in the rendered sing-box `users` array (subset; ignore
-// other fields naive may grow).
-export interface SingBoxUser {
+// One (username, password) pair extracted from a rendered
+// Caddyfile's `forward_proxy { basic_auth USER PASS }` directives.
+// Same shape v0.1.x called `SingBoxUser`; renamed at the v0.2.0
+// architecture cut.
+export interface BasicAuthUser {
     readonly username: string;
     readonly password: string;
 }
@@ -64,13 +73,13 @@ export interface DriftRow {
     readonly accountId: number;
     readonly username: string;
     // null means "the layer could not produce a value" — the row
-    // missed in DB, or sing-box config has no such user, or the
-    // subscription endpoint returned cover-site / 404. Distinct
-    // from "" (empty string), which means a layer EXPLICITLY
-    // produced an empty password — that's still a drift if the
-    // others have a value.
+    // missed in DB, or the Caddyfile has no matching basic_auth
+    // directive, or the subscription endpoint returned cover-site /
+    // 404. Distinct from "" (empty string), which means a layer
+    // EXPLICITLY produced an empty password — that's still a drift
+    // if the others have a value.
     readonly db: string | null;
-    readonly singbox: string | null;
+    readonly caddyfile: string | null;
     readonly subscription: string | null;
 }
 
@@ -90,35 +99,87 @@ export interface DriftReport {
     readonly ok: boolean;
 }
 
-// Parse the literal `users` array out of a rendered sing-box
-// config.json. We hand-walk JSON.parse(..).inbounds[].users
-// rather than imposing a full schema — the renderer is free to
-// grow inbound knobs without breaking the credential extractor.
+// Parse `basic_auth USER PASS` directives out of a rendered
+// Caddyfile's forward_proxy block.
 //
-// Returns [] when no naive inbound is present (caller treats as
-// "rendered config has zero credentials"). Throws on malformed
-// JSON so the caller can surface a render-broken state distinct
-// from a credentialless one.
-export function parseSingBoxUsers(rawJson: string): SingBoxUser[] {
-    const root = JSON.parse(rawJson) as unknown;
-    if (typeof root !== "object" || root === null) return [];
-    const inbounds = (root as { inbounds?: unknown }).inbounds;
-    if (!Array.isArray(inbounds)) return [];
-    const users: SingBoxUser[] = [];
-    for (const inbound of inbounds) {
-        if (typeof inbound !== "object" || inbound === null) continue;
-        if ((inbound as { type?: unknown }).type !== "naive") continue;
-        const rawUsers = (inbound as { users?: unknown }).users;
-        if (!Array.isArray(rawUsers)) continue;
-        for (const u of rawUsers) {
-            if (typeof u !== "object" || u === null) continue;
-            const username = (u as { username?: unknown }).username;
-            const password = (u as { password?: unknown }).password;
-            if (typeof username !== "string" || typeof password !== "string") continue;
-            users.push({ username, password });
+// We hand-tokenise rather than impose a full Caddyfile grammar
+// — the renderer is free to grow new forward_proxy options
+// without breaking the credential extractor. The rules:
+//
+//   - Track `{` / `}` depth to know we're inside a
+//     `forward_proxy` block (depth becomes "interesting" when the
+//     directive opens, returns "uninteresting" when the matching
+//     `}` closes).
+//   - At every line, after stripping leading whitespace, match
+//     `^basic_auth\s+(\S+)\s+(\S+)\s*$`. Comments and other
+//     directives are ignored. `basic_auth` outside a forward_proxy
+//     block is ignored too — there's no legitimate place for it
+//     in our rendered Caddyfile, but skipping it costs nothing.
+//   - Quoted username/password (`basic_auth "a b" "c d"`) is
+//     out of scope: our renderer emits unquoted whitespace-free
+//     tokens by design (see core/ct-server-core/src/caddy/mod.rs::
+//     is_caddyfile_password_safe). A future renderer that emits
+//     quoted forms would extend this parser.
+//
+// Returns [] for a Caddyfile with no forward_proxy block or no
+// `basic_auth` lines inside one. Never throws — even on malformed
+// Caddyfile content we degrade to "no credentials found", because
+// the upstream classifier already encodes "rendered config has
+// no users" as a drift finding.
+export function parseCaddyfileBasicAuth(rawText: string): BasicAuthUser[] {
+    const out: BasicAuthUser[] = [];
+    // Stack of `{` opens we're inside, paired with whether the
+    // most recent open was the `forward_proxy { ... }` we care
+    // about. We don't care about other block types — just track
+    // whether we're inside ONE forward_proxy somewhere up the stack.
+    let depth = 0;
+    let forwardProxyOpenAtDepth: number | null = null;
+    for (const rawLine of rawText.split("\n")) {
+        // Strip line comments (`# …`). Caddyfile allows comments
+        // anywhere whitespace is allowed; the simple-substring
+        // approach is correct because passwords containing `#`
+        // are rejected upstream by is_caddyfile_password_safe.
+        const commentIdx = rawLine.indexOf("#");
+        const line = (commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine).trim();
+        if (line.length === 0) continue;
+        // Detect opening / closing braces. A line can carry both a
+        // directive AND a `{` (e.g. `forward_proxy {`), or be a
+        // bare `}`. We process bracket transitions per character.
+        let consumed = "";
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i]!;
+            if (ch === "{") {
+                // The "consumed so far" is the directive token
+                // that's opening this block. Strip trailing space.
+                const directive = consumed.trim();
+                depth++;
+                if (
+                    forwardProxyOpenAtDepth === null &&
+                    directive.split(/\s+/).at(-1) === "forward_proxy"
+                ) {
+                    forwardProxyOpenAtDepth = depth;
+                }
+                consumed = "";
+            } else if (ch === "}") {
+                if (forwardProxyOpenAtDepth !== null && depth === forwardProxyOpenAtDepth) {
+                    forwardProxyOpenAtDepth = null;
+                }
+                if (depth > 0) depth--;
+                consumed = "";
+            } else {
+                consumed += ch;
+            }
+        }
+        // The "consumed" tail is the directive on this line (if
+        // any). Check it for basic_auth, but only if we're
+        // currently inside a forward_proxy block.
+        if (forwardProxyOpenAtDepth === null) continue;
+        const m = consumed.trim().match(/^basic_auth\s+(\S+)\s+(\S+)\s*$/);
+        if (m) {
+            out.push({ username: m[1]!, password: m[2]! });
         }
     }
-    return users;
+    return out;
 }
 
 // Parse the subscription endpoint's JSON body. Returns null for
@@ -163,29 +224,29 @@ export function parseSubscriptionResponse(rawBody: string): SubscriptionResponse
 //
 //   - All three layers reported the same non-empty string → ok.
 //   - Any pair of present-non-empty layers disagree           → fail.
-//   - DB has cleartext, sing-box rendered an empty/missing  → fail
+//   - DB has cleartext, Caddyfile rendered an empty/missing → fail
 //     (next CONNECT will be rejected for "no such user").
 //   - DB has cleartext, subscription returned cover-site
 //     (null body)                                              → warn
 //     (token may be expired, account disabled, or the panel
 //     rate-limited us — investigate but not necessarily fatal).
 //   - DB row missing entirely                                  → fail
-//     (sing-box has a phantom user; remove via the panel).
+//     (Caddyfile has a phantom user; remove via the panel).
 //
 // The summary string names which layers carry which values, NOT
 // the values themselves — leaking cleartext into operator output
 // is a separate audit failure even on a local terminal.
 export function classifyRow(row: DriftRow): DriftFinding {
     const db = row.db;
-    const sb = row.singbox;
+    const cf = row.caddyfile;
     const sub = row.subscription;
 
-    if (db === null && sb === null && sub === null) {
+    if (db === null && cf === null && sub === null) {
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "no layer carries this account — phantom row, run `./ct render singbox`",
+            summary: "no layer carries this account — phantom row, run `./ct render caddyfile`",
         };
     }
 
@@ -194,16 +255,16 @@ export function classifyRow(row: DriftRow): DriftFinding {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "DB row missing but sing-box/subscription still reference it; phantom account",
+            summary: "DB row missing but caddyfile/subscription still reference it; phantom account",
         };
     }
 
-    if (sb === null || sb === "") {
+    if (cf === null || cf === "") {
         return {
             accountId: row.accountId,
             username: row.username,
             severity: "fail",
-            summary: "DB has cleartext, sing-box rendered no password — `./ct render singbox` needed",
+            summary: "DB has cleartext, caddyfile rendered no password — `./ct render caddyfile` needed",
         };
     }
 
@@ -220,11 +281,11 @@ export function classifyRow(row: DriftRow): DriftFinding {
     }
 
     // All three present. The actual drift test.
-    if (db !== sb || db !== sub) {
+    if (db !== cf || db !== sub) {
         const which: string[] = [];
-        if (db !== sb) which.push("db↔singbox");
+        if (db !== cf) which.push("db↔caddyfile");
         if (db !== sub) which.push("db↔subscription");
-        if (sb !== sub && db === sb) which.push("singbox↔subscription");
+        if (cf !== sub && db === cf) which.push("caddyfile↔subscription");
         return {
             accountId: row.accountId,
             username: row.username,
@@ -251,20 +312,20 @@ export function buildReport(rows: readonly DriftRow[]): DriftReport {
 // printed — only present/absent status and same/diff vs DB.
 export function renderTable(report: DriftReport): string {
     const lines: string[] = [];
-    lines.push("account_id  username                    db        singbox   subscription  finding");
-    lines.push("──────────  ──────────────────────────  ────────  ────────  ────────────  ──────────────────────────────────");
+    lines.push("account_id  username                    db        caddyfile  subscription  finding");
+    lines.push("──────────  ──────────────────────────  ────────  ─────────  ────────────  ──────────────────────────────────");
     for (const row of report.rows) {
         const finding = report.findings.find(
             (f) => f.accountId === row.accountId && f.username === row.username,
         );
         const tag = ({ ok: "  OK", warn: "WARN", fail: "FAIL" } as const)[finding?.severity ?? "fail"];
         const cellDb = row.db === null ? "absent" : row.db === "" ? "EMPTY" : "present";
-        const cellSb = row.singbox === null ? "absent" : row.singbox === "" ? "EMPTY" :
-            (row.db !== null && row.singbox === row.db ? "same" : "DIFF");
+        const cellCf = row.caddyfile === null ? "absent" : row.caddyfile === "" ? "EMPTY" :
+            (row.db !== null && row.caddyfile === row.db ? "same" : "DIFF");
         const cellSub = row.subscription === null ? "absent" : row.subscription === "" ? "EMPTY" :
             (row.db !== null && row.subscription === row.db ? "same" : "DIFF");
         lines.push(
-            `${String(row.accountId).padEnd(10)}  ${row.username.slice(0, 26).padEnd(26)}  ${cellDb.padEnd(8)}  ${cellSb.padEnd(8)}  ${cellSub.padEnd(12)}  ${tag}  ${finding?.summary ?? ""}`,
+            `${String(row.accountId).padEnd(10)}  ${row.username.slice(0, 26).padEnd(26)}  ${cellDb.padEnd(8)}  ${cellCf.padEnd(9)}  ${cellSub.padEnd(12)}  ${tag}  ${finding?.summary ?? ""}`,
         );
     }
     return lines.join("\n");

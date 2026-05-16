@@ -212,19 +212,17 @@ jobs:
           fi
           echo "panel version: $panel_manifest_v (manifest = config)"
 
-          # Caddy / sing-box / mariadb / redis pins must match the FROM
-          # / image: tags in the Dockerfiles + compose file.
+          # Caddy / mariadb / redis pins must match the FROM / image:
+          # tags in the Dockerfiles + compose file.
+          #
+          # v0.2.0: sing-box + haproxy retired (architecture cut).
+          # The matching sb_manifest / haproxy_manifest checks were
+          # deleted here when manifests/sing-box.upstream.json and
+          # manifests/haproxy.upstream.json went away.
           caddy_manifest=$(jq -r .version manifests/caddy.upstream.json)
-          caddy_dockerfile=$(awk '/^FROM caddy:/ {sub(/^FROM caddy:/,""); sub(/-alpine.*$/,""); print "v"$0; exit}' docker/caddy/Dockerfile)
+          caddy_dockerfile=$(awk '/^FROM caddy:/ {sub(/^FROM caddy:/,""); sub(/-alpine.*$/,""); sub(/-builder.*$/,""); print "v"$0; exit}' docker/caddy/Dockerfile)
           if [[ "$caddy_manifest" != "$caddy_dockerfile" ]]; then
               echo "::error::caddy manifest=$caddy_manifest, Dockerfile=$caddy_dockerfile"
-              exit 1
-          fi
-
-          sb_manifest=$(jq -r .version manifests/sing-box.upstream.json)
-          sb_dockerfile=$(awk -F'=' '/^ARG SING_BOX_VERSION=/ {print $2; exit}' docker/sing-box/Dockerfile)
-          if [[ "$sb_manifest" != "$sb_dockerfile" ]]; then
-              echo "::error::sing-box manifest=$sb_manifest, Dockerfile=$sb_dockerfile"
               exit 1
           fi
 
@@ -278,8 +276,11 @@ jobs:
           # leaked into the current tree. Add new ones as past pivots
           # accrete.
           stale_patterns=(
-              # v0.0.1 → v0.0.2: forwardproxy gone (allow in CHANGELOG / NOTICE)
-              'forwardproxy@naive'
+              # v0.0.1 → v0.0.2 retired forwardproxy@naive in favour of
+              # sing-box. v0.2.0 reinstates it as the canonical
+              # NaiveProxy server (Caddy + klzgrad/forwardproxy@naive
+              # baked in via xcaddy). NOT a stale pattern any more —
+              # this slot intentionally empty.
               # v0.0.3 → v0.0.4: sing-box ACME gone
               'sing-box.*built-in ACME|naive inbound.*ACME'
               # v0.0.7 → v0.0.8: backup.sh used to snapshot singbox_data
@@ -571,13 +572,12 @@ jobs:
 
   # ---------- Cycle 40: anti-tracking config smell-test ----------
   #
-  # Static assertions on the sing-box and Caddy templates we ship.
-  # These catch regressions in the on-the-wire shape that
-  # NaiveProxy clients expect — TLS 1.3-only, no TCP clash API, no
-  # disk cache, no recognisable hostname or string signature.
-  # If a future edit weakens any of these, CI fails before the
-  # change ships. Static check on the file content; we don't run
-  # sing-box itself here.
+  # Static assertions on the Caddy template we ship.
+  # v0.2.0+: sing-box + haproxy retired (architecture cut). The
+  # corresponding smell-tests for `sing-box/config.json.tpl` and
+  # `haproxy/haproxy.cfg.tpl` deleted alongside the templates;
+  # the remaining checks live on the Caddyfile + the panel's
+  # subscription endpoint.
 
   anti-tracking-config:
     name: anti-tracking config smell-test
@@ -585,145 +585,49 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-      - name: assert sing-box config hardening
-        run: |
-          set -euo pipefail
-          tpl=sing-box/config.json.tpl
-          fail=0
-          # min_version must be 1.3 (no TLS 1.2 fallback — modern HTTPS
-          # is mostly 1.3 and a 1.2 connection stands out).
-          if ! grep -qE '"min_version":\s*"1\.3"' "$tpl"; then
-              echo "::error file=$tpl::tls.min_version must be \"1.3\" (anti-fingerprinting)"
-              fail=1
-          fi
-          # log.level must be warn or higher — info logs every
-          # connection, which is a forensic risk on seizure.
-          if grep -qE '"log".*\{[^}]*"level":\s*"(debug|info|trace)"' "$tpl"; then
-              echo "::error file=$tpl::log.level must be warn or higher (no per-connection logging)"
-              fail=1
-          fi
-          # external_controller (TCP) is bound to {{ .ClashListen }}
-          # inside the sing-box container — the renderer fills this
-          # from CT_CLASH_LISTEN (defaults to 172.30.0.10:9090, the
-          # ct-clash management network's static IP). The template
-          # is tested against the LITERAL Go-template binding here;
-          # the rendered config is validated separately by ci.yml's
-          # `templates` job, which substitutes a concrete value.
-          # Pre-v0.0.13 the template hardcoded 0.0.0.0:9090; that
-          # changed when ct-clash isolation landed (H3 in 2026-05-05
-          # audit). This rule was stale until v0.0.56 caught up.
-          if ! grep -qE '"external_controller"\s*:\s*"\{\{[[:space:]]*\.ClashListen[[:space:]]*\}\}"' "$tpl"; then
-              echo "::error file=$tpl::clash_api.external_controller must be templated as {{ .ClashListen }} (filled from CT_CLASH_LISTEN at render time)"
-              fail=1
-          fi
-          # The bearer secret must be templated, not a static literal.
-          # Static literals are a public attack surface if firewall is
-          # misconfigured; the templated value comes from
-          # ServerConfig::clash_secret() (see core/ct-server-core/src/
-          # singbox/mod.rs).
-          if ! grep -qE '"secret"\s*:\s*"\{\{\s*\.ClashSecret\s*\}\}"' "$tpl"; then
-              echo "::error file=$tpl::clash_api.secret must be templated as {{ .ClashSecret }}"
-              fail=1
-          fi
-          # cache_file should be disabled by default — DNS / connection
-          # cache on disk is a forensic risk. Flatten newlines because
-          # the cache_file block in the template spans multiple lines
-          # and grep is line-oriented.
-          if ! tr -d '\n' < "$tpl" | grep -qE '"cache_file"[[:space:]]*:[[:space:]]*\{[^}]*"enabled"[[:space:]]*:[[:space:]]*false'; then
-              echo "::error file=$tpl::experimental.cache_file.enabled must be false by default"
-              fail=1
-          fi
-          # Cross-check: the clash API listener at 0.0.0.0:9090 must
-          # not be host-exposed by any service in docker-compose.yml.
-          # Any list item (`- ...`) containing 9090 in a ports: or
-          # similar block is a leak. The only legitimate 9090 is the
-          # SINGBOX_CLASH_URL env var, which doesn't start with `-`.
-          if grep -nE '^[[:space:]]+-[[:space:]]+"?[^"]*9090' docker-compose.yml; then
-              echo "::error file=docker-compose.yml::clash API port 9090 must not appear in any service's ports: block"
-              fail=1
-          fi
-          # v0.0.33 R1-1 / R1-2: sing-box must NOT host-expose :443.
-          # haproxy fronts the :443 host port and TCP-forwards by SNI;
-          # if a future edit re-adds `- "443:443"` to the sing-box
-          # service, the SNI router becomes a parallel listener and
-          # clients that bypass it (direct connection to the host)
-          # see a different TLS fingerprint than the one haproxy
-          # forwards through. Audit-enforced: any list item under
-          # the sing-box service mentioning :443 fails CI.
-          # awk extracts just the sing-box service block; grep then
-          # looks for a `- "443..."` line. Restricting to the
-          # service block keeps haproxy's legitimate `- "443:443"`
-          # off-limits to this check.
-          if awk '/^  sing-box:/{f=1;next} f && /^  [a-z]/{f=0} f' docker-compose.yml \
-                  | grep -qE '^[[:space:]]+-[[:space:]]+"?[^"]*443'; then
-              echo "::error file=docker-compose.yml::sing-box service must NOT expose :443 on the host (haproxy fronts it via SNI router — R1-1 / R1-2, v0.0.33)"
-              fail=1
-          fi
-          exit "$fail"
-      - name: assert haproxy SNI-router hardening
-        run: |
-          set -euo pipefail
-          tpl=haproxy/haproxy.cfg.tpl
-          fail=0
-          # Must be TCP mode in defaults — `mode http` would terminate
-          # TLS at the router and leak the cert/cipher fingerprint
-          # forward to the backend on every connection.
-          if ! grep -qE '^[[:space:]]+mode tcp' "$tpl"; then
-              echo "::error file=$tpl::defaults must use 'mode tcp' (no TLS termination at router — R1-1)"
-              fail=1
-          fi
-          # No `bind ... ssl crt` — the frontend must be
-          # ssl-passthrough only.
-          if grep -qE '^[[:space:]]+bind[[:space:]]+:443[[:space:]]+ssl' "$tpl"; then
-              echo "::error file=$tpl::frontend bind must NOT carry 'ssl' (no TLS termination at router — R1-1)"
-              fail=1
-          fi
-          # Default backend must be the proxy (sing-box). Routing
-          # default to the panel would expose the Filament login
-          # to any SNI-less probe.
-          if ! grep -qE '^[[:space:]]+default_backend naive_singbox' "$tpl"; then
-              echo "::error file=$tpl::default_backend must be 'naive_singbox' (anti-fingerprinting: SNI-less probes hit the proxy, not the panel)"
-              fail=1
-          fi
-          # SNI routing rule for the panel must be present and
-          # case-insensitive (`-i`). DNS is case-insensitive and a
-          # probe lowercasing the SNI must not bypass the rule.
-          if ! grep -qE '^[[:space:]]+use_backend panel_caddy if \{ req_ssl_sni -i \{\{ \.PanelDomain \}\} \}' "$tpl"; then
-              echo "::error file=$tpl::missing 'use_backend panel_caddy if { req_ssl_sni -i {{ .PanelDomain }} }' rule"
-              fail=1
-          fi
-          exit "$fail"
       - name: assert Caddyfile hardening
         run: |
           set -euo pipefail
           tpl=caddy/Caddyfile.tpl
           fail=0
-          # All three rules below check OPERATIVE Caddyfile lines, not
+          # All rules below check OPERATIVE Caddyfile lines, not
           # commentary. The Caddyfile keeps a hashed-comment history
-          # of past forms (e.g. `# The previous \`respond "managed"\``)
-          # explaining why the present form was chosen — invaluable
-          # context for future maintainers, but the regexes here would
-          # naively match those commented-out historical strings and
-          # flag them as live regressions. v0.0.56 anchors the checks
-          # to non-comment lines via `grep -v '^\s*#'` upstream of the
+          # of past forms — invaluable context for future
+          # maintainers, but the regexes here would naively match
+          # those commented-out historical strings and flag them as
+          # live regressions. v0.0.56 anchors the checks to
+          # non-comment lines via `grep -v '^\s*#'` upstream of the
           # regex test.
           non_comments=$(grep -vE '^\s*#' "$tpl")
-          # The :8443 ghost site must NOT respond with a recognisable
-          # string ("managed", "ok", "alive"). Empty body + 444 is the
-          # contract.
+          # If the file ever sprouts a "respond" with a recognisable
+          # string ("ok", "alive", project names), that's a tell.
+          # The v0.2.0 Caddyfile has no `respond` directives outside
+          # the :80 redirect; this check guards future additions.
           if echo "$non_comments" | grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"'; then
-              echo "::error file=$tpl:::8443 ghost site must not respond with a recognisable string (use empty + 444)"
+              echo "::error file=$tpl::Caddy site must not respond with a recognisable string"
               fail=1
           fi
-          # tls1.2 must not be in the ghost site's protocols list.
-          if echo "$non_comments" | grep -qE 'protocols\s+tls1\.2'; then
-              echo "::error file=$tpl::Caddy protocols list must not include tls1.2 on the ghost site"
+          # Caddy admin must bind 127.0.0.1 only — never widen to
+          # an interface that's reachable from outside the container.
+          if echo "$non_comments" | grep -qE '^\s*admin\s+0\.0\.0\.0|^\s*admin\s+[^1]'; then
+              echo "::error file=$tpl::Caddy admin must remain loopback (admin 127.0.0.1:2019)"
               fail=1
           fi
-          # cert_failed must NOT append to a file in /data — that's a
-          # forensic trail. Log to stderr instead.
-          if echo "$non_comments" | grep -qE 'cert_failed.*>>\s*/data'; then
-              echo "::error file=$tpl::cert_failed event must log to stderr, not append to a file in /data"
+          # forward_proxy must carry probe_resistance (the secret-
+          # subdomain back-door for browser-side probes).
+          if ! echo "$non_comments" | grep -qE '^\s*probe_resistance\s'; then
+              echo "::error file=$tpl::forward_proxy block must include 'probe_resistance <secret>'"
+              fail=1
+          fi
+          # forward_proxy must include hide_ip + hide_via — otherwise
+          # the upstream sees X-Forwarded-For / Via headers and the
+          # source IP/proxy chain leaks.
+          if ! echo "$non_comments" | grep -qE '^\s*hide_ip\s*$'; then
+              echo "::error file=$tpl::forward_proxy block must include 'hide_ip'"
+              fail=1
+          fi
+          if ! echo "$non_comments" | grep -qE '^\s*hide_via\s*$'; then
+              echo "::error file=$tpl::forward_proxy block must include 'hide_via'"
               fail=1
           fi
           exit "$fail"

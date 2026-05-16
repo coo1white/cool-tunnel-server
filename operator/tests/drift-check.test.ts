@@ -1,55 +1,126 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/tests/drift-check.test.ts — pure-logic tests for the
 // three-way cleartext drift detector.
+//
+// v0.2.0+ pulls the proxy-side credentials from the rendered
+// Caddyfile (forward_proxy { basic_auth USER PASS }) instead of
+// the v0.1.x sing-box config.json. Tests in this file pin both
+// the Caddyfile parser shape AND the drift-classifier behaviour
+// against a representative real-world Caddyfile fragment.
 
 import { test, expect } from "bun:test";
 import {
     classifyRow,
-    parseSingBoxUsers,
+    parseCaddyfileBasicAuth,
     parseSubscriptionResponse,
     buildReport,
     renderTable,
     type DriftRow,
 } from "../src/util/drift-check";
 
-// ---------- parseSingBoxUsers ----------
+// ---------- parseCaddyfileBasicAuth ----------
 
-test("parseSingBoxUsers extracts username/password tuples from naive inbound", () => {
-    const cfg = JSON.stringify({
-        inbounds: [
-            {
-                type: "naive",
-                tag: "naive-in",
-                users: [
-                    { username: "alice", password: "pw-alice" },
-                    { username: "bob", password: "pw-bob" },
-                ],
-            },
-        ],
-    });
-    expect(parseSingBoxUsers(cfg)).toEqual([
+// A Caddyfile fragment shaped exactly like the one
+// core/ct-server-core/src/caddy/mod.rs::render emits.
+const REPRESENTATIVE_CADDYFILE = `
+{
+    email admin@example.com
+    auto_https disable_redirects
+}
+
+:80 {
+    redir https://{host}{uri} 308
+}
+
+proxy.example.com {
+    route {
+        forward_proxy {
+            basic_auth alice pw-alice
+            basic_auth bob pw-bob
+            hide_ip
+            hide_via
+            probe_resistance abc123.localhost
+        }
+    }
+}
+
+panel.proxy.example.com {
+    reverse_proxy panel:9000
+}
+`;
+
+test("parseCaddyfileBasicAuth extracts every basic_auth in the forward_proxy block", () => {
+    expect(parseCaddyfileBasicAuth(REPRESENTATIVE_CADDYFILE)).toEqual([
         { username: "alice", password: "pw-alice" },
         { username: "bob", password: "pw-bob" },
     ]);
 });
 
-test("parseSingBoxUsers ignores non-naive inbounds", () => {
-    const cfg = JSON.stringify({
-        inbounds: [
-            { type: "http", users: [{ username: "alice", password: "pw-alice" }] },
-            { type: "naive", users: [{ username: "bob", password: "pw-bob" }] },
-        ],
-    });
-    expect(parseSingBoxUsers(cfg)).toEqual([{ username: "bob", password: "pw-bob" }]);
+test("parseCaddyfileBasicAuth ignores basic_auth outside a forward_proxy block", () => {
+    const fragment = `
+proxy.example.com {
+    basic_auth not-forward-proxy pw-stray
+    route {
+        forward_proxy {
+            basic_auth real-user pw-real
+        }
+    }
+}
+`;
+    // basic_auth outside forward_proxy is uninteresting (and not
+    // something our renderer would emit). Only the inner one
+    // gets pulled.
+    expect(parseCaddyfileBasicAuth(fragment)).toEqual([
+        { username: "real-user", password: "pw-real" },
+    ]);
 });
 
-test("parseSingBoxUsers returns [] for credentialless config", () => {
-    const cfg = JSON.stringify({ inbounds: [{ type: "naive" }] });
-    expect(parseSingBoxUsers(cfg)).toEqual([]);
+test("parseCaddyfileBasicAuth returns [] when no forward_proxy block exists", () => {
+    const fragment = `
+proxy.example.com {
+    reverse_proxy backend:80
+}
+`;
+    expect(parseCaddyfileBasicAuth(fragment)).toEqual([]);
 });
 
-test("parseSingBoxUsers throws on malformed JSON (caller distinguishes broken render)", () => {
-    expect(() => parseSingBoxUsers("not json")).toThrow();
+test("parseCaddyfileBasicAuth never throws on malformed Caddyfile (degrades to [])", () => {
+    expect(parseCaddyfileBasicAuth("{{{{ not a caddyfile")).toEqual([]);
+});
+
+test("parseCaddyfileBasicAuth ignores comments inside the block", () => {
+    const fragment = `
+proxy.example.com {
+    forward_proxy {
+        # basic_auth commented-out pw-commented
+        basic_auth alice pw-alice
+    }
+}
+`;
+    expect(parseCaddyfileBasicAuth(fragment)).toEqual([
+        { username: "alice", password: "pw-alice" },
+    ]);
+});
+
+test("parseCaddyfileBasicAuth handles multiple forward_proxy blocks (defence-in-depth)", () => {
+    // Our renderer emits only one forward_proxy site, but the
+    // parser shouldn't choke on a future config that has two.
+    const fragment = `
+a.example.com {
+    forward_proxy {
+        basic_auth alice pw-alice
+    }
+}
+b.example.com {
+    forward_proxy {
+        basic_auth bob pw-bob
+    }
+}
+`;
+    expect(parseCaddyfileBasicAuth(fragment)).toEqual([
+        { username: "alice", password: "pw-alice" },
+        { username: "bob", password: "pw-bob" },
+    ]);
 });
 
 // ---------- parseSubscriptionResponse ----------
@@ -85,46 +156,46 @@ function row(opts: Partial<DriftRow> & { username: string; accountId?: number })
         accountId: opts.accountId ?? 1,
         username: opts.username,
         db: opts.db ?? null,
-        singbox: opts.singbox ?? null,
+        caddyfile: opts.caddyfile ?? null,
         subscription: opts.subscription ?? null,
     };
 }
 
 test("classifyRow ok when all three layers agree", () => {
-    const r = row({ username: "alice", db: "pw", singbox: "pw", subscription: "pw" });
+    const r = row({ username: "alice", db: "pw", caddyfile: "pw", subscription: "pw" });
     expect(classifyRow(r).severity).toBe("ok");
 });
 
-test("classifyRow fails on db↔singbox drift (today's exact incident shape)", () => {
-    // DB has the rotated value, sing-box never re-rendered.
-    const r = row({ username: "alice", db: "new-pw", singbox: "old-pw", subscription: "new-pw" });
+test("classifyRow fails on db↔caddyfile drift (today's exact incident shape)", () => {
+    // DB has the rotated value, caddyfile never re-rendered.
+    const r = row({ username: "alice", db: "new-pw", caddyfile: "old-pw", subscription: "new-pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("db↔singbox");
+    expect(f.summary).toContain("db↔caddyfile");
 });
 
 test("classifyRow fails on db↔subscription drift", () => {
-    // sing-box re-rendered, panel got rolled back somehow.
-    const r = row({ username: "alice", db: "new-pw", singbox: "new-pw", subscription: "old-pw" });
+    // caddyfile re-rendered, panel got rolled back somehow.
+    const r = row({ username: "alice", db: "new-pw", caddyfile: "new-pw", subscription: "old-pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
     expect(f.summary).toContain("db↔subscription");
 });
 
-test("classifyRow fails when sing-box has no user but DB does", () => {
-    const r = row({ username: "alice", db: "pw", singbox: null, subscription: "pw" });
+test("classifyRow fails when caddyfile has no user but DB does", () => {
+    const r = row({ username: "alice", db: "pw", caddyfile: null, subscription: "pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("render singbox");
+    expect(f.summary).toContain("render caddyfile");
 });
 
 test("classifyRow warns when subscription returns cover-site (null)", () => {
-    const r = row({ username: "alice", db: "pw", singbox: "pw", subscription: null });
+    const r = row({ username: "alice", db: "pw", caddyfile: "pw", subscription: null });
     expect(classifyRow(r).severity).toBe("warn");
 });
 
-test("classifyRow fails on phantom sing-box user (DB row absent)", () => {
-    const r = row({ username: "ghost", db: null, singbox: "pw" });
+test("classifyRow fails on phantom caddyfile user (DB row absent)", () => {
+    const r = row({ username: "ghost", db: null, caddyfile: "pw" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
     expect(f.summary).toContain("phantom");
@@ -134,16 +205,16 @@ test("classifyRow fails on phantom sing-box user (DB row absent)", () => {
 
 test("buildReport ok = false if any finding is fail", () => {
     const r = buildReport([
-        row({ username: "alice", db: "pw", singbox: "pw", subscription: "pw" }),
-        row({ username: "bob", accountId: 2, db: "x", singbox: "y", subscription: "z" }),
+        row({ username: "alice", db: "pw", caddyfile: "pw", subscription: "pw" }),
+        row({ username: "bob", accountId: 2, db: "x", caddyfile: "y", subscription: "z" }),
     ]);
     expect(r.ok).toBe(false);
 });
 
 test("buildReport ok = true when every row is ok", () => {
     const r = buildReport([
-        row({ username: "alice", db: "pw", singbox: "pw", subscription: "pw" }),
-        row({ username: "bob", accountId: 2, db: "pw2", singbox: "pw2", subscription: "pw2" }),
+        row({ username: "alice", db: "pw", caddyfile: "pw", subscription: "pw" }),
+        row({ username: "bob", accountId: 2, db: "pw2", caddyfile: "pw2", subscription: "pw2" }),
     ]);
     expect(r.ok).toBe(true);
 });
@@ -153,7 +224,7 @@ test("renderTable never leaks cleartext", () => {
         row({
             username: "alice",
             db: "super-secret-cleartext",
-            singbox: "different-secret",
+            caddyfile: "different-secret",
             subscription: "super-secret-cleartext",
         }),
     ]);

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/drift.ts — ct-operator drift task.
 //
-// Runs the three-way cleartext drift check (DB ⇄ sing-box rendered
-// config ⇄ subscription endpoint). Surfaces drifts that the strict
+// Runs the three-way cleartext drift check (DB ⇄ rendered
+// Caddyfile ⇄ subscription endpoint). Surfaces drifts that the strict
 // component check / credential-lock guard misses because those only
 // compare lock-hashes, not values.
 //
@@ -18,7 +18,7 @@ import {
     type DriftRow,
     type DriftReport,
     buildReport,
-    parseSingBoxUsers,
+    parseCaddyfileBasicAuth,
     parseSubscriptionResponse,
     renderTable,
 } from "../util/drift-check";
@@ -99,11 +99,16 @@ async function dumpDbRows(): Promise<DbRow[]> {
     return out;
 }
 
-// Read the rendered sing-box config straight off the panel
-// container — same volume mount sing-box reads. Returns null if
-// the file isn't there (render hasn't run yet).
-async function dumpSingBoxConfig(): Promise<string | null> {
-    const r = await capture($`docker compose exec -T panel cat /etc/sing-box/config.json`);
+// Read the rendered Caddyfile straight off the panel container —
+// the same /etc/caddy mount Caddy itself reads. Returns null if
+// the file isn't there (render hasn't run yet, or pre-v0.2.0
+// stack still mounting at /etc/sing-box/).
+//
+// We deliberately read it via the panel container (not the caddy
+// container) because the panel is the one with the bind-mount of
+// caddy_etc that ct-server-core writes into; it's always running.
+async function dumpCaddyfile(): Promise<string | null> {
+    const r = await capture($`docker compose exec -T panel cat /etc/caddy/Caddyfile`);
     if (!r.ok) return null;
     return r.stdout;
 }
@@ -137,11 +142,11 @@ function resolvePanelDomain(env: NodeJS.ProcessEnv): string {
 
 async function collectRows(panelDomain: string): Promise<DriftRow[]> {
     const dbRows = await dumpDbRows();
-    const singboxRaw = await dumpSingBoxConfig();
-    const singboxUsers = singboxRaw === null ? [] : parseSingBoxUsers(singboxRaw);
-    const singboxByUsername = new Map<string, string>();
-    for (const u of singboxUsers) {
-        singboxByUsername.set(u.username, u.password);
+    const caddyfileRaw = await dumpCaddyfile();
+    const caddyfileUsers = caddyfileRaw === null ? [] : parseCaddyfileBasicAuth(caddyfileRaw);
+    const caddyfileByUsername = new Map<string, string>();
+    for (const u of caddyfileUsers) {
+        caddyfileByUsername.set(u.username, u.password);
     }
 
     // Subscription fetch is the slowest layer (HTTPS round-trip per
@@ -175,30 +180,30 @@ async function collectRows(panelDomain: string): Promise<DriftRow[]> {
             subParsed === null
                 ? null
                 : (subParsed.profiles.find((p) => p.username === dbRow.username)?.password ?? null);
-        const sbForRow = singboxByUsername.has(dbRow.username)
-            ? singboxByUsername.get(dbRow.username)!
+        const cfForRow = caddyfileByUsername.has(dbRow.username)
+            ? caddyfileByUsername.get(dbRow.username)!
             : null;
         rows.push({
             accountId: dbRow.id,
             username: dbRow.username,
             db: dbRow.cleartext,
-            singbox: sbForRow,
+            caddyfile: cfForRow,
             subscription: subForRow,
         });
     }
 
-    // Phantom sing-box users: rows in /etc/sing-box/config.json
-    // whose username has no DB row at all. These are stale —
-    // typically a deleted account whose user line wasn't re-
-    // rendered. Surface them as rows with db=null.
+    // Phantom Caddyfile users: basic_auth lines in the rendered
+    // Caddyfile whose username has no DB row at all. Typically a
+    // deleted account whose Caddyfile wasn't re-rendered. Surface
+    // as rows with db=null.
     const dbUsernames = new Set(dbRows.map((r) => r.username));
-    for (const u of singboxUsers) {
+    for (const u of caddyfileUsers) {
         if (!dbUsernames.has(u.username)) {
             rows.push({
                 accountId: -1,
                 username: u.username,
                 db: null,
-                singbox: u.password,
+                caddyfile: u.password,
                 subscription: null,
             });
         }
@@ -247,7 +252,7 @@ export class DriftTask implements Task {
             } else {
                 process.stdout.write(
                     `\nFAIL: ${drifted} drift, ${warned} warn across ${report.findings.length} accounts\n` +
-                        `Repair: ./ct render singbox        # if singbox drifts from DB\n` +
+                        `Repair: ./ct render caddyfile     # if caddyfile drifts from DB\n` +
                         `        Filament UI Regenerate-pw  # if DB cleartext is stale\n`,
                 );
             }
