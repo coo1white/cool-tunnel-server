@@ -69,7 +69,11 @@ FROM oven/bun:1.1-alpine AS runtime
 # naive's release binary is dynamically linked against the typical
 # Alpine glibc-compat path (it's a Chromium-derived build). The
 # `gcompat` package provides the glibc-style dynamic linker.
-RUN apk add --no-cache gcompat ca-certificates
+# `libcap` provides `setcap` / `getcap` for the file-capability we
+# set on /usr/local/bin/naive below (oven/bun:1.1-alpine doesn't
+# ship libcap by default; v0.3.0 first-deploy on Vultr 2026-05-16
+# hit "setcap: not found" without this).
+RUN apk add --no-cache gcompat ca-certificates libcap
 
 COPY --from=fetch /fetch/naive /usr/local/bin/naive
 

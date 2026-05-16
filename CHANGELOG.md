@@ -22,6 +22,37 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.3.1] — 2026-05-16 — Hot-fix: apk-install libcap in ct-naive's runtime stage
+
+v0.3.0 first-deploy regression. `docker/naive/Dockerfile`'s
+runtime stage was `FROM oven/bun:1.1-alpine`; the `RUN setcap
+cap_net_bind_service=+ep /usr/local/bin/naive` step inherited
+caddy's pattern but didn't account for `oven/bun:1.1-alpine`
+not shipping `libcap` (the package that provides `setcap` /
+`getcap`). Build failed at that step with `setcap: not found`,
+exit 127, before the ct-naive image existed.
+
+Mirror of the v0.2.1 cap_net_bind_service hotfix in shape.
+
+### Fixed
+
+  **docker/naive/Dockerfile** — added `libcap` to the runtime
+  stage's `apk add --no-cache gcompat ca-certificates` line.
+  Surfaced on the 2026-05-16 Vultr first-deploy of v0.3.0; the
+  fix is a one-token diff and the v0.3.0 release notes already
+  flagged ct-naive cap_net_bind_service as a Dockerfile-level
+  concern (no architecture change here, just a missing apk pkg).
+
+  Operator hot-patch (skip rebuild + bake-in on next ./ct update):
+
+  ```
+  sed -i 's|apk add --no-cache gcompat ca-certificates|apk add --no-cache gcompat ca-certificates libcap|' docker/naive/Dockerfile
+  docker compose build naive
+  docker compose up -d --force-recreate panel caddy naive
+  ```
+
+---
+
 ## [0.3.0] — 2026-05-16 — Split naive server out of Caddy (eliminate padding-protocol drift)
 
 v0.1.x bundled sing-box as the NaiveProxy server. v0.2.x replaced
@@ -10938,7 +10969,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.0...v0.2.1
 [0.0.77]: https://github.com/coo1white/cool-tunnel-server/compare/v0.0.76...v0.0.77
