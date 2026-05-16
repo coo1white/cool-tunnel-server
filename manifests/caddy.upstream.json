@@ -1,7 +1,7 @@
 {
     "name": "caddy",
     "kind": "container-image",
-    "version": "v2.8.4",
+    "version": "v2.11.3",
     "upstream": "https://github.com/caddyserver/caddy",
     "verify": {
         "command": ["curl", "-sIo", "/dev/null", "--connect-timeout", "5", "http://caddy:80/"],

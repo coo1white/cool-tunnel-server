@@ -205,7 +205,7 @@ jobs:
 
       # v0.3.0: validate the Caddyfile against the SAME custom Caddy
       # image we ship (xcaddy + mholt/caddy-l4). Stock
-      # `caddy:2.8.4-alpine` rejects the `layer4` directive because
+      # `caddy:2.11.3-alpine` rejects the `layer4` directive because
       # the plugin isn't compiled in.
       #
       # The build is cached by docker's layer cache in CI runners;

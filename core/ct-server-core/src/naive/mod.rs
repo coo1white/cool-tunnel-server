@@ -102,10 +102,7 @@ pub async fn render(
 ) -> Result<()> {
     let cfg = db::server_config(pool).await?;
     let accounts = db::active_proxy_accounts(pool).await?;
-    let safe_accounts: Vec<&ProxyAccount> = accounts
-        .iter()
-        .filter(|a| filter_account(a))
-        .collect();
+    let safe_accounts: Vec<&ProxyAccount> = accounts.iter().filter(|a| filter_account(a)).collect();
 
     // Pick the first safe account whose cleartext is available.
     // Deterministic: lowest id (DB returns sorted by id).

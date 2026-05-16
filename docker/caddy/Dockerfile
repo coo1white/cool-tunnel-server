@@ -46,14 +46,17 @@
 # klzgrad/forwardproxy@naive plugin is GONE — its wire format is
 # the very thing v0.3.0 routes around.
 #
-# Why Caddy 2.8.4: matches the version operationalised under v0.2.x;
-# bumping Caddy + adopting layer4 in one release would broaden the
-# blast radius. Bump 2.8.4 → current as a separate change.
+# Why Caddy 2.11.3: caddy-l4 v0.1.1+ requires Go 1.25+, which only
+# arrived in caddy:2.11.x builders. The v0.2.x Dockerfile head
+# comment flagged 2.11.3 as the deferred-bump target ("Phase 0
+# interop test on 2026-05-16 used 2.11.3 and worked"); the layer4
+# adoption forces it here. caddy:2.11.3-alpine is the matching
+# runtime image so the Go-version-coupled module set lines up.
 
 # ----------------------------------------------------------------------
 # Stage 1 — build Caddy with the layer4 plugin
 # ----------------------------------------------------------------------
-FROM caddy:2.8.4-builder AS build
+FROM caddy:2.11.3-builder AS build
 
 # xcaddy fetches and links mholt/caddy-l4. The plugin exposes
 # `layer4.matchers.tls` (SNI/ALPN matching), `layer4.handlers.proxy`
@@ -69,7 +72,7 @@ RUN xcaddy build \
 # ----------------------------------------------------------------------
 # Stage 2 — runtime
 # ----------------------------------------------------------------------
-FROM caddy:2.8.4-alpine
+FROM caddy:2.11.3-alpine
 
 # Replace the stock Caddy binary with our xcaddy build. The image's
 # existing entrypoint + CMD + capabilities (NET_BIND_SERVICE so it
@@ -78,7 +81,7 @@ FROM caddy:2.8.4-alpine
 COPY --from=build /out/caddy /usr/bin/caddy
 
 # Re-apply the cap_net_bind_service file capability. The stock
-# caddy:2.8.4-alpine image bakes this cap on /usr/bin/caddy so
+# caddy:2.11.3-alpine image bakes this cap on /usr/bin/caddy so
 # the image's non-root `caddy` user can bind privileged ports
 # (:80, :443). Docker `COPY` does NOT preserve file capabilities
 # — the new binary lands with empty caps and Caddy then silently
