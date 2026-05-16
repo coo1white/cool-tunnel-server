@@ -226,12 +226,15 @@ services:
   panel:
     <<: *svc-hardening
     build:
-      # Context is docker/panel/ so the Dockerfile's
-      # `COPY opcache.ini …` etc. resolve to docker/panel/opcache.ini.
-      # The Rust core binary comes in via the CT_CORE_IMAGE arg's
-      # `FROM` reference, not the build context, so a narrow
-      # context is fine.
-      context: ./docker/panel
+      # Context is the repo ROOT (not ./docker/panel) so the
+      # Dockerfile's singbox-core-build stage can COPY singbox-core/
+      # from the repo root. v0.3.x had the narrower ./docker/panel
+      # context; v0.4.0+ widens it for the Bun-compile stage. All
+      # the existing `COPY opcache.ini …` lines were rewritten to
+      # the absolute-from-context form (`COPY docker/panel/opcache.ini
+      # …`) in the same commit.
+      context: .
+      dockerfile: docker/panel/Dockerfile
       args:
         CT_CORE_IMAGE: cool-tunnel-server-core:latest
     image: cool-tunnel-server-panel:latest
