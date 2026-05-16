@@ -7,25 +7,26 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Contracts\CaddyfileGeneratorInterface;
-use App\Contracts\NaiveConfigGeneratorInterface;
+use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Contracts\SingBoxReloaderInterface;
 use App\MessageHandlers\ReloadServerConfigHandler;
 use App\Messages\ReloadServerConfig;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
-// v0.3.0 cutover. ReloadServerConfigHandler's invocation contract:
+// v0.4.0 — ReloadServerConfigHandler's invocation contract:
 //
-//   1. Render Caddyfile FIRST. The Caddyfile is mostly static now
+//   1. Render Caddyfile FIRST. The Caddyfile is mostly static
 //      (Domain / PanelDomain / ACME bindings only) but a
-//      domain/email change must propagate before the naive renderer
-//      tries to compute the new cert path.
+//      domain/email change must propagate before the sing-box
+//      renderer tries to compute the new cert path.
 //   2. If Caddyfile changed, reload Caddy (still uses the legacy
 //      SingBoxReloader::reload() interface, whose concrete
 //      implementation now wraps caddy-reload).
-//   3. Render /data/config/naive.json. ct-naive's supervisor file-
-//      watches the path and respawns naive automatically — no
-//      explicit reload-side shell-out from PHP.
+//   3. Render /data/config/singbox.json. ct-singbox's
+//      `singbox-core supervise` file-watches the path and respawns
+//      sing-box automatically — no explicit reload-side shell-out
+//      from PHP.
 
 class ReloadServerConfigHandlerTest extends TestCase
 {
@@ -39,21 +40,21 @@ class ReloadServerConfigHandlerTest extends TestCase
     }
 
     #[Test]
-    public function handler_renders_caddy_first_then_naive_then_reloads_caddy_on_change(): void
+    public function handler_renders_caddy_first_then_singbox_then_reloads_caddy_on_change(): void
     {
         $caddy = new RecordingCaddyGenerator('sha256-caddy');
-        $naive = new RecordingNaiveGenerator('sha256-naive');
+        $singbox = new RecordingSingBoxGenerator('sha256-singbox');
         $reloader = new RecordingSingBoxReloader;
         $this->app->instance(CaddyfileGeneratorInterface::class, $caddy);
-        $this->app->instance(NaiveConfigGeneratorInterface::class, $naive);
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $singbox);
         $this->app->instance(SingBoxReloaderInterface::class, $reloader);
 
         $this->app->make(ReloadServerConfigHandler::class)(new ReloadServerConfig(reason: 'test'));
 
         $this->assertSame(
-            ['caddy', 'reload', 'naive'],
+            ['caddy', 'reload', 'singbox'],
             self::$invocationLog,
-            'Caddyfile render MUST come before naive render (cert path feeds in); '
+            'Caddyfile render MUST come before singbox render (cert path feeds in); '
             .'Caddy reload MUST come between them if the Caddyfile changed.',
         );
     }
@@ -62,16 +63,20 @@ class ReloadServerConfigHandlerTest extends TestCase
     public function handler_skips_caddy_reload_when_caddyfile_unchanged(): void
     {
         $caddy = new RecordingCaddyGenerator(null);  // "unchanged"
-        $naive = new RecordingNaiveGenerator('sha256-naive');
+        $singbox = new RecordingSingBoxGenerator('sha256-singbox');
         $reloader = new RecordingSingBoxReloader;
         $this->app->instance(CaddyfileGeneratorInterface::class, $caddy);
-        $this->app->instance(NaiveConfigGeneratorInterface::class, $naive);
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $singbox);
         $this->app->instance(SingBoxReloaderInterface::class, $reloader);
 
         $this->app->make(ReloadServerConfigHandler::class)(new ReloadServerConfig(reason: 'test'));
 
         $this->assertSame(1, $caddy->renderCalls);
-        $this->assertSame(1, $naive->renderCalls, 'naive.json still renders even if Caddyfile was unchanged.');
+        $this->assertSame(
+            1,
+            $singbox->renderCalls,
+            'singbox.json still renders even if Caddyfile was unchanged.',
+        );
         $this->assertSame(
             0,
             $reloader->reloadCalls,
@@ -100,7 +105,7 @@ final class RecordingCaddyGenerator implements CaddyfileGeneratorInterface
     }
 }
 
-final class RecordingNaiveGenerator implements NaiveConfigGeneratorInterface
+final class RecordingSingBoxGenerator implements SingBoxConfigGeneratorInterface
 {
     public int $renderCalls = 0;
 
@@ -109,7 +114,7 @@ final class RecordingNaiveGenerator implements NaiveConfigGeneratorInterface
     public function renderToFile(): ?string
     {
         $this->renderCalls++;
-        ReloadServerConfigHandlerTest::recordInvocation('naive');
+        ReloadServerConfigHandlerTest::recordInvocation('singbox');
 
         return $this->hash;
     }
