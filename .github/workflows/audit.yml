@@ -616,10 +616,12 @@ jobs:
           fi
           # v0.3.0+: the layer4 block MUST route the proxy SNI to
           # ct-naive (no in-container forwardproxy any more — that's
-          # the whole point of the v0.3.0 cut). Match a `proxy`
-          # directive pointing at tcp/ct-naive:443.
-          if ! echo "$non_comments" | grep -qE 'upstream\s+tcp/ct-naive:443'; then
-              echo "::error file=$tpl::layer4 block must proxy proxy-SNI traffic to tcp/ct-naive:443"
+          # the whole point of the v0.3.0 cut). Match a `proxy
+          # ct-naive:443` directive (caddy-l4's short form; the
+          # block form `proxy { upstream tcp/ct-naive:443 }` is
+          # equivalent but the renderer emits the short form).
+          if ! echo "$non_comments" | grep -qE 'proxy\s+ct-naive:443'; then
+              echo "::error file=$tpl::layer4 block must proxy proxy-SNI traffic to ct-naive:443"
               fail=1
           fi
           # And it MUST do so behind a TLS-SNI matcher — never a
