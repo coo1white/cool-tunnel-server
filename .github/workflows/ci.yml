@@ -238,10 +238,14 @@ jobs:
         run: |
           set -euo pipefail
           rendered=$(mktemp)
-          # Substitute every binding the v0.3.0 renderer emits. No
-          # more ForwardProxyBasicAuthLines / ProbeResistanceSecret —
-          # the per-account credentials and probe-resistance secret
-          # live in /data/config/naive.json now (ct-naive's input).
+          # Substitute every binding the v0.4.0 renderer emits. The
+          # Caddyfile shrinks to a layer4 SNI splitter (panel.* SNI →
+          # inner :8443, everything else → tcp/ct-singbox:443) plus
+          # the inner Caddy :8443 panel reverse-proxy. No more
+          # cert-acquisition stub or proxy-domain ACME — Reality
+          # replaces ACME on the proxy path; per-account credentials
+          # live in /data/config/singbox.json (singbox-core render-
+          # server's output, file-watched by ct-singbox's supervisor).
           sed -e 's|{{ \.Domain }}|test.local|g' \
               -e 's|{{ \.PanelDomain }}|panel.test.local|g' \
               -e 's|{{ \.AcmeEmail }}|t@x.com|g' \
