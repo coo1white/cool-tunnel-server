@@ -289,8 +289,11 @@ mod tests {
         // layer4 SNI router.
         assert!(body.contains("layer4 {"));
         assert!(body.contains("sni proxy.example.com"));
-        assert!(body.contains("tcp/ct-naive:443"));
-        assert!(body.contains("tcp/127.0.0.1:8443"));
+        // caddy-l4's short-form proxy directive — `proxy <host>:<port>`.
+        // Block form (`proxy { upstream tcp/<host>:<port> }`) is
+        // equivalent but the renderer emits the short form.
+        assert!(body.contains("proxy ct-naive:443"));
+        assert!(body.contains("proxy 127.0.0.1:8443"));
         // Inner panel site block.
         assert!(body.contains("https://panel.proxy.example.com:8443"));
         assert!(body.contains("reverse_proxy panel:9000"));
