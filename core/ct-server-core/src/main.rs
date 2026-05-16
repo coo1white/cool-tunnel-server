@@ -328,7 +328,11 @@ enum NaiveOp {
         dry_run: bool,
         /// Override output path. The default matches the shared
         /// volume mount in docker-compose.yml (naive_config:/data/config).
-        #[arg(long, env = "NAIVE_CONFIG_PATH", default_value = "/data/config/naive.json")]
+        #[arg(
+            long,
+            env = "NAIVE_CONFIG_PATH",
+            default_value = "/data/config/naive.json"
+        )]
         output: String,
     },
 }

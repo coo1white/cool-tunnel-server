@@ -28,6 +28,26 @@
 //! either N naive processes on N ports + SNI subdomains, or a
 //! thin authproxy in front. Today's DB shape carries one or two
 //! accounts in practice, so this is acceptable for the initial cut.
+//!
+//! Anti-tracking posture (inherited from upstream klzgrad/naiveproxy
+//! defaults — see klzgrad/naiveproxy/src/naive_proxy_delegate.cc and
+//! the README's threat-model section):
+//!
+//!   - `hide_ip` — naive does NOT add X-Forwarded-For or any other
+//!     client-IP-revealing header on the egress CONNECT. The
+//!     downstream sees the VPS IP, not the client's home IP.
+//!   - `hide_via` — naive does NOT add a Via header. The proxy
+//!     chain is invisible to the destination.
+//!   - `probe_resistance` — naive's TLS Client Hello fingerprint
+//!     mimics current Chrome (matched to the upstream tag we pin);
+//!     unauthenticated CONNECTs land at naive's cover-site behaviour
+//!     (silent close) rather than emitting a recognisable error
+//!     response, denying probe-classification a useful signal.
+//!
+//! These were Caddyfile-level directives in v0.2.x (the forward_proxy
+//! plugin exposed them as explicit knobs). In v0.3.0 they're upstream
+//! defaults; the renderer's job is to NOT pass any naive flag that
+//! would disable them.
 
 use crate::db;
 use crate::domain::ProxyAccount;
