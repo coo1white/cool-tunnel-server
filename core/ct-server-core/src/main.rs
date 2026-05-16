@@ -25,11 +25,12 @@ mod frame;
 mod internal_metrics;
 mod laravel_crypt;
 mod metrics;
-// naive/ — v0.3.0+. Renders /data/config/naive.json that ct-naive's
-// supervisor watches; the supervisor respawns naive on file change.
-// Replaces the v0.2.x basic_auth-in-Caddyfile path (Caddyfile is now
-// static; per-account data lives in naive.json).
-mod naive;
+// naive/ retired in v0.4.0. naive itself is a client-only binary
+// (its --listen flag does not accept https://); v0.3.0 was built on
+// the wrong premise. v0.4.0 replaces naive with sing-box on both
+// ends and moves rendering from this Rust crate to the singbox-core/
+// Bun TypeScript package whose compiled binary is embedded in the
+// panel container and shelled to by SingboxConfigGenerator.php.
 mod observability;
 mod probe;
 mod quota;
@@ -129,14 +130,8 @@ enum Cmd {
         #[command(subcommand)]
         op: CaddyfileOp,
     },
-    /// naive.json generation (v0.3.0+). ct-naive's supervisor
-    /// file-watches /data/config/naive.json and respawns naive on
-    /// change; there's no separate `reload` subcommand because
-    /// the supervisor IS the reload mechanism.
-    Naive {
-        #[command(subcommand)]
-        op: NaiveOp,
-    },
+    // Naive subcommand removed in v0.4.0 — config rendering moved
+    // to the singbox-core/ Bun package.
     /// Talk to sing-box's clash API.
     Server {
         #[command(subcommand)]
@@ -317,25 +312,7 @@ enum CaddyfileOp {
     },
 }
 
-#[derive(Subcommand, Debug)]
-enum NaiveOp {
-    /// Render the current ServerConfig + active proxy_account into
-    /// /data/config/naive.json (atomic). ct-naive's supervisor
-    /// debounces file-change events and respawns naive within
-    /// ~250ms of this write.
-    Render {
-        #[arg(long)]
-        dry_run: bool,
-        /// Override output path. The default matches the shared
-        /// volume mount in docker-compose.yml (naive_config:/data/config).
-        #[arg(
-            long,
-            env = "NAIVE_CONFIG_PATH",
-            default_value = "/data/config/naive.json"
-        )]
-        output: String,
-    },
-}
+// NaiveOp removed in v0.4.0 — see singbox-core/ for the replacement.
 
 // HaproxyOp deleted in v0.2.0 (HAProxy SNI router replaced by Caddy
 // SNI routing). The `Cmd::Haproxy` dispatch arm + this enum landed
@@ -481,14 +458,10 @@ async fn dispatch(cli: Cli) -> Result<()> {
             }
             CaddyfileOp::Reload { output } => caddy::reload(&output).await,
         },
-        Cmd::Naive { op } => match op {
-            NaiveOp::Render { dry_run, output } => {
-                let pool = db::connect(&cli.database_url).await?;
-                naive::render(&pool, &output, dry_run, cli.json).await
-            }
-        },
-        // Cmd::Haproxy dispatch deleted in v0.2.0 (HAProxy retired —
-        // Caddy SNI-routes the panel reverse-proxy itself).
+        // Cmd::Naive dispatch removed in v0.4.0 (rendering moved to
+        // singbox-core/ Bun package; ct-server-core no longer renders
+        // the proxy config at all). Cmd::Haproxy dispatch removed in
+        // v0.2.0 (Caddy SNI-routes the panel reverse-proxy itself).
         Cmd::Server { op } => {
             // CLI Server.{Reload,Config} are operator-facing — they
             // don't read the DB; the clash bearer is now env-derived

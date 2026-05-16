@@ -116,17 +116,10 @@ final class CtServerCore implements CtServerCoreInterface
         return $this->run(['caddyfile', 'render']);
     }
 
-    /**
-     * v0.3.0+ — render /data/config/naive.json (consumed by
-     * ct-naive's Bun supervisor). The supervisor file-watches the
-     * path and respawns the naive child within ~250ms of the write,
-     * so there's no separate "reloadNaive" shell-out: the file
-     * write IS the reload trigger.
-     */
-    public function renderNaive(): array
-    {
-        return $this->run(['naive', 'render']);
-    }
+    // renderNaive() removed in v0.4.0 — sing-box rendering is now
+    // done by SingboxConfigGenerator shelling directly to the
+    // singbox-core binary; ct-server-core (Rust) no longer renders
+    // proxy configs at all.
 
     public function reloadSingBox(): array
     {

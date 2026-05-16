@@ -6,11 +6,9 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Contracts\NaivePinReaderInterface;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
-use App\Services\NaivePinReader;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
@@ -99,9 +97,7 @@ class SubscriptionController extends Controller
      */
     private const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 30;
 
-    public function __construct(
-        private readonly NaivePinReaderInterface $naivePin = new NaivePinReader,
-    ) {}
+    public function __construct() {}
 
     public function show(Request $request, string $token): Response
     {
@@ -274,23 +270,14 @@ class SubscriptionController extends Controller
             // emit only when non-null and non-empty.
         ];
 
-        // server_naive_pin: v0.3.x runtime cross-end pin confirmation.
-        // Carry the upstream tag + the running binary's reported
-        // version so the client can confirm the SERVER it's about to
-        // tunnel through is pinned to the same upstream
-        // klzgrad/naiveproxy tag the client itself was built against
-        // — even though the two halves ship different per-OS binaries
-        // (different SHAs by design). Field is OPTIONAL on the wire
-        // (Rust struct uses skip_serializing_if = Option::is_none): we
-        // emit ONLY when both the manifest tag and the runtime version
-        // are readable. A partial read (binary missing, manifest
-        // unparseable, exec failed) → omit the key entirely rather
-        // than serve a half-truthy value the client might log a
-        // confusing warning over.
-        $pin = $this->naivePin->read();
-        if ($pin !== null) {
-            $body['server_naive_pin'] = $pin;
-        }
+        // server_naive_pin removed in v0.4.0 — the naive binary is no
+        // longer on either end of the tunnel; both server and client
+        // run sing-box pinned in singbox-core/singbox.upstream.json.
+        // The equivalent cross-end pin field for sing-box is a
+        // follow-up to this pivot once the server actually emits a
+        // sing-box-shaped manifest (the manifest schema below still
+        // carries the v0.x naive `profiles[]` shape — the client
+        // build will need a coordinated schema change too).
 
         // HMAC over the body WITHOUT a `signature` field at all.
         // The Rust client verifies by deserialising, setting

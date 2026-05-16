@@ -9,17 +9,15 @@ namespace App\Providers;
 use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\ComponentCheckerInterface;
 use App\Contracts\CtServerCoreInterface;
-use App\Contracts\NaiveConfigGeneratorInterface;
-use App\Contracts\NaivePinReaderInterface;
 use App\Contracts\RevocationBusInterface;
+use App\Contracts\SingboxConfigGeneratorInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Contracts\SingBoxReloaderInterface;
 use App\Services\CaddyfileGenerator;
 use App\Services\ComponentChecker;
 use App\Services\CtServerCore;
-use App\Services\NaiveConfigGenerator;
-use App\Services\NaivePinReader;
 use App\Services\RedisRevocationBus;
+use App\Services\SingboxConfigGenerator;
 use App\Services\SingBoxConfigGenerator;
 use App\Services\SingBoxReloader;
 use App\Services\TrafficCollector;
@@ -48,20 +46,24 @@ class AppServiceProvider extends ServiceProvider
      * the interface in `$this->app->bind(...)`.
      */
     private const SERVICE_BINDINGS = [
+        // SingBoxConfigGenerator (the legacy v0.1.x sing-box-on-the-
+        // wire renderer) is kept as dead-code-no-effect for transitional
+        // ct-server-core compatibility; full removal is a future
+        // v0.4.x followup. The active v0.4.0+ renderer is
+        // SingboxConfigGeneratorInterface (lowercase 'b') which
+        // shells to singbox-core for VLESS+Reality config.json.
         SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
         SingBoxReloaderInterface::class => SingBoxReloader::class,
         CaddyfileGeneratorInterface::class => CaddyfileGenerator::class,
-        // v0.3.0+ — naive.json renderer. See
-        // App\Contracts\NaiveConfigGeneratorInterface for lifecycle.
-        NaiveConfigGeneratorInterface::class => NaiveConfigGenerator::class,
+        // v0.4.0+ — singbox.json renderer (replaces v0.3.x
+        // NaiveConfigGenerator). See SingboxConfigGeneratorInterface
+        // for the lifecycle docs. Note the lowercase 'b' in
+        // Singbox* — the sing-box upstream brand is hyphenated
+        // (sing-box), conventionally rendered as Singbox in code.
+        SingboxConfigGeneratorInterface::class => SingboxConfigGenerator::class,
         RevocationBusInterface::class => RedisRevocationBus::class,
         CtServerCoreInterface::class => CtServerCore::class,
         ComponentCheckerInterface::class => ComponentChecker::class,
-        // v0.3.x — naive-pin reader used by SubscriptionController
-        // to splice server_naive_pin into the subscription manifest.
-        // Tests bind a stub against the interface so they don't
-        // touch the real /srv/manifests file or shell out to naive.
-        NaivePinReaderInterface::class => NaivePinReader::class,
     ];
 
     public function register(): void
@@ -72,11 +74,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SingBoxConfigGenerator::class);
         $this->app->singleton(SingBoxReloader::class);
         $this->app->singleton(CaddyfileGenerator::class);
-        $this->app->singleton(NaiveConfigGenerator::class);
+        $this->app->singleton(SingboxConfigGenerator::class);
         $this->app->singleton(TrafficCollector::class);
         $this->app->singleton(ComponentChecker::class);
         $this->app->singleton(RedisRevocationBus::class);
-        $this->app->singleton(NaivePinReader::class);
 
         // Interface → concrete bindings. `$this->app->bind` (not
         // `singleton`) is enough here because the concrete is

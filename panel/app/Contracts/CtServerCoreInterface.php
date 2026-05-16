@@ -44,8 +44,9 @@ interface CtServerCoreInterface
     /** @return array<mixed> */
     public function renderCaddyfile(): array;
 
-    /** @return array<mixed> */
-    public function renderNaive(): array;
+    // renderNaive() removed in v0.4.0 — replaced by
+    // SingboxConfigGenerator which shells directly to the
+    // singbox-core binary, not to ct-server-core.
 
     /** @return array<mixed> */
     public function reloadSingBox(): array;
