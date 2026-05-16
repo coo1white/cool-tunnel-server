@@ -64,6 +64,30 @@ FROM caddy:2.8.4-alpine
 # unchanged.
 COPY --from=build /out/caddy /usr/bin/caddy
 
+# Re-apply the cap_net_bind_service file capability. The stock
+# caddy:2.8.4-alpine image bakes this cap on /usr/bin/caddy so
+# the image's non-root `caddy` user can bind privileged ports
+# (:80, :443). Docker `COPY` does NOT preserve file capabilities
+# — the new binary lands with empty caps and Caddy then silently
+# falls back to alternative ports (:443 → :8443, :80 → :8080),
+# producing a healthy container that nothing public can reach.
+#
+# Symptom observed on the v0.2.0 first-deploy 2026-05-16: ss inside
+# the container showed `:::8443 LISTEN` instead of `:::443`, the
+# host's `docker compose ps` showed `0.0.0.0:443->443/tcp` (the
+# mapping survives even with no listener on the container side),
+# external connections to https://<domain>:443 were refused with
+# no apparent cause.
+#
+# The `cap_add: NET_BIND_SERVICE` in docker-compose.yml is
+# necessary but not sufficient — it grants the cap to the
+# container's effective set, but the file-cap on the binary
+# (with the `+ep` flag) is what allows the binary's exec to
+# inherit it without ambient-cap kernel features the alpine
+# image doesn't enable.
+RUN setcap cap_net_bind_service=+ep /usr/bin/caddy \
+    && getcap /usr/bin/caddy | grep -q cap_net_bind_service
+
 # Caddy reads /etc/caddy/Caddyfile on boot. Compose mounts the
 # panel-rendered file (from caddy/Caddyfile.tpl) into /etc/caddy.
 VOLUME ["/etc/caddy", "/data", "/config"]

@@ -22,6 +22,53 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.2.1] — 2026-05-16 — Hot-fix: re-apply cap_net_bind_service to the xcaddy binary
+
+Critical v0.2.0 first-deploy bug. The new docker/caddy/Dockerfile
+`COPY --from=build /out/caddy /usr/bin/caddy` replaced the stock
+Caddy binary with our xcaddy build but did NOT preserve the
+file capability `cap_net_bind_service+ep` that the stock image
+bakes onto its `/usr/bin/caddy`. Docker COPY drops file caps.
+
+Result: Caddy starts, fails silently to bind `:443`, falls back
+to `:8443` (and `:8080` for `:80`'s alternate). The container is
+"healthy" from compose's POV, the host port mapping
+`0.0.0.0:443->443/tcp` survives, but nothing listens on the
+container side of :443 so every external connection is refused.
+
+### Fixed
+
+  **docker/caddy/Dockerfile** — added `RUN setcap
+  cap_net_bind_service=+ep /usr/bin/caddy` immediately after the
+  COPY, with a `getcap` verification pinned to fail the build if
+  the cap doesn't stick. `cap_add: NET_BIND_SERVICE` in
+  docker-compose.yml is necessary but NOT sufficient: the
+  container needs the cap in its effective set AND the binary
+  needs the file-cap so the cap inherits across exec without
+  ambient-cap kernel features the alpine image doesn't enable.
+
+  Symptom (observed on the 2026-05-16 Vultr deploy): ss inside
+  the container showed `:::8443 LISTEN` / `:::8444 LISTEN`
+  instead of `:::443`. macOS client connections to
+  `https://naive.<domain>:443` hung at the SOCKS forward step
+  (the upstream :443 wasn't reachable).
+
+### Operator note
+
+  Affects every v0.2.0 deploy. The bug is in the image; existing
+  v0.2.0 deploys need to either rebuild caddy after pulling
+  v0.2.1, or apply the cap-restore inline:
+
+      docker compose exec -T --user 0 caddy \
+          setcap cap_net_bind_service=+ep /usr/bin/caddy
+      docker compose restart caddy
+
+  The latter is the hot-patch — survives until the next rebuild,
+  at which point `./ct update` pulls the v0.2.1 Dockerfile change
+  and bakes the cap in.
+
+---
+
 ## [0.2.0] — 2026-05-16 — Architecture cut: sing-box + HAProxy collapse into Caddy+forwardproxy
 
 Real-incident-driven simplification. After the 2026-05-16 macOS-
