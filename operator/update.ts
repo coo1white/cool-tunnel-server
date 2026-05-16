@@ -205,41 +205,71 @@ number are usually enough to diagnose.`,
 }
 
 async function rebuildImages(): Promise<void> {
-    step("Rebuild sing-box + panel + haproxy");
-    // Same live-streaming rationale as rebuildCore — see comment there.
-    const r = await runStreaming($`docker compose build sing-box panel haproxy`);
+    step("Rebuild caddy + panel images");
+    // v0.2.0+: caddy + panel only. sing-box and haproxy services
+    // retired in the architecture cut. Same live-streaming rationale
+    // as rebuildCore.
+    const r = await runStreaming($`docker compose build caddy panel`);
     if (!r.ok) {
         dieWithDiag(
-            "sing-box / panel / haproxy build failed",
+            "caddy / panel build failed",
             `Common causes (in priority order):
   - Out of disk             ->  df -h /var/lib/docker
                                 then docker system prune -af
-  - APK / PECL transient    ->  retry: ./ct update
+  - xcaddy / Go transient   ->  retry: ./ct update
+                                (Caddy is built with the
+                                klzgrad/forwardproxy plugin via
+                                xcaddy; first build pulls a Go
+                                dep graph from proxy.golang.org)
   - Composer.lock conflict  ->  this was the v0.0.95 class
                                 of bug -- check the entrypoint
                                 output for "platform-req" errors
 
 The build prints which Dockerfile step failed; that pinpoints
-which image (sing-box / panel / haproxy) and which line.`,
+which image (caddy / panel) and which line.`,
         );
     }
 }
 
-async function fixHaproxyAdminVolume(): Promise<void> {
-    step("Ensure haproxy_admin volume ownership (one-time fix for pre-v0.0.51 deploys)");
-    const ls = await capture($`docker volume ls --format ${"{{.Name}}"}`);
-    const vol = ls.ok
-        ? ls.stdout.split("\n").find((l) => /_haproxy_admin$/.test(l.trim()))
-        : null;
-    if (!vol) {
-        ok("haproxy_admin volume not yet created (fresh deploy)");
-        return;
+// v0.2.0 migration: detect v0.1.x containers (sing-box, haproxy)
+// left over from before the architecture cut and stop+remove them
+// so the new Caddy on :443 can bind without a port-collision war.
+//
+// Idempotent — running this on a freshly-cut v0.2.0 deploy that
+// never had sing-box / haproxy is a clean no-op.
+//
+// Rollback note: image tags are NOT preserved here; a clean
+// downgrade path is `git checkout v0.1.20 && ./ct update`, which
+// re-introduces the sing-box and haproxy services via the v0.1.x
+// docker-compose.yml. The image tags `cool-tunnel-server-singbox:
+// latest` and `cool-tunnel-server-haproxy:latest` linger in the
+// local docker registry until `docker image prune -a`; for the
+// 30-day rollback window we recommend operators run `docker image
+// tag cool-tunnel-server-singbox:latest cool-tunnel-server-
+// singbox:v0.1.20-rollback` BEFORE running ./ct update if they
+// expect to downgrade. (Auto-tagging the rollback target is a
+// v0.2.1+ feature; cost-benefit doesn't yet justify the diff.)
+async function stopLegacyV01Containers(): Promise<void> {
+    step("v0.2.0 migration — stop v0.1.x sing-box + haproxy containers (if present)");
+    let stopped = 0;
+    for (const name of ["ct-singbox", "ct-haproxy"]) {
+        const ps = await capture($`docker ps -aq --filter ${`name=^${name}$`}`);
+        if (!ps.ok || !ps.stdout.trim()) {
+            continue;
+        }
+        const id = ps.stdout.trim();
+        // `docker compose down` won't touch these — they're no longer
+        // listed in the v0.2.0 compose. Stop + rm directly. -t 15
+        // gives sing-box / haproxy 15s to drain in-flight conns
+        // before SIGKILL; matches their compose-default stop_grace_period.
+        await capture($`docker stop -t 15 ${id}`);
+        await capture($`docker rm -f ${id}`);
+        ok(`stopped + removed legacy container ${name} (${id.slice(0, 12)})`);
+        stopped++;
     }
-    const r = await capture(
-        $`docker run --rm --user root --entrypoint chown -v ${`${vol.trim()}:/v`} haproxy:3.0.21-alpine -R haproxy:haproxy /v`,
-    );
-    if (r.ok) ok("haproxy_admin ownership verified");
-    else ok("haproxy_admin chown skipped (volume may be empty or already correct)");
+    if (stopped === 0) {
+        ok("no legacy v0.1.x containers present (fresh v0.2.0 deploy or already migrated)");
+    }
 }
 
 async function panelEntrypointDone(): Promise<boolean> {
@@ -250,11 +280,16 @@ async function panelEntrypointDone(): Promise<boolean> {
 }
 
 async function bringNewImagesUp(): Promise<void> {
-    step("Bring new panel image up (entrypoint runs migrate + render)");
-    const r = await capture($`docker compose up -d panel sing-box haproxy`);
+    step("Bring new panel + caddy images up (entrypoint runs migrate + render)");
+    // v0.2.0+: caddy + panel only. sing-box + haproxy are no longer in
+    // compose. The panel container's entrypoint shells out to
+    // ct-server-core caddyfile render on startup, so by the time
+    // bringNewImagesUp returns, /etc/caddy/Caddyfile is on disk and
+    // caddy is reading from it.
+    const r = await capture($`docker compose up -d panel caddy`);
     if (!r.ok) {
         dieWithDiag(
-            "compose up -d panel sing-box haproxy failed",
+            "compose up -d panel caddy failed",
             r.stderr.split("\n").slice(0, 5).join("\n") || "check `docker compose ps`",
         );
     }
@@ -286,50 +321,40 @@ async function migrateDb(): Promise<void> {
     }
 }
 
-async function renderSingBox(): Promise<void> {
-    step("Re-render sing-box config");
+async function renderCaddyfile(): Promise<void> {
+    step("Re-render Caddyfile");
+    // v0.2.0+: a single render covers the role formerly split across
+    // singbox render + haproxy render. The renderer pulls
+    // ProxyAccount rows + ServerConfig and emits the consolidated
+    // Caddyfile (panel reverse_proxy + forward_proxy basic_auth +
+    // probe_resistance). See core/ct-server-core/src/caddy/mod.rs.
     const r = await capture(
-        $`docker compose exec -T panel ct-server-core --json singbox render`,
+        $`docker compose exec -T panel ct-server-core --json caddyfile render`,
     );
     if (!r.ok) {
-        dieWithDiag("ct-server-core singbox render failed", r.stderr.split("\n")[0] ?? "");
+        dieWithDiag("ct-server-core caddyfile render failed", r.stderr.split("\n")[0] ?? "");
     }
 }
 
-async function assertCredentialLock(): Promise<void> {
-    step("Assert credential lock (db = rendered = manifest = Mac config)");
+async function reloadCaddy(): Promise<void> {
+    step("Reload Caddy (graceful — drains in-flight connections)");
+    // v0.2.0+ replacement for the v0.1.x reloadSingBox + reloadHaproxy
+    // chain. Caddy's reload is graceful + zero-downtime — in-flight
+    // forward_proxy connections drain naturally as the new config
+    // picks up new ones. Implementation: `docker exec ct-caddy caddy
+    // reload --config /etc/caddy/Caddyfile`. Caddy validates the
+    // new config BEFORE swapping; a parse error leaves the running
+    // config in place (fail-closed; matches singbox::reload's posture).
     const r = await capture(
-        $`docker compose exec -T panel ct-server-core guard credential-lock`,
+        $`docker compose exec -T panel ct-server-core caddyfile reload`,
     );
     if (!r.ok) {
         dieWithDiag(
-            "credential-lock guard reports NG",
-            "run: ct fix    (recipe credential_drift will re-render + restart sing-box)",
+            "ct-server-core caddyfile reload failed",
+            r.stderr.split("\n")[0] ??
+                "check `docker compose logs --tail=40 caddy` and that ct-caddy is running",
         );
     }
-}
-
-async function reloadSingBox(): Promise<void> {
-    step("Reload sing-box and purge stale runtime state");
-    await capture($`docker compose exec -T panel ct-server-core server reload`);
-    await capture($`docker compose restart sing-box`);
-}
-
-async function renderHaproxy(): Promise<void> {
-    step("Re-render haproxy config (v0.0.51)");
-    const r = await capture($`docker compose exec -T panel ct-server-core haproxy render`);
-    if (!r.ok) {
-        dieWithDiag("ct-server-core haproxy render failed", r.stderr.split("\n")[0] ?? "");
-    }
-}
-
-async function reloadHaproxy(): Promise<void> {
-    step("Reload haproxy (SIGHUP — graceful re-exec)");
-    await capture($`docker compose kill -s HUP haproxy`);
-    // v0.1.3 belt-and-suspenders: ensure haproxy is up after the
-    // SIGHUP-induced re-exec (sometimes exits rather than reloads).
-    await capture($`docker compose up -d haproxy`);
-    await new Promise((r) => setTimeout(r, 2000));
 }
 
 async function fetchOperatorBinary(): Promise<void> {
@@ -368,7 +393,12 @@ export async function runUpdate(): Promise<number> {
     if (!disk.ok) dieOnFailure(disk.failure);
     else ok(disk.summary ?? "disk ok");
 
-    const stack = await checkStackUp(["panel", "sing-box", "haproxy"]);
+    // v0.2.0: the live services are caddy + panel + db + redis.
+    // sing-box and haproxy may still be running on a pre-v0.2.0
+    // deploy — those are not a failure case here, they're picked up
+    // and stopped by stopLegacyV01Containers() below after git pull
+    // brings in the v0.2.0 compose.
+    const stack = await checkStackUp(["panel", "caddy"]);
     if (!stack.ok) dieOnFailure(stack.failure);
     else if (stack.missing.length > 0) warn(stack.summary);
     else ok(stack.summary);
@@ -391,16 +421,19 @@ export async function runUpdate(): Promise<number> {
 
     await gitPullFfOnly();
     await autoMigrateEnv();
+    // v0.2.0 migration step: stop v0.1.x sing-box + haproxy
+    // containers if they're still running. Idempotent — no-op on a
+    // fresh v0.2.0 deploy. MUST run after gitPullFfOnly (so the
+    // new compose is on disk) and BEFORE rebuildImages (so the new
+    // caddy image build doesn't race the old caddy's :443 with
+    // haproxy's stale :443 binding).
+    await stopLegacyV01Containers();
     await rebuildCore();
     await rebuildImages();
-    await fixHaproxyAdminVolume();
     await bringNewImagesUp();
     await migrateDb();
-    await renderSingBox();
-    await assertCredentialLock();
-    await reloadSingBox();
-    await renderHaproxy();
-    await reloadHaproxy();
+    await renderCaddyfile();
+    await reloadCaddy();
 
     step("Component check (post-swap)");
     const cc = await runComponentCheckStrict();
