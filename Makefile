@@ -226,13 +226,6 @@ manifests-jq: ## jq parse every manifests/*.json
 
 .PHONY: manifest-lockstep
 manifest-lockstep: ## verify manifest pins match local deployment sources
-	@naive_arg=$$(sed -n -E 's/^ARG NAIVE_VERSION=v?(.+)/\1/p' docker/panel/Dockerfile | head -n1); \
-	naive_manifest=$$(jq -r '.version' manifests/naiveproxy-client.upstream.json); \
-	case "$$naive_arg" in "$$naive_manifest"| "$$naive_manifest"-*) ;; \
-	    *) echo "naiveproxy-client manifest drift: Dockerfile=$$naive_arg manifest=$$naive_manifest" >&2; \
-	    exit 1; \
-	    ;; \
-	esac
 	@credential_pin=$$(jq -r '.version' manifests/credential-lock.upstream.json); \
 	if [ "$$credential_pin" != "db=rendered=manifest=mac-config" ]; then \
 	    echo "credential-lock manifest drift: $$credential_pin" >&2; \
@@ -475,8 +468,7 @@ set-component-version: ## bump component version across compose + Dockerfile + m
 	    echo '  haproxy  — docker/haproxy/Dockerfile (FROM) + manifest'; \
 	    echo ''; \
 	    echo 'manifest-only components:'; \
-	    echo '  caddy, ct-protocol, ct-server-core, doh-resolver,'; \
-	    echo '  naiveproxy, naiveproxy-client, panel'; \
+	    echo '  caddy, ct-protocol, ct-server-core, doh-resolver, panel'; \
 	    exit 1; \
 	fi
 	@if [ ! -f manifests/$(COMPONENT).upstream.json ]; then \
@@ -532,14 +524,6 @@ set-component-version: ## bump component version across compose + Dockerfile + m
 pin-images: ## resolve current docker base-image tags to digests; updates Dockerfiles in place
 	@if ! command -v docker >/dev/null; then echo 'docker not on PATH'; exit 1; fi
 	cd operator && bun run pin-images.ts
-
-.PHONY: sync-naive-pin
-sync-naive-pin: ## rewrite docker/{naive,panel}/Dockerfile ARG defaults to match manifests/naive.upstream.json (the v0.3.0 single-source-of-truth)
-	cd operator && bun run sync-naive-pin.ts
-
-.PHONY: check-naive-pin
-check-naive-pin: ## verify docker/{naive,panel}/Dockerfile ARG defaults match manifests/naive.upstream.json; exit non-zero on drift (CI / pre-build gate)
-	cd operator && bun run sync-naive-pin.ts --check
 
 .PHONY: sbom
 sbom: ## generate CycloneDX SBOMs for cargo + composer + docker
