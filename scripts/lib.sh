@@ -163,6 +163,29 @@ load_env() {
     set +a
 }
 
+# ---------- Portable filesystem helpers ----------------------------
+
+# file_mode_octal <path>
+#
+# Print the file's mode as an octal string (e.g. `0600`, `644`).
+# Portable across GNU coreutils (`stat -c '%a'`) and BSD/macOS
+# (`stat -f '%OLp'`). Round-21 cross-platform audit: install.sh
+# previously used `stat -c '%a'` directly, which fails on macOS
+# (and any BSD) with `stat: illegal option -- c` — confusing for
+# a developer trying to run install.sh outside Linux for testing.
+# Same invariant on output (octal digits) regardless of host
+# coreutils flavour.
+file_mode_octal() {
+    local path="$1"
+    if stat -c '%a' "$path" 2>/dev/null; then
+        return 0
+    fi
+    if stat -f '%OLp' "$path" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 # ---------- Asynchronous waits -------------------------------------
 
 # wait_for <description> <max_attempts> <sleep_seconds> <command...>
@@ -228,6 +251,16 @@ prompt_yn() {
 }
 
 # ---------- Docker helpers -----------------------------------------
+
+# require_docker
+#
+# Verify Docker + Compose v2 are usable.
+require_docker() {
+    require_cmd docker "Install per docs/installation-debian.md (uses Docker's official apt repo)."
+    docker compose version >/dev/null 2>&1 \
+        || die "docker compose v2 not available" \
+               "Install with: apt install -y docker-compose-plugin"
+}
 
 # disable_ipv6_if_broken
 #
@@ -299,6 +332,67 @@ compose() {
     docker compose "$@"
 }
 
+# compose_project_name
+#
+# Print the docker-compose project name docker-compose itself will
+# use for THIS working directory. Honours `COMPOSE_PROJECT_NAME`
+# env override + any `name:` field in compose files; falls back to
+# directory basename otherwise (which is docker-compose's default).
+#
+# Round-24 operator-workflow audit: backup.sh + restore.sh
+# previously hardcoded `cool-tunnel-server_caddy_data` as the
+# volume name, assuming the project name is exactly
+# `cool-tunnel-server`. An operator running parallel deployments
+# (e.g. `/opt/ct-prod/` and `/opt/ct-staging/`) would get
+# different project names per deployment, but both backup/restore
+# scripts would still target `cool-tunnel-server_caddy_data` —
+# silently overwriting one deployment's ACME certs with the
+# other's on restore. This helper sources the truth from
+# docker-compose itself.
+#
+# Requires `compose ps` to work (i.e. valid compose files in the
+# CWD). Caller should `require_docker` first.
+compose_project_name() {
+    local name
+    name=$(docker compose config --format json 2>/dev/null \
+        | jq -r '.name // empty' 2>/dev/null) || true
+    if [[ -z "$name" ]]; then
+        # Fallback: docker-compose's default project-name rule is
+        # the basename of the project directory, lowercased and
+        # stripped of any non-alphanumeric chars (cf. compose v2
+        # docs). Most repo dirs match the rule already; the
+        # transform here is a defensive cleanup.
+        name="$(basename "$(pwd)" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')"
+    fi
+    printf '%s\n' "$name"
+}
+
+# acquire_op_lock
+#
+# Take an exclusive, non-blocking flock for the lifetime of the
+# calling script. Per-project (round-24 multi-deploy: prod and
+# staging on the same host don't serialise against each other);
+# shared across install/update/backup/restore so any of them
+# blocks the others. fd 9 is well outside typical script use; the
+# kernel releases the lock on process exit, so no manual cleanup
+# is needed (even on `kill -9` the fd closes and flock drops).
+# See CHANGELOG [0.0.80].
+acquire_op_lock() {
+    require_cmd flock "apt install -y util-linux"
+    local project lock_path
+    project=$(compose_project_name)
+    lock_path="/tmp/cool-tunnel-ops-${project}.lock"
+
+    # shellcheck disable=SC2188  # the redirect IS the side effect (fd 9 open)
+    exec 9>"$lock_path" \
+        || die "could not open lock file $lock_path" \
+               "check /tmp permissions and disk space"
+    if ! flock -n 9; then
+        die "another cool-tunnel operator script is already running for project '${project}'" \
+            "lockfile: $lock_path  (try: lsof '$lock_path' to see who holds it)"
+    fi
+}
+
 # component_check_strict [<manifests-dir>]
 #
 # Run the Rust component checker and fail when any row reports NG.
@@ -326,213 +420,4 @@ component_check_strict() {
 
     rm -f "$out"
     return 0
-}
-
-# ---------- Diagnostic-block error reporting -----------------------
-#
-# `die` (above) prints a one-line failure + one-line "↳ try:" hint.
-# Good for the common case. Inadequate when the operator needs
-# multi-line context to act — e.g. "git pull blocked by uncommitted
-# changes" needs to show *what* is uncommitted, *why* it's blocking,
-# and *which three options* the operator can choose.
-#
-# `die_with_diag` is for those cases. Caller passes a one-line
-# summary + a multi-line body (printed verbatim, indented). The
-# body is heredoc-friendly — see update.sh for canonical examples.
-
-# die_with_diag <summary> <body>
-#
-# Print:  ✗ FAILED <summary>
-#         Diagnostic:
-#           <body, line-by-line, indented 2 spaces>
-# Then exit 1.
-die_with_diag() {
-    local summary="$1"
-    shift || true
-    local body="${*:-}"
-    printf "\n%s✗ FAILED%s %s\n" "${CT_RED}${CT_BOLD}" "${CT_RESET}" "$summary" >&2
-    if [[ -n "$body" ]]; then
-        printf "\n%sDiagnostic:%s\n" "${CT_BOLD}" "${CT_RESET}" >&2
-        printf '%s\n' "$body" | sed 's/^/  /' >&2
-        printf "\n" >&2
-    fi
-    exit 1
-}
-
-# ---------- Pre-flight bundle (v0.0.96 maintain-UX rewrite) -------
-#
-# The helpers in this section are designed to run at the TOP of any
-# operator-facing maintain script (update.sh, install.sh, restore.sh).
-# Each one either:
-#   - passes silently / with one `ok` line, or
-#   - dies with a `die_with_diag` block that tells the operator what
-#     to do next.
-#
-# Operator-tested rule: an error block must contain (1) the failure,
-# (2) a plain-English diagnosis, (3) ≥ 2 concrete commands to try.
-# A one-line "↳ try: stash or commit your local edits first" is not
-# enough — that's the gap v0.0.96 closes.
-
-# preflight_clean_tree
-#
-# Refuse to proceed when the git working tree has uncommitted
-# changes. Interactive: shows a stat summary + diff preview, then
-# offers stash / discard / abort. Non-interactive: prints a
-# diagnostic block and exits (never silently overwrites local state).
-#
-# Returns 0 (tree clean or stash succeeded) or dies. Tested on the
-# v0.0.95 production incident where an operator hand-rolled-back
-# v0.0.93 directly on the VPS, then `update.sh`'s `git pull` died
-# with a generic "uncommitted changes?" message that left them
-# stuck.
-preflight_clean_tree() {
-    if git diff --quiet HEAD 2>/dev/null \
-       && git diff --quiet --cached 2>/dev/null; then
-        ok "working tree clean"
-        return 0
-    fi
-
-    printf "\n  %s!%s Working tree has uncommitted changes:\n\n" \
-        "${CT_YELLOW}" "${CT_RESET}" >&2
-    git diff --stat HEAD 2>/dev/null | sed 's/^/    /' >&2
-    printf "\n  Preview (first 30 lines of diff):\n" >&2
-    git diff HEAD 2>/dev/null | head -30 | sed 's/^/    /' >&2
-    printf "\n" >&2
-
-    if [[ ! -t 0 ]]; then
-        # `read -r -d ''` pattern (not `$(cat <<EOF...)`) because
-        # the latter triggers a bash parser bug: parentheses
-        # inside the heredoc body confuse the substitution's
-        # paren-counter and produce "unexpected EOF" errors.
-        # `read -d ''` reads to NUL (which is never present in
-        # the heredoc), hits EOF, returns non-zero — hence the
-        # trailing `|| true`. Used consistently across lib.sh.
-        local diag
-        read -r -d '' diag <<'EOF' || true
-Running non-interactively, so this script will not auto-decide.
-
-To preserve the edits and proceed:
-  git stash push -u -m "preflight-$(date -u +%Y%m%dT%H%M%SZ)"
-  ./scripts/update.sh
-
-To discard the edits and proceed:
-  git checkout -- .
-  ./scripts/update.sh
-
-To inspect what is there before deciding:
-  git diff HEAD
-  git stash list   # if you have stashed before
-EOF
-        die_with_diag "uncommitted changes block git pull" "$diag"
-    fi
-
-    local choice
-    while true; do
-        printf "  How do you want to proceed?\n" >&2
-        printf "    [s] stash with timestamp label (preserves edits, recoverable via 'git stash pop')\n" >&2
-        printf "    [d] discard local edits (NOT recoverable)\n" >&2
-        printf "    [a] abort — I'll handle it manually\n" >&2
-        printf "  choice [s/d/a]: " >&2
-        IFS= read -r choice
-        case "${choice:-a}" in
-            s|S)
-                local label
-                label="preflight-$(date -u +%Y%m%dT%H%M%SZ)"
-                if git stash push -u -m "$label"; then
-                    ok "stashed as '$label' (recover with: git stash pop)"
-                    return 0
-                else
-                    local stash_diag
-                    read -r -d '' stash_diag <<'EOF' || true
-git refused to stash -- usually means the index is in a
-broken state. Inspect with:
-  git status
-  git stash list
-If you see an in-progress merge / rebase / cherry-pick:
-  git merge --abort  (or rebase --abort, etc.)
-EOF
-                    die_with_diag "git stash failed" "$stash_diag"
-                fi
-                ;;
-            d|D)
-                if prompt_yn "Discard ALL uncommitted changes to TRACKED files? (untracked files preserved)" n; then
-                    git checkout -- .
-                    ok "tracked-file changes reverted (untracked files left alone)"
-                    return 0
-                fi
-                continue
-                ;;
-            a|A)
-                local abort_diag
-                read -r -d '' abort_diag <<'EOF' || true
-You chose to handle this manually. The diff is shown above.
-When ready to retry, run:
-  ./scripts/update.sh
-EOF
-                die_with_diag "aborted on uncommitted changes" "$abort_diag"
-                ;;
-            *)
-                printf "    please answer s, d, or a\n" >&2
-                continue
-                ;;
-        esac
-    done
-}
-
-# preflight_stack_up <service...>
-#
-# Verify each named compose service has at least one container in
-# `running` or `restarting` state. `restarting` counts as "up" so
-# we don't refuse to operate during the very crisis we're trying
-# to recover from (the v0.0.94 restart-loop on production was the
-# motivating case).
-#
-# Dies with a "did you mean install.sh?" diagnostic when ALL
-# services are down — that's almost always operator confusion
-# about which script to run on a fresh box.
-preflight_stack_up() {
-    local services=("$@")
-    if (( ${#services[@]} == 0 )); then
-        ok "preflight_stack_up: no services specified, skipping"
-        return 0
-    fi
-
-    local missing=() running_count=0
-    for svc in "${services[@]}"; do
-        if docker compose ps --status running --status restarting --services 2>/dev/null \
-                | grep -qxF "$svc"; then
-            running_count=$((running_count + 1))
-        else
-            missing+=("$svc")
-        fi
-    done
-
-    if (( ${#missing[@]} == 0 )); then
-        ok "stack is up (${running_count}/${#services[@]} services running)"
-        return 0
-    fi
-
-    if (( running_count == 0 )); then
-        local stack_diag
-        stack_diag=$(printf '%s\n' \
-            "None of the expected services are running:" \
-            "  ${services[*]}" \
-            "" \
-            "You probably want install.sh, not update.sh. update.sh assumes a" \
-            "live stack and reuses its volumes + cache." \
-            "" \
-            "What to do:" \
-            "  First-time setup on a fresh box:" \
-            "    ./scripts/install.sh" \
-            "" \
-            "  Stack was running and crashed:" \
-            "    docker compose ps                # what is the state?" \
-            "    docker compose logs --tail=80    # what blew up?" \
-            "    docker compose up -d             # bring it back up" \
-            "    ./scripts/update.sh              # then update")
-        die_with_diag "stack is entirely down" "$stack_diag"
-    fi
-
-    warn "stack is partially up — these services are NOT running: ${missing[*]}"
-    warn "update will try to bring them back up alongside the rebuild"
 }

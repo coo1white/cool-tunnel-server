@@ -122,7 +122,15 @@ cd "$INSTALL_DIR"
 
 if [ ! -f .env ]; then
     cp .env.example .env
-    log "scaffolded $INSTALL_DIR/.env"
+    # Tighten before secrets land in this file. `cp` inherits the
+    # operator's umask (0022 on Debian → 0644), but install.sh's
+    # R2-1 audit gate refuses to proceed on a world-readable .env
+    # (APP_KEY + DB credentials would leak via the filesystem).
+    # Without this chmod the very next step blocks the operator
+    # with a confusing "world-readable / try: chmod 0600 .env"
+    # message on a file THIS script just created.
+    chmod 0600 .env
+    log "scaffolded $INSTALL_DIR/.env (mode 0600)"
 
     # generate random passwords for any unset/changeme placeholder
     gen_pass() { openssl rand -base64 30 | tr -d '/=+' | cut -c1-32; }
