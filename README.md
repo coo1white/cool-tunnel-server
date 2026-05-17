@@ -92,6 +92,7 @@ and a deterministic daemon FSM). For diagrams and rationale, see
 | Deep Debian-specific install reference | [docs/installation-debian.md](./docs/installation-debian.md) |
 | Update / backup / rotate passwords / debug | [docs/operations.md](./docs/operations.md) |
 | Troubleshoot a specific failure | [docs/operator-runbook.md](./docs/operator-runbook.md) |
+| Smoke-test a release on a throwaway VPS | [docs/test-vps.md](./docs/test-vps.md) |
 | Understand the architecture | [docs/architecture.md](./docs/architecture.md) |
 | Look up a term | [docs/glossary.md](./docs/glossary.md) |
 | Read the design rationale for v0.x decisions | [docs/architectural-decisions-2026.md](./docs/architectural-decisions-2026.md) |
