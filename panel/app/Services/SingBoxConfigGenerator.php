@@ -162,12 +162,18 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
             throw new \RuntimeException('reality_dest_host is empty');
         }
 
-        $shortIds = is_array($cfg->reality_short_ids) ? $cfg->reality_short_ids : [];
+        // PHPStan can't see through the eloquent-cast type for
+        // reality_short_ids; spell the narrowing out as in
+        // SubscriptionController.
+        /** @var array<int,mixed> $shortIds */
+        $shortIds = is_array($cfg->reality_short_ids)
+            ? array_values($cfg->reality_short_ids)
+            : [];
         // The renderer always wants at least one short_id; the empty
         // string is the conventional "no short_id challenge" entry.
-        $normalisedShortIds = empty($shortIds)
+        $normalisedShortIds = $shortIds === []
             ? ['']
-            : array_values(array_map('strval', $shortIds));
+            : array_map('strval', $shortIds);
 
         // Only enabled, non-expired, in-quota accounts get rendered
         // into singbox.json. Filtering at the panel layer (vs. having

@@ -12,7 +12,11 @@ import {
 const SERVER_INPUT: ServerRenderInput = {
     domain: "naive.example.com",
     listen_port: 443,
-    reality_private_key: "EFOpHzZ8eSPQjGr5Tg2cFGSXgC7y5sN3yMpZJ_TT-Eo",
+    // Low-entropy placeholder — the renderer doesn't crypto-validate;
+    // it just plumbs the value into the rendered sing-box config.
+    // High-entropy base64url-shaped strings here trip the
+    // gitleaks `generic-api-key` rule as a false positive.
+    reality_private_key: "TEST-PRIVATE-KEY-PLACEHOLDER",
     reality_short_ids: [""],
     reality_dest_host: "www.microsoft.com",
     reality_dest_port: 443,

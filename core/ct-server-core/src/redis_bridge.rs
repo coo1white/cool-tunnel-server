@@ -154,10 +154,7 @@ fn lock_tracker(t: &Mutex<FlushTracker>) -> std::sync::MutexGuard<'_, FlushTrack
 /// reconnect-after-error and on every successful reload-fire. None
 /// when the operator hasn't enabled the `--metrics-bind` endpoint —
 /// no observability cost in that case.
-pub fn spawn(
-    redis_url: String,
-    metrics: Option<Arc<MetricsRegistry>>,
-) -> JoinHandle<()> {
+pub fn spawn(redis_url: String, metrics: Option<Arc<MetricsRegistry>>) -> JoinHandle<()> {
     tokio::spawn(async move {
         // FlushTracker is shared between the subscriber loop (which
         // calls `coalescer.admit`) and the trailing-flush task

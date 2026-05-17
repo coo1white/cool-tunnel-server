@@ -668,7 +668,8 @@ async fn handle(req: WireRequestV1, pool: &MySqlPool) -> Result<WireResponseV1> 
         // error rather than a silent no-op.
         WireRequestV1::RenderCaddyfile => Err(Error::UnsupportedOperation {
             operation: "render_caddyfile",
-            message: "v0.4.0: panel-side SingBoxConfigGenerator renders directly via singbox-core; \
+            message:
+                "v0.4.0: panel-side SingBoxConfigGenerator renders directly via singbox-core; \
                       no daemon-side renderer remains. Use `ct-server-core caddyfile render` for \
                       Caddyfile-only renders.",
         }),

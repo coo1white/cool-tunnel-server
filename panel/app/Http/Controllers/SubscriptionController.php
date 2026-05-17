@@ -264,8 +264,15 @@ class SubscriptionController extends Controller
         // multi-short-id binding (per-account short_id rotation) is
         // a model concern; the manifest just picks one for the
         // client to plug into its outbound.
-        $shortIds = is_array($cfg->reality_short_ids) ? $cfg->reality_short_ids : [];
-        $shortId = (string) ($shortIds[0] ?? '');
+        // PHPStan can't see through the eloquent-cast type, so spell
+        // the narrowing out: array_values renumbers + asserts a
+        // list-shaped result; an empty-list check then gives a
+        // narrowed array<int,mixed> for the offset read.
+        /** @var array<int,mixed> $shortIds */
+        $shortIds = is_array($cfg->reality_short_ids)
+            ? array_values($cfg->reality_short_ids)
+            : [];
+        $shortId = $shortIds === [] ? '' : (string) $shortIds[0];
 
         // Capture wall-clock ONCE for both timestamps. Pre-fix this
         // called `time()` twice in succession on adjacent lines —

@@ -69,7 +69,6 @@ struct Cli {
     // The corresponding env vars in docker-compose are deprecated; if
     // they're set the binary silently ignores them (clap with no matching
     // arg is a no-op).
-
     /// Panel subdomain. Used by the Caddyfile renderer to attach
     /// Caddy auto-HTTPS for the panel cert. Defaults to
     /// `panel.${DOMAIN}` when unset; install.sh writes the chosen
