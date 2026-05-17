@@ -298,9 +298,9 @@ step "Build caddy image (stock Caddy 2 — ACME provider only, no plugins)"
 compose build caddy
 ok "caddy image built"
 
-step "Build sing-box image (downloads upstream pre-built binary)"
-compose build sing-box
-ok "sing-box image built"
+step "Build singbox image (downloads upstream sing-box binary)"
+compose build singbox
+ok "singbox image built"
 
 step "Build panel image (FrankenPHP + Composer + ct-server-core baked in)"
 warn "First panel build takes 8-15 min on a 1-vCPU VPS — most of the time"
@@ -337,7 +337,10 @@ compose up -d panel
 #   2. php artisan key:generate
 #   3. wait for db
 #   4. php artisan migrate (--force, swallows errors with `|| true`)
-#   5. {filament,config,route,view}:cache + caddyfile/singbox render
+#   5. {filament,config,route,view}:cache + Caddyfile render
+#      + singbox.json render (SingboxConfigGenerator → singbox-core
+#      render-server, writing to the singbox_config volume that
+#      ct-singbox file-watches)
 #   6. touch /tmp/cool-tunnel/entrypoint-complete (sentinel)
 #   7. exec supervisord (frankenphp/octane, queue, scheduler, ct-server-core daemon)
 #
@@ -377,26 +380,22 @@ fi
 compose exec -T panel php artisan db:seed --force --no-interaction || true
 ok "migrations applied + default seed in place"
 
-# ---------- Render the initial Caddyfile + sing-box + haproxy ------
+# ---------- Re-render Caddyfile after seed -------------------------
 
-step "Render initial Caddyfile + sing-box + haproxy configs from DB"
-# Render each config; track failures so the post-step `ok`
-# doesn't lie when a render actually failed (papercut spotted in
-# the v0.0.11 audit — operator saw "✗ FAILED" + "✓ rendered" on
-# the same step, misleading the eye to believe the step
-# succeeded).
+step "Re-render Caddyfile from the seeded DB"
+# v0.4.0: the panel entrypoint already rendered both Caddyfile
+# (ct-server-core caddyfile render) and singbox.json (via
+# SingboxConfigGenerator → singbox-core render-server) before its
+# sentinel landed. We re-render the Caddyfile here so any settings
+# the `db:seed` step just wrote (default DOMAIN / PANEL_DOMAIN /
+# ACME email rows) are reflected. singbox.json doesn't need an
+# explicit re-render: ct-singbox file-watches /data/config/
+# singbox.json and the panel-side renderer reruns whenever a
+# ProxyAccount or ServerConfig changes.
 caddy_render_ok=true
-singbox_render_ok=true
-haproxy_render_ok=true
 compose exec -T panel ct-server-core --json caddyfile render \
-    || { warn "Caddyfile render failed — Caddy will start with no domain configured"; caddy_render_ok=false; }
-compose exec -T panel ct-server-core --json singbox render \
-    || { warn "sing-box render failed — first proxy account creation will retry"; singbox_render_ok=false; }
-compose exec -T panel ct-server-core --json haproxy render \
-    || { warn "haproxy render failed — :443 SNI router will start with no rules"; haproxy_render_ok=false; }
-[[ "$caddy_render_ok"   == true ]] && ok "Caddyfile rendered to /etc/caddy/Caddyfile (caddy_etc volume)"
-[[ "$singbox_render_ok" == true ]] && ok "config.json rendered to /etc/sing-box/config.json (singbox_etc volume)"
-[[ "$haproxy_render_ok" == true ]] && ok "haproxy.cfg rendered to /usr/local/etc/haproxy/haproxy.cfg (haproxy_etc volume)"
+    || { warn "Caddyfile re-render failed — Caddy will start with the entrypoint's render"; caddy_render_ok=false; }
+[[ "$caddy_render_ok" == true ]] && ok "Caddyfile re-rendered to /etc/caddy/Caddyfile (caddy_etc volume)"
 
 # ---------- Start Caddy first; wait for both certs to land --------
 
@@ -485,8 +484,8 @@ warn "    docker compose logs -f --tail=80 caddy"
 
 # Wait for both cert files to appear in the shared caddy_data
 # volume. Path is /data/caddy/certificates/<ca>/<domain>/<domain>.crt
-# — see core/ct-server-core/src/singbox/mod.rs::cert_paths() for
-# derivation.
+# — derived from Caddy's on-disk ACME storage layout, mirrored by
+# the singbox supervisor that file-watches the apex cert.
 ca_folder="acme-v02.api.letsencrypt.org-directory"
 case "${ACME_DIRECTORY:-}" in
     *staging*) ca_folder="acme-staging-v02.api.letsencrypt.org-directory" ;;
@@ -509,18 +508,14 @@ WAIT_FOR_HINT="$caddy_acme_hint" wait_for "Caddy cert (apex) at ${apex_cert_path
 WAIT_FOR_HINT="$caddy_acme_hint" wait_for "Caddy cert (panel) at ${panel_cert_path}" 45 2 \
     bash -c "docker compose exec -T caddy test -f \"$panel_cert_path\""
 
-# ---------- Start sing-box + haproxy (now that the certs exist) ---
+# ---------- Start singbox (now that the certs exist) --------------
 
-step "Start sing-box (reads apex cert from caddy_data volume)"
-compose up -d sing-box
-ok "sing-box running on internal :443 (TCP only — NaiveProxy is HTTP/2-only)"
-ok "  no host port mapping; haproxy fronts :443 and forwards by SNI"
-
-step "Start haproxy (SNI router on :443; routes to sing-box or caddy:8444)"
-compose up -d haproxy
-ok "haproxy running on :443 (TCP/SSL-passthrough — no TLS decryption here)"
-ok "  SNI=${DOMAIN:-?} → sing-box (NaiveProxy)"
-ok "  SNI=${PANEL_DOMAIN:-?} → caddy:8444 → panel"
+step "Start singbox (reads apex cert from caddy_data, singbox.json from singbox_config)"
+compose up -d singbox
+ok "singbox running (sing-box VLESS+Reality, supervised by singbox-core)"
+ok "  Caddy's layer-4 SNI splitter routes :443 traffic:"
+ok "    SNI=${DOMAIN:-?}       → singbox (VLESS+Reality)"
+ok "    SNI=${PANEL_DOMAIN:-?} → inner panel listener"
 
 # ---------- Create first Filament admin ----------------------------
 
@@ -554,9 +549,9 @@ ${CT_BOLD}${CT_GREEN}Cool Tunnel Server is up.${CT_RESET}
 
   Panel         https://${PANEL_DOMAIN}/admin
   Subscription  https://${PANEL_DOMAIN}/api/v1/subscription/<token>
-                  (issued from the panel)
-  Proxy         naive+https://<user>:<pass>@${DOMAIN}:443
-                  (NaiveProxy clients connect here)
+                  (issued from the panel; clients import this URL
+                  rather than constructing a per-account proxy URL
+                  manually)
 
 What to do next:
 
