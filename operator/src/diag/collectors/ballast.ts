@@ -150,35 +150,25 @@ const CHECKS: Check[] = [
         },
     },
     {
-        slug: "singbox-admin",
+        slug: "singbox-running",
         title: "sing-box container running",
         async run() {
-            // v0.1.6 probed the host on port 9090, but the clash admin
-            // port is bound INSIDE the sing-box container only (project
-            // security policy — never expose the admin port to the host).
-            // From the host the check could never succeed even on a
-            // healthy deploy. Switch to a container-state assertion —
-            // mirrors panel-container, uses the same compose primitive.
+            // v0.1.6 probed the host on port 9090 (clash admin) — but
+            // the admin port was bound INSIDE the container only, so
+            // the check could never succeed from the host. v0.2.0+
+            // switched to a container-state assertion. v0.4.0 retired
+            // sing-box's clash admin API entirely (VLESS+Reality
+            // doesn't expose one), so the slug is now `singbox-running`
+            // and the compose service is `singbox` (renamed in #158).
             if (!(await which("docker"))) return { status: "warn", detail: "docker not on PATH" };
-            const r = await capture($`docker compose ps sing-box --status running --quiet`);
+            const r = await capture($`docker compose ps singbox --status running --quiet`);
             if (!r.ok) return { status: "fail", detail: r.stderr.split("\n")[0] ?? "compose ps failed" };
-            return r.stdout.trim() ? { status: "pass" } : { status: "fail", detail: "sing-box not running" };
+            return r.stdout.trim() ? { status: "pass" } : { status: "fail", detail: "singbox not running" };
         },
     },
-    {
-        slug: "haproxy-stats",
-        title: "HAProxy stats socket",
-        async run() {
-            const sock = "/var/run/haproxy.sock";
-            if (!(await which("socat"))) return { status: "warn", detail: "socat not on PATH" };
-            const r = await capture(
-                $`bash -c "echo 'show info' | socat - UNIX-CONNECT:${sock} 2>&1 | head -5"`,
-            );
-            return r.ok && r.stdout.includes("Name:")
-                ? { status: "pass" }
-                : { status: "warn", detail: "stats socket unreachable" };
-        },
-    },
+    // haproxy-stats ballast check retired in v0.4.0. HAProxy was
+    // removed from the stack in v0.2.0 (Caddy's layer-4 SNI splitter
+    // replaced it); the check has been a no-op warn ever since.
     {
         slug: "sot-parity",
         title: "Cross-language SoT parity (panel_domain)",
