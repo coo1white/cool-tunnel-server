@@ -18,24 +18,7 @@ mod db;
 mod domain;
 mod err;
 mod frame;
-// haproxy/ deleted in v0.2.0 (Caddy SNI-routes the panel reverse-proxy
-// itself; HAProxy front door is gone).
 mod internal_metrics;
-// naive/ retired in v0.4.0 — replaced by singbox-core (Bun TS package
-// bundled into the panel container). singbox/ + quota/ + metrics/ +
-// admin/ + credentials/ all deleted alongside the sing-box-via-Rust
-// renderer they hung off:
-//   - singbox::render rendered the v0.3.x naive inbound shape from
-//     a template; the v0.4.0 renderer is singbox-core's
-//     renderServerConfig, shelled to from PHP.
-//   - quota::enforce and metrics::collect both spoke to sing-box's
-//     clash admin API. v0.4.0 sing-box VLESS+Reality does not expose
-//     a clash API at all; per-user accounting is operator-side via
-//     `singbox-core supervise`'s healthz + the panel's revocation bus.
-//   - admin/ was the clash-API HTTP client used by quota + metrics.
-//   - credentials::assert_locked compared the rendered naive users[]
-//     against DB tuples; v0.4.0's equivalent check is
-//     `operator/src/util/drift-check.ts`'s parseSingboxJsonUsers.
 mod observability;
 mod redis_bridge;
 mod template;
@@ -94,20 +77,6 @@ enum Cmd {
         #[command(subcommand)]
         op: CaddyfileOp,
     },
-    // v0.4.0 — removed Cmd variants:
-    //   Singbox / SingboxOp  → renderer moved to singbox-core (Bun TS)
-    //   Server / ServerOp    → clash admin API doesn't exist on sing-box
-    //                          VLESS+Reality
-    //   Traffic / TrafficOp  → per-user counters came from clash-API
-    //   Quota / QuotaOp      → quota enforcement via clash-API reload
-    //   Guard / GuardOp      → credentials::assert_locked compared the
-    //                          v0.3.x naive users shape; v0.4.0's
-    //                          equivalent is operator/src/util/drift-check
-    //   Admin::ClashSecret   → derives a bearer for an API that's gone
-    //   Probe / ProbeOp      → bundled-naive anti-tracking probe; the
-    //                          naive binary was removed from the panel
-    //                          image in v0.4.0, so the probe was
-    //                          guaranteed-broken at runtime
     /// Long-running JSON-over-unix-socket daemon. Also subscribes
     /// to the Redis revocation channel for ≤100 ms Filament-to-
     /// sing-box reload propagation.
@@ -172,11 +141,6 @@ enum CanaryOp {
 
 #[derive(Subcommand, Debug)]
 enum AdminOp {
-    // v0.4.0 — `Admin::ClashSecret` removed. The clash API the secret
-    // gated doesn't exist on sing-box VLESS+Reality, and the upstream
-    // drift probe at manifests/sing-box.upstream.json is replaced in
-    // v0.4.0 by operator/src/util/version-bridge.ts (which shells to
-    // `singbox-core version --json`, not the clash /version endpoint).
     /// Print the resolved panel hostname to stdout. The Cycle 3
     /// `SoT` (v0.0.55) anchor — single source of truth for
     /// `panel.<base>` derivation, mirrored byte-for-byte by
@@ -187,12 +151,6 @@ enum AdminOp {
     /// errors loudly rather than producing `panel.` with no base.
     PanelDomain,
 }
-
-// GuardOp removed in v0.4.0 — credentials::assert_locked compared the
-// v0.3.x naive users shape against DB tuples; v0.4.0's equivalent
-// three-way drift check lives in operator/src/util/drift-check.ts
-// (DB UUID ⇄ rendered singbox.json users[] UUID ⇄ subscription
-// endpoint UUID).
 
 #[derive(Subcommand, Debug)]
 enum ComponentOp {
@@ -207,11 +165,6 @@ enum ComponentOp {
         manifests: String,
     },
 }
-
-// SingboxOp removed in v0.4.0 — the renderer is now singbox-core
-// (Bun TS), shelled to from panel-side SingBoxConfigGenerator. The
-// "validate" path moves into singbox-core supervise as well (sing-box
-// check runs in-container, not via this CLI).
 
 #[derive(Subcommand, Debug)]
 enum CaddyfileOp {
@@ -245,16 +198,6 @@ enum CaddyfileOp {
         output: String,
     },
 }
-
-// NaiveOp removed in v0.4.0 — see singbox-core/ for the replacement.
-//
-// HaproxyOp deleted in v0.2.0 (HAProxy SNI router replaced by Caddy
-// SNI routing). The `Cmd::Haproxy` dispatch arm + this enum landed
-// together in v0.0.33; both retired in the architecture cut.
-//
-// ServerOp / TrafficOp / QuotaOp deleted in v0.4.0 — all three were
-// thin clash-API wrappers; sing-box VLESS+Reality does not expose a
-// clash API.
 
 fn main() -> ExitCode {
     // tracing must write to stderr — `--json` render output emits
@@ -348,19 +291,6 @@ fn resolve_panel_domain(cli_value: &str) -> Result<String> {
 
 async fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
-        // v0.4.0 — removed dispatch arms:
-        //   Cmd::Singbox  → renderer is singbox-core (Bun TS) shelled
-        //                  to from panel-side SingBoxConfigGenerator
-        //   Cmd::Server   → clash admin API doesn't exist on sing-box
-        //                  VLESS+Reality
-        //   Cmd::Traffic  → per-user counters came from clash-API
-        //   Cmd::Quota    → quota enforcement via clash-API reload
-        //   Cmd::Guard    → credentials::assert_locked compared the
-        //                  v0.3.x naive users shape; replaced by
-        //                  operator/src/util/drift-check.ts
-        // Cmd::Naive dispatch removed in v0.4.0 (rendering moved to
-        // singbox-core/ Bun package). Cmd::Haproxy dispatch removed in
-        // v0.2.0 (Caddy SNI-routes the panel reverse-proxy itself).
         Cmd::Caddyfile { op } => match op {
             CaddyfileOp::Render {
                 dry_run,

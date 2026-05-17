@@ -173,11 +173,8 @@ impl Bindings {
 /// — operator-supplied fields like Domain / AcmeEmail / cert paths
 /// don't normally carry `"` or `\`, but a typo or paste of a Windows
 /// path would otherwise corrupt the rendered config.
-// Used by the Caddyfile renderer's defense-in-depth binding escape
-// posture. The v0.3.x sing-box renderer that consumed every binding
-// site of this helper is gone in v0.4.0; the public surface is kept
-// for the Caddyfile path which still escapes operator-supplied fields
-// before binding them into the Caddyfile template.
+// Used by the Caddyfile renderer for defense-in-depth escaping of
+// operator-supplied fields before binding them into the template.
 #[allow(dead_code)]
 #[must_use]
 pub fn json_escape(s: &str) -> String {

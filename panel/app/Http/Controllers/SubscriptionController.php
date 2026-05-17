@@ -32,14 +32,13 @@ use Illuminate\Support\Facades\RateLimiter;
 //
 // Top-level changes from v1:
 //   - `version`: 2 (was 1)
-//   - `server_singbox_pin`: replaces v0.3.x's `server_naive_pin`.
-//     Carries the upstream sing-box tag the panel container was
-//     built against ({"upstream_tag": "v1.13.12"}). The client
-//     compares against its own embedded singbox.upstream.json and
-//     soft-warns on mismatch. Optional — the controller omits the
-//     key when the SingboxPinReader can't shell to singbox-core
-//     (degraded deploy; the manifest still works, just no cross-end
-//     pin confirmation).
+//   - `server_singbox_pin`: carries the upstream sing-box tag the
+//     panel container was built against ({"upstream_tag":
+//     "v1.13.12"}). The client compares against its own embedded
+//     singbox.upstream.json and soft-warns on mismatch. Optional —
+//     the controller omits the key when the SingboxPinReader can't
+//     shell to singbox-core (degraded deploy; the manifest still
+//     works, just no cross-end pin confirmation).
 //   - `expires_at`: clamped to FRESHNESS_WINDOW (7 days). Pre-v0.4.0
 //     this was 30 days, which exceeded the spec-side replay window
 //     and made spec-compliant clients refuse manifests after day 7.

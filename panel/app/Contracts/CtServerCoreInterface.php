@@ -41,28 +41,11 @@ interface CtServerCoreInterface
     /** @return array<mixed> */
     public function renderCaddyfile(): array;
 
-    // renderSingBoxConfig() removed in v0.4.0 — SingBoxConfigGenerator
-    // now shells directly to /usr/local/bin/singbox-core render-server
-    // (the Bun-compiled binary bundled in the panel container) rather
-    // than going through ct-server-core's Rust renderer. See the
-    // SingBoxConfigGenerator head comment for the rationale.
-
-    // reloadSingBox / collectTraffic / enforceQuota removed in
-    // v0.4.0 — all three shelled into ct-server-core clash-API paths
-    // that sing-box VLESS+Reality doesn't expose. Caddy reload moved
-    // to renderCaddyfile + the artisan `caddyfile:reload` (which
-    // shells to `ct-server-core caddyfile reload`, still alive).
-
     /** @return array<mixed> */
     public function componentList(string $manifestsDir = '/srv/manifests'): array;
 
     /** @return array<mixed> */
     public function componentCheck(string $manifestsDir = '/srv/manifests'): array;
-
-    // probeAntiTracking() removed in v0.4.0 — the probe spawned a
-    // /usr/local/bin/naive subprocess that v0.4.0 no longer bundles
-    // in the panel image; the underlying ct-server-core `probe
-    // anti-tracking` subcommand is gone alongside.
 
     /** @return array<mixed> */
     public function canaryProbe(): array;

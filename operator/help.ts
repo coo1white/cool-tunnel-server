@@ -662,13 +662,6 @@ Repair recipes (per finding):
                             ./ct render singbox
 `,
     },
-    // The "wire-probe" topic was removed in v0.4.0 along with the
-    // `ct wire-probe` command. The probe spawned the upstream
-    // klzgrad/naiveproxy client to validate padding negotiation —
-    // v0.4.0 pivoted the proxy to sing-box VLESS+Reality, which has
-    // no padding extension. The class of bug it caught (binary
-    // versions that advertise the right `--version` but skip the
-    // padding header) is now structurally impossible.
 };
 
 export const TOPIC_SLUGS: readonly string[] = Object.keys(TOPICS);

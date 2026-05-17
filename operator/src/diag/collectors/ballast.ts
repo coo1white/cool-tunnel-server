@@ -46,9 +46,8 @@ const CHECKS: Check[] = [
         slug: "panel-octane-up",
         title: "Panel Octane responds on /up",
         async run(ctx) {
-            // Port 9000 matches scripts/doctor.sh::check_up_endpoint —
-            // FrankenPHP's host-side bind is 127.0.0.1:9000, not 8000
-            // (the v0.1.4 default was wrong).
+            // Port 9000 matches scripts/doctor.sh::check_up_endpoint
+            // (FrankenPHP's host-side bind is 127.0.0.1:9000).
             const port = ctx.env["PANEL_OCTANE_PORT"] ?? "9000";
             const r = await capture($`curl -fsS --max-time 3 http://127.0.0.1:${port}/up`);
             return r.ok
@@ -118,20 +117,11 @@ const CHECKS: Check[] = [
             if (!(await which("docker"))) return { status: "warn", detail: "docker not on PATH" };
             // Caddy nests certs under the ACME issuer subdirectory:
             //   /data/caddy/certificates/<issuer>/<domain>/<domain>.crt
-            // v0.1.6 listed only the top level and grepped for the
-            // domain — the listing was the issuer dir, never the
-            // domain, so the check always FAILed on a real deploy.
-            //
-            // v0.1.12 unnested the shell layering. Pre-this-fix the
-            // expiry probe ran `bash -c "docker compose exec sh -c
-            // \"openssl ... -checkend $((7*86400))\""`. Bun's $
-            // template literal parser saw `$((` and tried to read
-            // it as command substitution (`$(...)`), failing with
-            // `expected a command or assignment but got:
-            // "CmdSubstEnd"`. The whole check threw before either
-            // sub-shell ran. Pre-computing the seconds in TS and
-            // dropping the redundant `bash -c "..."` wrapper makes
-            // the call a single argv that Bun escapes correctly.
+            // `find` rather than a fixed path keeps us indifferent to
+            // staging vs prod ACME. The expiry probe pre-computes
+            // the seconds in TS (rather than `$((7*86400))` in bash)
+            // so Bun's $ template literal doesn't misparse `$((` as
+            // command substitution.
             const certName = `${domain}.crt`;
             const find = await capture(
                 $`docker compose exec -T caddy find /data/caddy/certificates -name ${certName} -print -quit`,
@@ -153,22 +143,15 @@ const CHECKS: Check[] = [
         slug: "singbox-running",
         title: "sing-box container running",
         async run() {
-            // v0.1.6 probed the host on port 9090 (clash admin) — but
-            // the admin port was bound INSIDE the container only, so
-            // the check could never succeed from the host. v0.2.0+
-            // switched to a container-state assertion. v0.4.0 retired
-            // sing-box's clash admin API entirely (VLESS+Reality
-            // doesn't expose one), so the slug is now `singbox-running`
-            // and the compose service is `singbox` (renamed in #158).
+            // sing-box VLESS+Reality has no admin API to probe; a
+            // container-state assertion is the strongest cheap check
+            // available.
             if (!(await which("docker"))) return { status: "warn", detail: "docker not on PATH" };
             const r = await capture($`docker compose ps singbox --status running --quiet`);
             if (!r.ok) return { status: "fail", detail: r.stderr.split("\n")[0] ?? "compose ps failed" };
             return r.stdout.trim() ? { status: "pass" } : { status: "fail", detail: "singbox not running" };
         },
     },
-    // haproxy-stats ballast check retired in v0.4.0. HAProxy was
-    // removed from the stack in v0.2.0 (Caddy's layer-4 SNI splitter
-    // replaced it); the check has been a no-op warn ever since.
     {
         slug: "sot-parity",
         title: "Cross-language SoT parity (panel_domain)",
@@ -198,14 +181,10 @@ const CHECKS: Check[] = [
         slug: "ct-operator-version",
         title: "ct-operator binary version matches panel config",
         async run(ctx) {
-            // The deploy-skew failure mode that ate hours on the
-            // 2026-05-15 v0.1.12 → v0.1.13 Vultr update: the
-            // operator binary on disk was v0.1.12, but the wrapper
-            // (post-git-pull) dispatched `update` — a subcommand
-            // v0.1.12 didn't have. Result: "error: unknown
-            // command: update". This check surfaces that mismatch
-            // before the operator notices via a broken `./ct`
-            // invocation.
+            // Catches the deploy-skew failure mode where the
+            // operator binary on disk is older than what the
+            // post-git-pull wrapper dispatches to — the operator
+            // hits "error: unknown command: <verb>" otherwise.
             const phpPath = await tryPaths(
                 `${ctx.cwd}/panel/config/cool-tunnel.php`,
                 `${ctx.cwd}/../panel/config/cool-tunnel.php`,
@@ -240,8 +219,8 @@ const CHECKS: Check[] = [
         async run(ctx) {
             // The workspace root core/Cargo.toml holds the actual
             // `version = "X.Y.Z"`; ct-server-core/Cargo.toml uses
-            // `version.workspace = true`. v0.1.4 read the wrong file
-            // and reported "no version field" against a deployed VPS.
+            // `version.workspace = true`. Reading the leaf
+            // Cargo.toml would surface "no version field" instead.
             const cargoPath = await tryPaths(
                 `${ctx.cwd}/core/Cargo.toml`,
                 `${ctx.cwd}/../core/Cargo.toml`,

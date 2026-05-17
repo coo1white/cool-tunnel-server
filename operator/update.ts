@@ -178,11 +178,8 @@ async function autoMigrateEnv(): Promise<void> {
 
 async function rebuildCore(): Promise<void> {
     step("Rebuild ct-server-core (Rust)");
-    // Streams BuildKit progress live (`[+] Building 31.6s (17/23)...`).
-    // The pre-v0.1.17 capture() variant buffered until subprocess
-    // exit; on a 1 vCPU VPS the operator saw the "==> Rebuild" step
-    // hang for 60-180s with no output and assumed the build was
-    // stuck. Surfaced 2026-05-15 on the v0.1.16 Vultr update.
+    // runStreaming surfaces BuildKit progress live so a slow VPS
+    // doesn't look like a hung step.
     const r = await runStreaming($`docker compose --profile build-only build core-builder`);
     if (!r.ok) {
         dieWithDiag(
@@ -217,9 +214,8 @@ async function rebuildImages(): Promise<void> {
                                 mholt/caddy-l4 plugin via xcaddy;
                                 first build pulls a Go dep graph
                                 from proxy.golang.org.)
-  - Composer.lock conflict  ->  this was the v0.0.95 class
-                                of bug -- check the entrypoint
-                                output for "platform-req" errors
+  - Composer.lock conflict  ->  check the entrypoint output for
+                                "platform-req" errors
 
 The build prints which Dockerfile step failed; that pinpoints
 which image (caddy / singbox / panel) and which line.`,
@@ -370,16 +366,11 @@ export async function runUpdate(): Promise<number> {
     else if (stack.missing.length > 0) warn(stack.summary);
     else ok(stack.summary);
 
-    // v0.1.14: IPv6 broken-routing auto-disable. The v0.1.9 install.sh
-    // and bootstrap.sh both run this check on first install, but
-    // update.sh / update.ts did not — so a Vultr/RackNerd box whose
-    // docker daemon.json got re-enabled for IPv6 (kernel update,
-    // provider reboot, manual /etc/docker mucking) would hit the
-    // exact "static.rust-lang.org Network unreachable" wall on the
-    // next Rust rebuild, with no auto-recovery. checkIpv6Routing()
-    // mirrors the install-time logic: detect missing IPv6 route +
-    // missing sysctl override, write the sysctl + daemon.json, then
-    // restart docker. Skippable via CT_SKIP_IPV6_AUTO_DISABLE=1.
+    // IPv6 broken-routing auto-disable — mirrors the install-time
+    // logic. Without it, a Vultr/RackNerd box whose docker
+    // daemon.json got re-enabled for IPv6 (kernel update, provider
+    // reboot) would hit "static.rust-lang.org Network unreachable"
+    // on the next Rust rebuild. Skip via CT_SKIP_IPV6_AUTO_DISABLE=1.
     const ipv6 = await checkIpv6Routing();
     if (ipv6.action === "warn") warn(ipv6.detail);
     else ok(ipv6.detail);
@@ -405,7 +396,7 @@ export async function runUpdate(): Promise<number> {
     if (!cc.ok) dieOnFailure(cc.failure);
     ok("all components OK");
 
-    // v0.1.5: non-fatal operator-binary fetch.
+    // Non-fatal operator-binary fetch (signed release from GitHub).
     await fetchOperatorBinary();
 
     ok("Update complete.");
