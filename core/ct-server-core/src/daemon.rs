@@ -626,7 +626,6 @@ fn wire_method_name(req: &WireRequestV1) -> &'static str {
         WireRequestV1::ReloadCaddy => "reload_caddy",
         WireRequestV1::CollectTraffic => "collect_traffic",
         WireRequestV1::EnforceQuota => "enforce_quota",
-        WireRequestV1::ProbeAntiTracking => "probe_anti_tracking",
         WireRequestV1::Health => "health",
     }
 }
@@ -687,10 +686,6 @@ async fn handle(req: WireRequestV1, pool: &MySqlPool) -> Result<WireResponseV1> 
             operation: "enforce_quota",
             message: "v0.4.0: quota enforcement happens at the panel layer (ProxyAccount::\
                       isActive) and propagates to ct-singbox via singbox.json regeneration.",
-        }),
-        WireRequestV1::ProbeAntiTracking => Err(Error::UnsupportedOperation {
-            operation: "probe_anti_tracking",
-            message: "anti-tracking probe needs a `via` URL; use the CLI for now",
         }),
         WireRequestV1::Health => {
             // SELECT 1 borrows a connection from the shared pool;

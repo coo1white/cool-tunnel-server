@@ -37,7 +37,6 @@ mod internal_metrics;
 //     against DB tuples; v0.4.0's equivalent check is
 //     `operator/src/util/drift-check.ts`'s parseSingboxJsonUsers.
 mod observability;
-mod probe;
 mod redis_bridge;
 mod template;
 mod util;
@@ -105,11 +104,10 @@ enum Cmd {
     //                          v0.3.x naive users shape; v0.4.0's
     //                          equivalent is operator/src/util/drift-check
     //   Admin::ClashSecret   → derives a bearer for an API that's gone
-    /// Active probes (anti-tracking, connectivity, ACME).
-    Probe {
-        #[command(subcommand)]
-        op: ProbeOp,
-    },
+    //   Probe / ProbeOp      → bundled-naive anti-tracking probe; the
+    //                          naive binary was removed from the panel
+    //                          image in v0.4.0, so the probe was
+    //                          guaranteed-broken at runtime
     /// Long-running JSON-over-unix-socket daemon. Also subscribes
     /// to the Redis revocation channel for ≤100 ms Filament-to-
     /// sing-box reload propagation.
@@ -258,23 +256,12 @@ enum CaddyfileOp {
 // thin clash-API wrappers; sing-box VLESS+Reality does not expose a
 // clash API.
 
-#[derive(Subcommand, Debug)]
-enum ProbeOp {
-    AntiTracking {
-        #[arg(long)]
-        via: Option<String>,
-        #[arg(long, default_value = "https://ifconfig.co/json")]
-        target: String,
-    },
-}
-
 fn main() -> ExitCode {
-    // tracing must write to stderr — several CLI subcommands
-    // (`--json` render output, `probe anti-tracking`, `singbox
-    // render`) emit machine-readable JSON on stdout that is parsed
-    // by the panel and the stress harness. Default fmt() writes to
-    // stdout, which would interleave INFO/WARN lines with the JSON
-    // and break every downstream parser.
+    // tracing must write to stderr — `--json` render output emits
+    // machine-readable JSON on stdout that is parsed by the panel
+    // and the stress harness. Default fmt() writes to stdout,
+    // which would interleave INFO/WARN lines with the JSON and
+    // break every downstream parser.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
@@ -385,11 +372,6 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 caddy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
             CaddyfileOp::Reload { output } => caddy::reload(&output).await,
-        },
-        Cmd::Probe { op } => match op {
-            ProbeOp::AntiTracking { via, target } => {
-                probe::anti_tracking(&target, via.as_deref()).await
-            }
         },
         Cmd::Daemon {
             socket,

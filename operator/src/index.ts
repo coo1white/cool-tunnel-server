@@ -22,7 +22,7 @@ Commands:
   fix            Detect and interactively repair common issues
   readiness      Strict >=9/10 readiness gate; cron/CI suitable
   ballast        Critical-invariant check only (no narration; cron-friendly)
-  render         Re-render caddyfile/haproxy/singbox config from the DB
+  render         Re-render caddyfile/singbox config from the DB
   auto-sync      Credential-lock audit + auto-correct agent
   backup         Snapshot db + .env + caddy ACME state into backups/
   restore <p>    Restore a deployment from a backup tarball
@@ -33,7 +33,6 @@ Commands:
   version        Print version and exit
   version-bridge Check that PHP / Rust / Bun layers agree on version
   drift          Three-way cleartext drift check (DB ⇄ sing-box ⇄ subscription)
-  wire-probe     Wire-protocol probe — confirm naive negotiates padding with upstream
 
 Options:
   --json         Emit structured JSON to stdout instead of human output
@@ -114,10 +113,6 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "drift": {
             const { DriftTask } = await import("./tasks/drift");
             return new DriftTask();
-        }
-        case "wire-probe": {
-            const { WireProbeTask } = await import("./tasks/wire-probe");
-            return new WireProbeTask();
         }
         default:
             return null;

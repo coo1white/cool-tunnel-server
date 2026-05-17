@@ -202,24 +202,22 @@ pub enum AntiTrackingFeature {
 
 /// Naive-pin block carried in `SubscriptionManifestV1::server_naive_pin`.
 ///
-/// `upstream_tag` is the canonical pin from the server's
-/// `manifests/naive.upstream.json` (e.g. `v148.0.7778.96-5`) — the
-/// build-time invariant the operator chose. `naive_version` is the
-/// runtime output of `naive --version` (e.g. `148.0.7778.96` — no
-/// `v` prefix, no rebuild suffix) on whichever naive binary the
-/// server has on hand to introspect (in panel-side codepaths that's
-/// the bundled probe-client binary, which the build-time
-/// `operator/sync-naive-pin.ts` keeps in lockstep with the
-/// ct-naive server-side binary).
+/// **v0.4.0 status: dead on the wire.** The v0.4.0 sing-box pivot
+/// removed naive from both the server and the panel image; v0.4.0
+/// servers always emit `server_naive_pin: None`, and clients on
+/// v3.0.0+ ignore the field. The struct and field are retained on
+/// the wire so v0.3.x and v0.4.0 clients/servers can still parse
+/// each other's manifests without a hard schema break — older
+/// clients see `None` as "server doesn't advertise a pin" (already
+/// the v0.3.x soft-warn path) rather than as a parse error.
 ///
-/// Client-side decision rule:
-///   - normaliseNaiveVersion(client_pin.upstream_tag) ==
-///     server_naive_pin.naive_version → ✓ wire-compatible.
-///   - upstream_tag-vs-upstream_tag string equality across repos →
-///     stricter check, matches the v0.3.0 "same upstream tag both
-///     ends" invariant verbatim.
-///   - Mismatch → soft-warn in client UI ("server is running an
-///     unexpected naive version — wire compatibility may be broken").
+/// Historical v0.3.x semantics: `upstream_tag` was the canonical
+/// pin from the server's `manifests/naive.upstream.json` (e.g.
+/// `v148.0.7778.96-5`) — the build-time invariant. `naive_version`
+/// was the runtime `naive --version` output on whichever naive
+/// binary the server had on hand to introspect. A mismatch
+/// soft-warned in client UI ("server is running an unexpected
+/// naive version — wire compatibility may be broken").
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NaivePinV1 {
     /// Canonical upstream tag the SERVER was built against.

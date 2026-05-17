@@ -161,15 +161,11 @@ final class CtServerCore implements CtServerCoreInterface
         return $this->run(['component', 'check', '--manifests', $manifestsDir]);
     }
 
-    public function probeAntiTracking(?string $via, string $target): array
-    {
-        $args = ['probe', 'anti-tracking', '--target', $target];
-        if ($via !== null) {
-            array_push($args, '--via', $via);
-        }
-
-        return $this->run($args, timeoutSec: 20);
-    }
+    // probeAntiTracking() removed in v0.4.0 — see the head comment
+    // on CtServerCoreInterface for context. The
+    // /usr/local/bin/naive subprocess this method spawned is no
+    // longer bundled in the panel image, and the
+    // `ct-server-core probe anti-tracking` subcommand is gone.
 
     /**
      * Run one self-probe canary cycle.
