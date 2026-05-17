@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/credential_drift.ts — pure-TS port of
-// scripts/fix.sh recipe 14.
+// ct fix recipe 14.
 //
 // Detect: `ct-server-core guard credential-lock` exits non-zero,
 // meaning at least one of db / rendered / manifest / mac-config has

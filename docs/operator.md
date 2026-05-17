@@ -1,8 +1,8 @@
 # ct-operator
 
 A single Bun-compiled binary that replaces three of the more complex
-operator shell scripts (`scripts/doctor.sh`, `scripts/fix.sh`,
-`scripts/late-night-comeback.sh`) with a unified CLI. Adds a structured
+operator shell scripts (`ct doctor`, `ct fix`,
+`ct readiness`) with a unified CLI. Adds a structured
 AI incident bridge on failure, a critical-invariant check set
 ("ballast stones"), and a signed self-update path.
 
@@ -55,7 +55,7 @@ the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
 | Command            | What it does                                                           |
 |--------------------|------------------------------------------------------------------------|
 | `ct doctor`        | PASS/WARN/FAIL health dashboard, including a Ballast Stones group at the end. No state mutation. |
-| `ct fix`           | Interactive recipe walker. Same 17 recipes as `scripts/fix.sh`.        |
+| `ct fix`           | Interactive recipe walker. Same 17 recipes as `ct fix`.        |
 | `ct readiness`     | Strict ≥8/9 launch gate. Offers tactical retreat / rebuild on fail.    |
 | `ct ballast`       | Run the 10 critical-invariant checks only. Exit 0 if no FAIL, 1 otherwise. Cron-friendly. |
 | `ct-operator self-update` | Pull a signed binary update from GitHub Releases.               |

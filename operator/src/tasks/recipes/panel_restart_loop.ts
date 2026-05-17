@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/panel_restart_loop.ts — pure-TS port of
-// scripts/fix.sh recipe 11.
+// ct fix recipe 11.
 //
 // Detect: `docker compose ps panel` shows Restarting or Created.
 // Fix: rebuild the image (no-op if cached) and force-recreate the

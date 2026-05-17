@@ -211,7 +211,7 @@ There's a built-in readiness check that runs nine probes and gives
 you a percentage score:
 
 ```sh
-./scripts/late-night-comeback.sh
+./ct readiness
 ```
 
 It checks DNS, ports, ACME, UFW, BBR, NTP, components, the Redis

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/pin-images.ts — pure-TS port of scripts/pin-images.sh.
+// operator/pin-images.ts — resolve docker base-image tags to digests + rewrite Dockerfile FROM lines.
 //
 // Resolve docker base-image tags to digests and rewrite the FROM
 // lines in docker/*/Dockerfile in place. LTSC reproducibility — the

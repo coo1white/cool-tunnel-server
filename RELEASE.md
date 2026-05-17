@@ -136,7 +136,7 @@ the Dockerfiles to pin by `@sha256:...`. Commit the digest update
 on top of the release commit (or as a follow-up).
 
 If docker isn't available locally, run `make pin-images` on the
-production VPS after `./scripts/update.sh`.
+production VPS after `./ct update`.
 
 ### 11. Announce
 

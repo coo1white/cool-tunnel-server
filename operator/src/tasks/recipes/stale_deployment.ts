@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/stale_deployment.ts — pure-TS port of
-// scripts/fix.sh recipe 17.
+// ct fix recipe 17.
 //
 // Detect: this checkout is a git work-tree, origin can be fetched,
 // the latest tag on origin/main is newer than the version recorded
 // in panel/config/cool-tunnel.php. Fix: git pull --ff-only origin
-// main, then ./scripts/update.sh (the canonical update entry point).
+// main, then ./ct update (the canonical update entry point).
 //
 // Companion to scripts/auto_update.sh (the unattended path). This
 // recipe is the interactive one — an operator running `ct fix` gets a
@@ -35,7 +35,7 @@ recipes that catch issues we've actually seen in the wild. Falling
 behind is fine for short windows but accumulates risk over time.
 
 Fix: pulls origin/main + runs the standard update flow
-(\`./scripts/update.sh\`). That is:
+(\`./ct update\`). That is:
   - git pull --ff-only (no rebase, no merge commits)
   - rebuilds the Rust core + Docker images (cached when nothing
     changed)
@@ -67,7 +67,7 @@ export const recipe: Recipe = {
                 detail: pull.stderr.split("\n")[0] || "git pull --ff-only failed",
             };
         }
-        const update = await capture($`./scripts/update.sh`);
+        const update = await capture($`./ct update`);
         if (!update.ok) {
             return {
                 ok: false,

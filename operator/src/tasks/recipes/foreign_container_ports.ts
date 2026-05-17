@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/foreign_container_ports.ts — pure-TS port
-// of scripts/fix.sh recipe 4.
+// of ct fix recipe 4.
 //
 // Detect: a docker container that is NOT part of the cool-tunnel-server
 // compose project (name doesn't start with "ct-") is publishing host

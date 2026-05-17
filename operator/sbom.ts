@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/sbom.ts — pure-TS port of scripts/sbom.sh.
+// operator/sbom.ts — generate CycloneDX SBOMs for cargo + composer + docker.
 //
 // Produce CycloneDX SBOMs for everything that goes into a release
 // artefact. Output lands in `sbom/`. Each release uploads these to

@@ -630,7 +630,7 @@ Pick *Smart* mode. Click **Start**. Done.
 
 ```bash
 cd /opt/cool-tunnel-server
-./scripts/update.sh
+./ct update
 ```
 
 `update.sh` does `git pull`, `docker compose build --pull`, runs new
@@ -639,7 +639,7 @@ migrations, re-renders the sing-box config, and `docker compose up -d`.
 ### Back up
 
 ```bash
-./scripts/backup.sh
+./ct backup
 # → backups/cool-tunnel-YYYY-MM-DD.tar.gz   (mode 0600 — operator-only)
 #   contains: .env (APP_KEY + DB / Redis / clash secrets), db dump
 #             (--single-transaction), caddy_data.tgz (ACME certs +
@@ -656,7 +656,7 @@ ASAP.
 ### Restore
 
 ```bash
-./scripts/restore.sh backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz
+./ct restore backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz
 ```
 
 Documented disaster-recovery procedure (works on a fresh VPS):
@@ -673,7 +673,7 @@ Documented disaster-recovery procedure (works on a fresh VPS):
 4. **Repoint DNS** — update both `${DOMAIN}` and `${PANEL_DOMAIN}`
    A records to the new VPS IP. Wait for propagation
    (`dig +short ${DOMAIN}` matches the new IP).
-5. `./scripts/restore.sh backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz`
+5. `./ct restore backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz`
 6. Verify: `make components` shows OK across all rows;
    `curl -ksI https://${PANEL_DOMAIN}/admin` returns 200/302.
 
@@ -754,7 +754,7 @@ docker compose restart caddy
   `naive` inbound (e.g. someone swapped to a build without it),
   the proxy will silently degrade to "just an ACME endpoint" and
   client connections will fail. The OK/NG check is the canary.
-- **Use `./scripts/backup.sh`** — it captures `caddy_data` (ACME
+- **Use `./ct backup`** — it captures `caddy_data` (ACME
   certs + private keys; ACME moved from sing-box to Caddy in
   v0.0.4) plus the DB dump, the three render-input templates,
   manifests/, and `.env`. Run weekly to a private storage bucket;

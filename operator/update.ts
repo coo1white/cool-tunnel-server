@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/update.ts — pure-TS port of scripts/update.sh.
+// operator/update.ts — `ct update` implementation.
 //
 // Pulls a new release, rebuilds images, runs migrations + Caddy
 // reload, then component-checks the result. On NG the OLD images

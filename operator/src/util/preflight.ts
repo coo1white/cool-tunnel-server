@@ -54,7 +54,7 @@ What to check (in priority order):
   docker info | grep -A3 Registry    # registry mirror configured?
 
 When the network is back, re-run:
-  ./scripts/update.sh`,
+  ./ct update`,
         },
     };
 }
@@ -127,7 +127,7 @@ What to free (priority order, most-impact first):
   rm -rf core/target             # Rust build cache (2-5 GB)
   du -h --max-depth=1 / | sort -rh | head    # find the actual offender
 
-Re-run ./scripts/update.sh after freeing space.`,
+Re-run ./ct update after freeing space.`,
             },
         };
     }
@@ -210,7 +210,7 @@ What to do:
     docker compose ps                # what is the state?
     docker compose logs --tail=80    # what blew up?
     docker compose up -d             # bring it back up
-    ./scripts/update.sh              # then update`,
+    ./ct update              # then update`,
             },
         };
     }

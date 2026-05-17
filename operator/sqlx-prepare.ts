@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/sqlx-prepare.ts — pure-TS port of scripts/sqlx-prepare.sh.
+// operator/sqlx-prepare.ts — regenerate core/.sqlx/ from the live schema.
 //
 // Regenerate core/.sqlx/ query metadata from the live schema. Run
 // after a panel migration, a Rust sqlx::query!()/query_as!() edit,

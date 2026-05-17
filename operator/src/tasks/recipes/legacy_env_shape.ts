@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/legacy_env_shape.ts — pure-TS port of
-// scripts/fix.sh recipe 16.
+// ct fix recipe 16.
 //
 // Detect: .env has the pre-v0.0.68 APP_URL shape using ${DOMAIN}
 // (apex hostname) instead of ${PANEL_DOMAIN}. Fix: delegate to
-// scripts/update.sh which has the canonical idempotent rewrite.
+// ct update which has the canonical idempotent rewrite.
 
 import type { Recipe } from "./types";
 import { $, capture } from "../../util/sh";
@@ -36,7 +36,7 @@ export const recipe: Recipe = {
     describe: async () => DESCRIBE,
     detect: envHasLegacyShape,
     async fix() {
-        const r = await capture($`./scripts/update.sh`);
+        const r = await capture($`./ct update`);
         if (!r.ok) {
             return {
                 ok: false,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/missing_tls_cert.ts — pure-TS port of
-// scripts/fix.sh recipe 8.
+// ct fix recipe 8.
 //
 // Detect: sing-box logs show "no such file or directory" on a .crt
 // path — caddy hasn't issued the cert yet so sing-box can't start

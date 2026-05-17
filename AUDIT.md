@@ -102,7 +102,7 @@ forever, codify it:
 
 - **Anything that needs Docker bringup** (real ACME issuance, real
   sing-box reload, real DB migration). Those live in
-  `scripts/late-night-comeback.sh`, which is what an operator runs
+  `ct readiness`, which is what an operator runs
   on real metal — CI doesn't pretend it covers them.
 - **Subjective taste calls** (variable naming, comment style,
   test-name shape). Those land in code review, not automation.

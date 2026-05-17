@@ -2,7 +2,7 @@
 // operator/src/tasks/auto-sync.ts — `ct-operator auto-sync` task.
 //
 // Wraps src/util/credential-sync.ts as a runner Task. Same exit
-// codes as scripts/auto_sync.sh:
+// codes as ct auto-sync:
 //   0   no drift, OR drift was detected and corrected
 //   1   drift was detected and the correction failed
 //   2   prerequisite missing (docker not on PATH, etc.)

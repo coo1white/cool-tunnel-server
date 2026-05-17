@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/broken_container_dns.ts — pure-TS port of
-// scripts/fix.sh recipe 5.
+// ct fix recipe 5.
 //
 // Detect: the panel container is running but can NOT reach 1.1.1.1 by
 // hostname, yet CAN reach 1.0.0.1 by direct IP. That's the signature

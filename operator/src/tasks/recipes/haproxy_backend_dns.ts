@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/haproxy_backend_dns.ts — pure-TS port of
-// scripts/fix.sh recipe 7.
+// ct fix recipe 7.
 //
 // Detect: haproxy is Restarting/Created AND its recent logs complain
 // it cannot resolve "caddy" or "sing-box" via compose's internal DNS.

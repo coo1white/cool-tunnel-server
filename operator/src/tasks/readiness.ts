@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/src/tasks/readiness.ts — TS port of scripts/late-night-comeback.sh.
+// operator/src/tasks/readiness.ts — TS port of ct readiness.
 //
 // Nine checks (slot 10 retired in v0.4.0 — see CHECKS array). Pass
 // >= 8/9 to ship. Structural checks 1-4 cap the final score at 7 if

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/ipv6_dns_unreachable.ts — pure-TS port of
-// scripts/fix.sh recipe 6.
+// ct fix recipe 6.
 //
 // Detect: caddy is running AND its recent logs show "network is
 // unreachable" against an IPv6 DNS server (Vultr-style: provider

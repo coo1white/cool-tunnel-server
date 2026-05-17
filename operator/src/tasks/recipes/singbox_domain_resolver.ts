@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/singbox_domain_resolver.ts — pure-TS port
-// of scripts/fix.sh recipe 9.
+// of ct fix recipe 9.
 //
 // Detect: sing-box logs show "missing domain resolver for domain
 // server address" — sing-box 1.13+ rejects DoH resolvers that use a
