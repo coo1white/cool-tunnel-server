@@ -21,4 +21,12 @@ regexes = [
   # RFC 7519 / jwt.io documentation, signed with the literal key
   # "your-256-bit-secret" — not a real credential.
   '''eyJhbGciOiJIUzI1NiIs\.eyJzdWIiOiIxMjM0NSJ9\.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c''',
+  # singbox-core/tests/render.test.ts (commit 20ed581b71e7): a
+  # high-entropy base64url-shaped string used as a sing-box renderer
+  # input. The renderer doesn't crypto-validate the value; it just
+  # plumbs it into the rendered sing-box config. The current
+  # working-tree value is a low-entropy placeholder (commit ed42858
+  # onwards); the regex below pins the historical commit's value so
+  # the gitleaks scan over the PR's diff range stops flagging it.
+  '''EFOpHzZ8eSPQjGr5Tg2cFGSXgC7y5sN3yMpZJ_TT-Eo''',
 ]
