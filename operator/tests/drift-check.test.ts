@@ -4,15 +4,11 @@
 //
 // v0.4.0+ pulls the proxy-side credentials from the rendered
 // /data/config/singbox.json (the singbox-core supervise watch
-// target). The credential type is now a VLESS UUID per account.
-// The legacy parsers (parseNaiveJsonAuth, parseCaddyfileBasicAuth)
-// are kept for migration windows; their tests stay green.
+// target). The credential type is a VLESS UUID per account.
 
 import { test, expect } from "bun:test";
 import {
     classifyRow,
-    parseCaddyfileBasicAuth,
-    parseNaiveJsonAuth,
     parseSingboxJsonUsers,
     parseSubscriptionResponse,
     buildReport,
@@ -111,42 +107,6 @@ test("parseSingboxJsonUsers handles multiple vless inbounds", () => {
         { username: "alice", uuid: "uuid-a" },
         { username: "bob", uuid: "uuid-b" },
     ]);
-});
-
-// ---------- parseNaiveJsonAuth (v0.3.x legacy) ----------
-
-test("parseNaiveJsonAuth maps v0.3.x password into uuid-shaped SingboxUser", () => {
-    const naive = JSON.stringify({
-        schema: 1,
-        domain: "naive.example.com",
-        listen_port: 443,
-        user: "alice",
-        password: "pw-alice",
-        acme_directory_dir: "acme-v02.api.letsencrypt.org-directory",
-    });
-    expect(parseNaiveJsonAuth(naive)).toEqual([{ username: "alice", uuid: "pw-alice" }]);
-});
-
-test("parseNaiveJsonAuth returns [] on empty user/password (stub)", () => {
-    expect(
-        parseNaiveJsonAuth(
-            JSON.stringify({ user: "", password: "", domain: "x" }),
-        ),
-    ).toEqual([]);
-});
-
-// ---------- parseCaddyfileBasicAuth (v0.2.x legacy) ----------
-
-test("parseCaddyfileBasicAuth still pulls basic_auth lines (forensic-only)", () => {
-    const caddy = `
-proxy.example.com {
-    route {
-        forward_proxy {
-            basic_auth alice pw-alice
-        }
-    }
-}`;
-    expect(parseCaddyfileBasicAuth(caddy)).toEqual([{ username: "alice", uuid: "pw-alice" }]);
 });
 
 // ---------- parseSubscriptionResponse ----------
