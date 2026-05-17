@@ -78,7 +78,7 @@ of its standard pass; the incident bridge also runs them on any task
 failure and embeds the results in the AI-paste payload.
 
 1. **panel-container** — `docker compose ps panel` shows it running.
-2. **panel-octane-up** — `curl http://localhost:8000/up` returns 200.
+2. **panel-octane-up** — `curl http://127.0.0.1:9000/up` returns 200.
 3. **redis-ping** — `redis-cli ping` returns `PONG` (via host or
    `docker compose exec redis`).
 4. **db-schema-version** — last migration matches the expected name in
@@ -86,10 +86,11 @@ failure and embeds the results in the AI-paste payload.
 5. **sqlx-cache** — `cd core && cargo sqlx prepare --check` exits 0.
 6. **caddy-acme** — `caddy_data` volume holds a cert for `$PANEL_DOMAIN`
    not expiring in the next 7 days.
-7. **singbox-admin** — sing-box admin port reachable via `nc -z`.
-8. **haproxy-stats** — `show info` over `/var/run/haproxy.sock`.
-9. **sot-parity** — `scripts/verify_sot.sh` agrees (PHP and Rust impls
+7. **singbox-running** — `docker compose ps singbox` shows it running.
+8. **sot-parity** — `scripts/verify_sot.sh` agrees (PHP and Rust impls
    of `panel_domain` produce identical output).
+9. **ct-operator-version** — compiled `ct-operator` binary version
+   matches the panel's expected `OPERATOR_BINARY_VERSION`.
 10. **ct-core-version** — `ct-server-core --version` matches the version
     pinned in `core/ct-server-core/Cargo.toml`.
 

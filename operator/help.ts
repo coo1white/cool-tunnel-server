@@ -92,7 +92,8 @@ Next topic:  ./scripts/help.sh update
   Pre-flight:
     - Network reachable (github.com + registry-1.docker.io)
     - Disk headroom (>= 2 GB repo, >= 4 GB docker root)
-    - Stack is up (panel/sing-box/haproxy running OR restarting)
+    - Stack is up (panel + caddy running OR restarting; singbox
+      allowed transiently down, depends on panel-rendered config)
     - Working tree clean (interactive stash/discard/abort if
       uncommitted)
 

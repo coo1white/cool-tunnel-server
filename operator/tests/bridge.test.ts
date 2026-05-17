@@ -82,11 +82,15 @@ test("formatBridge produces JSON inside a fenced ctx block with the schema versi
     expect(out).toContain('"exit_code": 1');
 });
 
-// Dogfood — reconstructs the diagnostic shape for the v0.1.3 haproxy
-// SIGHUP incident (CHANGELOG.md::[0.1.3]). haproxy exited; ballast
-// haproxy-stats fails; compose state shows haproxy with state "exited"
-// and a non-zero exit code; everything else still up.
-test("haproxy-exited incident fixture exposes the deciding evidence", () => {
+// Dogfood — reconstructs the diagnostic shape that the bridge must
+// surface when a critical service has exited: the ballast check for
+// that service FAILs, AND the compose-state snapshot shows the
+// service in "exited" with a non-zero exit code, while everything
+// else still up. Originally written against the v0.1.3 haproxy
+// SIGHUP incident; ported to a v0.4.0 singbox-exited scenario after
+// HAProxy was removed from the stack in v0.2.0 (CHANGELOG::[0.1.3]
+// for the original incident shape).
+test("service-exited incident fixture exposes the deciding evidence", () => {
     const ctx = makeCtx({
         task: "readiness",
         ballast: {
@@ -95,7 +99,7 @@ test("haproxy-exited incident fixture exposes the deciding evidence", () => {
                 overall_ok: false,
                 checks: [
                     { slug: "panel-octane-up",  title: "Panel Octane responds on /up", status: "pass" },
-                    { slug: "haproxy-stats",    title: "HAProxy stats socket",         status: "fail", detail: "stats socket unreachable" },
+                    { slug: "singbox-running",  title: "sing-box container running",   status: "fail", detail: "singbox not running" },
                     { slug: "redis-ping",       title: "Redis reachable",              status: "pass" },
                 ],
             },
@@ -104,21 +108,20 @@ test("haproxy-exited incident fixture exposes the deciding evidence", () => {
             name: "compose", ok: true, duration_ms: 8,
             data: {
                 services: [
-                    { service: "panel",    name: "ct-panel",    state: "running", status: "Up 2 hours (healthy)" },
-                    { service: "haproxy",  name: "ct-haproxy",  state: "exited",  status: "Exited (137) 30 seconds ago", exit_code: 137 },
-                    { service: "caddy",    name: "ct-caddy",    state: "running", status: "Up 2 hours" },
-                    { service: "sing-box", name: "ct-sing-box", state: "running", status: "Up 2 hours (healthy)" },
-                    { service: "redis",    name: "ct-redis",    state: "running", status: "Up 2 hours" },
+                    { service: "panel",   name: "ct-panel",   state: "running", status: "Up 2 hours (healthy)" },
+                    { service: "singbox", name: "ct-singbox", state: "exited",  status: "Exited (137) 30 seconds ago", exit_code: 137 },
+                    { service: "caddy",   name: "ct-caddy",   state: "running", status: "Up 2 hours" },
+                    { service: "redis",   name: "ct-redis",   state: "running", status: "Up 2 hours" },
                 ],
             },
         },
     });
     const out = formatBridge(ctx);
     // The reader should see the failing ballast check.
-    expect(out).toContain('"slug": "haproxy-stats"');
+    expect(out).toContain('"slug": "singbox-running"');
     expect(out).toContain('"status": "fail"');
-    // The reader should see the compose state showing haproxy exited.
-    expect(out).toContain('"service": "haproxy"');
+    // The reader should see the compose state showing singbox exited.
+    expect(out).toContain('"service": "singbox"');
     expect(out).toContain('"state": "exited"');
     expect(out).toContain('"exit_code": 137');
     // The new prompt header should be intact.
