@@ -16,7 +16,7 @@
 #     scoring; treats partial outages as actionable WARN rather
 #     than hard FAIL where it makes sense.
 #   - late-night-comeback.sh: "is the system ready to publicly
-#     launch?" Strict scoring (>= 9 / 10 checks pass, structural
+#     launch?" Strict scoring (>= 8 / 9 checks pass, structural
 #     fails cap the score at 7). Different question, different
 #     answer shape.
 #

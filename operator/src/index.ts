@@ -20,7 +20,7 @@ Usage:
 Commands:
   doctor         Run health checks on the running deployment
   fix            Detect and interactively repair common issues
-  readiness      Strict >=9/10 readiness gate; cron/CI suitable
+  readiness      Strict >=8/9 readiness gate; cron/CI suitable
   ballast        Critical-invariant check only (no narration; cron-friendly)
   render         Re-render caddyfile/singbox config from the DB
   auto-sync      Credential-lock audit + auto-correct agent

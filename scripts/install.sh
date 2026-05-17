@@ -567,11 +567,11 @@ What to do next:
        open https://${PANEL_DOMAIN}/admin -> ProxyAccounts -> New
        (cleartext password is shown ONCE - copy it then)
 
-  3. Point the macOS client at:
-       ${CT_BOLD}naive+https://<username>:<password>@${DOMAIN}:443${CT_RESET}
+  3. Import the subscription URL into the macOS client (panel UI
+     prints it when you create a Proxy Account).
 
-  4. Run the readiness gate when you have a test account:
-       ${CT_BOLD}LNC_TEST_PROXY_URL=... ./scripts/late-night-comeback.sh${CT_RESET}
+  4. Run the readiness gate:
+       ${CT_BOLD}./scripts/late-night-comeback.sh${CT_RESET}
 
 If something looks wrong, the safe first move is:
        ${CT_BOLD}${CT_GREEN}ct fix${CT_RESET}        (interactive diagnose-and-repair)

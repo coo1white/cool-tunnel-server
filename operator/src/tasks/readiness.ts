@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/readiness.ts — TS port of scripts/late-night-comeback.sh.
 //
-// Ten checks. Pass >= 9/10 to ship. Structural checks 1-4 cap the final
-// score at 7 if any of them is NG. Exit 0 on pass, 1 on fail.
+// Nine checks (slot 10 retired in v0.4.0 — see CHECKS array). Pass
+// >= 8/9 to ship. Structural checks 1-4 cap the final score at 7 if
+// any of them is NG (cap stays below the 8/9 threshold so structural
+// failure always means FAIL). Exit 0 on pass, 1 on fail.
 //
 // On fail with interactive stdin, offer tactical retreat (git checkout
 // last-good-tag + compose up -d) or clean rebuild (compose down +
@@ -296,20 +298,20 @@ export class ReadinessTask implements Task {
 
         let score = pass;
         if (structuralFails > 0 && score > 7) score = 7;
-        const pct = Math.floor((score * 100) / 10);
-        process.stdout.write(`Score: ${score}/10 (${pct}%)\n`);
+        const pct = Math.floor((score * 100) / 9);
+        process.stdout.write(`Score: ${score}/9 (${pct}%)\n`);
         if (structuralFails > 0) {
             process.stdout.write(`Structural fail(s): ${structuralFails} — score capped at 7.\n`);
         }
 
-        if (score >= 9) {
+        if (score >= 8) {
             process.stdout.write(`Result: PASS — ready to ship.\n`);
-            return { ok: true, code: 0, summary: `${score}/10`, json: { score, results } };
+            return { ok: true, code: 0, summary: `${score}/9`, json: { score, results } };
         }
 
         process.stdout.write(`Result: FAIL — fix flagged checks before launch.\n`);
         if (ctx.interactive) await offerRecovery(ctx);
 
-        return { ok: false, code: 1, summary: `${score}/10`, json: { score, results } };
+        return { ok: false, code: 1, summary: `${score}/9`, json: { score, results } };
     }
 }
