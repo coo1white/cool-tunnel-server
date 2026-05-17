@@ -2,30 +2,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/update.ts — pure-TS port of scripts/update.sh.
 //
-// Pulls a new release, rebuilds images, runs migrations + render
-// + credential-lock guard + sing-box reload + haproxy reload, then
-// component-checks the result. On NG the OLD images are still
-// running on their volumes (compose hasn't swapped traffic).
+// Pulls a new release, rebuilds images, runs migrations + Caddy
+// reload, then component-checks the result. On NG the OLD images
+// are still running on their volumes (compose hasn't swapped
+// traffic).
 //
-// Stages preserved from the bash original:
+// Stages:
 //   1. acquireOpLock (per-project flock)
 //   2. preflight: network, disk space, stack-up, clean tree
 //      (TTY: interactive stash/discard/abort; non-TTY: dies)
 //   3. git pull --ff-only
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
 //   5. compose build core-builder (Rust)
-//   6. compose build sing-box panel haproxy
-//   7. haproxy_admin volume chown (one-time fix for pre-v0.0.51)
-//   8. compose up -d panel sing-box haproxy
-//   9. wait for panel entrypoint sentinel
-//  10. php artisan migrate --force
-//  11. ct-server-core singbox render
-//  12. ct-server-core guard credential-lock
-//  13. ct-server-core server reload + compose restart sing-box
-//  14. ct-server-core haproxy render
-//  15. compose kill -s HUP haproxy + compose up -d haproxy
-//  16. component_check_strict /srv/manifests
-//  17. fetch_operator_binary.sh (non-fatal)
+//   6. compose build caddy singbox panel
+//   7. compose up -d panel caddy singbox
+//   8. wait for panel entrypoint sentinel
+//   9. php artisan migrate --force
+//  10. ct-server-core caddyfile render
+//  11. ct-server-core caddyfile reload
+//  12. component_check_strict /srv/manifests
+//  13. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
 import { die, makeTerm, ANSI } from "./src/util/term";
@@ -180,41 +176,6 @@ async function autoMigrateEnv(): Promise<void> {
     for (const c of r.changes) ok(c.summary);
 }
 
-/**
- * v0.3.0+ invariant: the upstream naive binary that ships in the
- * panel image (anti-tracking probe / client side) and the binary
- * that ships in the ct-naive container (server side) MUST be the
- * same version. manifests/naive.upstream.json is the canonical pin;
- * docker/{naive,panel}/Dockerfile ARG defaults are auto-managed.
- *
- * Drift between manifest and Dockerfile defaults already burned us
- * once — refuse to rebuild until it's resolved.
- */
-async function checkNaivePinLockstep(): Promise<void> {
-    step("Verify naive pin lockstep (server ↔ client)");
-    const r = await runStreaming($`bun run operator/sync-naive-pin.ts --check`);
-    if (!r.ok) {
-        dieWithDiag(
-            "naive pin drift between manifests/naive.upstream.json and the Dockerfile ARG defaults",
-            `The v0.3.0 architecture requires the server-side naive
-(docker/naive/Dockerfile) and the client-side naive bundled in the
-panel image (docker/panel/Dockerfile) to be the SAME upstream tag —
-this is what prevents the v0.2.x padding-protocol drift class of
-bugs from re-appearing.
-
-Fix:
-
-    bun run operator/sync-naive-pin.ts        # rewrites both Dockerfiles
-    # or:
-    make sync-naive-pin
-
-then re-run \`ct update\`. If you intended to bump the naive version,
-edit manifests/naive.upstream.json first, then run the sync.`,
-        );
-    }
-    ok("naive pin in lockstep");
-}
-
 async function rebuildCore(): Promise<void> {
     step("Rebuild ct-server-core (Rust)");
     // Streams BuildKit progress live (`[+] Building 31.6s (17/23)...`).
@@ -240,15 +201,14 @@ number are usually enough to diagnose.`,
 }
 
 async function rebuildImages(): Promise<void> {
-    step("Rebuild caddy + naive + panel images");
-    // v0.3.0+: caddy (now with mholt/caddy-l4 instead of
-    // klzgrad/forwardproxy@naive) + naive (NEW — runs the same
-    // klzgrad/naiveproxy binary the macOS client bundles) + panel.
-    // sing-box and haproxy services were retired in v0.2.0.
-    const r = await runStreaming($`docker compose build caddy naive panel`);
+    step("Rebuild caddy + singbox + panel images");
+    // v0.4.0: caddy (layer4 SNI splitter via mholt/caddy-l4) +
+    // singbox (sing-box VLESS+Reality, supervisored by singbox-core)
+    // + panel.
+    const r = await runStreaming($`docker compose build caddy singbox panel`);
     if (!r.ok) {
         dieWithDiag(
-            "caddy / naive / panel build failed",
+            "caddy / singbox / panel build failed",
             `Common causes (in priority order):
   - Out of disk             ->  df -h /var/lib/docker
                                 then docker system prune -af
@@ -257,62 +217,13 @@ async function rebuildImages(): Promise<void> {
                                 mholt/caddy-l4 plugin via xcaddy;
                                 first build pulls a Go dep graph
                                 from proxy.golang.org.)
-  - naive tarball fetch     ->  retry: ./ct update
-                                (ct-naive's Dockerfile fetches the
-                                upstream naive Linux build from
-                                GitHub Releases at build time. A
-                                transient github.com hiccup will
-                                fail it; the SHA pin in
-                                manifests/naive.upstream.json
-                                ensures integrity.)
   - Composer.lock conflict  ->  this was the v0.0.95 class
                                 of bug -- check the entrypoint
                                 output for "platform-req" errors
 
 The build prints which Dockerfile step failed; that pinpoints
-which image (caddy / naive / panel) and which line.`,
+which image (caddy / singbox / panel) and which line.`,
         );
-    }
-}
-
-// v0.2.0 migration: detect v0.1.x containers (sing-box, haproxy)
-// left over from before the architecture cut and stop+remove them
-// so the new Caddy on :443 can bind without a port-collision war.
-//
-// Idempotent — running this on a freshly-cut v0.2.0 deploy that
-// never had sing-box / haproxy is a clean no-op.
-//
-// Rollback note: image tags are NOT preserved here; a clean
-// downgrade path is `git checkout v0.1.20 && ./ct update`, which
-// re-introduces the sing-box and haproxy services via the v0.1.x
-// docker-compose.yml. The image tags `cool-tunnel-server-singbox:
-// latest` and `cool-tunnel-server-haproxy:latest` linger in the
-// local docker registry until `docker image prune -a`; for the
-// 30-day rollback window we recommend operators run `docker image
-// tag cool-tunnel-server-singbox:latest cool-tunnel-server-
-// singbox:v0.1.20-rollback` BEFORE running ./ct update if they
-// expect to downgrade. (Auto-tagging the rollback target is a
-// v0.2.1+ feature; cost-benefit doesn't yet justify the diff.)
-async function stopLegacyV01Containers(): Promise<void> {
-    step("v0.2.0 migration — stop v0.1.x sing-box + haproxy containers (if present)");
-    let stopped = 0;
-    for (const name of ["ct-singbox", "ct-haproxy"]) {
-        const ps = await capture($`docker ps -aq --filter ${`name=^${name}$`}`);
-        if (!ps.ok || !ps.stdout.trim()) {
-            continue;
-        }
-        const id = ps.stdout.trim();
-        // `docker compose down` won't touch these — they're no longer
-        // listed in the v0.2.0 compose. Stop + rm directly. -t 15
-        // gives sing-box / haproxy 15s to drain in-flight conns
-        // before SIGKILL; matches their compose-default stop_grace_period.
-        await capture($`docker stop -t 15 ${id}`);
-        await capture($`docker rm -f ${id}`);
-        ok(`stopped + removed legacy container ${name} (${id.slice(0, 12)})`);
-        stopped++;
-    }
-    if (stopped === 0) {
-        ok("no legacy v0.1.x containers present (fresh v0.2.0 deploy or already migrated)");
     }
 }
 
@@ -324,24 +235,24 @@ async function panelEntrypointDone(): Promise<boolean> {
 }
 
 async function bringNewImagesUp(): Promise<void> {
-    step("Bring new panel + caddy + naive images up (entrypoint runs migrate + render)");
-    // v0.3.0+: caddy + naive + panel. Panel's entrypoint shells out
-    // to `ct-server-core caddyfile render` AND `ct-server-core naive
-    // render` on startup, so by the time bringNewImagesUp returns,
-    // /etc/caddy/Caddyfile + /data/config/naive.json are both on
-    // disk. caddy reads the Caddyfile directly; ct-naive's
-    // supervisor file-watches /data/config/naive.json and spawns
-    // naive once both file + cert are present.
+    step("Bring new panel + caddy + singbox images up (entrypoint runs migrate + render)");
+    // v0.4.0: caddy + singbox + panel. Panel's entrypoint shells
+    // out to `ct-server-core caddyfile render` AND
+    // `singbox-core render-server` on startup (via
+    // SingBoxConfigGenerator), so by the time bringNewImagesUp
+    // returns, /etc/caddy/Caddyfile + /data/config/singbox.json
+    // are both on disk. caddy reads the Caddyfile directly;
+    // ct-singbox's supervisor file-watches singbox.json and
+    // (re)spawns sing-box once both file + cert are present.
     //
     // --remove-orphans cleans up containers from removed services
-    // (e.g. ct-singbox / ct-haproxy lingering from a v0.1.x box
-    // that never ran stopLegacyV01Containers, or a future service
-    // we retire). Safer than the v0.2.x default that left orphans
-    // mapping ports.
-    const r = await capture($`docker compose up -d --remove-orphans panel caddy naive`);
+    // (e.g. ct-naive lingering from a v0.3.x box, ct-haproxy from
+    // a v0.1.x box, or a future service we retire). Safer than
+    // the default that would leave orphans mapping ports.
+    const r = await capture($`docker compose up -d --remove-orphans panel caddy singbox`);
     if (!r.ok) {
         dieWithDiag(
-            "compose up -d panel caddy naive failed",
+            "compose up -d panel caddy singbox failed",
             r.stderr.split("\n").slice(0, 5).join("\n") || "check `docker compose ps`",
         );
     }
@@ -375,31 +286,17 @@ async function migrateDb(): Promise<void> {
 
 async function renderCaddyfile(): Promise<void> {
     step("Re-render Caddyfile");
-    // v0.3.0+: Caddyfile is now mostly-static (Domain / PanelDomain /
+    // v0.4.0: Caddyfile is mostly-static (Domain / PanelDomain /
     // ACME email / ACME directory only); per-account credentials
-    // moved to naive.json. The renderer is still wired up so a
-    // domain/email change picks up cleanly. See
-    // core/ct-server-core/src/caddy/mod.rs.
+    // live in singbox.json (rendered separately by the panel
+    // entrypoint via singbox-core render-server). The Caddyfile
+    // renderer is still wired so a domain/email change picks up
+    // cleanly. See core/ct-server-core/src/caddy/mod.rs.
     const r = await capture(
         $`docker compose exec -T panel ct-server-core --json caddyfile render`,
     );
     if (!r.ok) {
         dieWithDiag("ct-server-core caddyfile render failed", r.stderr.split("\n")[0] ?? "");
-    }
-}
-
-async function renderNaiveJson(): Promise<void> {
-    step("Render /data/config/naive.json (ct-naive supervisor input)");
-    // v0.3.0+ NEW. Renderer reads ServerConfig + first active
-    // ProxyAccount, writes /data/config/naive.json. ct-naive's
-    // Bun supervisor file-watches this path and respawns naive
-    // within ~250 ms. No separate reload primitive — the file
-    // write IS the reload trigger.
-    const r = await capture(
-        $`docker compose exec -T panel ct-server-core --json naive render`,
-    );
-    if (!r.ok) {
-        dieWithDiag("ct-server-core naive render failed", r.stderr.split("\n")[0] ?? "");
     }
 }
 
@@ -463,11 +360,11 @@ export async function runUpdate(): Promise<number> {
     if (!disk.ok) dieOnFailure(disk.failure);
     else ok(disk.summary ?? "disk ok");
 
-    // v0.2.0: the live services are caddy + panel + db + redis.
-    // sing-box and haproxy may still be running on a pre-v0.2.0
-    // deploy — those are not a failure case here, they're picked up
-    // and stopped by stopLegacyV01Containers() below after git pull
-    // brings in the v0.2.0 compose.
+    // v0.4.0: the live services are caddy + singbox + panel + db
+    // + redis. Preflight only checks the public-facing pair
+    // (panel + caddy); db/redis come up alongside, and singbox
+    // depends on the panel-rendered singbox.json so it's allowed
+    // to be transiently down here.
     const stack = await checkStackUp(["panel", "caddy"]);
     if (!stack.ok) dieOnFailure(stack.failure);
     else if (stack.missing.length > 0) warn(stack.summary);
@@ -491,26 +388,16 @@ export async function runUpdate(): Promise<number> {
 
     await gitPullFfOnly();
     await autoMigrateEnv();
-    // v0.2.0 migration step: stop v0.1.x sing-box + haproxy
-    // containers if they're still running. Idempotent — no-op on a
-    // fresh v0.2.0 deploy. MUST run after gitPullFfOnly (so the
-    // new compose is on disk) and BEFORE rebuildImages (so the new
-    // caddy image build doesn't race the old caddy's :443 with
-    // haproxy's stale :443 binding).
-    await stopLegacyV01Containers();
-    await checkNaivePinLockstep();
     await rebuildCore();
     await rebuildImages();
     await bringNewImagesUp();
     await migrateDb();
     await renderCaddyfile();
     await reloadCaddy();
-    // v0.3.0 NEW: render naive.json AFTER caddy is up (so caddy
-    // has had a chance to acquire the naive.<DOMAIN> cert that
-    // ct-naive will pick up via the shared /data/caddy volume).
-    // ct-naive's supervisor will see the new naive.json and the
-    // freshly-acquired cert, then spawn the naive child.
-    await renderNaiveJson();
+    // v0.4.0: singbox.json is rendered by the panel entrypoint
+    // (SingBoxConfigGenerator → singbox-core render-server) when
+    // bringNewImagesUp completes, so no explicit operator-side
+    // re-render step is needed here.
 
     step("Component check (post-swap)");
     const cc = await runComponentCheckStrict();
