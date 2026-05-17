@@ -28,8 +28,7 @@ const { step, ok, warn } = makeTerm();
 // guard in pin() catches that now.
 const MAPPINGS: ReadonlyArray<{ readonly file: string; readonly image: string }> = [
     { file: "docker/caddy/Dockerfile", image: "caddy:2.8.4-alpine" },
-    { file: "docker/sing-box/Dockerfile", image: "alpine:3.20" },
-    { file: "docker/haproxy/Dockerfile", image: "haproxy:3.0.21-alpine" },
+    { file: "docker/singbox/Dockerfile", image: "alpine:3.20" },
     { file: "docker/core/Dockerfile", image: "rust:1.88-alpine" },
     { file: "docker/core/Dockerfile", image: "alpine:3.20" },
     { file: "docker/panel/Dockerfile", image: "dunglas/frankenphp:1-php8.4-alpine" },

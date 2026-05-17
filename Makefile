@@ -344,8 +344,8 @@ status: ## one-shot health check (safe to run after SSH reconnect)
 		| grep -iE 'error|fatal|exception' | tail -5 \
 		|| echo "  no recent errors"
 	@echo ""
-	@echo "=== Last sing-box errors (if any) ==="
-	@docker compose logs --tail=200 sing-box 2>/dev/null \
+	@echo "=== Last singbox errors (if any) ==="
+	@docker compose logs --tail=200 singbox 2>/dev/null \
 		| grep -iE 'error|fatal|panic' | tail -5 \
 		|| echo "  no recent errors"
 	@echo ""
@@ -380,7 +380,7 @@ build-detached: ## run a long build in tmux so SSH drops don't kill it
 		'set -x; \
 		 docker compose --profile build-only build core-builder && \
 		 docker compose build panel && \
-		 docker compose up -d --force-recreate panel sing-box && \
+		 docker compose up -d --force-recreate panel singbox && \
 		 echo "DONE $$(date)" > /tmp/ct-build.done; \
 		 echo "press enter to close session"; read'
 	@echo "Build started in tmux session 'ct-build'."
@@ -464,8 +464,7 @@ set-component-version: ## bump component version across compose + Dockerfile + m
 	    echo 'lockstep-aware components (compose / Dockerfile / manifest):'; \
 	    echo '  redis    — docker-compose.yml + docker/panel/Dockerfile + manifest'; \
 	    echo '  mariadb  — docker-compose.yml + manifest'; \
-	    echo '  sing-box — docker/sing-box/Dockerfile (ARG) + manifest'; \
-	    echo '  haproxy  — docker/haproxy/Dockerfile (FROM) + manifest'; \
+	    echo '  singbox  — docker/singbox/Dockerfile (ARG) + manifest'; \
 	    echo ''; \
 	    echo 'manifest-only components:'; \
 	    echo '  caddy, ct-protocol, ct-server-core, doh-resolver, panel'; \
@@ -490,13 +489,9 @@ set-component-version: ## bump component version across compose + Dockerfile + m
 	        sed -i.bak -E 's|(image: *)mariadb:[^[:space:]]+|\1mariadb:$(V)|' docker-compose.yml && \
 	        echo "    bumped mariadb tag: docker-compose.yml" \
 	        ;; \
-	    sing-box) \
-	        sed -i.bak -E 's|^(ARG SING_BOX_VERSION=).*|\1$(V)|' docker/sing-box/Dockerfile && \
-	        echo "    bumped sing-box: docker/sing-box/Dockerfile (ARG)" \
-	        ;; \
-	    haproxy) \
-	        sed -i.bak -E 's|^(FROM )haproxy:[^[:space:]]+|\1haproxy:$(V)-alpine|' docker/haproxy/Dockerfile && \
-	        echo "    bumped haproxy: docker/haproxy/Dockerfile (FROM)" \
+	    singbox) \
+	        sed -i.bak -E 's|^(ARG SING_BOX_VERSION=).*|\1$(V)|' docker/singbox/Dockerfile && \
+	        echo "    bumped singbox: docker/singbox/Dockerfile (ARG)" \
 	        ;; \
 	esac
 	@sed -i.bak -E 's/"version": "[^"]*"/"version": "$(V)"/' manifests/$(COMPONENT).upstream.json
@@ -514,8 +509,7 @@ set-component-version: ## bump component version across compose + Dockerfile + m
 	@# touching unrelated .bak files in the working tree.
 	@rm -f docker-compose.yml.bak \
 	       docker/panel/Dockerfile.bak \
-	       docker/sing-box/Dockerfile.bak \
-	       docker/haproxy/Dockerfile.bak \
+	       docker/singbox/Dockerfile.bak \
 	       manifests/$(COMPONENT).upstream.json.bak
 	@echo "    bumped manifests/$(COMPONENT).upstream.json::version → $(V)"
 	@echo "    LOCKSTEP COMPLETE — run \`make ci\` to verify"

@@ -69,13 +69,12 @@ ct backup        # snapshot DB + .env + ACME certs
 
 ## What's running
 
-A live deployment has six containers:
+A live deployment has five containers:
 
 | Service | Role |
 |---------|------|
-| `haproxy` | Public `:443` TCP SNI router; routes to either sing-box or caddy without terminating TLS itself |
-| `sing-box` | The NaiveProxy server users connect to with their username + password |
-| `caddy` | Gets the TLS cert from Let's Encrypt (ACME), reverse-proxies the admin panel |
+| `caddy` | Public `:443` — layer-4 SNI splitter (via `mholt/caddy-l4`) routes panel traffic to itself, everything else to sing-box; also terminates TLS for the panel and gets certs from Let's Encrypt (ACME) |
+| `singbox` | The sing-box VLESS+Reality proxy users connect to; config rendered by `singbox-core render-server`, file-watched and respawned by `singbox-core supervise` |
 | `panel` | The Laravel + Filament admin UI + Rust control-plane binary; FrankenPHP worker mode |
 | `db` | MariaDB; stores accounts + settings |
 | `redis` | Cache + queue + revocation bus |
