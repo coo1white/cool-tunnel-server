@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/zombie_docker_proxy.ts — pure-TS port of
-// scripts/fix.sh recipe 3.
+// ct fix recipe 3.
 //
 // Detect: docker-proxy is bound to :80 or :443 on the host but no
 // running container is actually publishing those ports. Fix: restart

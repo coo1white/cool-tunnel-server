@@ -3,7 +3,7 @@
 // and auto-correct logic, shared between the `ct-operator
 // auto-sync` task and the `credential_drift` fix recipe.
 //
-// Ported from scripts/auto_sync.sh. The bash original wraps three
+// Ported from ct auto-sync. The bash original wraps three
 // docker compose exec calls:
 //
 //   1. ct-server-core guard credential-lock   (audit)

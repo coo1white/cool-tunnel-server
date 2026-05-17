@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/no_proxy_account.ts — pure-TS port of
-// scripts/fix.sh recipe 15.
+// ct fix recipe 15.
 //
 // Detect: panel running AND zero enabled rows in proxy_accounts.
 // Fix: there is no automated fix — this recipe is informational. It

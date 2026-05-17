@@ -115,7 +115,7 @@ If you need to roll back to the previous known-good release:
 
 ```sh
 git checkout v0.0.<X>      # the prior known-good tag
-./scripts/update.sh        # rebuilds + redeploys that version
+./ct update        # rebuilds + redeploys that version
 ```
 
 ---
@@ -176,7 +176,7 @@ If your VPS dies and you need to bring up a new one:
 
    ```sh
    cd /opt/cool-tunnel-server
-   ./scripts/restore.sh backups/cool-tunnel-LATEST.tar.gz
+   ./ct restore backups/cool-tunnel-LATEST.tar.gz
    ct doctor
    ```
 

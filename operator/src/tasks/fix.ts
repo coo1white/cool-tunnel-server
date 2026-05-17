@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/fix.ts — interactive recipe walker.
 //
-// The 17 recipes from scripts/fix.sh are exposed as a typed registry.
+// The 17 recipes from ct fix are exposed as a typed registry.
 // Each recipe is either:
 //   - pure-TS, implemented in operator/src/tasks/recipes/<slug>.ts and
 //     registered in PURE_TS_RECIPES below, OR
 //   - delegating, falling back to the corresponding helper function in
-//     scripts/fix.sh via a `bash -c` subshell with on-the-fly sed
+//     ct fix via a `bash -c` subshell with on-the-fly sed
 //     extraction of everything before the canonical MAIN-section
 //     divider.
 //
@@ -23,14 +23,14 @@ import { recipe as dockerDaemonDown } from "./recipes/docker_daemon_down";
 import { recipe as composeServiceDown } from "./recipes/compose_service_down";
 import { recipe as pendingMigrations } from "./recipes/pending_migrations";
 // v0.1.10 — four new pure-TS recipes for issues lit up by a real
-// v0.1.7 first-deploy session. No corresponding scripts/fix.sh
+// v0.1.7 first-deploy session. No corresponding ct fix
 // helpers; these slugs exist only here.
 import { recipe as singBoxDohCrash } from "./recipes/sing_box_doh_crash";
 import { recipe as composeCaddyZombie } from "./recipes/compose_caddy_zombie";
 import { recipe as ipv6BrokenRouting } from "./recipes/ipv6_broken_routing";
 import { recipe as staleSubscriptionUsers } from "./recipes/stale_subscription_users";
 // v0.1.13 — five more pure-TS ports of clean docker / compose plumbing
-// recipes from scripts/fix.sh (3, 4, 5, 7, 8). The riskier recipes
+// recipes from ct fix (3, 4, 5, 7, 8). The riskier recipes
 // (sysctl heredoc writes, artisan tinker DB edits, sing-box config
 // rewrites) still delegate to fix.sh until they can be ported with
 // confidence.
@@ -43,11 +43,11 @@ import { recipe as missingTlsCert } from "./recipes/missing_tls_cert";
 // messenger_queue_stuck are direct docker / redis-cli probes;
 // no_proxy_account is the print-only informational recipe;
 // legacy_env_shape and credential_drift detect locally but delegate
-// the fix to the existing scripts/update.sh and scripts/auto_sync.sh
+// the fix to the existing ct update and ct auto-sync
 // entry points (stable shell-script seams, not the MAIN-divider sed
 // extraction). Only the 4 highest-risk recipes (sysctl heredocs,
 // sing-box config rewrites, stale_deployment git probing) still
-// delegate to scripts/fix.sh.
+// delegate to ct fix.
 import { recipe as panelRestartLoop } from "./recipes/panel_restart_loop";
 import { recipe as messengerQueueStuck } from "./recipes/messenger_queue_stuck";
 import { recipe as noProxyAccount } from "./recipes/no_proxy_account";
@@ -97,7 +97,7 @@ const RECIPE_SLUGS = [
     "compose_caddy_zombie",
     "sing_box_doh_crash",
     "stale_subscription_users",
-    // Legacy delegating recipes (mirror scripts/fix.sh's order).
+    // Legacy delegating recipes (mirror ct fix's order).
     "docker_daemon_down",
     "compose_service_down",
     "zombie_docker_proxy",
@@ -119,7 +119,7 @@ const RECIPE_SLUGS = [
 
 async function findFixSh(cwd: string): Promise<{ repoRoot: string; fixSh: string } | null> {
     for (const root of [cwd, `${cwd}/..`]) {
-        const p = `${root}/scripts/fix.sh`;
+        const p = `${root}/ct fix`;
         if (await Bun.file(p).exists()) return { repoRoot: root, fixSh: p };
     }
     return null;
@@ -136,7 +136,7 @@ function runHelper(repoRoot: string, expr: string): ReturnType<typeof $> {
 set -uo pipefail
 cd ${shQuote(repoRoot)}
 export CT_NO_FIX_HINT=1
-eval "$(sed '/^# ============================================================$/,$d' scripts/fix.sh)"
+eval "$(sed '/^# ============================================================$/,$d' ct fix)"
 ${expr}
 `;
     return $`bash -c ${script}`;
@@ -146,7 +146,7 @@ function makeRecipe(slug: string): Recipe {
     return {
         slug,
         async describe() {
-            return `see scripts/fix.sh::describe_${slug}`;
+            return `see ct fix::describe_${slug}`;
         },
         async detect(ctx) {
             const r = await findFixSh(ctx.cwd);
@@ -156,7 +156,7 @@ function makeRecipe(slug: string): Recipe {
         },
         async fix(ctx) {
             const r = await findFixSh(ctx.cwd);
-            if (!r) return { ok: false, detail: "scripts/fix.sh not found" };
+            if (!r) return { ok: false, detail: "ct fix not found" };
             const out = await capture(runHelper(r.repoRoot, `fix_${slug}`));
             return out.ok
                 ? { ok: true }
@@ -222,7 +222,7 @@ export class FixTask implements Task {
     async run(ctx: RunContext): Promise<TaskResult> {
         const found = await findFixSh(ctx.cwd);
         if (!found) {
-            ctx.logger.error("scripts/fix.sh not found in cwd or parent");
+            ctx.logger.error("ct fix not found in cwd or parent");
             return { ok: false, code: 2, summary: "no fix.sh" };
         }
         // v0.1.10: --auto applies every detected fix without prompting.

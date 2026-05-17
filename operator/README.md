@@ -1,7 +1,7 @@
 # ct-operator
 
 Operator CLI for Cool Tunnel Server. Replaces selected shell maintenance
-scripts (`scripts/doctor.sh`, `scripts/fix.sh`, `scripts/late-night-comeback.sh`)
+scripts (`ct doctor`, `ct fix`, `ct readiness`)
 with a single Bun-compiled binary.
 
 The legacy shell scripts remain in `scripts/` as a fallback; the top-level

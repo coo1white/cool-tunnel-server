@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/docker_daemon_down.ts — pure-TS port of
-// scripts/fix.sh recipe 1.
+// ct fix recipe 1.
 //
 // Detect: `docker info` fails. Fix: systemctl start docker + enable +
 // bring the compose stack back. Idempotent; systemctl start/enable

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/pending_migrations.ts — pure-TS port of
-// scripts/fix.sh recipe 12.
+// ct fix recipe 12.
 //
 // Detect: panel is running AND `php artisan migrate:status` shows
 // at least one row with "Ran? = No". Fix: `php artisan migrate --force`.

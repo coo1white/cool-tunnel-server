@@ -67,7 +67,7 @@ by component (read the FIRST one whose component matches):
 The OLD release is still running on the volumes from before this
 update -- your users are NOT impacted. You can roll back with:
   git checkout v0.0.95   # (or the prior known-good tag)
-  ./scripts/update.sh`;
+  ./ct update`;
 
 // Run the strict component check. The bash original uses
 // `/srv/manifests` as the manifests-dir default; we mirror that

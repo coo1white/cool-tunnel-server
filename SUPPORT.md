@@ -100,7 +100,7 @@ migration that depends on the previous minor's schema being in place.
 | `0.0.X` | `0.2.0` | **no** — go via `0.1.0` |
 | `0.1.0` | `1.0.0` | yes |
 
-Run the upgrade with `./scripts/update.sh`. It rebuilds the images,
+Run the upgrade with `./ct update`. It rebuilds the images,
 runs DB migrations, runs the OK/NG component check, and only swaps
 traffic over if everything reports OK.
 
@@ -110,7 +110,7 @@ GitHub Issues. Include:
 
 1. The version you're on (`git rev-parse HEAD` and `git tag --points-at HEAD`).
 2. The platform (`cat /etc/os-release` + `uname -r`).
-3. The output of `scripts/late-night-comeback.sh`.
+3. The output of `ct readiness`.
 4. A reproduction or, if it's intermittent, the relevant log
    excerpts (`docker compose logs --tail=200 panel sing-box caddy`).
 

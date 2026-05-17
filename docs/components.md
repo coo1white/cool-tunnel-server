@@ -145,7 +145,7 @@ ct:version` emits on the panel — atomically.
 **Then in either case:**
 
 ```sh
-./scripts/update.sh
+./ct update
 ```
 
 The script:
@@ -160,7 +160,7 @@ The script:
 ## Adding a new component
 
 When you add a new piece (say, a metrics-shipping sidecar), drop a
-new `manifests/<slug>.upstream.json` and `scripts/update.sh` will
+new `manifests/<slug>.upstream.json` and `ct update` will
 pick it up automatically. The Filament page enumerates the
 directory, so it shows up there too without code changes.
 

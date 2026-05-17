@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/auto-update.ts — pure-TS port of scripts/auto_update.sh.
+// operator/auto-update.ts — unattended release-pulling agent (cron-safe).
 //
 // Unattended Cool Tunnel release-pulling agent. Fetches the latest
 // release tag, compares it to the deployed version, and if the
-// stack is healthy + behind runs `./scripts/update.sh` to bring it
+// stack is healthy + behind runs `./ct update` to bring it
 // forward. Designed to be cron-safe.
 //
 // Differs from the standard ops lock: this script gets its own
@@ -141,7 +141,7 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
     log.say(`upgrade available: ${v.current} -> ${latestVersion} (tag ${v.latest})`);
 
     if (opts.dryRun) {
-        log.say("(dry-run) would now: git pull --ff-only && ./scripts/update.sh");
+        log.say("(dry-run) would now: git pull --ff-only && ./ct update");
         log.say("(dry-run) exit 0");
         return 0;
     }
@@ -169,7 +169,7 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
 
     // Delegate the actual deploy to `./ct update` so we ride the
     // dispatch_via_operator path — operator binary when present
-    // (canonical Bun runUpdate), bash scripts/update.sh otherwise.
+    // (canonical Bun runUpdate), bash ct update otherwise.
     // The subprocess gets its own ops flock; AUTO_UPDATE_MARKER
     // is distinct from CT_OPS_FLOCK_HELD so the child re-execs
     // under its own lock without thinking ours is "already held".

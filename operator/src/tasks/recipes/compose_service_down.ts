@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/compose_service_down.ts — pure-TS port of
-// scripts/fix.sh recipe 2.
+// ct fix recipe 2.
 //
 // Detect: any service declared in compose.yml is NOT in the running set
 // right now. Fix: `docker compose up -d`. This is the v0.1.3 incident

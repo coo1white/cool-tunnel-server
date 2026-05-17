@@ -241,41 +241,42 @@ install: ## first-time bootstrap (interactive)
 
 .PHONY: update
 update: ## pull, rebuild, run component check, swap traffic
-	./scripts/update.sh
+	./ct update
 
 .PHONY: deploy
 deploy: update ## alias of update; deploy the latest fast-forwarded release
 
 .PHONY: backup
 backup: ## snapshot db + .env + caddy data into backups/
-	./scripts/backup.sh
+	./ct backup
 
 .PHONY: readiness
-readiness: ## run scripts/late-night-comeback.sh (strict >=8/9 readiness gate; cron/CI suitable)
-	./scripts/late-night-comeback.sh
+readiness: ## strict >=8/9 readiness gate (cron/CI suitable)
+	./ct readiness
 
 .PHONY: doctor
-doctor: ## run scripts/doctor.sh (operator-friendly health dashboard with PASS/WARN/FAIL + remediation hints)
-	./scripts/doctor.sh
+doctor: ## operator-friendly health dashboard (PASS/WARN/FAIL + remediation hints)
+	./ct doctor
 
 .PHONY: auto-sync
-auto-sync: ## run scripts/auto_sync.sh (credential-lock audit + auto-correct agent; cron-friendly)
-	./scripts/auto_sync.sh
+auto-sync: ## credential-lock audit + auto-correct agent (cron-friendly)
+	./ct auto-sync
 
 .PHONY: fix
-fix: ## run scripts/fix.sh (interactive multi-recipe auto-diagnose-and-repair agent; the "I'm stuck" command)
-	./scripts/fix.sh
+fix: ## interactive multi-recipe auto-diagnose-and-repair agent (the "I'm stuck" command)
+	./ct fix
 
 .PHONY: auto-update
-auto-update: ## run scripts/auto_update.sh (unattended release-pulling agent; default-OFF cron-safe; `ct auto-update enable` to schedule)
-	./scripts/auto_update.sh
+auto-update: ## unattended release-pulling agent (default-OFF; `ct auto-update enable` to schedule)
+	./ct auto-update now
 
 # ============================================================
 # operator/ — Bun CLI (ct-operator)
 # ============================================================
-# Compiled standalone replacement for fix / doctor / late-night-comeback.
-# The `ct` dispatcher prefers operator/bin/ct-operator-<os>-<arch> when
-# present and falls back to the .sh scripts otherwise. No flag day.
+# Standalone canonical implementation. The `ct` dispatcher and the
+# Makefile targets above all route through operator/bin/ct-operator-
+# <os>-<arch>; build it once with `make operator-build` (or let
+# `make operator-fetch` pull the signed release binary).
 
 .PHONY: operator-build
 operator-build: ## build ct-operator binary (default linux-x64; pass TARGET=<linux-arm64|darwin-arm64|all> to cross-compile)

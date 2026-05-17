@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/src/tasks/doctor.ts — TS port of scripts/doctor.sh.
+// operator/src/tasks/doctor.ts — TS port of ct doctor.
 //
 // PASS/WARN/FAIL dashboard, grouped by area. Non-zero exit only on FAIL;
 // WARN-only runs exit zero. No state mutation — safe on a healthy VPS.

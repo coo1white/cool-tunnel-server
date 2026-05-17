@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/backup.ts — pure-TS port of scripts/backup.sh.
+// operator/backup.ts — `ct backup` implementation.
 //
 // Snapshot the deployment's state into a single timestamped tarball
 // under ./backups/. Contents:

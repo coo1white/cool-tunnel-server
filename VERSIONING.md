@@ -82,11 +82,11 @@ See [`RELEASE.md`](./RELEASE.md). The short version:
 ## Rollback
 
 A release can be rolled back by checking out the previous tag and
-running `./scripts/update.sh`. Database migrations are designed to
+running `./ct update`. Database migrations are designed to
 be **safe-to-roll-back within a minor line** but **not necessarily
 between minor lines** — the changelog calls out any migration
 that's one-way.
 
 If you've already taken a `down` migration that's one-way, the
-backup taken by `./scripts/backup.sh` before the upgrade is your
+backup taken by `./ct backup` before the upgrade is your
 recovery path.

@@ -269,7 +269,7 @@ I should look at"; `readiness` is the strict ship-readiness gate.
 
 ## readiness
 
-The 9-check operator-launch gate (`scripts/late-night-comeback.sh`).
+The 9-check operator-launch gate (`ct readiness`).
 Strict: requires ≥8/9 checks PASS, with structural fails capping the
 score at 7. Suitable for cron / CI. The historical name comes from
 the original use case — checking a VPS was ready to publicly launch

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/util/env-migrate.ts — .env auto-migration logic
-// for scripts/update.sh's "Auto-migrate legacy .env" step.
+// for ct update's "Auto-migrate legacy .env" step.
 //
 // Three idempotent phases (preserving the bash original's order):
 //   1. Backfill `PANEL_DOMAIN=panel.${DOMAIN}` immediately after

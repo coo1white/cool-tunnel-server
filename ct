@@ -67,9 +67,6 @@ DEEPER COMMANDS
   drift          three-way cleartext drift check: DB ⇄ sing-box ⇄ subscription endpoint
                  (catches cleartext divergence the credential-lock guard misses;
                   requires ct-operator binary)
-  wire-probe     wire-protocol probe: spawn naive client, confirm Padding negotiates
-                 (catches client-binary regressions before release;
-                  requires ct-operator binary; see `ct wire-probe --help` for flags)
   render <tgt>   re-render the Caddyfile from the DB (target: caddyfile)
   auto-sync      credential-lock audit + auto-correct
   auto-update    unattended release-pulling agent (default OFF)
@@ -127,7 +124,7 @@ auto_update_subcommand() {
     case "$sub" in
         now|run|"")
             shift || true
-            dispatch_via_operator auto-update ./scripts/auto_update.sh "$@"
+            dispatch_via_operator auto-update "" "$@"
             ;;
         enable)
             if [[ -L "$CRON_SYMLINK" || -e "$CRON_SYMLINK" ]]; then
@@ -359,22 +356,21 @@ cmd="${1:-help}"
 
 case "$cmd" in
     install)      exec ./scripts/install.sh             "$@" ;;
-    fix)          dispatch_via_operator fix       ./scripts/fix.sh                 "$@" ;;
-    doctor)       dispatch_via_operator doctor    ./scripts/doctor.sh              "$@" ;;
-    update)       dispatch_via_operator update ./scripts/update.sh "$@" ;;
-    backup)       dispatch_via_operator backup ./scripts/backup.sh "$@" ;;
-    restore)      dispatch_via_operator restore ./scripts/restore.sh "$@" ;;
-    readiness)    dispatch_via_operator readiness ./scripts/late-night-comeback.sh "$@" ;;
-    ballast)      dispatch_via_operator ballast   ""                                "$@" ;;
+    fix)          dispatch_via_operator fix       "" "$@" ;;
+    doctor)       dispatch_via_operator doctor    "" "$@" ;;
+    update)       dispatch_via_operator update    "" "$@" ;;
+    backup)       dispatch_via_operator backup    "" "$@" ;;
+    restore)      dispatch_via_operator restore   "" "$@" ;;
+    readiness)    dispatch_via_operator readiness "" "$@" ;;
+    ballast)      dispatch_via_operator ballast   "" "$@" ;;
     render)       render_subcommand "$@" ;;
-    auto-sync)    dispatch_via_operator auto-sync ./scripts/auto_sync.sh "$@" ;;
+    auto-sync)    dispatch_via_operator auto-sync "" "$@" ;;
     auto-update)  auto_update_subcommand "$@" ;;
     status)       exec make status ;;
     logs)         exec make logs ;;
-    help)         dispatch_via_operator help ./scripts/help.sh "$@" ;;
-    version-bridge) dispatch_via_operator version-bridge ""                       "$@" ;;
-    drift)        dispatch_via_operator drift     ""                                "$@" ;;
-    wire-probe)   dispatch_via_operator wire-probe ""                                "$@" ;;
+    help)         dispatch_via_operator help      "" "$@" ;;
+    version-bridge) dispatch_via_operator version-bridge "" "$@" ;;
+    drift)        dispatch_via_operator drift     "" "$@" ;;
     version|--version|-V) show_version ;;
     -h|--help|"")
         show_help

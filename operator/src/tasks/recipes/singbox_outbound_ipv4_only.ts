@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/singbox_outbound_ipv4_only.ts — pure-TS
-// port of scripts/fix.sh recipe 10.
+// port of ct fix recipe 10.
 //
 // Detect: sing-box is up, the host can NOT reach the public internet
 // over IPv6, AND the rendered sing-box config lacks the v0.1.2+

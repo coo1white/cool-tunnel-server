@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/help.ts — operator-facing mini-manual (pure-TS port of
-// scripts/help.sh).
+// operator/help.ts — operator-facing mini-manual.
 //
 // Topic registry: `Record<slug, { title, body }>`. The CLI here
 // drives both the standalone `bun run help.ts` path and the
@@ -37,7 +36,7 @@ For the long-form tutorial (with prerequisites and detailed
 verification at each step), see README.md sections "First
 Deploy" and "Maintaining a Running Deployment".
 
-Next topic:  ./scripts/help.sh install
+Next topic:  ./ct help install
 `,
     },
     "install": {
@@ -83,7 +82,7 @@ Diagnostics on failure:
   - Errors come with a 'Diagnostic:' block listing next steps
   - 'make doctor' run anytime gives the dashboard view
 
-Next topic:  ./scripts/help.sh update
+Next topic:  ./ct help update
 `,
     },
     "update": {
@@ -142,9 +141,9 @@ in the entrypoint.
 
 Roll back if needed:
   git checkout v0.0.96  # (or the prior known-good tag)
-  ./scripts/update.sh
+  ./ct update
 
-Next topic:  ./scripts/help.sh doctor
+Next topic:  ./ct help doctor
 `,
     },
     "doctor": {
@@ -189,7 +188,7 @@ Exit codes:
   0   - all-PASS or WARN-only (FAIL count is 0)
   1   - one or more FAIL rows
 
-Next topic:  ./scripts/help.sh readiness
+Next topic:  ./ct help readiness
 `,
     },
     "auto-sync": {
@@ -249,7 +248,7 @@ Exit codes:
   0   no drift detected, OR drift was detected + corrected
   1   drift detected, correction failed -- manual investigation
 
-Next topic:  ./scripts/help.sh fix
+Next topic:  ./ct help fix
 `,
     },
     "fix": {
@@ -341,7 +340,7 @@ Exit codes:
   1   one or more fix attempts failed -- recipe slug surfaced
       in the summary block
 
-Next topic:  ./scripts/help.sh auto-update
+Next topic:  ./ct help auto-update
 `,
     },
     "auto-update": {
@@ -349,7 +348,7 @@ Next topic:  ./scripts/help.sh auto-update
         body: `What it does:
   Checks origin/main for a newer release tag. If the deployed
   version is older AND the running stack is currently healthy,
-  pulls main and runs the standard \`./scripts/update.sh\` flow.
+  pulls main and runs the standard \`./ct update\` flow.
 
   The agent is DEFAULT-OFF. A fresh install never auto-upgrades.
   You opt in via:
@@ -423,7 +422,7 @@ Exit codes:
 Companion recipe in \`ct fix\`: \`stale_deployment\` — interactive
 catch-up that runs the same logic with an [a]pply/[s]kip prompt.
 
-Next topic:  ./scripts/help.sh readiness
+Next topic:  ./ct help readiness
 `,
     },
     "readiness": {
@@ -470,7 +469,7 @@ Exit codes:
   0   - PASS (score >= 8)
   1   - FAIL (score < 8 OR any structural fail)
 
-Next topic:  ./scripts/help.sh backup
+Next topic:  ./ct help backup
 `,
     },
     "backup": {
@@ -508,7 +507,7 @@ service interruption).
 To list existing backups:
   ls -lh backups/
 
-Next topic:  ./scripts/help.sh restore
+Next topic:  ./ct help restore
 `,
     },
     "restore": {
@@ -554,7 +553,7 @@ Common failure modes:
     Fix: edit .env to match current setup, then
     'docker compose up -d --force-recreate panel'.
 
-Next topic:  ./scripts/help.sh troubleshooting
+Next topic:  ./ct help troubleshooting
 `,
     },
     "troubleshooting": {
@@ -614,7 +613,7 @@ When asking for help, paste:
 
 That's enough for almost any diagnosis.
 
-Topics:  ./scripts/help.sh   (list all)
+Topics:  ./ct help   (list all)
 `,
     },
     "drift": {

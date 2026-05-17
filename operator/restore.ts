@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/restore.ts — pure-TS port of scripts/restore.sh.
+// operator/restore.ts — `ct restore` implementation.
 //
 // Bring a fresh box up from a backup.ts/backup.sh tarball.
 // Companion to operator/backup.ts. Stages:
@@ -223,7 +223,7 @@ export async function runRestore(backupPath: string): Promise<number> {
 
 Next:
   1. Tail logs:    docker compose logs -f --tail=80
-  2. Confirm proxy: ./scripts/late-night-comeback.sh
+  2. Confirm proxy: ./ct readiness
   3. Test subscription: curl one of the manifest URLs you had before
 
 If the restored .env had a different CT_CLASH_SECRET_SEED than the

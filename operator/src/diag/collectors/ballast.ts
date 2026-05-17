@@ -46,7 +46,7 @@ const CHECKS: Check[] = [
         slug: "panel-octane-up",
         title: "Panel Octane responds on /up",
         async run(ctx) {
-            // Port 9000 matches scripts/doctor.sh::check_up_endpoint
+            // Port 9000 matches ct doctor::check_up_endpoint
             // (FrankenPHP's host-side bind is 127.0.0.1:9000).
             const port = ctx.env["PANEL_OCTANE_PORT"] ?? "9000";
             const r = await capture($`curl -fsS --max-time 3 http://127.0.0.1:${port}/up`);
@@ -61,7 +61,7 @@ const CHECKS: Check[] = [
         async run(ctx) {
             const pw = ctx.env["REDIS_PASSWORD"];
             // REDISCLI_AUTH (env, not -a on argv) keeps the secret off
-            // `ps -ef`. Matches scripts/late-night-comeback.sh's pattern.
+            // `ps -ef`. Matches ct readiness's pattern.
             if (await which("redis-cli")) {
                 const r = pw
                     ? await capture($`redis-cli --no-auth-warning ping`.env({ ...process.env, REDISCLI_AUTH: pw }))

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/recipes/messenger_queue_stuck.ts — pure-TS port of
-// scripts/fix.sh recipe 13.
+// ct fix recipe 13.
 //
 // Detect: Redis stream cool_tunnel:messenger has > 100 unprocessed
 // messages (steady state is ~0). Fix: restart the panel container so
