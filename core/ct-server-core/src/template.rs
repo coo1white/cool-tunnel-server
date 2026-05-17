@@ -165,43 +165,6 @@ impl Bindings {
     }
 }
 
-/// Escape `s` so it is safe to interpolate verbatim inside a JSON
-/// string literal. Quotes, backslashes, and ASCII control characters
-/// are turned into their JSON-string escape sequences (per RFC 8259
-/// §7); everything else passes through. Use this defensively at the
-/// binding site for any value that lands inside a `"…"` JSON context
-/// — operator-supplied fields like Domain / AcmeEmail / cert paths
-/// don't normally carry `"` or `\`, but a typo or paste of a Windows
-/// path would otherwise corrupt the rendered config.
-// Used by the Caddyfile renderer's defense-in-depth binding escape
-// posture. The v0.3.x sing-box renderer that consumed every binding
-// site of this helper is gone in v0.4.0; the public surface is kept
-// for the Caddyfile path which still escapes operator-supplied fields
-// before binding them into the Caddyfile template.
-#[allow(dead_code)]
-#[must_use]
-pub fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\x08' => out.push_str("\\b"),
-            '\x0c' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                use std::fmt::Write;
-                // 0x00–0x1F (excluding the named ones above) — \u00XX.
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// Validate that `value` is safe to interpolate verbatim into a
 /// **Caddyfile** directive. Returns `Err(_)` if the value contains a
 /// character that would let an operator-controlled binding break out
@@ -218,11 +181,11 @@ pub fn json_escape(s: &str) -> String {
 /// no general escape mechanism for these inside an unquoted directive
 /// argument, so any "smart" escape we tried would either change the
 /// argument's meaning (breaking the legitimate use case) or pass-
-/// through (defeating the check). The companion v0.0.13 sing-box fix
-/// (`json_escape`) was safe because JSON strings DO have a defined
-/// escape grammar. Caddyfile does not — the only correct response to
-/// a metasyntactic value is to fail loudly with a clear error so the
-/// operator sees it before the bad config reaches Caddy.
+/// through (defeating the check). Caddyfile has no general escape
+/// mechanism for these characters in unquoted directive arguments —
+/// the only correct response to a metasyntactic value is to fail
+/// loudly with a clear error so the operator sees it before the bad
+/// config reaches Caddy.
 ///
 /// Used by `caddy::render` at the binding site.
 /// (v0.0.16 hardening — closes the Caddyfile-injection class
@@ -347,30 +310,6 @@ mod tests {
     fn template_with_no_tags_passes_through_verbatim() {
         let body = "no tags here {single brace}";
         assert_eq!(render(body, &b(&[])).unwrap(), body);
-    }
-
-    #[test]
-    fn json_escape_handles_quote_and_backslash() {
-        assert_eq!(json_escape(r#"a"b"#), r#"a\"b"#);
-        assert_eq!(json_escape(r"a\b"), r"a\\b");
-        assert_eq!(json_escape("plain"), "plain");
-    }
-
-    #[test]
-    fn json_escape_handles_control_and_named_escapes() {
-        assert_eq!(json_escape("a\nb"), "a\\nb");
-        assert_eq!(json_escape("a\tb"), "a\\tb");
-        assert_eq!(json_escape("a\rb"), "a\\rb");
-        assert_eq!(json_escape("a\x08b"), "a\\bb");
-        assert_eq!(json_escape("a\x0cb"), "a\\fb");
-        // Other control char gets \u00XX form.
-        assert_eq!(json_escape("a\x01b"), "a\\u0001b");
-    }
-
-    #[test]
-    fn json_escape_passes_unicode_through() {
-        // Non-ASCII does not need to be escaped per RFC 8259.
-        assert_eq!(json_escape("héllo"), "héllo");
     }
 
     #[test]

@@ -120,47 +120,6 @@ pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
     })
 }
 
-// v0.4.0 — removed db queries: active_proxy_accounts, record_caddyfile_hash,
-// upsert_traffic, add_used_bytes (+ MAX_USED_BYTES_DELTA), plus their tests.
-// All four read or wrote columns / tables tied to the v0.3.x sing-box-via-
-// Rust renderer + clash-API metrics:
-//   - active_proxy_accounts selected `password_hash, password_cleartext_
-//     encrypted` (both dropped in panel/database/migrations/2026_05_16_-
-//     000002_replace_password_with_uuid_on_proxy_accounts) — would fail
-//     `cargo sqlx prepare` under v0.4.0 schema.
-//   - record_caddyfile_hash wrote to `server_configs.last_caddyfile_hash`,
-//     consumed by the deleted caddy renderer's idempotence check; the
-//     `panel/app/Services/CaddyfileGenerator.php` Hash-dedupe lives on
-//     the PHP side now.
-//   - upsert_traffic / add_used_bytes were the clash-API metrics writers;
-//     sing-box VLESS+Reality exposes no clash API, so per-user
-//     accounting moves to operator-side instrumentation (out-of-scope
-//     for the v0.4.0 cut).
-
-/// Single-account disable. Kept for the daemon's per-account
-/// revocation path (Redis pub/sub) where the SQL is a one-shot
-/// outside any larger transaction. The quota enforcer inlines its
-/// own UPDATE inside a transaction since it needs SELECT FOR
-/// UPDATE atomicity.
-#[allow(dead_code)]
-pub async fn disable_account(pool: &MySqlPool, id: i64, reason: &str) -> Result<()> {
-    // R-2 (v0.0.67): demoted from info! → debug! per CONTRIBUTING.md
-    // logging discipline. The `account` field carries an account ID,
-    // which is operator-visible PII; surfacing it at info-level
-    // would violate the "no per-user identifiers in info-and-above
-    // logs" rule. Operators investigating disable events can
-    // `RUST_LOG=ct_server_core::db=debug` to see this trail.
-    tracing::debug!(account = id, reason, "disabling account");
-    let id_u: u64 = id.max(0) as u64;
-    sqlx::query!(
-        r#"UPDATE proxy_accounts SET enabled = 0, updated_at = NOW() WHERE id = ?"#,
-        id_u,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {

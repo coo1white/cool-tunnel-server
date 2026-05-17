@@ -118,18 +118,6 @@ final class CtServerCore implements CtServerCoreInterface
         return $this->run(['caddyfile', 'render']);
     }
 
-    // renderSingBoxConfig() / renderNaive() removed in v0.4.0 —
-    // sing-box rendering is done by SingBoxConfigGenerator shelling
-    // directly to /usr/local/bin/singbox-core render-server (the
-    // Bun-compiled binary in the panel container), bypassing
-    // ct-server-core entirely. The Rust core no longer renders proxy
-    // configs at all; only the Caddyfile path remains here.
-
-    // reloadSingBox / collectTraffic / enforceQuota removed in v0.4.0
-    // — all three shelled into ct-server-core CLI paths that wrapped
-    // sing-box's clash admin API; sing-box VLESS+Reality exposes no
-    // clash API at all.
-
     /**
      * Caddy reload — graceful, zero-downtime config swap inside the
      * ct-caddy container.
@@ -160,12 +148,6 @@ final class CtServerCore implements CtServerCoreInterface
     {
         return $this->run(['component', 'check', '--manifests', $manifestsDir]);
     }
-
-    // probeAntiTracking() removed in v0.4.0 — see the head comment
-    // on CtServerCoreInterface for context. The
-    // /usr/local/bin/naive subprocess this method spawned is no
-    // longer bundled in the panel image, and the
-    // `ct-server-core probe anti-tracking` subcommand is gone.
 
     /**
      * Run one self-probe canary cycle.

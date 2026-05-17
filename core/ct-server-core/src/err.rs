@@ -426,9 +426,6 @@ impl From<crate::template::RenderError> for Error {
     }
 }
 
-// laravel_crypt::CryptError From-impl removed in v0.4.0 (see Error
-// variant comment above for the rationale).
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {

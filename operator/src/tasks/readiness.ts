@@ -178,11 +178,6 @@ const CHECKS: ReadinessCheck[] = [
             };
         },
     },
-    // Slot 10 (anti-tracking probe) removed in v0.4.0 — the probe
-    // shelled to `ct-server-core probe anti-tracking`, which spawned
-    // /usr/local/bin/naive in client mode against the deployment.
-    // v0.4.0 removed naive from the panel image, so the check was
-    // guaranteed-FAIL at runtime.
 ];
 
 async function readLine(): Promise<string> {

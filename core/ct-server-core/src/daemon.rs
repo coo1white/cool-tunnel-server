@@ -60,17 +60,13 @@ const MAX_REQUEST_READ_CHUNK_BYTES: usize = 8 * 1024;
 
 /// Concurrent-handler cap. The panel is the only legitimate client of
 /// this socket and runs `FrankenPHP` with `worker num 4` (default in
-/// docker/panel/Caddyfile). 8 → 16 ceiling; 16 chosen to leave
-/// headroom for the queue + scheduler + the components.md probe also
-/// shelling out, while still preventing a misbehaving client from
-/// driving unbounded handler-task spawn. (T-1, v0.0.65 — defense-in-
-/// depth; the Unix socket's 0o660 perms already gate access at the
-/// container-user layer.)
-///
-/// Pub since v0.0.67: `main.rs` reads this constant when constructing
-/// the shared `Arc<Semaphore>` it passes into both `serve` and the
-/// `internal_metrics::MetricsRegistry` (so the metrics endpoint can
-/// publish `ct_daemon_handler_permits_total`).
+/// docker/panel/Caddyfile). 16 leaves headroom for queue + scheduler
+/// + the components.md probe also shelling out, while preventing a
+/// misbehaving client from driving unbounded handler-task spawn.
+/// `main.rs` reads this when constructing the shared `Arc<Semaphore>`
+/// it passes into both `serve` and the `internal_metrics` registry
+/// (so the metrics endpoint can publish
+/// `ct_daemon_handler_permits_total`).
 pub const MAX_CONCURRENT_HANDLERS: usize = 16;
 
 /// Per-request line-read timeout. A connected client that sends part
@@ -78,7 +74,7 @@ pub const MAX_CONCURRENT_HANDLERS: usize = 16;
 /// malicious holding pattern) would otherwise keep the handler task
 /// — and the semaphore permit — alive indefinitely. 30 s is generous
 /// (panel requests complete in tens of ms); this is a poison-pill
-/// detector, not a perf knob. (T-2, v0.0.65.)
+/// detector, not a perf knob.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Named contract for daemon JSON-line request acquisition.
@@ -184,18 +180,13 @@ pub async fn serve(
         "ct-server-core daemon listening"
     );
 
-    // Concurrent-handler permit cap (T-1, v0.0.65). Each accept
-    // acquires one permit before spawning its handler task; the
-    // permit drops when the handler exits. The 17th simultaneous
-    // connection blocks at `acquire_owned().await` until a handler
-    // completes — that's the backpressure signal we want
-    // (clients see slower accept under saturation, the daemon
-    // doesn't OOM).
-    //
-    // The semaphore itself is constructed in `main.rs` (v0.0.67) so
-    // `internal_metrics::MetricsRegistry` can read its
-    // `available_permits()` for the `ct_daemon_handler_permits_used`
-    // gauge without a duplicate construction site.
+    // Concurrent-handler permit cap. Each accept acquires one
+    // permit before spawning; the permit drops when the handler
+    // exits. The (N+1)th simultaneous connection blocks at
+    // `acquire_owned().await` until a handler completes — that's
+    // the backpressure signal (slower accept under saturation,
+    // no OOM). Semaphore constructed in main.rs so
+    // internal_metrics can read available_permits().
 
     // Graceful shutdown: stop accepting new connections on
     // SIGINT / SIGTERM, drop the listener so its socket file is
