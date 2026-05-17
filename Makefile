@@ -251,7 +251,7 @@ backup: ## snapshot db + .env + caddy data into backups/
 	./scripts/backup.sh
 
 .PHONY: readiness
-readiness: ## run scripts/late-night-comeback.sh (strict >=9/10 readiness gate; cron/CI suitable)
+readiness: ## run scripts/late-night-comeback.sh (strict >=8/9 readiness gate; cron/CI suitable)
 	./scripts/late-night-comeback.sh
 
 .PHONY: doctor

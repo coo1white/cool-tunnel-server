@@ -175,7 +175,7 @@ Difference from 'make readiness':
   doctor    -> 'show me everything I should look at'
                 Permissive: WARN is informational, exit 0
   readiness -> 'is the system ready to publicly launch?'
-                Strict: needs >=9/10 checks PASS, structural
+                Strict: needs >=8/9 checks PASS, structural
                 fails cap the score at 7, exit 1 if not ready
 
 Output anatomy:
@@ -428,7 +428,7 @@ Next topic:  ./scripts/help.sh readiness
     "readiness": {
         title: "late-night-comeback.sh — readiness gate",
         body: `What it does:
-  Runs exactly 10 checks against the live stack and applies a
+  Runs exactly 9 checks against the live stack and applies a
   strict scoring rule:
 
     Structural (caps score at 7 if any FAIL):
@@ -466,8 +466,8 @@ to cool_tunnel:revocations. This is intentional and harmless
 non-read-only operation in the script.
 
 Exit codes:
-  0   - PASS (score >= 9)
-  1   - FAIL (score < 9 OR any structural fail)
+  0   - PASS (score >= 8)
+  1   - FAIL (score < 8 OR any structural fail)
 
 Next topic:  ./scripts/help.sh backup
 `,

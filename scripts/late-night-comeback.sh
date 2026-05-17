@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # late-night-comeback.sh — pre-launch readiness gate.
 #
-# Ten checks. Pass ≥ 90% (nine) to ship. Structural checks 1–4
-# (DNS / ports / ACME / UFW) cap the final score at 7 if any of
-# them is NG, regardless of the others — they are non-negotiable.
+# Nine checks (slot 10 retired in v0.4.0 — see below). Pass ≥ 8/9
+# (~89%) to ship. Structural checks 1–4 (DNS / ports / ACME / UFW)
+# cap the final score at 7 if any of them is NG, regardless of the
+# others — they are non-negotiable.
 #
 # Exit 0 on pass, 1 on fail. Suitable for cron / CI.
 
@@ -214,36 +215,11 @@ check_cover_invariant() {
     fi
 }
 
-# ---- 10. Bundled NaiveProxy anti-tracking probe ------------------
-# This is the meaningful end-to-end proxy check: ct-server-core
-# launches the packaged /usr/local/bin/naive client, points it at the
-# real proxy credential URL, and verifies hide_ip + hide_via at the
-# target. Plain `curl --proxy` is intentionally not used here because
-# it does not speak NaiveProxy's padding extension.
-check_probe() {
-    if [[ -z "${LNC_TEST_PROXY_URL:-}" ]]; then
-        record 10 ng "Set LNC_TEST_PROXY_URL=https://user:pass@${DOMAIN:-DOMAIN}:443 to enable anti-tracking probe"
-        return
-    fi
-    local out
-    out=$(docker compose exec -T panel ct-server-core probe anti-tracking \
-              --via "$LNC_TEST_PROXY_URL" 2>/dev/null)
-    if echo "$out" | grep -q '"hide_ip_effective":true' \
-        && echo "$out" | grep -q '"hide_via_effective":true'; then
-        record 10 ok "hide_ip + hide_via effective"
-    else
-        # Defense-in-depth: the Rust probe already strips creds from
-        # its ProbeResult.via field as of v0.1.2 (see probe.rs
-        # strip_creds), but if a future probe path or operator-set
-        # raw-output mode leaks the URL into stdout we still need
-        # readiness logs to be safe to paste. Mask any
-        # `user:secret@` segment regardless of source.
-        local safe_out
-        safe_out=$(printf '%s' "$out" \
-            | sed -E 's#([a-zA-Z+]+://)[^/@[:space:]"]+:[^/@[:space:]"]+@#\1***:***@#g')
-        record 10 ng "Anti-tracking probe failed: $safe_out"
-    fi
-}
+# Slot 10 (bundled-NaiveProxy anti-tracking probe) retired in v0.4.0.
+# The probe spawned /usr/local/bin/naive, which v0.4.0 stopped
+# bundling in the panel image when the proxy pivoted to sing-box
+# VLESS+Reality. The Bun-native operator/src/tasks/readiness.ts
+# dropped the slot in the same change; this bash twin matches.
 
 # ---- run ----------------------------------------------------------
 echo "Late-Night Comeback — readiness check"
@@ -263,7 +239,6 @@ check_redis_bridge
 echo
 echo "Functional:"
 check_cover_invariant
-check_probe
 echo
 
 # Score logic.
@@ -271,15 +246,16 @@ score=$total_pass
 if (( structural_fails > 0 )); then
     if (( score > 7 )); then score=7; fi
 fi
-# Now out of 10 checks. PASS requires 9/10, and any structural fail
-# still caps the score below the passing threshold.
-pct=$((score * 100 / 10))
-echo "Score: ${score}/10 (${pct}%)"
+# 9 checks total (slot 10 retired in v0.4.0 — see comment above).
+# PASS requires 8/9; structural fail caps the score at 7, which
+# stays below the threshold.
+pct=$((score * 100 / 9))
+echo "Score: ${score}/9 (${pct}%)"
 if (( structural_fails > 0 )); then
     echo "Structural fail(s): $structural_fails — score capped at 7."
 fi
 
-if (( score >= 9 )); then
+if (( score >= 8 )); then
     echo "Result: PASS — ready to ship."
     exit 0
 else

@@ -56,7 +56,7 @@ the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
 |--------------------|------------------------------------------------------------------------|
 | `ct doctor`        | PASS/WARN/FAIL health dashboard, including a Ballast Stones group at the end. No state mutation. |
 | `ct fix`           | Interactive recipe walker. Same 17 recipes as `scripts/fix.sh`.        |
-| `ct readiness`     | Strict ≥9/10 launch gate. Offers tactical retreat / rebuild on fail.   |
+| `ct readiness`     | Strict ≥8/9 launch gate. Offers tactical retreat / rebuild on fail.    |
 | `ct ballast`       | Run the 10 critical-invariant checks only. Exit 0 if no FAIL, 1 otherwise. Cron-friendly. |
 | `ct-operator self-update` | Pull a signed binary update from GitHub Releases.               |
 | `ct-operator version` | Print the embedded build version.                                   |
