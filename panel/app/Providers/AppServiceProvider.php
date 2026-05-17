@@ -9,20 +9,17 @@ namespace App\Providers;
 use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\ComponentCheckerInterface;
 use App\Contracts\CtServerCoreInterface;
-use App\Contracts\NaiveConfigGeneratorInterface;
-use App\Contracts\NaivePinReaderInterface;
 use App\Contracts\RevocationBusInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
+use App\Contracts\SingboxPinReaderInterface;
 use App\Contracts\SingBoxReloaderInterface;
 use App\Services\CaddyfileGenerator;
 use App\Services\ComponentChecker;
 use App\Services\CtServerCore;
-use App\Services\NaiveConfigGenerator;
-use App\Services\NaivePinReader;
 use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
+use App\Services\SingboxPinReader;
 use App\Services\SingBoxReloader;
-use App\Services\TrafficCollector;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -48,20 +45,24 @@ class AppServiceProvider extends ServiceProvider
      * the interface in `$this->app->bind(...)`.
      */
     private const SERVICE_BINDINGS = [
+        // v0.4.0+ — SingBoxConfigGenerator shells directly to
+        // /usr/local/bin/singbox-core (Bun-compiled binary bundled in
+        // the panel container via docker/panel/Dockerfile). The
+        // pre-v0.4.0 dual-interface ("SingBox" capital B vs "Singbox"
+        // lowercase b for staged migration) was YAGNI — v0.4.0 has
+        // exactly one renderer, and capital-B is the canonical name
+        // throughout consumers + tests.
         SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
         SingBoxReloaderInterface::class => SingBoxReloader::class,
         CaddyfileGeneratorInterface::class => CaddyfileGenerator::class,
-        // v0.3.0+ — naive.json renderer. See
-        // App\Contracts\NaiveConfigGeneratorInterface for lifecycle.
-        NaiveConfigGeneratorInterface::class => NaiveConfigGenerator::class,
+        // v0.4.0+ — splices the pinned sing-box upstream tag into
+        // SubscriptionController's server_singbox_pin block. Reads
+        // once via `singbox-core version --json`, caches for the
+        // worker's lifetime; binary is immutable until redeploy.
+        SingboxPinReaderInterface::class => SingboxPinReader::class,
         RevocationBusInterface::class => RedisRevocationBus::class,
         CtServerCoreInterface::class => CtServerCore::class,
         ComponentCheckerInterface::class => ComponentChecker::class,
-        // v0.3.x — naive-pin reader used by SubscriptionController
-        // to splice server_naive_pin into the subscription manifest.
-        // Tests bind a stub against the interface so they don't
-        // touch the real /srv/manifests file or shell out to naive.
-        NaivePinReaderInterface::class => NaivePinReader::class,
     ];
 
     public function register(): void
@@ -72,11 +73,9 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SingBoxConfigGenerator::class);
         $this->app->singleton(SingBoxReloader::class);
         $this->app->singleton(CaddyfileGenerator::class);
-        $this->app->singleton(NaiveConfigGenerator::class);
-        $this->app->singleton(TrafficCollector::class);
+        $this->app->singleton(SingboxPinReader::class);
         $this->app->singleton(ComponentChecker::class);
         $this->app->singleton(RedisRevocationBus::class);
-        $this->app->singleton(NaivePinReader::class);
 
         // Interface → concrete bindings. `$this->app->bind` (not
         // `singleton`) is enough here because the concrete is

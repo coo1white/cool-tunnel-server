@@ -12,10 +12,17 @@ use Symfony\Component\Process\Process;
 
 // Thin wrapper around the ct-server-core Rust binary.
 //
-// Every PHP service that used to do "real work" (SingBoxConfigGenerator,
-// SingBoxReloader, TrafficCollector, ComponentChecker) now calls into
-// this one helper. The Rust binary owns the latency-sensitive paths;
-// PHP stays where it's good — UI and persistence orchestration.
+// Every PHP service that still routes through ct-server-core (Caddyfile
+// rendering / reloading, component manifest checks, canary probes, the
+// PanelDomain SoT helper) calls into this one helper.
+//
+// v0.4.0 — sing-box rendering moved out of this path. The panel-side
+// SingBoxConfigGenerator now shells directly to
+// /usr/local/bin/singbox-core render-server (the Bun-compiled binary
+// bundled in the panel container) rather than going through the Rust
+// core. Traffic collection / quota enforcement / sing-box reload all
+// went away with the clash admin API that sing-box VLESS+Reality
+// doesn't expose.
 //
 // We always pass --json and parse stdout. If the exit code is non-
 // zero we surface stderr to the caller.
@@ -106,36 +113,26 @@ final class CtServerCore implements CtServerCoreInterface
         return substr($s, 0, self::MAX_CAPTURE_BYTES).'…[truncated]';
     }
 
-    public function renderSingBoxConfig(): array
-    {
-        return $this->run(['singbox', 'render']);
-    }
-
     public function renderCaddyfile(): array
     {
         return $this->run(['caddyfile', 'render']);
     }
 
-    /**
-     * v0.3.0+ — render /data/config/naive.json (consumed by
-     * ct-naive's Bun supervisor). The supervisor file-watches the
-     * path and respawns the naive child within ~250ms of the write,
-     * so there's no separate "reloadNaive" shell-out: the file
-     * write IS the reload trigger.
-     */
-    public function renderNaive(): array
-    {
-        return $this->run(['naive', 'render']);
-    }
+    // renderSingBoxConfig() / renderNaive() removed in v0.4.0 —
+    // sing-box rendering is done by SingBoxConfigGenerator shelling
+    // directly to /usr/local/bin/singbox-core render-server (the
+    // Bun-compiled binary in the panel container), bypassing
+    // ct-server-core entirely. The Rust core no longer renders proxy
+    // configs at all; only the Caddyfile path remains here.
 
-    public function reloadSingBox(): array
-    {
-        return $this->run(['server', 'reload'], timeoutSec: 60);
-    }
+    // reloadSingBox / collectTraffic / enforceQuota removed in v0.4.0
+    // — all three shelled into ct-server-core CLI paths that wrapped
+    // sing-box's clash admin API; sing-box VLESS+Reality exposes no
+    // clash API at all.
 
     /**
-     * v0.2.0+ Caddy reload — graceful, zero-downtime config swap
-     * inside the ct-caddy container.
+     * Caddy reload — graceful, zero-downtime config swap inside the
+     * ct-caddy container.
      *
      * Implementation in core/ct-server-core/src/caddy/mod.rs::reload
      * shells out to `docker exec ct-caddy caddy reload --config <output>`.
@@ -152,16 +149,6 @@ final class CtServerCore implements CtServerCoreInterface
     public function reloadCaddy(): array
     {
         return $this->run(['caddyfile', 'reload'], timeoutSec: 30);
-    }
-
-    public function collectTraffic(): array
-    {
-        return $this->run(['traffic', 'collect']);
-    }
-
-    public function enforceQuota(): array
-    {
-        return $this->run(['quota', 'enforce']);
     }
 
     public function componentList(string $manifestsDir = '/srv/manifests'): array

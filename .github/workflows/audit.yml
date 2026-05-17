@@ -39,7 +39,13 @@ on:
       - 'manifests/*.json'
       - 'docker/**/Dockerfile'
       - 'docker-compose.yml'
-      - 'sing-box/config.json.tpl'
+      # v0.4.0+ — singbox-core is the shared sing-box management
+      # package that compiles to the binary bundled in both the
+      # ct-singbox container and the macOS client. A change here
+      # rebuilds the server-side renderer and the client embedded
+      # binary in lockstep, so the anti-tracking + render-shape
+      # guards below MUST re-run.
+      - 'singbox-core/**'
       - 'caddy/Caddyfile.tpl'
 
 concurrency:
@@ -352,6 +358,7 @@ jobs:
               -not -name 'AUDIT.md' \
               -not -name 'THIRD_PARTY_LICENSES.md' \
               -not -name 'sing-box.upstream.json' \
+              -not -name 'singbox.upstream.json' \
               -not -name 'caddy.upstream.json' \
               -not -path './manifests/README.md' \
               -not -path './docs/installation-debian.md')
@@ -573,11 +580,14 @@ jobs:
   # ---------- Cycle 40: anti-tracking config smell-test ----------
   #
   # Static assertions on the templates we ship.
-  # v0.3.0+: ct-naive owns the forward-proxy role (hide_ip, hide_via,
-  # probe_resistance, basic_auth are naive-binary concerns now —
-  # see klzgrad/naiveproxy's docs). The Caddyfile's surface shrinks
-  # to layer4 SNI router + inner :8443 panel reverse-proxy + 404
-  # cert-acquisition stub; assertions track that.
+  # v0.4.0+: sing-box (VLESS+Reality) owns the forward-proxy role.
+  # The proxy-side hardening (cover-site SNI, xtls-rprx-vision flow,
+  # Reality handshake) lives in the singbox-core renderer + ct-singbox
+  # container. The Caddyfile shrinks to:
+  #   layer4 SNI splitter (panel.* → inner :8443, everything else →
+  #   ct-singbox:443) + inner :8443 panel reverse-proxy.
+  # No ACME cert is acquired for the proxy domain — Reality replaces
+  # that step with its own cover-site cryptography.
 
   anti-tracking-config:
     name: anti-tracking config smell-test
@@ -600,11 +610,12 @@ jobs:
           # regex test.
           non_comments=$(grep -vE '^\s*#' "$tpl")
           # If the file ever sprouts a "respond" with a recognisable
-          # string ("ok", "alive", project names), that's a tell.
-          # v0.3.0 has exactly one `respond 404` in the cert-
-          # acquisition stub site block; that's intentional (no body,
-          # bare 404). Match only quoted-string responds.
-          if echo "$non_comments" | grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box)"'; then
+          # string ("ok", "alive", project names, protocol tells),
+          # that's a fingerprintable signal. v0.4.0 has no
+          # quoted-string responds in operative lines; the
+          # cert-acquisition stub site from v0.3.x is gone (no proxy-
+          # domain cert anymore — Reality replaces it).
+          if echo "$non_comments" | grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box|reality|vless)"'; then
               echo "::error file=$tpl::Caddy site must not respond with a recognisable string"
               fail=1
           fi
@@ -614,42 +625,59 @@ jobs:
               echo "::error file=$tpl::Caddy admin must remain loopback (admin 127.0.0.1:2019)"
               fail=1
           fi
-          # v0.3.0+: the layer4 block MUST route the proxy SNI to
-          # ct-naive (no in-container forwardproxy any more — that's
-          # the whole point of the v0.3.0 cut). Match a `proxy
-          # ct-naive:443` directive (caddy-l4's short form; the
-          # block form `proxy { upstream tcp/ct-naive:443 }` is
-          # equivalent but the renderer emits the short form).
-          if ! echo "$non_comments" | grep -qE 'proxy\s+ct-naive:443'; then
-              echo "::error file=$tpl::layer4 block must proxy proxy-SNI traffic to ct-naive:443"
+          # v0.4.0+: the layer4 catch-all branch MUST route the
+          # cover-site SNI traffic to ct-singbox (the sing-box
+          # VLESS+Reality container). Match a `proxy ct-singbox:443`
+          # directive in caddy-l4's short form.
+          if ! echo "$non_comments" | grep -qE 'proxy\s+ct-singbox:443'; then
+              echo "::error file=$tpl::layer4 block must proxy cover-site SNI to ct-singbox:443"
               fail=1
           fi
-          # And it MUST do so behind a TLS-SNI matcher — never a
-          # blanket proxy that ignores SNI (which would expose
-          # ct-naive to panel.* clients too).
+          # And it MUST scope the panel routing behind a TLS-SNI
+          # matcher — never a blanket proxy that exposes ct-singbox
+          # to panel.* clients (which would defeat the SNI split).
           if ! echo "$non_comments" | grep -qE '^\s*sni\s'; then
-              echo "::error file=$tpl::layer4 block must use a 'sni' matcher to scope which SNI hits ct-naive"
+              echo "::error file=$tpl::layer4 block must use a 'sni' matcher to scope panel.* traffic"
               fail=1
           fi
+          # v0.4.0: the Caddyfile must NOT acquire a cert for the
+          # proxy domain — Reality replaces ACME on that path. A
+          # `tls_internal` or `tls { issuer ... }` block scoped to
+          # the proxy-domain hostname here would defeat the
+          # cover-site posture (Caddy would present its own cert
+          # instead of letting sing-box do Reality's cover-site
+          # cryptography). The panel domain still gets ACME — that
+          # block stays inside the inner :8443 reverse-proxy site.
           exit "$fail"
-      - name: assert naive.json renderer carries hardening flags
+      - name: assert singbox-core renderer carries Reality hardening posture
         run: |
           set -euo pipefail
-          src=core/ct-server-core/src/naive/mod.rs
+          src=singbox-core/src/config/render.ts
           fail=0
-          # The hide_ip / hide_via / probe_resistance concerns moved
-          # from the Caddyfile to the naive binary in v0.3.0. The
-          # renderer (or its supervisor wrapper) MUST construct a
-          # naive config that asks for these defaults. We assert on
-          # the renderer source: it must reference these knobs or
-          # ship them as part of the `naive --listen=...` URL form
-          # (which carries auth but not these flags directly — naive
-          # defaults to anti-tracking-friendly behaviour upstream,
-          # and the renderer's job is mostly to NOT disable them).
-          # For now we only require an awareness comment so future
-          # changes don't accidentally drop these protections.
-          if ! grep -qE 'hide_ip|hide_via|probe_resistance|anti-tracking' "$src" docker/naive/supervisor.ts; then
-              echo "::error file=$src::naive renderer/supervisor must reference the hide_ip/hide_via/probe_resistance posture (even if upstream defaults handle them)"
+          # v0.4.0: the server-side renderer is singbox-core's
+          # renderServerConfig (Bun TS, compiled into the binary
+          # bundled in both the panel and ct-singbox containers).
+          # It MUST emit:
+          #   - flow: "xtls-rprx-vision"     (Reality + uTLS Vision)
+          #   - reality.enabled: true        (the cover-site posture)
+          #   - reality.handshake.{server,server_port}
+          #   - max_time_difference          (anti-replay window)
+          # The hide_ip / hide_via / probe_resistance vocabulary from
+          # v0.3.x doesn't directly apply — sing-box's vless+reality
+          # inbound replaces all three with the cover-site handshake.
+          # We assert on the Reality-specific surface so a future
+          # accidental flow downgrade (e.g. dropping vision, exposing
+          # the credential over a non-Reality TLS) gets flagged here.
+          if ! grep -q 'xtls-rprx-vision' "$src"; then
+              echo "::error file=$src::renderServerConfig must emit flow=\"xtls-rprx-vision\" (Reality + uTLS Vision)"
+              fail=1
+          fi
+          if ! grep -qE 'reality:\s*\{|reality:\s*$' "$src"; then
+              echo "::error file=$src::renderServerConfig must emit a tls.reality block"
+              fail=1
+          fi
+          if ! grep -q 'max_time_difference' "$src"; then
+              echo "::error file=$src::renderServerConfig must set reality.max_time_difference (anti-replay window)"
               fail=1
           fi
           exit "$fail"

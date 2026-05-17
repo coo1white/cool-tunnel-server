@@ -56,10 +56,9 @@
 
 use crate::internal_metrics::MetricsRegistry;
 use crate::util::debounce::{Coalescer, Decision, DEFAULT_WINDOW};
-use crate::{admin, singbox, Result};
+use crate::Result;
 use redis::{Client, ConnectionAddr, ConnectionInfo, RedisConnectionInfo};
 use serde::{Deserialize, Serialize};
-use sqlx::MySqlPool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
@@ -155,14 +154,7 @@ fn lock_tracker(t: &Mutex<FlushTracker>) -> std::sync::MutexGuard<'_, FlushTrack
 /// reconnect-after-error and on every successful reload-fire. None
 /// when the operator hasn't enabled the `--metrics-bind` endpoint —
 /// no observability cost in that case.
-pub fn spawn(
-    redis_url: String,
-    pool: MySqlPool,
-    template: String,
-    output: String,
-    admin_url: String,
-    metrics: Option<Arc<MetricsRegistry>>,
-) -> JoinHandle<()> {
+pub fn spawn(redis_url: String, metrics: Option<Arc<MetricsRegistry>>) -> JoinHandle<()> {
     tokio::spawn(async move {
         // FlushTracker is shared between the subscriber loop (which
         // calls `coalescer.admit`) and the trailing-flush task
@@ -177,17 +169,7 @@ pub fn spawn(
 
         let mut backoff_ms = 250_u64;
         loop {
-            match run_subscriber(
-                &redis_url,
-                &pool,
-                &template,
-                &output,
-                &admin_url,
-                &tracker,
-                metrics.as_ref(),
-            )
-            .await
-            {
+            match run_subscriber(&redis_url, &tracker, metrics.as_ref()).await {
                 Ok(()) => {
                     tracing::warn!("redis subscriber exited cleanly; restarting");
                     backoff_ms = 250;
@@ -207,10 +189,6 @@ pub fn spawn(
 
 async fn run_subscriber(
     redis_url: &str,
-    pool: &MySqlPool,
-    template: &str,
-    output: &str,
-    admin_url: &str,
     tracker: &Arc<Mutex<FlushTracker>>,
     metrics: Option<&Arc<MetricsRegistry>>,
 ) -> Result<()> {
@@ -267,16 +245,9 @@ async fn run_subscriber(
                 // up our state when it runs.
             }
             Decision::FireNow | Decision::FireNowAndScheduleFlush => {
-                fire_reload(pool, template, output, admin_url, "leading", metrics).await;
+                fire_reload("leading", metrics).await;
                 if matches!(decision, Decision::FireNowAndScheduleFlush) {
-                    schedule_flush(
-                        tracker.clone(),
-                        pool.clone(),
-                        template.to_owned(),
-                        output.to_owned(),
-                        admin_url.to_owned(),
-                        metrics.map(Arc::clone),
-                    );
+                    schedule_flush(tracker.clone(), metrics.map(Arc::clone));
                 }
             }
         }
@@ -284,44 +255,21 @@ async fn run_subscriber(
     Ok(())
 }
 
-/// Run one sing-box render + clash-API reload cycle. Errors are
-/// logged but never propagated — a failed reload must not kill the
-/// subscriber loop, since the next event will retry the work.
+/// Note a revocation-driven reload edge. v0.4.0: this is a logged
+/// no-op — the actual sing-box reload happens at the panel layer
+/// (PHP DB::afterCommit → MessageBus → SingBoxConfigGenerator →
+/// singbox-core render-server → file-watch in ct-singbox supervisor).
+/// The Redis pub/sub bus is still the fast path the panel uses to
+/// announce status changes; the daemon's subscriber is preserved here
+/// so the operator-internal-health metric `ct_coalescer_fires_total`
+/// keeps tracking the announce-rate (a useful operator signal for
+/// "how often did anything change").
 ///
-/// The `metrics` registry (v0.0.67) is incremented on the *successful*
-/// reload-applied path only. Failed reloads count as zero fires
-/// because the operator's view should be "how often did sing-box
-/// actually pick up new state", not "how often did we try and fail."
-async fn fire_reload(
-    pool: &MySqlPool,
-    template: &str,
-    output: &str,
-    admin_url: &str,
-    edge: &'static str,
-    metrics: Option<&Arc<MetricsRegistry>>,
-) {
-    let started = Instant::now();
-    if let Err(e) = singbox::render(pool, template, output, false, false).await {
-        tracing::warn!(error = %e, edge, "render failed during revocation");
-        return;
-    }
-    // Clash bearer is now derived purely from CT_CLASH_SECRET_SEED
-    // env (no DB round-trip — see singbox::current_clash_secret).
-    // Comment kept abbreviated; rotation propagates via env, not DB.
-    let secret = match singbox::current_clash_secret() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(error = %e, edge, "could not load clash secret; skipping reload");
-            return;
-        }
-    };
-    let admin_client = admin::ClashAdmin::new(admin_url, &secret);
-    if let Err(e) = admin_client.reload(output).await {
-        tracing::warn!(error = %e, edge, "reload failed during revocation");
-        return;
-    }
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-    tracing::info!(edge, elapsed_ms, "sing-box reload applied");
+/// Pre-v0.4.0 this function rendered sing-box config + posted a clash-
+/// API reload. Both surfaces are gone (renderer moved to singbox-core;
+/// sing-box VLESS+Reality has no clash API).
+async fn fire_reload(edge: &'static str, metrics: Option<&Arc<MetricsRegistry>>) {
+    tracing::debug!(edge, "revocation announce observed (no-op in v0.4.0)");
     if let Some(m) = metrics {
         m.note_coalescer_fire(edge);
     }
@@ -333,14 +281,7 @@ async fn fire_reload(
 /// false), we return without spawning. The pending task's eventual
 /// `on_flush` will pick up the latest Coalescer state — last-writer-
 /// wins is the operator-intent semantic. (T-3, v0.0.65.)
-fn schedule_flush(
-    tracker: Arc<Mutex<FlushTracker>>,
-    pool: MySqlPool,
-    template: String,
-    output: String,
-    admin_url: String,
-    metrics: Option<Arc<MetricsRegistry>>,
-) {
+fn schedule_flush(tracker: Arc<Mutex<FlushTracker>>, metrics: Option<Arc<MetricsRegistry>>) {
     let mut g = lock_tracker(&tracker);
     if g.flush_handle.as_ref().is_some_and(|h| !h.is_finished()) {
         // Defense-in-depth: previous flush task hasn't completed.
@@ -358,15 +299,7 @@ fn schedule_flush(
             g.coalescer.on_flush(Instant::now())
         };
         if needs_flush {
-            fire_reload(
-                &pool,
-                &template,
-                &output,
-                &admin_url,
-                "trailing",
-                metrics.as_ref(),
-            )
-            .await;
+            fire_reload("trailing", metrics.as_ref()).await;
         } else {
             tracing::debug!("trailing flush skipped — no suppressed events");
         }

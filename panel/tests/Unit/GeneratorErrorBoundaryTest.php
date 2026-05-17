@@ -7,92 +7,80 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Contracts\CtServerCoreInterface;
+use App\Models\ProxyAccount;
+use App\Models\ServerConfig;
 use App\Services\CaddyfileGenerator;
 use App\Services\SingBoxConfigGenerator;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 // Pins the error-boundary contract of the two thin shell-out
-// generators that bridge the panel save flow to ct-server-core:
+// generators that bridge the panel save flow to its rendering
+// helpers:
 //
-//   - \RuntimeException (CtServerCore::run on non-zero exit, sing-box
-//     check timeout, docker hiccup) is "soft": the surrounding model
-//     save still commits, renderToFile returns null, the every-5-min
-//     scheduler reconciles.
+//   - CaddyfileGenerator still shells through CtServerCore (the
+//     Rust binary owns the Caddyfile templating). Failure-class
+//     semantics unchanged from v0.3.x: \RuntimeException is soft
+//     (render returns null, surrounding save commits, scheduler
+//     reconciles); \Error is hard (re-thrown so a code defect
+//     surfaces as a 500 instead of a silent diverge).
 //
-//   - \Error (TypeError, ArgumentCountError, undefined-method,
-//     class-not-found) is "hard": code defect, the catch must re-
-//     throw so the surrounding save fails with a visible 500 instead
-//     of silently leaving the panel/proxy diverged. v0.0.9 had
-//     exactly this bug: renderToFile called renderCaddyfile() by
-//     copy-paste error, every save hit it, the catch silenced it.
+//   - SingBoxConfigGenerator (v0.4.0+) shells directly to
+//     /usr/local/bin/singbox-core render-server with a JSON
+//     ServerRenderInput on stdin. Failure-class semantics:
+//       * Missing prerequisites (no reality_private_key,
+//         reality_dest_host) — hard: throw \RuntimeException at
+//         input-build time. These are server-side misconfigurations,
+//         not transient failures; the operator MUST hit a 500 and
+//         the panel logs the cause, not silently render with garbage.
+//       * Binary spawn / non-zero exit / non-JSON outcome — soft:
+//         log critical, return null. These are transient (panel
+//         container restart, docker filesystem hiccup) and the
+//         every-5-min scheduled `singbox:render --if-changed` will
+//         reconcile.
 //
-// The fix in v0.1.x narrows the catch's behaviour but keeps the
-// log_critical trace for both cases. These tests pin that contract
-// so a future refactor doesn't re-introduce the silent-Error path.
+// The v0.3.x test exercised mock-CtServerCore failure modes; v0.4.0
+// exercises DB-driven prerequisites (Reality keypair, dest host).
+// The shell-out side is integration territory (CI runs the docker
+// stack); unit tests here cover the deterministic input-build path.
 
 final class GeneratorErrorBoundaryTest extends TestCase
 {
-    #[Test]
-    public function singbox_soft_fails_on_runtime_exception(): void
-    {
-        $core = $this->createMock(CtServerCoreInterface::class);
-        $core->method('renderSingBoxConfig')
-            ->willThrowException(new \RuntimeException('docker exec failed'));
-
-        $gen = new SingBoxConfigGenerator($core);
-        $result = $gen->renderToFile();
-
-        $this->assertNull(
-            $result,
-            'A transient \RuntimeException must soft-fail to null so the surrounding save still commits.',
-        );
-    }
+    use RefreshDatabase;
 
     #[Test]
-    public function singbox_rethrows_on_error(): void
+    public function singbox_throws_when_reality_private_key_is_missing(): void
     {
-        $core = $this->createMock(CtServerCoreInterface::class);
-        $core->method('renderSingBoxConfig')
-            ->willThrowException(new \TypeError('called undefined method'));
+        // First-boot deploy: ServerConfig row exists but the
+        // operator hasn't run reality-keygen yet. Rendering would
+        // produce a config sing-box rejects at load time; the
+        // generator hard-fails so the surrounding handler doesn't
+        // silently write a broken file.
+        ServerConfig::factory()->create(['reality_private_key' => null]);
+        ProxyAccount::factory()->create();
 
-        $gen = new SingBoxConfigGenerator($core);
+        $gen = $this->app->make(SingBoxConfigGenerator::class);
 
-        $this->expectException(\Error::class);
-        $this->expectExceptionMessage('called undefined method');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/reality_private_key/i');
         $gen->renderToFile();
     }
 
     #[Test]
-    public function singbox_returns_hash_on_changed_render(): void
+    public function singbox_throws_when_reality_dest_host_is_empty(): void
     {
-        $core = $this->createMock(CtServerCoreInterface::class);
-        $core->method('renderSingBoxConfig')->willReturn([
-            'hash' => 'deadbeefcafebabe',
-            'changed' => true,
-            'bytes' => 1024,
-        ]);
+        // Reality requires a cover-site SNI. An empty string would
+        // render a sing-box config with `server_name: ""`, which
+        // sing-box's vless inbound rejects at load.
+        ServerConfig::factory()->create(['reality_dest_host' => '']);
+        ProxyAccount::factory()->create();
 
-        $gen = new SingBoxConfigGenerator($core);
+        $gen = $this->app->make(SingBoxConfigGenerator::class);
 
-        $this->assertSame('deadbeefcafebabe', $gen->renderToFile());
-    }
-
-    #[Test]
-    public function singbox_returns_null_on_unchanged_render(): void
-    {
-        $core = $this->createMock(CtServerCoreInterface::class);
-        $core->method('renderSingBoxConfig')->willReturn([
-            'hash' => 'abcd',
-            'changed' => false,
-        ]);
-
-        $gen = new SingBoxConfigGenerator($core);
-
-        $this->assertNull(
-            $gen->renderToFile(),
-            'When changed=false, renderToFile MUST return null to skip the reload.',
-        );
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/reality_dest_host/i');
+        $gen->renderToFile();
     }
 
     #[Test]
@@ -104,7 +92,10 @@ final class GeneratorErrorBoundaryTest extends TestCase
 
         $gen = new CaddyfileGenerator($core);
 
-        $this->assertNull($gen->renderToFile());
+        $this->assertNull(
+            $gen->renderToFile(),
+            'A transient \RuntimeException must soft-fail to null so the surrounding save still commits.',
+        );
     }
 
     #[Test]

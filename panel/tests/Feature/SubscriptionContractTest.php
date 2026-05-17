@@ -6,7 +6,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use App\Contracts\NaivePinReaderInterface;
+use App\Contracts\SingboxPinReaderInterface;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
@@ -14,31 +14,28 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
-// Round-10 client-contract regression tests.
+// Round-10 client-contract regression tests, ported to v0.4.0.
 //
-// Two silent-failure modes the prior 9 audits didn't catch:
+// v=2 manifest shape (per SubscriptionController head comment):
 //
-//   1. The Rust subscription emitter
-//      (core/ct-server-core/src/subscription.rs) emits a
-//      literal `{{CLEARTEXT_PLACEHOLDER}}` string the panel was
-//      meant to splice cleartext into before signing. The PHP
-//      controller path doesn't go through Rust today (it builds
-//      the body directly from the model's decrypted column), but
-//      a future refactor that pipes Rust→PHP could regress
-//      silently — the served body would carry the literal
-//      placeholder + clients would 401 against sing-box with no
-//      diagnostic. Test #1 anchors that the served body NEVER
-//      contains the placeholder string.
+//   {
+//     version: 2,
+//     server: <domain>,
+//     profiles: [{
+//       host, port, username, uuid, label,
+//       reality: { public_key, dest_host, short_id }
+//     }],
+//     capabilities: { anti_tracking, http3, ?fake_site_slug },
+//     issued_at, expires_at,
+//     ?note,
+//     ?server_singbox_pin: { upstream_tag },
+//     signature: <hex>
+//   }
 //
-//   2. Pre-fix the controller served `password => '' ?? ''`
-//      when `getCleartextPassword()` returned null — legacy
-//      rows pre-v0.0.5 cleartext column, OR Crypt::decryptString
-//      failure from APP_KEY rotation. Clients received a
-//      valid-looking manifest with empty basic_auth, attempted
-//      the proxy connect, and got sing-box 401 — no surface for
-//      the operator to debug. Fix: fall through to cover site,
-//      preserving the cover-site invariant. Test #2 anchors
-//      that contract.
+// Failure modes that must fall through to the cover-site catch-all
+// (preserving anti-enumeration parity with the bogus-token path):
+//   - Active account but ProxyAccount.uuid is empty
+//   - Active account but ServerConfig.reality_public_key is empty
 
 class SubscriptionContractTest extends TestCase
 {
@@ -55,64 +52,80 @@ class SubscriptionContractTest extends TestCase
         return $this->get('/cover-baseline-'.bin2hex(random_bytes(4)));
     }
 
-    #[Test]
-    public function served_manifest_never_contains_cleartext_placeholder(): void
+    /**
+     * Stub SingboxPinReader so the controller emits a deterministic
+     * server_singbox_pin block without shelling to the bundled binary
+     * (the test environment doesn't have /usr/local/bin/singbox-core).
+     * Returning null collapses to the field-omitted-on-the-wire branch.
+     */
+    private function stubSingboxPin(?string $upstreamTag): void
     {
-        // The Rust emitter emits `{{CLEARTEXT_PLACEHOLDER}}` as
-        // a literal — that's its contract for the
-        // CLI-without-panel path. The HTTP path must never serve
-        // that string to a client. If a future refactor pipes
-        // Rust→PHP and forgets to splice, this test catches it.
+        $stub = new class($upstreamTag) implements SingboxPinReaderInterface
+        {
+            public function __construct(private readonly ?string $tag) {}
+
+            public function upstreamTag(): ?string
+            {
+                return $this->tag;
+            }
+        };
+        $this->app->instance(SingboxPinReaderInterface::class, $stub);
+    }
+
+    #[Test]
+    public function manifest_profile_carries_uuid_and_reality_block(): void
+    {
+        // v=2 contract: every profile carries the VLESS UUID (the
+        // credential) and a per-profile Reality block (public_key +
+        // dest_host + short_id). The client plugs these into its
+        // sing-box outbound directly.
         $this->seedActiveCover();
+        $this->stubSingboxPin(null);
+
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('s3cr3t-actual');
-        $account->save();
+        $uuid = $account->uuid;
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
 
         $this->assertSame(200, $response->status());
         $this->assertSame('application/json', $response->headers->get('Content-Type'));
-        $this->assertStringNotContainsString(
-            '{{CLEARTEXT_PLACEHOLDER}}',
-            $response->getContent(),
-            'Served manifest must never carry the Rust emitter placeholder string',
+
+        $decoded = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertSame(2, $decoded['version'], 'v0.4.0 manifest version is 2');
+        $this->assertCount(1, $decoded['profiles']);
+
+        $profile = $decoded['profiles'][0];
+        $this->assertSame($uuid, $profile['uuid'], 'profile.uuid must equal ProxyAccount.uuid');
+        $this->assertArrayNotHasKey(
+            'password',
+            $profile,
+            'v=2 manifest must NOT carry v0.3.x `password` field on profiles',
         );
-        $this->assertStringContainsString(
-            's3cr3t-actual',
-            $response->getContent(),
-            'The actual decrypted cleartext should be in the manifest',
-        );
+
+        $this->assertArrayHasKey('reality', $profile, 'profile must carry a reality block');
+        $this->assertSame('TEST-PUBLIC-KEY-base64url-32-byteish', $profile['reality']['public_key']);
+        $this->assertSame('www.microsoft.com', $profile['reality']['dest_host']);
+        $this->assertSame('', $profile['reality']['short_id']);
     }
 
     #[Test]
-    public function manifest_canonical_is_serde_round_trippable(): void
+    public function manifest_canonical_is_round_trippable(): void
     {
-        // Round-11 data-integrity: the contract docstring on
-        // SubscriptionManifestV1 (core/ct-protocol/src/subscription.rs)
-        // says clients verify by setting `signature` to None and
-        // re-serialising. With serde's `skip_serializing_if =
-        // "Option::is_none"` on Option<String> fields, an absent
-        // None field produces JSON with NO key, not `"key":null`.
+        // Round-11 data-integrity: clients verify by setting
+        // `signature` to None and re-canonicalising. With
+        // `skip_serializing_if = "Option::is_none"` on Option fields
+        // (the future ct-protocol::SubscriptionManifestV2 will mirror
+        // V1's serde discipline), absent fields produce JSON with NO
+        // key, not `"key":null`.
         //
-        // Pre-fix the controller emitted `"note":null` and
-        // `"signature":null` literals in the canonical body. Round-
-        // tripping THAT through a Rust deserialise + (signature →
-        // None) + re-serialise produces a SHORTER string (no `note`
-        // key, no `signature` key) — different bytes, different
-        // HMAC, every Rust client verification fails.
-        //
-        // This test asserts the served JSON survives a remove-
-        // signature round-trip without losing or gaining keys —
-        // i.e. the bytes the SERVER signed equal the bytes a CLIENT
-        // would canonicalise. PHP's `json_encode` and `json_decode`
-        // round-trip is byte-stable for our flag set (UNESCAPED_-
-        // SLASHES | UNESCAPED_UNICODE) and the rest of the body
-        // contains only flat scalars + ordered arrays — same shape
-        // serde produces.
+        // The asserted invariant: the body the SERVER signed equals
+        // the body a CLIENT would canonicalise after deserialising
+        // and clearing signature.
         $this->seedActiveCover();
+        $this->stubSingboxPin(null);
+
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('s3cr3t-actual');
-        $account->save();
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
         $this->assertSame(200, $response->status());
@@ -120,27 +133,24 @@ class SubscriptionContractTest extends TestCase
         $served = $response->getContent();
         $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
 
-        $this->assertArrayHasKey('signature', $decoded, 'served manifest must carry a signature');
+        $this->assertArrayHasKey('signature', $decoded);
         $servedSig = $decoded['signature'];
-        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $servedSig, 'signature must be 32-byte hex');
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $servedSig);
 
-        // Reconstruct the canonical: drop `signature` entirely
-        // (matching `signature: None` + skip_if_none on the Rust
-        // side). Re-encode with the same flags the controller uses.
+        // Strip signature, re-encode with the same flags the
+        // controller uses, HMAC, expect equal.
         unset($decoded['signature']);
         $canonical = json_encode(
             $decoded,
             JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
         );
 
-        // The body must NOT contain `note` when it is null —
-        // pre-fix this test would catch `"note":null` leaking into
-        // canonical bytes.
         $this->assertStringNotContainsString(
             '"note":',
             $canonical,
-            'canonical must omit `note` when null (Rust skip_if_none); '
-            .'leaking `"note":null` into the canonical breaks HMAC verification',
+            'canonical must omit `note` when null (skip_if_none); emitting '
+            .'`"note":null` would diverge from a deserialise→re-serialise '
+            .'round-trip and break HMAC verification.',
         );
         $this->assertStringNotContainsString(
             '"signature":',
@@ -148,38 +158,27 @@ class SubscriptionContractTest extends TestCase
             'canonical (post-strip) must NOT carry signature in any form',
         );
 
-        // HMAC the reconstructed canonical with the same key the
-        // controller used — must equal the served signature. This
-        // is the EXACT computation a Rust/Go/Swift client does;
-        // if it diverges, that client cannot verify a manifest
-        // this server signs.
         $expected = hash_hmac('sha256', $canonical, (string) config('app.key'));
         $this->assertSame(
             $expected,
             $servedSig,
-            'server-signed HMAC must equal the HMAC a client would compute by '
-            .'removing `signature` and re-canonicalising — '
-            .'if this fails, every client implementing the documented '
-            .'verify-by-stripping-signature flow will reject this manifest',
+            'server-signed HMAC must equal the HMAC a client computes by '
+            .'removing `signature` and re-canonicalising.',
         );
     }
 
     #[Test]
     public function manifest_capabilities_skip_optional_when_absent(): void
     {
-        // capabilities.fake_site_slug carries
-        // `#[serde(default, skip_serializing_if = "Option::is_none")]`
-        // on the Rust side. When no fake site is active, the field
-        // must be ABSENT from the canonical, not present-as-null.
-        // Pre-fix the controller emitted
-        // `"fake_site_slug":null` always — same divergence trap as
-        // the top-level `note` field.
+        // capabilities.fake_site_slug is emitted only when an active
+        // fake site exists. When absent it must be OMITTED, not
+        // emitted as null — same divergence trap as the top-level
+        // `note` field.
         ServerConfig::factory()->create();
+        $this->stubSingboxPin(null);
         // intentionally NOT creating an active FakeWebsite
 
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('s3cr3t-actual');
-        $account->save();
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
         $this->assertSame(200, $response->status());
@@ -189,13 +188,13 @@ class SubscriptionContractTest extends TestCase
             '"fake_site_slug":null',
             $served,
             'capabilities.fake_site_slug must be omitted when no active fake site, '
-            .'not emitted as null — Rust round-trip drops it and HMAC diverges',
+            .'not emitted as null — round-trip drops it and HMAC diverges.',
         );
 
         $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
         $this->assertArrayNotHasKey('fake_site_slug', $decoded['capabilities']);
 
-        // Sanity: the round-trip HMAC still verifies in this branch.
+        // Sanity: round-trip HMAC still verifies in this branch.
         $sig = $decoded['signature'];
         unset($decoded['signature']);
         $canonical = json_encode(
@@ -205,32 +204,29 @@ class SubscriptionContractTest extends TestCase
         $this->assertSame(
             hash_hmac('sha256', $canonical, (string) config('app.key')),
             $sig,
-            'HMAC must verify in the no-active-fake-site branch too',
         );
     }
 
     #[Test]
-    public function manifest_with_non_ascii_password_round_trips_through_hmac_verify(): void
+    public function manifest_with_non_ascii_label_round_trips_through_hmac_verify(): void
     {
-        // Round-14 input-boundary: non-ASCII passwords (Chinese,
-        // Japanese, Korean, anything non-ASCII) must survive the
+        // Round-14 input-boundary: non-ASCII text in any user-facing
+        // field (the `label`, future `note`) must survive the
         // server-canonicalise → HMAC-sign → client-deserialise →
-        // re-canonicalise → HMAC-verify round-trip.
+        // re-canonicalise → HMAC-verify round-trip. PHP's
+        // JSON_UNESCAPED_UNICODE flag and the client's matching
+        // serde_json default both emit raw UTF-8 bytes for non-ASCII;
+        // if EITHER encoder flips to default-escape, HMAC verification
+        // breaks across every account whose label / domain contains
+        // a non-ASCII codepoint.
         //
-        // Pre-this test, the contract relied on PHP's
-        // JSON_UNESCAPED_UNICODE flag matching Rust's serde_json
-        // default — both emit raw UTF-8 bytes for non-ASCII. If
-        // EITHER encoder ever flips to default-escape, the
-        // canonical bytes diverge and HMAC verification fails on
-        // every account whose password contains a non-ASCII
-        // codepoint. This test exercises the actual PHP encode
-        // path and proves the round-trip succeeds in the
-        // non-ASCII case (the analogous Rust-side test is in
-        // ct-protocol::subscription::tests).
-        $this->seedActiveCover();
+        // v=2 uuids are ASCII (RFC 4122), so the non-ASCII concern
+        // moves to the label field (which embeds the domain).
+        ServerConfig::factory()->create(['domain' => 'プロキシ.中文.example']);
+        FakeWebsite::factory()->active()->create();
+        $this->stubSingboxPin(null);
+
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('héllo Zürich プロキシ 中文密码');
-        $account->save();
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
         $this->assertSame(200, $response->status());
@@ -238,15 +234,11 @@ class SubscriptionContractTest extends TestCase
         $served = $response->getContent();
 
         // Body must contain the raw UTF-8 bytes (NOT \u-escaped).
-        $this->assertStringContainsString('héllo Zürich', $served);
-        $this->assertStringContainsString('プロキシ', $served);
-        $this->assertStringContainsString('中文密码', $served);
-        $this->assertStringNotContainsString('\\u00e9', $served, 'no \\u escapes for é');
+        $this->assertStringContainsString('プロキシ.中文.example', $served);
+        $this->assertStringNotContainsString('\\u30D7', $served, 'no \\u escapes for プ');
         $this->assertStringNotContainsString('\\u4e2d', $served, 'no \\u escapes for 中');
 
-        // HMAC round-trip must succeed in the non-ASCII branch
-        // (same recipe as manifest_canonical_is_serde_round_trippable
-        // but with non-ASCII payload).
+        // HMAC round-trip.
         $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
         $sig = $decoded['signature'];
         unset($decoded['signature']);
@@ -257,38 +249,29 @@ class SubscriptionContractTest extends TestCase
         $this->assertSame(
             hash_hmac('sha256', $canonical, (string) config('app.key')),
             $sig,
-            'HMAC must verify with non-ASCII password — if this fails, '
-            .'check that PHP JSON_UNESCAPED_UNICODE is still emitted by the '
-            .'controller AND that no upstream PHP version change shifted '
-            .'json_encode default behaviour',
+            'HMAC must verify with non-ASCII label — if this fails, check that '
+            .'JSON_UNESCAPED_UNICODE is still emitted by the controller AND that '
+            .'no upstream PHP version change shifted json_encode default behaviour.',
         );
     }
 
     #[Test]
-    public function manifest_issued_at_and_expires_at_are_exactly_30_days_apart(): void
+    public function manifest_issued_at_and_expires_at_are_exactly_7_days_apart(): void
     {
         // Round-13 time-and-clock: pre-fix the controller called
-        // `time()` twice on adjacent lines for issued_at and
-        // expires_at, which under a sub-second second-boundary
-        // race could land issued_at = N and expires_at = N+1 + 30
-        // days — an off-by-one window. Now both share a single
-        // captured `$now`. This test pins:
-        //   1. expires_at - issued_at == EXACTLY 30 days
-        //   2. issued_at <= the test's wall clock (reasonable
-        //      sanity bound)
+        // `time()` twice on adjacent lines, exposing a sub-second
+        // boundary race. Now both share a single captured `$now`.
         //
-        // Anchors against the Rust spec's
-        // FRESHNESS_WINDOW_SECONDS = 7 days: the server-issued
-        // expiry is 30 days but client-side replay-resistance
-        // cuts in at 7 days. If a future change pushes
-        // MANIFEST_TTL_SECONDS above 30 days, this test fails
-        // first — at which point the FRESHNESS_WINDOW_SECONDS
-        // bound on the client side becomes the binding constraint
-        // and the operator should know.
+        // v0.4.0: expires_at - issued_at is the spec's FRESHNESS_WINDOW
+        // (7 days), down from v0.3.x's 30 days. Pre-v0.4.0 the server
+        // promised 30 days but spec-compliant clients refused after
+        // day 7 (the replay-resistance window cut in first). v0.0.83's
+        // canonical_expires_at constructor pinned 7 days as the
+        // authoritative value; the PHP controller now matches.
         $this->seedActiveCover();
+        $this->stubSingboxPin(null);
+
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('s3cr3t');
-        $account->save();
 
         $before = time();
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
@@ -300,67 +283,32 @@ class SubscriptionContractTest extends TestCase
         $this->assertIsInt($decoded['issued_at']);
         $this->assertIsInt($decoded['expires_at']);
 
-        $this->assertGreaterThanOrEqual(
-            $before,
-            $decoded['issued_at'],
-            'issued_at must be >= the pre-request wall clock',
-        );
-        $this->assertLessThanOrEqual(
-            $after,
-            $decoded['issued_at'],
-            'issued_at must be <= the post-request wall clock',
-        );
+        $this->assertGreaterThanOrEqual($before, $decoded['issued_at']);
+        $this->assertLessThanOrEqual($after, $decoded['issued_at']);
 
-        $thirtyDays = 60 * 60 * 24 * 30;
+        $sevenDays = 60 * 60 * 24 * 7;
         $this->assertSame(
-            $thirtyDays,
+            $sevenDays,
             $decoded['expires_at'] - $decoded['issued_at'],
-            'expires_at - issued_at must be EXACTLY 30 days; '
-            .'a non-30-day delta means the controller is calling time() '
-            .'twice and racing the second boundary',
+            'expires_at - issued_at must be EXACTLY 7 days '
+            .'(matches ct-protocol::SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS); '
+            .'a non-7-day delta means the controller is either calling time() twice '
+            .'OR the MANIFEST_TTL_SECONDS constant has drifted from the spec value.',
         );
-    }
-
-    /**
-     * Stub NaivePinReader so the controller emits a deterministic
-     * server_naive_pin block without touching the real manifest file
-     * or shelling out to `naive --version`. Mirrors the half-truthy-
-     * read decision rule the production reader uses: returning null
-     * collapses to the field-omitted-on-the-wire branch.
-     *
-     * @param  array{upstream_tag:string, naive_version:string}|null  $pin
-     */
-    private function stubNaivePin(?array $pin): void
-    {
-        $stub = new class($pin) implements NaivePinReaderInterface
-        {
-            public function __construct(private readonly ?array $pin) {}
-
-            public function read(bool $useCache = true): ?array
-            {
-                return $this->pin;
-            }
-        };
-        $this->app->instance(NaivePinReaderInterface::class, $stub);
     }
 
     #[Test]
-    public function manifest_carries_server_naive_pin_when_reader_returns_one(): void
+    public function manifest_carries_server_singbox_pin_when_reader_returns_a_tag(): void
     {
-        // v0.3.x runtime cross-end confirmation: when the reader can
-        // see BOTH halves (manifest tag + running binary version),
-        // the controller splices them into the manifest BEFORE
-        // signing. The signature must still verify after the field
-        // is included — i.e. the splice happened before the HMAC.
+        // v0.4.0 cross-end binary-identity confirmation: when the
+        // bundled singbox-core binary reports its upstream pin, the
+        // controller splices it into the manifest BEFORE signing.
+        // The signature must verify after the field is included —
+        // i.e. the splice happened on the canonical side.
         $this->seedActiveCover();
-        $this->stubNaivePin([
-            'upstream_tag' => 'v148.0.7778.96-5',
-            'naive_version' => '148.0.7778.96',
-        ]);
+        $this->stubSingboxPin('v1.13.12');
 
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('s3cr3t-actual');
-        $account->save();
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
         $this->assertSame(200, $response->status());
@@ -368,23 +316,21 @@ class SubscriptionContractTest extends TestCase
         $served = $response->getContent();
         $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
 
-        $this->assertArrayHasKey('server_naive_pin', $decoded);
-        $this->assertSame('v148.0.7778.96-5', $decoded['server_naive_pin']['upstream_tag']);
-        $this->assertSame('148.0.7778.96', $decoded['server_naive_pin']['naive_version']);
+        $this->assertArrayHasKey('server_singbox_pin', $decoded);
+        $this->assertSame('v1.13.12', $decoded['server_singbox_pin']['upstream_tag']);
 
-        // Order: server_naive_pin appears AFTER expires_at and BEFORE
-        // signature — matches the Rust struct's field-declaration
-        // order, which is part of the wire contract.
+        // Wire order: server_singbox_pin appears AFTER expires_at
+        // and BEFORE signature.
         $posExpires = strpos($served, '"expires_at"');
-        $posPin = strpos($served, '"server_naive_pin"');
+        $posPin = strpos($served, '"server_singbox_pin"');
         $posSig = strpos($served, '"signature"');
-        $this->assertNotFalse($posPin, 'served body must contain server_naive_pin');
+        $this->assertNotFalse($posPin, 'served body must contain server_singbox_pin');
         $this->assertNotFalse($posExpires);
         $this->assertNotFalse($posSig);
         $this->assertLessThan($posPin, $posExpires);
         $this->assertLessThan($posSig, $posPin);
 
-        // HMAC still verifies — server_naive_pin is INSIDE the
+        // HMAC still verifies — server_singbox_pin is INSIDE the
         // signed body.
         $sig = $decoded['signature'];
         unset($decoded['signature']);
@@ -397,27 +343,25 @@ class SubscriptionContractTest extends TestCase
     }
 
     #[Test]
-    public function manifest_omits_server_naive_pin_when_reader_returns_null(): void
+    public function manifest_omits_server_singbox_pin_when_reader_returns_null(): void
     {
-        // Half-truthy reads (manifest missing, binary unparseable,
-        // exec failure) → reader returns null → controller omits
-        // the field entirely. Old clients (pre-v0.3.x naive-pin
-        // awareness) see exactly what they used to see.
+        // Half-truthy reads (binary missing, JSON non-conformant,
+        // exec failure) → reader returns null → controller omits the
+        // field entirely. Older clients (pre-v0.4.0 pin awareness)
+        // see exactly what they used to see.
         $this->seedActiveCover();
-        $this->stubNaivePin(null);
+        $this->stubSingboxPin(null);
 
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('s3cr3t');
-        $account->save();
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
         $this->assertSame(200, $response->status());
 
         $served = $response->getContent();
-        $this->assertStringNotContainsString('"server_naive_pin"', $served);
-        $this->assertStringNotContainsString('server_naive_pin', $served);
+        $this->assertStringNotContainsString('"server_singbox_pin"', $served);
+        $this->assertStringNotContainsString('server_singbox_pin', $served);
 
-        // Sanity: signature still verifies in the absent-field branch.
+        // Signature still verifies in the absent-field branch.
         $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
         $sig = $decoded['signature'];
         unset($decoded['signature']);
@@ -432,22 +376,21 @@ class SubscriptionContractTest extends TestCase
     }
 
     #[Test]
-    public function manifest_with_empty_cleartext_falls_through_to_cover_site(): void
+    public function manifest_with_empty_uuid_falls_through_to_cover_site(): void
     {
-        // A row whose cleartext column is empty (or whose
-        // decryption fails because APP_KEY rotated since the row
-        // was created) MUST NOT serve a working-looking manifest
-        // with empty basic_auth. The cover-site fall-through is
-        // the right shape: same byte signature as any unknown
-        // path, so a censor probing the subscription endpoint
-        // can't distinguish "valid token, bad cleartext" from
-        // "bogus token" from "/random-path".
+        // A row whose uuid column is empty (corrupt DB row, or a
+        // legacy migration that didn't auto-seed) MUST NOT serve a
+        // working-looking manifest with no credential. The cover-site
+        // fall-through is the right shape: same byte signature as any
+        // unknown path, so a censor probing the subscription endpoint
+        // can't distinguish "valid token, no credential" from "bogus
+        // token" from "/random-path".
         $this->seedActiveCover();
+        $this->stubSingboxPin(null);
+
         $account = ProxyAccount::factory()->create();
-        // Force the encrypted-cleartext column empty AFTER the
-        // factory — the factory normally backfills it via
-        // mutators.
-        $account->password_cleartext_encrypted = null;
+        // Bypass the creating-hook by zeroing the column directly.
+        $account->uuid = '';
         $account->saveQuietly();
 
         $cover = $this->coverSiteBaseline();
@@ -464,5 +407,30 @@ class SubscriptionContractTest extends TestCase
             $sub->getContent(),
             'body byte-equal to cover (no manifest leak)',
         );
+    }
+
+    #[Test]
+    public function manifest_with_empty_reality_public_key_falls_through_to_cover_site(): void
+    {
+        // ServerConfig.reality_public_key empty → operator hasn't run
+        // first-boot reality-keygen, or the column got nulled. A
+        // manifest without reality.public_key would carry a credential
+        // the client can't actually use. Fall-through to cover-site,
+        // same posture as the uuid-missing branch.
+        ServerConfig::factory()->create(['reality_public_key' => '']);
+        FakeWebsite::factory()->active()->create();
+        $this->stubSingboxPin(null);
+
+        $account = ProxyAccount::factory()->create();
+
+        $cover = $this->coverSiteBaseline();
+        $sub = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+
+        $this->assertSame($cover->status(), $sub->status());
+        $this->assertSame(
+            $cover->headers->get('Content-Type'),
+            $sub->headers->get('Content-Type'),
+        );
+        $this->assertSame($cover->getContent(), $sub->getContent());
     }
 }

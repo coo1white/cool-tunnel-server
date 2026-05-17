@@ -8,12 +8,10 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod admin;
 mod caddy;
 mod canary;
 mod components;
 mod contracts;
-mod credentials;
 mod daemon;
 mod daemon_fsm;
 mod db;
@@ -23,25 +21,24 @@ mod frame;
 // haproxy/ deleted in v0.2.0 (Caddy SNI-routes the panel reverse-proxy
 // itself; HAProxy front door is gone).
 mod internal_metrics;
-mod laravel_crypt;
-mod metrics;
-// naive/ — v0.3.0+. Renders /data/config/naive.json that ct-naive's
-// supervisor watches; the supervisor respawns naive on file change.
-// Replaces the v0.2.x basic_auth-in-Caddyfile path (Caddyfile is now
-// static; per-account data lives in naive.json).
-mod naive;
+// naive/ retired in v0.4.0 — replaced by singbox-core (Bun TS package
+// bundled into the panel container). singbox/ + quota/ + metrics/ +
+// admin/ + credentials/ all deleted alongside the sing-box-via-Rust
+// renderer they hung off:
+//   - singbox::render rendered the v0.3.x naive inbound shape from
+//     a template; the v0.4.0 renderer is singbox-core's
+//     renderServerConfig, shelled to from PHP.
+//   - quota::enforce and metrics::collect both spoke to sing-box's
+//     clash admin API. v0.4.0 sing-box VLESS+Reality does not expose
+//     a clash API at all; per-user accounting is operator-side via
+//     `singbox-core supervise`'s healthz + the panel's revocation bus.
+//   - admin/ was the clash-API HTTP client used by quota + metrics.
+//   - credentials::assert_locked compared the rendered naive users[]
+//     against DB tuples; v0.4.0's equivalent check is
+//     `operator/src/util/drift-check.ts`'s parseSingboxJsonUsers.
 mod observability;
 mod probe;
-mod quota;
 mod redis_bridge;
-// singbox/ retained as dead-code-no-runtime-effect for v0.2.0; the
-// metrics + quota modules still reference singbox::clash_secret /
-// admin::ClashAdmin for paths that aren't wired to a live service
-// anymore. Full removal lands in a v0.2.1 follow-up that also
-// migrates metrics::collect (clash-API → Caddy /metrics) and
-// quota::enforce (clash reload → caddy::reload).
-mod singbox;
-mod subscription;
 mod template;
 mod util;
 
@@ -60,48 +57,20 @@ struct Cli {
     #[arg(long, env = "DATABASE_URL", global = true)]
     database_url: Option<String>,
 
-    /// sing-box config template path.
-    #[arg(
-        long,
-        env = "SINGBOX_CONFIG_TEMPLATE",
-        default_value = "/srv/sing-box/config.json.tpl",
-        global = true
-    )]
-    template: String,
-
-    /// sing-box config output path.
-    #[arg(
-        long,
-        env = "SINGBOX_CONFIG_PATH",
-        default_value = "/etc/sing-box/config.json",
-        global = true
-    )]
-    output: String,
-
-    /// sing-box clash-API base URL. Default targets the
-    /// docker-internal `ct-singbox:9090` listener bound by
-    /// `experimental.clash_api.external_controller`. The compose
-    /// `ports:` map MUST NOT publish 9090 (audit-enforced) — this
-    /// is a TCP listener intended for `ct-net` peers only.
-    #[arg(
-        long,
-        env = "SINGBOX_CLASH_URL",
-        default_value = "http://ct-singbox:9090",
-        global = true
-    )]
-    admin_url: String,
-
-    /// Optional override for the clash-API bearer token. Empty
-    /// (default) → derive deterministically from ServerConfig at
-    /// each call site, matching what `singbox::render` baked into
-    /// `experimental.clash_api.secret`. Set this only for
-    /// host-side dev where the panel's ServerConfig isn't reachable.
-    #[arg(long, env = "SINGBOX_CLASH_SECRET", default_value = "", global = true)]
-    admin_secret: String,
-
-    /// Panel subdomain. Used by the Caddyfile and haproxy.cfg
-    /// renderers to (a) attach Caddy auto-HTTPS for the panel cert
-    /// and (b) point the haproxy SNI rule at it. Defaults to
+    // v0.4.0 — dropped Cli fields:
+    //   template       (was SINGBOX_CONFIG_TEMPLATE; sing-box template
+    //                  rendering moved to singbox-core, shelled to from
+    //                  panel-side SingBoxConfigGenerator).
+    //   output         (was SINGBOX_CONFIG_PATH; only consumer was the
+    //                  deleted Rust renderer + credentials::assert_locked).
+    //   admin_url      (was SINGBOX_CLASH_URL; sing-box VLESS+Reality has
+    //                  no clash admin API at all).
+    //   admin_secret   (was SINGBOX_CLASH_SECRET; same — no clash API).
+    // The corresponding env vars in docker-compose are deprecated; if
+    // they're set the binary silently ignores them (clap with no matching
+    // arg is a no-op).
+    /// Panel subdomain. Used by the Caddyfile renderer to attach
+    /// Caddy auto-HTTPS for the panel cert. Defaults to
     /// `panel.${DOMAIN}` when unset; install.sh writes the chosen
     /// value into .env at first boot. (R1-1 / R1-2, v0.0.33.)
     #[arg(long, env = "PANEL_DOMAIN", default_value = "", global = true)]
@@ -117,41 +86,25 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// sing-box config generation + validation.
-    Singbox {
-        #[command(subcommand)]
-        op: SingboxOp,
-    },
-    /// Caddyfile generation + Caddy reload (v0.3.0+ Caddy is the
-    /// layer4 SNI router + panel reverse-proxy; the per-account
-    /// data the Caddyfile used to carry now lives in naive.json).
+    /// Caddyfile generation + Caddy reload. v0.4.0: Caddy is the
+    /// layer4 SNI splitter (panel.* → inner :8443, everything else →
+    /// tcp/ct-singbox:443) plus the inner panel reverse-proxy. No
+    /// per-account state here — that lives in /data/config/singbox.json
+    /// (singbox-core's output, file-watched by ct-singbox's supervisor).
     Caddyfile {
         #[command(subcommand)]
         op: CaddyfileOp,
     },
-    /// naive.json generation (v0.3.0+). ct-naive's supervisor
-    /// file-watches /data/config/naive.json and respawns naive on
-    /// change; there's no separate `reload` subcommand because
-    /// the supervisor IS the reload mechanism.
-    Naive {
-        #[command(subcommand)]
-        op: NaiveOp,
-    },
-    /// Talk to sing-box's clash API.
-    Server {
-        #[command(subcommand)]
-        op: ServerOp,
-    },
-    /// Pull metrics + roll into traffic_logs.
-    Traffic {
-        #[command(subcommand)]
-        op: TrafficOp,
-    },
-    /// Enforce per-account quotas + expiry.
-    Quota {
-        #[command(subcommand)]
-        op: QuotaOp,
-    },
+    // v0.4.0 — removed Cmd variants:
+    //   Singbox / SingboxOp  → renderer moved to singbox-core (Bun TS)
+    //   Server / ServerOp    → clash admin API doesn't exist on sing-box
+    //                          VLESS+Reality
+    //   Traffic / TrafficOp  → per-user counters came from clash-API
+    //   Quota / QuotaOp      → quota enforcement via clash-API reload
+    //   Guard / GuardOp      → credentials::assert_locked compared the
+    //                          v0.3.x naive users shape; v0.4.0's
+    //                          equivalent is operator/src/util/drift-check
+    //   Admin::ClashSecret   → derives a bearer for an API that's gone
     /// Active probes (anti-tracking, connectivity, ACME).
     Probe {
         #[command(subcommand)]
@@ -185,25 +138,15 @@ enum Cmd {
         #[arg(long, env = "CT_METRICS_BIND", default_value = "")]
         metrics_bind: String,
     },
-    /// Emit a SubscriptionManifestV1 to stdout for `account_id`.
-    Subscription {
-        #[arg(long)]
-        account_id: i64,
-    },
     /// Component-as-machine-part: list / check installed components.
     Component {
         #[command(subcommand)]
         op: ComponentOp,
     },
-    /// sing-box clash-API administration helpers.
+    /// Operator-facing administration helpers.
     Admin {
         #[command(subcommand)]
         op: AdminOp,
-    },
-    /// Deployment invariants that must fail closed on drift.
-    Guard {
-        #[command(subcommand)]
-        op: GuardOp,
     },
     /// Self-probe canary — early-warning surface for "this VPS is
     /// becoming unreachable from its own network position." See
@@ -231,17 +174,11 @@ enum CanaryOp {
 
 #[derive(Subcommand, Debug)]
 enum AdminOp {
-    /// Print the derived clash-API bearer secret to stdout. Used
-    /// by manifests/sing-box.upstream.json's drift-detection probe
-    /// (Cycle 2 / 4, v0.0.42) to authenticate against the sing-box
-    /// clash-API /version endpoint. Single source of truth — calls
-    /// the same `singbox::clash_secret()` function the panel
-    /// renderer and the daemon use, so a future change to the
-    /// derivation (BLAKE2, salting, etc.) cannot create silent
-    /// drift between probe-time and render-time. Reads
-    /// `CT_CLASH_SECRET_SEED` from the environment; errors loudly
-    /// if unset (probe falls through to `VerifyFailed`).
-    ClashSecret,
+    // v0.4.0 — `Admin::ClashSecret` removed. The clash API the secret
+    // gated doesn't exist on sing-box VLESS+Reality, and the upstream
+    // drift probe at manifests/sing-box.upstream.json is replaced in
+    // v0.4.0 by operator/src/util/version-bridge.ts (which shells to
+    // `singbox-core version --json`, not the clash /version endpoint).
     /// Print the resolved panel hostname to stdout. The Cycle 3
     /// `SoT` (v0.0.55) anchor — single source of truth for
     /// `panel.<base>` derivation, mirrored byte-for-byte by
@@ -253,11 +190,11 @@ enum AdminOp {
     PanelDomain,
 }
 
-#[derive(Subcommand, Debug)]
-enum GuardOp {
-    /// Assert DB active credentials equal the rendered sing-box users.
-    CredentialLock,
-}
+// GuardOp removed in v0.4.0 — credentials::assert_locked compared the
+// v0.3.x naive users shape against DB tuples; v0.4.0's equivalent
+// three-way drift check lives in operator/src/util/drift-check.ts
+// (DB UUID ⇄ rendered singbox.json users[] UUID ⇄ subscription
+// endpoint UUID).
 
 #[derive(Subcommand, Debug)]
 enum ComponentOp {
@@ -273,16 +210,10 @@ enum ComponentOp {
     },
 }
 
-#[derive(Subcommand, Debug)]
-enum SingboxOp {
-    /// Render template → /etc/sing-box/config.json (atomic).
-    Render {
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Run `sing-box check` on the rendered file.
-    Validate,
-}
+// SingboxOp removed in v0.4.0 — the renderer is now singbox-core
+// (Bun TS), shelled to from panel-side SingBoxConfigGenerator. The
+// "validate" path moves into singbox-core supervise as well (sing-box
+// check runs in-container, not via this CLI).
 
 #[derive(Subcommand, Debug)]
 enum CaddyfileOp {
@@ -317,47 +248,15 @@ enum CaddyfileOp {
     },
 }
 
-#[derive(Subcommand, Debug)]
-enum NaiveOp {
-    /// Render the current ServerConfig + active proxy_account into
-    /// /data/config/naive.json (atomic). ct-naive's supervisor
-    /// debounces file-change events and respawns naive within
-    /// ~250ms of this write.
-    Render {
-        #[arg(long)]
-        dry_run: bool,
-        /// Override output path. The default matches the shared
-        /// volume mount in docker-compose.yml (naive_config:/data/config).
-        #[arg(
-            long,
-            env = "NAIVE_CONFIG_PATH",
-            default_value = "/data/config/naive.json"
-        )]
-        output: String,
-    },
-}
-
+// NaiveOp removed in v0.4.0 — see singbox-core/ for the replacement.
+//
 // HaproxyOp deleted in v0.2.0 (HAProxy SNI router replaced by Caddy
 // SNI routing). The `Cmd::Haproxy` dispatch arm + this enum landed
 // together in v0.0.33; both retired in the architecture cut.
-
-#[derive(Subcommand, Debug)]
-enum ServerOp {
-    /// Hot-reload via the clash API.
-    Reload,
-    /// GET /configs from the clash API and print.
-    Config,
-}
-
-#[derive(Subcommand, Debug)]
-enum TrafficOp {
-    Collect,
-}
-
-#[derive(Subcommand, Debug)]
-enum QuotaOp {
-    Enforce,
-}
+//
+// ServerOp / TrafficOp / QuotaOp deleted in v0.4.0 — all three were
+// thin clash-API wrappers; sing-box VLESS+Reality does not expose a
+// clash API.
 
 #[derive(Subcommand, Debug)]
 enum ProbeOp {
@@ -462,13 +361,19 @@ fn resolve_panel_domain(cli_value: &str) -> Result<String> {
 
 async fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
-        Cmd::Singbox { op } => match op {
-            SingboxOp::Render { dry_run } => {
-                let pool = db::connect(&cli.database_url).await?;
-                singbox::render(&pool, &cli.template, &cli.output, dry_run, cli.json).await
-            }
-            SingboxOp::Validate => singbox::validate(&cli.output).await,
-        },
+        // v0.4.0 — removed dispatch arms:
+        //   Cmd::Singbox  → renderer is singbox-core (Bun TS) shelled
+        //                  to from panel-side SingBoxConfigGenerator
+        //   Cmd::Server   → clash admin API doesn't exist on sing-box
+        //                  VLESS+Reality
+        //   Cmd::Traffic  → per-user counters came from clash-API
+        //   Cmd::Quota    → quota enforcement via clash-API reload
+        //   Cmd::Guard    → credentials::assert_locked compared the
+        //                  v0.3.x naive users shape; replaced by
+        //                  operator/src/util/drift-check.ts
+        // Cmd::Naive dispatch removed in v0.4.0 (rendering moved to
+        // singbox-core/ Bun package). Cmd::Haproxy dispatch removed in
+        // v0.2.0 (Caddy SNI-routes the panel reverse-proxy itself).
         Cmd::Caddyfile { op } => match op {
             CaddyfileOp::Render {
                 dry_run,
@@ -480,47 +385,6 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 caddy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
             CaddyfileOp::Reload { output } => caddy::reload(&output).await,
-        },
-        Cmd::Naive { op } => match op {
-            NaiveOp::Render { dry_run, output } => {
-                let pool = db::connect(&cli.database_url).await?;
-                naive::render(&pool, &output, dry_run, cli.json).await
-            }
-        },
-        // Cmd::Haproxy dispatch deleted in v0.2.0 (HAProxy retired —
-        // Caddy SNI-routes the panel reverse-proxy itself).
-        Cmd::Server { op } => {
-            // CLI Server.{Reload,Config} are operator-facing — they
-            // don't read the DB; the clash bearer is now env-derived
-            // (CT_CLASH_SECRET_SEED). An explicit --admin-secret /
-            // SINGBOX_CLASH_SECRET still wins for ad-hoc debugging.
-            let secret = if cli.admin_secret.is_empty() {
-                singbox::current_clash_secret()?
-            } else {
-                cli.admin_secret.clone()
-            };
-            let admin_client = admin::ClashAdmin::new(&cli.admin_url, &secret);
-            match op {
-                ServerOp::Reload => admin_client.reload(&cli.output).await,
-                ServerOp::Config => admin_client.dump_config().await,
-            }
-        }
-        Cmd::Traffic { op } => match op {
-            TrafficOp::Collect => {
-                let secret = if cli.admin_secret.is_empty() {
-                    singbox::current_clash_secret()?
-                } else {
-                    cli.admin_secret.clone()
-                };
-                let pool = db::connect(&cli.database_url).await?;
-                metrics::collect(&pool, &admin::ClashAdmin::new(&cli.admin_url, &secret)).await
-            }
-        },
-        Cmd::Quota { op } => match op {
-            QuotaOp::Enforce => {
-                let pool = db::connect(&cli.database_url).await?;
-                quota::enforce(&pool, &cli.template, &cli.output, &cli.admin_url).await
-            }
         },
         Cmd::Probe { op } => match op {
             ProbeOp::AntiTracking { via, target } => {
@@ -577,33 +441,13 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 .map(|s| !s.is_empty())
                 .unwrap_or(false);
             if !redis_url.is_empty() || has_discrete_redis {
-                redis_bridge::spawn(
-                    redis_url,
-                    pool.clone(),
-                    cli.template.clone(),
-                    cli.output.clone(),
-                    cli.admin_url.clone(),
-                    metrics_registry.clone(),
-                );
+                redis_bridge::spawn(redis_url, metrics_registry.clone());
             } else {
                 tracing::warn!(
                     "neither REDIS_HOST nor REDIS_URL set — running without revocation subscriber"
                 );
             }
-            daemon::serve(
-                &socket,
-                pool,
-                &cli.template,
-                &cli.output,
-                &cli.admin_url,
-                permits,
-                metrics_registry,
-            )
-            .await
-        }
-        Cmd::Subscription { account_id } => {
-            let pool = db::connect(&cli.database_url).await?;
-            subscription::emit(&pool, account_id).await
+            daemon::serve(&socket, pool, permits, metrics_registry).await
         }
         Cmd::Component { op } => match op {
             ComponentOp::List { manifests } => {
@@ -628,21 +472,10 @@ async fn dispatch(cli: Cli) -> Result<()> {
             }
         },
         Cmd::Admin { op } => match op {
-            AdminOp::ClashSecret => {
-                let secret = singbox::clash_secret()?;
-                println!("{secret}");
-                Ok(())
-            }
             AdminOp::PanelDomain => {
                 let pd = util::domain::panel_domain()?;
                 println!("{pd}");
                 Ok(())
-            }
-        },
-        Cmd::Guard { op } => match op {
-            GuardOp::CredentialLock => {
-                let pool = db::connect(&cli.database_url).await?;
-                credentials::assert_locked(&pool, &cli.output).await
             }
         },
         Cmd::Canary { op } => match op {

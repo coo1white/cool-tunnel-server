@@ -6,61 +6,71 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Contracts\NaivePinReaderInterface;
+use App\Contracts\SingboxPinReaderInterface;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
-use App\Services\NaivePinReader;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 
-// Emits a SubscriptionManifestV1 (per ct-protocol::subscription) for
-// the proxy account whose token matches the URL. Signed with HMAC-
-// SHA-256 using a per-account secret.
+// Emits a SubscriptionManifestV2 for the proxy account whose token
+// matches the URL. Signed with HMAC-SHA-256 over the canonical body
+// with `signature` ABSENT.
 //
-// Anti-tracking note: the response carries NO project-identifying
-// custom headers. The signature rides in the JSON body's
-// `signature` field (computed over the canonical body with that
-// field ABSENT — see the canonical-form note below; pre-v0.0.59
-// docs said "set to null" but that did not match the Rust spec
-// and broke client-side verification). On the wire this looks
-// like any other authenticated JSON API response, not a "Cool
-// Tunnel" tell. (v0.0.8 and earlier emitted X-CT-Signature /
-// X-CT-Protocol response headers; those are gone.)
+// v0.4.0 — the v2 schema replaces v0.3.x's basic-auth manifest with
+// sing-box VLESS+Reality fields. Each profile carries:
 //
-// Canonical form (v0.0.59+, must match
-// core/ct-protocol/src/subscription.rs serde behaviour):
-//   - Field order = SubscriptionManifestV1 declaration order:
-//     version, server, profiles, capabilities, issued_at,
-//     expires_at, note, signature.
-//   - Optional fields with `skip_serializing_if = "Option::is_none"`
-//     on the Rust side are emitted ONLY when set: `note` (top
-//     level) and `capabilities.fake_site_slug`. Emitting them as
-//     `"key":null` in the canonical breaks Rust-client verification
-//     (the client deserialises null → None → drops the key on
-//     re-canonicalise → bytes diverge → HMAC fails).
-//   - The signature itself is NOT in the canonical at all (NOT
-//     present-as-null). The server builds the body without a
-//     signature key, HMACs those bytes, then adds the signature
-//     key for the response body only.
+//   { host, port, username, uuid, label, reality: { public_key,
+//     dest_host, short_id } }
+//
+// Reality params live PER PROFILE (rather than at manifest top) so a
+// future multi-server / multi-region deployment can hand the client
+// distinct Reality fingerprints under one bookmark — the v3.0.0
+// client just iterates profiles[] and picks one.
+//
+// Top-level changes from v1:
+//   - `version`: 2 (was 1)
+//   - `server_singbox_pin`: replaces v0.3.x's `server_naive_pin`.
+//     Carries the upstream sing-box tag the panel container was
+//     built against ({"upstream_tag": "v1.13.12"}). The client
+//     compares against its own embedded singbox.upstream.json and
+//     soft-warns on mismatch. Optional — the controller omits the
+//     key when the SingboxPinReader can't shell to singbox-core
+//     (degraded deploy; the manifest still works, just no cross-end
+//     pin confirmation).
+//   - `expires_at`: clamped to FRESHNESS_WINDOW (7 days). Pre-v0.4.0
+//     this was 30 days, which exceeded the spec-side replay window
+//     and made spec-compliant clients refuse manifests after day 7.
+//
+// Anti-tracking: response carries NO project-identifying custom
+// headers. Signature in the body field, not an X-* header. On the
+// wire it looks like any other authenticated JSON API.
+//
+// Canonical form (must match a future ct-protocol::SubscriptionManifestV2
+// when the Rust side gets a v2 deserialiser; until then it's pinned
+// by SubscriptionContractTest on the panel side):
+//   - Field order: version, server, profiles, capabilities,
+//     issued_at, expires_at, note, server_singbox_pin, signature.
+//   - Optional fields (`note`, `server_singbox_pin`,
+//     `capabilities.fake_site_slug`, `signature`) are OMITTED when
+//     null — never emitted as `"key":null`. Emitting `"key":null`
+//     diverges from a deserialise→re-serialise round-trip on a
+//     spec-compliant client → HMAC mismatch → silent rejection of
+//     manifests the server signed correctly.
 //   - PHP flags: JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE.
-//   - The contract is pinned by SubscriptionContractTest +
-//     ct-protocol's canonical_roundtrips_under_signature_strip.
 //
-// HTTP/3 honesty: NaiveProxy is HTTP/2-only at the protocol level,
-// so the manifest's `capabilities.http3` is always false regardless
-// of any DB toggle. Advertising true would lead clients to attempt
-// QUIC, fail (no UDP listener), and fall back — a recognisable
-// network signature. See cross-platform-clients.md.
+// HTTP/3 honesty: the v0.4.0 sing-box stack runs VLESS over TCP only
+// (no QUIC listener wired), so `capabilities.http3` is always false.
+// Advertising true would lead clients to attempt QUIC, fail, fall
+// back — a fingerprintable network pattern.
 //
-// Why a panel-side endpoint and not just `ct-server-core subscription`?
-// The cleartext password isn't in the DB (we only store the bcrypt
-// hash). The panel issues a one-time token at account creation that
-// also stores the cleartext encrypted with the HMAC secret; this
-// controller resolves the token, decrypts, splices the cleartext
-// into the manifest the Rust core emits, signs the body, and serves.
+// Why a panel-side endpoint? Historically the cleartext password
+// wasn't in the DB; the panel decrypted on-the-fly. v0.4.0 keeps the
+// panel-side endpoint for continuity (token-resolution path is
+// identical; the cover-site fall-through to FakeSiteController is
+// part of the anti-enumeration posture).
 
 class SubscriptionController extends Controller
 {
@@ -86,21 +96,21 @@ class SubscriptionController extends Controller
     private const RATE_LIMIT_DECAY_SEC = 60;
 
     /**
-     * Server-issued manifest expiry, in seconds. The Rust spec
-     * (ct-protocol::SubscriptionManifestV1::FRESHNESS_WINDOW_SECONDS)
-     * also enforces a 7-day replay window measured from issued_at —
-     * so even though we issue a 30-day expires_at here, a captured
-     * manifest is only usable for 7 days regardless. The 30-day
-     * value is what the operator chose for "how often a healthy
-     * client must re-fetch". Don't bump this above 30 days without
-     * coordinating with the FRESHNESS_WINDOW_SECONDS bound (the
-     * client will reject earlier than the server-issued expiry).
-     * (Round-13 time-and-clock audit.)
+     * Server-issued manifest expiry, in seconds. Matches the spec-
+     * side replay-resistance window (ct-protocol::SubscriptionManifestV1::
+     * FRESHNESS_WINDOW_SECONDS = 7 days). Pre-v0.4.0 this was 30 days,
+     * which exceeded the spec window: spec-compliant clients refused
+     * manifests after day 7 even though the server promised 30, and
+     * users saw "subscription stopped working a week after install"
+     * with no panel-side error. v0.0.83's `canonical_expires_at`
+     * constructor pinned the canonical relationship; this constant
+     * matches the same value byte-for-byte. (Round-13 time-and-clock
+     * audit; v0.0.83 robustness-review item 6.)
      */
-    private const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 30;
+    private const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 7;
 
     public function __construct(
-        private readonly NaivePinReaderInterface $naivePin = new NaivePinReader,
+        private SingboxPinReaderInterface $singboxPin,
     ) {}
 
     public function show(Request $request, string $token): Response
@@ -182,79 +192,108 @@ class SubscriptionController extends Controller
 
         $cfg = ServerConfig::current();
 
-        // Refuse to emit a manifest with an empty cleartext
-        // password. Pre-fix the controller served `password => ''`
-        // when getCleartextPassword() returned null (legacy row
-        // pre-v0.0.5 cleartext column, or a Crypt::decryptString
-        // failure from APP_KEY rotation — see ProxyAccount.php:
-        // 192-202). The client would receive a valid-looking
-        // manifest, attempt the proxy connect with empty
-        // basic_auth, and get a sing-box 401 with no diagnostic
-        // surface. Falling through to the cover-site preserves
-        // the cover-site invariant AND surfaces the failure as
-        // an obvious "subscription URL not working" — the
-        // operator can debug via the panel's Regenerate-password
-        // flow. (Round-10 client-contract audit.)
-        $cleartext = $account->getCleartextPassword();
-        if ($cleartext === null || $cleartext === '') {
-            // Active, real account with a broken cleartext column —
-            // ALWAYS critical (this means an APP_KEY rotation or
-            // legacy-row issue is silently breaking THIS specific
-            // user's subscription). Operator must hit the
-            // Regenerate-password flow for this account. Cardinality
-            // is bounded by the broken-account count, not the probe
-            // rate. (Round-12 observability.)
-            Log::critical('subscription.fallthrough.cleartext_decrypt_failed', [
+        // Refuse to emit a manifest with an empty UUID. The booted()
+        // `creating` hook on ProxyAccount auto-seeds a UUID at first
+        // save, so this branch only fires for legacy rows that
+        // somehow predate that hook OR for a corrupt DB column.
+        // Falling through to the cover-site preserves the cover-site
+        // invariant AND surfaces the failure as an obvious
+        // "subscription URL not working" — the operator can debug
+        // via the panel's Regenerate-UUID flow.
+        $uuid = (string) ($account->uuid ?? '');
+        if ($uuid === '') {
+            // Active, real account with no UUID set — ALWAYS critical
+            // (a row without a credential cannot authenticate against
+            // sing-box's vless inbound). Operator must hit the
+            // Regenerate-UUID flow for this account. Cardinality is
+            // bounded by the broken-account count, not the probe rate.
+            Log::critical('subscription.fallthrough.uuid_missing', [
                 'account_id' => $account->id,
             ]);
 
             return (new FakeSiteController)->show($request);
         }
 
-        // Build the body in field-declaration order of
-        // SubscriptionManifestV1 (core/ct-protocol/src/subscription.rs):
-        // version, server, profiles, capabilities, issued_at,
-        // expires_at, note, signature. serde emits struct fields in
-        // declaration order; PHP arrays preserve insertion order; so
-        // the on-the-wire byte order is the same on both sides as
-        // long as we keep the literal below in sync with the Rust
-        // struct.
+        // Refuse to emit a manifest with no Reality public key.
+        // The panel's first-boot SingboxBootstrap is supposed to fill
+        // reality_private_key + reality_public_key via
+        // `singbox-core reality-keygen`; if those are still empty,
+        // the server hasn't been set up and ct-singbox is either not
+        // running or running with a default-empty config. A client
+        // that received a manifest without `reality.public_key`
+        // would have nothing to plug into its sing-box outbound's
+        // tls.reality.public_key — the handshake would fail.
+        // Falling through to cover-site keeps the same
+        // anti-enumeration posture as the other broken-deploy
+        // branches in this controller.
+        $realityPublicKey = (string) ($cfg->reality_public_key ?? '');
+        if ($realityPublicKey === '') {
+            Log::critical('subscription.fallthrough.reality_public_key_missing', [
+                'account_id' => $account->id,
+            ]);
+
+            return (new FakeSiteController)->show($request);
+        }
+
+        // Build the body in declaration order so the wire bytes a
+        // future Rust client deserialises round-trip byte-for-byte
+        // through (deserialise → re-serialise with signature
+        // stripped). serde emits struct fields in declaration order;
+        // PHP arrays preserve insertion order; the literal here is
+        // the source of truth until ct-protocol::SubscriptionManifestV2
+        // lands and pins the contract on the spec side.
         //
-        // Optional fields with `#[serde(skip_serializing_if =
-        // "Option::is_none")]` on the Rust side MUST be OMITTED here
-        // when null — `serde_json::to_string(&m)` on a struct whose
-        // `note` is None produces JSON without a `note` key at all.
-        // If we emit `"note":null`, the Rust client deserialises ↦
-        // `note: None`, then re-canonicalises (signature = None) and
-        // gets DIFFERENT bytes (no `note` key). HMACs diverge.
-        // Verification fails on a manifest the server signed
-        // correctly. Same trap for `capabilities.fake_site_slug`
-        // when no fake site is active. (Round-11 data-integrity.)
+        // Optional fields are OMITTED when null — never emitted as
+        // `"key":null`. A spec-compliant client that strips signature
+        // and re-serialises would produce divergent bytes (the
+        // dropped optional reappears or doesn't), HMACs diverge,
+        // verification fails. The same trap caught a real v0.x bug
+        // (the `"note":null` regression) — see Round-11 data-
+        // integrity. The `array_filter`-free conditionals below are
+        // there so a future maintainer doesn't accidentally insert
+        // an `"x" => null` literal.
         $optionalCaps = [];
         if (($slug = optional(FakeWebsite::active())->slug) !== null) {
             $optionalCaps['fake_site_slug'] = $slug;
         }
 
+        // Reality short_id: the first short_id from the configured
+        // list, or "" when none configured (the server-side renderer
+        // adds `[""]` to the inbound's accepted short_ids in that
+        // case — see singbox-core/src/config/render.ts). Future
+        // multi-short-id binding (per-account short_id rotation) is
+        // a model concern; the manifest just picks one for the
+        // client to plug into its outbound.
+        // PHPStan can't see through the eloquent-cast type, so spell
+        // the narrowing out: array_values renumbers + asserts a
+        // list-shaped result; an empty-list check then gives a
+        // narrowed array<int,mixed> for the offset read.
+        /** @var array<int,mixed> $shortIds */
+        $shortIds = is_array($cfg->reality_short_ids)
+            ? array_values($cfg->reality_short_ids)
+            : [];
+        $shortId = $shortIds === [] ? '' : (string) $shortIds[0];
+
         // Capture wall-clock ONCE for both timestamps. Pre-fix this
         // called `time()` twice in succession on adjacent lines —
         // an extremely rare second-boundary race could land
-        // issued_at = N and expires_at = N+1 + 30 days = an
-        // off-by-one window. The MANIFEST_TTL_SECONDS constant
-        // matches ct-protocol::SubscriptionManifestV1::FRESHNESS_-
-        // WINDOW_SECONDS-aware design: server emits a 30-day
-        // expires_at; the client's spec-side replay-resistance
-        // window cuts in earlier at 7 days. (Round-13 time-and-
-        // clock audit.)
+        // issued_at = N and expires_at = N+1 + TTL = an off-by-one
+        // window. (Round-13 time-and-clock audit.)
         $now = time();
         $body = [
-            'version' => 1,
+            'version' => 2,
             'server' => $cfg->domain,
             'profiles' => [[
                 'host' => $cfg->domain,
                 'port' => 443,
                 'username' => $account->username,
-                'password' => $cleartext,
+                'uuid' => $uuid,
                 'label' => "{$cfg->domain} ({$account->username})",
+                'reality' => [
+                    'public_key' => $realityPublicKey,
+                    'dest_host' => (string) $cfg->reality_dest_host,
+                    'short_id' => $shortId,
+                ],
             ]],
             'capabilities' => [
                 'anti_tracking' => array_values(array_filter([
@@ -264,40 +303,43 @@ class SubscriptionController extends Controller
                     $cfg->anti_tracking_doh_resolver ? 'doh_resolver' : null,
                 ])),
                 // HTTP/3 always advertised as false — see class
-                // docstring. NaiveProxy does not do QUIC.
+                // docstring. The v0.4.0 sing-box stack runs VLESS
+                // over TCP only; no QUIC listener wired.
                 'http3' => false,
             ] + $optionalCaps,
             'issued_at' => $now,
             'expires_at' => $now + self::MANIFEST_TTL_SECONDS,
-            // note: omitted when null (Rust skip_if_none). Today the
-            // panel never sets a note; if a future column is added,
-            // emit only when non-null and non-empty.
+            // note: omitted when null. Today the panel never sets a
+            // note; if a future column is added, emit only when non-
+            // null and non-empty (NEVER `"note":null` — that breaks
+            // canonical round-trip).
         ];
 
-        // server_naive_pin: v0.3.x runtime cross-end pin confirmation.
-        // Carry the upstream tag + the running binary's reported
-        // version so the client can confirm the SERVER it's about to
-        // tunnel through is pinned to the same upstream
-        // klzgrad/naiveproxy tag the client itself was built against
-        // — even though the two halves ship different per-OS binaries
-        // (different SHAs by design). Field is OPTIONAL on the wire
-        // (Rust struct uses skip_serializing_if = Option::is_none): we
-        // emit ONLY when both the manifest tag and the runtime version
-        // are readable. A partial read (binary missing, manifest
-        // unparseable, exec failed) → omit the key entirely rather
-        // than serve a half-truthy value the client might log a
-        // confusing warning over.
-        $pin = $this->naivePin->read();
+        // server_singbox_pin: cross-end binary-identity confirmation.
+        // The v3.0.0+ client embeds its own singbox.upstream.json at
+        // build time and compares `upstream_tag` here against its
+        // own copy. Mismatch → soft-warn ("server is running an
+        // unexpected sing-box version — wire compatibility may be
+        // broken"); match → silent ok.
+        //
+        // SingboxPinReader returns null when the bundled singbox-core
+        // binary is missing / broken (degraded deploy). We omit the
+        // key entirely in that case rather than emitting an empty
+        // object — the client treats absence as "unknown, soft-warn"
+        // rather than as a hard failure (an old server build won't
+        // emit this field at all).
+        $pin = $this->singboxPin->upstreamTag();
         if ($pin !== null) {
-            $body['server_naive_pin'] = $pin;
+            $body['server_singbox_pin'] = [
+                'upstream_tag' => $pin,
+            ];
         }
 
         // HMAC over the body WITHOUT a `signature` field at all.
-        // The Rust client verifies by deserialising, setting
-        // `signature` to None, and re-serialising — which produces
-        // bytes with no `signature` key (skip_if_none). We must
+        // Clients verify by deserialising, setting `signature` to
+        // null, and re-serialising in canonical form. We must
         // canonicalise the same way: build and sign with no
-        // `signature` key present. Pre-fix this code emitted
+        // `signature` key present. Pre-fix (v1) emitted
         // `"signature":null` in the canonical, which DOES NOT round-
         // trip through serde — every Rust-side verification would
         // fail. (Round-11 data-integrity.)

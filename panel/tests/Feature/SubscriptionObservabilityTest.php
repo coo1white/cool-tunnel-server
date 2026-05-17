@@ -22,6 +22,10 @@ use Tests\TestCase;
 // paths that would amplify scanner traffic into log spam at China-
 // bound scan rates).
 //
+// v0.4.0: log code renames (cleartext_decrypt_failed → uuid_missing)
+// and a new fallthrough branch when ServerConfig.reality_public_key
+// is empty.
+//
 // Captures via `Event::listen(MessageLogged)` rather than
 // `Log::spy()` because Laravel's spy doesn't compose with the
 // channel chain Filament uses; the event fires regardless of
@@ -93,8 +97,6 @@ class SubscriptionObservabilityTest extends TestCase
         // token path.
         $this->seedActiveCover();
         $account = ProxyAccount::factory()->create(['enabled' => false]);
-        $account->setCleartextPassword('s3cr3t');
-        $account->save();
 
         $this->get('/api/v1/subscription/'.$account->subscriptionToken());
 
@@ -112,21 +114,24 @@ class SubscriptionObservabilityTest extends TestCase
     }
 
     #[Test]
-    public function empty_cleartext_logs_critical_with_account_id(): void
+    public function missing_uuid_logs_critical_with_account_id(): void
     {
-        // Active account, working token, but cleartext column is
-        // empty/undecryptable — APP_KEY rotation or legacy row.
-        // This is the operator-must-fix-NOW scenario; CRITICAL is
-        // the right level so dashboards alert.
+        // Active account, working token, but the uuid column is
+        // empty. The booted() `creating` hook on ProxyAccount auto-
+        // seeds a UUID, so this branch only fires for a corrupt
+        // direct-DB row OR a legacy migration that didn't run. It's
+        // the operator-must-fix-NOW scenario; CRITICAL is the right
+        // level so dashboards alert.
         $this->seedActiveCover();
         $account = ProxyAccount::factory()->create();
-        $account->password_cleartext_encrypted = null;
+        // Bypass the creating-hook by zeroing the column directly.
+        $account->uuid = '';
         $account->saveQuietly();
 
         $this->get('/api/v1/subscription/'.$account->subscriptionToken());
 
-        $hits = $this->loggedMatching('subscription.fallthrough.cleartext_decrypt_failed');
-        $this->assertCount(1, $hits, 'broken cleartext must log exactly once per request');
+        $hits = $this->loggedMatching('subscription.fallthrough.uuid_missing');
+        $this->assertCount(1, $hits, 'missing uuid must log exactly once per request');
         $this->assertSame('critical', $hits[0]['level']);
         $this->assertSame($account->id, $hits[0]['context']['account_id']);
         // Privacy invariant (CONTRIBUTING.md): usernames are NEVER logged.
@@ -138,6 +143,29 @@ class SubscriptionObservabilityTest extends TestCase
     }
 
     #[Test]
+    public function missing_reality_public_key_logs_critical_with_account_id(): void
+    {
+        // Server-side mis-configuration: a healthy account but the
+        // ServerConfig row has no Reality public key (operator never
+        // ran first-boot SingboxBootstrap, or the column got nulled).
+        // A v3.0.0 client receiving a manifest without reality.public_key
+        // would have nothing to plug into its sing-box outbound and
+        // fail at handshake time — fall-through to cover-site bytes
+        // surfaces the failure as "subscription URL not working" the
+        // operator can debug.
+        ServerConfig::factory()->create(['reality_public_key' => '']);
+        FakeWebsite::factory()->active()->create();
+        $account = ProxyAccount::factory()->create();
+
+        $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+
+        $hits = $this->loggedMatching('subscription.fallthrough.reality_public_key_missing');
+        $this->assertCount(1, $hits, 'missing reality_public_key must log exactly once per request');
+        $this->assertSame('critical', $hits[0]['level']);
+        $this->assertSame($account->id, $hits[0]['context']['account_id']);
+    }
+
+    #[Test]
     public function happy_path_emits_no_fall_through_logs(): void
     {
         // Sanity: a successful manifest serve must NOT emit any
@@ -145,8 +173,6 @@ class SubscriptionObservabilityTest extends TestCase
         // would chase phantom alerts on healthy traffic.
         $this->seedActiveCover();
         $account = ProxyAccount::factory()->create();
-        $account->setCleartextPassword('s3cr3t');
-        $account->save();
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
         $this->assertSame(200, $response->status());

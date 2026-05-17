@@ -22,9 +22,8 @@
 //!   - Laravel `\$table->timestamp()->nullable()` → with chrono
 //!     feature, sqlx returns `Option<chrono::DateTime<chrono::Utc>>`.
 
-use crate::domain::{ProxyAccount, ServerConfig};
+use crate::domain::ServerConfig;
 use crate::Result;
-use chrono::NaiveDate;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions};
 use std::env;
 use std::str::FromStr;
@@ -121,198 +120,22 @@ pub async fn server_config(pool: &MySqlPool) -> Result<ServerConfig> {
     })
 }
 
-pub async fn active_proxy_accounts(pool: &MySqlPool) -> Result<Vec<ProxyAccount>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT id, username, password_hash, password_cleartext_encrypted,
-               enabled, quota_bytes, used_bytes, expires_at
-        FROM proxy_accounts
-        WHERE enabled = 1
-          AND (expires_at IS NULL OR expires_at > NOW())
-          AND (quota_bytes IS NULL OR used_bytes < quota_bytes)
-        ORDER BY username
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let app_key = std::env::var("APP_KEY").ok();
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
-        // password_cleartext_encrypted is TEXT NULL — sqlx returns
-        // Option<String>. Decryption errors are logged + skipped:
-        // a stale APP_KEY or pre-migration row should not lock the
-        // operator out of every other account.
-        let cleartext = r.password_cleartext_encrypted.and_then(|enc| {
-            match crate::laravel_crypt::decrypt(&enc, app_key.as_deref().unwrap_or("")) {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    tracing::warn!(error = %e, "could not decrypt cleartext for account");
-                    None
-                }
-            }
-        });
-        out.push(ProxyAccount {
-            id: r.id as i64,
-            username: r.username,
-            password_hash: r.password_hash,
-            cleartext_password: cleartext,
-            enabled: r.enabled != 0,
-            quota_bytes: r.quota_bytes.map(|n| n as i64),
-            used_bytes: r.used_bytes as i64,
-            expires_at: r.expires_at,
-        });
-    }
-    Ok(out)
-}
-
-pub async fn record_caddyfile_hash(pool: &MySqlPool, hash: &str) -> Result<()> {
-    sqlx::query!(
-        r#"
-        UPDATE server_configs
-        SET last_caddyfile_hash = ?, last_rendered_at = NOW()
-        WHERE id = 1
-        "#,
-        hash,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn upsert_traffic(
-    pool: &MySqlPool,
-    proxy_account_id: i64,
-    day: NaiveDate,
-    uplink: i64,
-    downlink: i64,
-    connections: i64,
-) -> Result<i64> {
-    // Schema columns are UNSIGNED — bind as u64/u32 to match. Internal
-    // callers pass i64; clamp negatives to 0 (a metric-source bug
-    // anyway) and cast for the bind.
-    let pid: u64 = proxy_account_id.max(0) as u64;
-    let up: u64 = uplink.max(0) as u64;
-    let down: u64 = downlink.max(0) as u64;
-    let conn: u32 = connections.max(0) as u32;
-    let res = sqlx::query!(
-        r#"
-        INSERT INTO traffic_logs
-            (proxy_account_id, day, uplink_bytes, downlink_bytes, connections, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-            uplink_bytes   = VALUES(uplink_bytes),
-            downlink_bytes = VALUES(downlink_bytes),
-            connections    = GREATEST(connections, VALUES(connections)),
-            updated_at     = NOW()
-        "#,
-        pid, day, up, down, conn,
-    )
-    .execute(pool)
-    .await?;
-    Ok(res.rows_affected() as i64)
-}
-
-/// Maximum byte delta accepted in a single call. 1 PiB is well
-/// above any plausible per-window traffic for a single proxy
-/// account; values above this are almost certainly a parsing bug
-/// in the metric source (sing-box upgrade changed the line shape,
-/// the parser misread a label, etc.) and we reject them rather
-/// than instantly disabling everyone via the quota path.
-const MAX_USED_BYTES_DELTA: i64 = 1 << 50; // 1 PiB
-
-pub async fn add_used_bytes(pool: &MySqlPool, proxy_account_id: i64, delta: i64) -> Result<()> {
-    if delta < 0 {
-        return Err(crate::Error::validation(
-            "traffic delta",
-            format!(
-                "add_used_bytes: refusing negative delta {delta} for account {proxy_account_id}"
-            ),
-        ));
-    }
-    if delta > MAX_USED_BYTES_DELTA {
-        return Err(crate::Error::validation(
-            "traffic delta",
-            format!(
-                "add_used_bytes: delta {delta} for account {proxy_account_id} \
-                 exceeds {MAX_USED_BYTES_DELTA} (sane upper bound); \
-                 likely a metric-source regression — refusing to apply"
-            ),
-        ));
-    }
-    // proxy_accounts.id and used_bytes are BIGINT UNSIGNED — bind as u64.
-    let d: u64 = delta as u64;
-    let id: u64 = proxy_account_id.max(0) as u64;
-
-    // v0.0.82 robustness-review fix (item 5): guard the addition
-    // against u64 overflow at the SQL boundary. Naively `SET
-    // used_bytes = used_bytes + ?` lets MariaDB silently wrap (or
-    // error in strict mode) when the sum exceeds u64::MAX
-    // (18446744073709551615 = 2^64 - 1). On wrap, `used_bytes`
-    // jumps near 0 and the quota check `used_bytes < quota_bytes`
-    // passes again — the account silently re-enables. The
-    // `MAX_USED_BYTES_DELTA` cap above keeps `d` ≤ 1 PiB
-    // (= 2^50), so the right-hand `MAX - d` subtraction is always
-    // safe, and the WHERE clause refuses the UPDATE when the
-    // addition would overflow.
-    //
-    // 0 rows-affected then has two possible causes: (a) the id
-    // doesn't exist (a known late-metric race for deleted
-    // accounts; benign), or (b) the addition would overflow
-    // (loud accounting bug; surface as Err). A second one-row
-    // existence check distinguishes them on the cold path —
-    // happy-path adds zero round-trips.
-    // Runtime `sqlx::query` (not the compile-time `query!` macro)
-    // because the overflow guard adds a third `?` binding that the
-    // existing `core/.sqlx/` offline metadata doesn't cover. The
-    // schema and binding types are simple here (three `u64`s into
-    // a parameterised UPDATE); CI's stress + integration suite
-    // exercises the live path. The first compile-time-checked
-    // query on the same table (`upsert_traffic` above, plus the
-    // unchanged `SELECT 1` check below) provides the structural
-    // validation against schema drift.
-    let res = sqlx::query(
-        r#"
-        UPDATE proxy_accounts
-        SET used_bytes = used_bytes + ?,
-            last_seen_at = NOW(),
-            updated_at = NOW()
-        WHERE id = ? AND used_bytes <= 18446744073709551615 - ?
-        "#,
-    )
-    .bind(d)
-    .bind(id)
-    .bind(d)
-    .execute(pool)
-    .await?;
-
-    if res.rows_affected() == 0 {
-        // Distinguish "account no longer exists" (silent) from
-        // "would overflow u64" (loud).
-        let exists: Option<(i64,)> = sqlx::query_as(r"SELECT 1 FROM proxy_accounts WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
-
-        if exists.is_some() {
-            return Err(crate::Error::validation(
-                "traffic delta",
-                format!(
-                    "add_used_bytes: account {proxy_account_id} would overflow u64 \
-                     (used_bytes + delta {delta} exceeds 18446744073709551615) \
-                     — refusing to apply"
-                ),
-            ));
-        }
-        // Account was deleted between metric collection and this
-        // call. Known race; not actionable; log at debug.
-        tracing::debug!(
-            proxy_account_id,
-            "add_used_bytes: account no longer exists (late metric for deleted account)"
-        );
-    }
-    Ok(())
-}
+// v0.4.0 — removed db queries: active_proxy_accounts, record_caddyfile_hash,
+// upsert_traffic, add_used_bytes (+ MAX_USED_BYTES_DELTA), plus their tests.
+// All four read or wrote columns / tables tied to the v0.3.x sing-box-via-
+// Rust renderer + clash-API metrics:
+//   - active_proxy_accounts selected `password_hash, password_cleartext_
+//     encrypted` (both dropped in panel/database/migrations/2026_05_16_-
+//     000002_replace_password_with_uuid_on_proxy_accounts) — would fail
+//     `cargo sqlx prepare` under v0.4.0 schema.
+//   - record_caddyfile_hash wrote to `server_configs.last_caddyfile_hash`,
+//     consumed by the deleted caddy renderer's idempotence check; the
+//     `panel/app/Services/CaddyfileGenerator.php` Hash-dedupe lives on
+//     the PHP side now.
+//   - upsert_traffic / add_used_bytes were the clash-API metrics writers;
+//     sing-box VLESS+Reality exposes no clash API, so per-user
+//     accounting moves to operator-side instrumentation (out-of-scope
+//     for the v0.4.0 cut).
 
 /// Single-account disable. Kept for the daemon's per-account
 /// revocation path (Redis pub/sub) where the SQL is a one-shot
@@ -423,31 +246,9 @@ mod tests {
         assert_eq!(opts.get_username(), "cooltunnel");
     }
 
-    #[test]
-    fn add_used_bytes_sql_carries_overflow_guard() {
-        // v0.0.82 robustness-review fix (item 5). The pre-fix
-        // `SET used_bytes = used_bytes + ?` lets MariaDB silently
-        // wrap (or error in strict mode) when the sum exceeds
-        // u64::MAX (18446744073709551615 = 2^64 - 1). On wrap,
-        // `used_bytes` jumps near 0 and the quota check
-        // `used_bytes < quota_bytes` passes again — the account
-        // silently re-enables. This text-level pin asserts the
-        // overflow guard is present in the live SQL string so a
-        // future refactor can't regress the protection without
-        // tripping the test. We can't run a live integration test
-        // against MariaDB at unit-test time, but the SQL string is
-        // a load-bearing surface — pin it.
-        let src = include_str!("db.rs");
-        assert!(
-            src.contains("used_bytes <= 18446744073709551615 - ?"),
-            "add_used_bytes UPDATE must keep its overflow-guard WHERE clause; \
-             see the v0.0.82 rationale block on add_used_bytes."
-        );
-        assert!(
-            src.contains("would overflow u64"),
-            "add_used_bytes must surface a typed validation error on the \
-             overflow-detected branch (rows_affected == 0 + account exists), \
-             not silently no-op."
-        );
-    }
+    // v0.4.0 — removed test `add_used_bytes_sql_carries_overflow_guard`
+    // alongside the function it pinned. The v0.0.82 u64-overflow guard
+    // was an invariant of the deleted clash-API metrics writer; the
+    // v0.4.0 stack has no equivalent SQL-side accumulator, so there is
+    // nothing to anchor.
 }

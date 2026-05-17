@@ -32,6 +32,28 @@
 ARG CT_CORE_IMAGE=cool-tunnel-server-core:latest
 FROM ${CT_CORE_IMAGE} AS ct-core-stage
 
+# ----------------------------------------------------------------------
+# singbox-core-build — v0.4.0+ Bun compile of singbox-core
+# ----------------------------------------------------------------------
+#
+# Compiles singbox-core/src/cli.ts to a self-contained linux-x64
+# binary the panel runtime shells to (SingboxConfigGenerator.php
+# spawns `/usr/local/bin/singbox-core render-server`). The same
+# source is also compiled inside docker/singbox/Dockerfile for the
+# ct-singbox supervisor — duplicating the stage rather than sharing
+# avoids cross-Dockerfile coupling (one Dockerfile per image is the
+# project convention; if a future shared-base image makes sense
+# we'll add it then).
+FROM oven/bun:1.1-alpine AS singbox-core-build
+WORKDIR /build
+COPY singbox-core /build/singbox-core
+RUN cd singbox-core \
+    && bun install --frozen-lockfile 2>/dev/null || bun install \
+    && bunx tsc --noEmit \
+    && bun build --compile --target=bun-linux-x64 \
+        src/cli.ts \
+        --outfile /out/singbox-core
+
 # dunglas/frankenphp ships PHP + Caddy + Composer in a single Alpine
 # image. PHP 8.4 over the prior 8.3-fpm-alpine: laravel/octane v2.17
 # (the version this swap pins) transitively depends on
@@ -157,70 +179,48 @@ RUN apk add --no-cache --virtual .ext-redis-build-deps $PHPIZE_DEPS \
 # pull redis-server, useless in this container).
 COPY --from=redis:7.4.8-alpine /usr/local/bin/redis-cli /usr/local/bin/redis-cli
 
-# Bundle the upstream naive client binary so the anti-tracking probe
-# (core/ct-server-core/src/probe.rs) can speak NaiveProxy's HTTP/2-
-# with-padding extension. v0.3.0+ this is the SAME binary the
-# ct-naive container runs as the server — the v0.3.0 architecture
-# cut eliminates padding-protocol drift by making "server naive ==
-# client naive" a build-time invariant.
-#
-# AUTO-MANAGED. The ARG defaults below mirror manifests/naive.upstream.json,
-# the canonical single source of truth for both this image's client
-# binary AND ct-naive's server binary. `operator/sync-naive-pin.ts`
-# keeps the three ARG lines in lockstep with the manifest's upstream_tag
-# and per-arch SHA-256s. Do NOT edit by hand — bump the manifest and
-# run `make sync-naive-pin`. `ct update` preflight runs `--check` and
-# refuses to build on drift; CI runs the same check.
-#
-# The arm64 SHA covers cross-builds against the GitHub-hosted tarball
-# (bytes-in → bytes-out, host-architecture-independent). Bumps must
-# update both arches together — the manifest schema requires both.
-ARG TARGETARCH
-ARG NAIVE_VERSION=v148.0.7778.96-5
-ARG NAIVE_SHA256_AMD64=ca6958dcbbfb7b1b38c55a213dab6927ce3c1417d969b815657513b81fc7352d
-ARG NAIVE_SHA256_ARM64=88fb88340d70b763cdf66586e056d78cb0877b62899f3194abc30d41e5d18763
-RUN set -eux; \
-    cd /tmp; \
-    case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')}" in \
-        amd64) NAIVE_ASSET_ARCH=linux-x64;   NAIVE_SHA256=${NAIVE_SHA256_AMD64} ;; \
-        arm64) NAIVE_ASSET_ARCH=linux-arm64; NAIVE_SHA256=${NAIVE_SHA256_ARM64} ;; \
-        *)     echo "unsupported TARGETARCH: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL -o naiveproxy.tar.xz \
-        "https://github.com/klzgrad/naiveproxy/releases/download/${NAIVE_VERSION}/naiveproxy-${NAIVE_VERSION}-${NAIVE_ASSET_ARCH}.tar.xz"; \
-    if [ -n "${NAIVE_SHA256}" ]; then \
-        echo "${NAIVE_SHA256}  naiveproxy.tar.xz" | sha256sum -c -; \
-    else \
-        echo "" >&2; \
-        echo "  ⚠️  WARN: NAIVE_SHA256 unset for ${NAIVE_ASSET_ARCH}." >&2; \
-        echo "      Build proceeds without supply-chain verification of the" >&2; \
-        echo "      naiveproxy-client tarball. Pin via --build-arg" >&2; \
-        echo "      NAIVE_SHA256_$(echo ${TARGETARCH} | tr a-z A-Z)=<sha>" >&2; \
-        echo "      after computing the hash on a trusted arm64 host." >&2; \
-        echo "      See the head comment in docker/panel/Dockerfile." >&2; \
-        echo "" >&2; \
-    fi; \
-    tar -xJf naiveproxy.tar.xz; \
-    install -m 0755 "naiveproxy-${NAIVE_VERSION}-${NAIVE_ASSET_ARCH}/naive" /usr/local/bin/naive; \
-    rm -rf naiveproxy.tar.xz "naiveproxy-${NAIVE_VERSION}-${NAIVE_ASSET_ARCH}"
-
 # Drop in the ct-server-core binary the panel shells out to.
+#
+# v0.4.0 NOTE: naive binary is no longer bundled here. v0.3.x had
+# this Dockerfile fetch + verify the naive Linux tarball (matched
+# to ct-naive's server-side binary) so the panel's anti-tracking
+# probe could speak naive's HTTP/2-with-padding wire format. That
+# whole concern is gone — the v0.4.0 proxy is sing-box, not naive;
+# rendering moved to singbox-core; the panel's anti-tracking probe
+# is rewritten in a follow-up (still tracked under
+# core/ct-server-core/src/probe.rs but no longer shells to naive).
 COPY --from=ct-core-stage /usr/local/bin/ct-server-core /usr/local/bin/ct-server-core
 RUN chmod +x /usr/local/bin/ct-server-core \
     && /usr/local/bin/ct-server-core --version || true
+
+# v0.4.0+ — bundle the singbox-core binary so
+# SingboxConfigGenerator.php can shell to it for runtime config
+# rendering. The same source produces the ct-singbox container's
+# binary (docker/singbox/Dockerfile); this Dockerfile uses a
+# parallel multi-stage build to avoid cross-Dockerfile coupling.
+#
+# Why bundle in the panel image instead of doing all rendering from
+# ct-singbox: the panel-side render call needs to fire on every
+# Filament UI save, which is synchronous in the request-handling
+# path. A docker-exec into a sibling container adds latency + a new
+# dependency on the docker socket. Embedding the compiled binary
+# keeps the call shape identical to the v0.3.x naive-render flow.
+COPY --from=singbox-core-build /out/singbox-core /usr/local/bin/singbox-core
+RUN chmod +x /usr/local/bin/singbox-core \
+    && /usr/local/bin/singbox-core version || true
 
 # Lean opcache config — under FrankenPHP worker mode the OPcache
 # warm window is amortised across the whole worker lifetime, not
 # the request. Keeping the same tuning as pre-swap; future tuning
 # is operator follow-up.
-COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY docker/panel/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
 # Anti-fingerprint hardening: turn off `X-Powered-By: PHP/8.3.x`.
 # FrankenPHP's response pipeline forwards PHP-emitted headers
 # verbatim — same suppression discipline as the FPM era. The
 # server-tier `Server: Caddy` header is suppressed in the
 # Caddyfile (no equivalent at the PHP level).
-COPY php-hardening.ini /usr/local/etc/php/conf.d/php-hardening.ini
+COPY docker/panel/php-hardening.ini /usr/local/etc/php/conf.d/php-hardening.ini
 
 # FrankenPHP serves Caddy + PHP in one process. The Caddyfile
 # defines the listening port, document root, worker-mode binding,
@@ -243,9 +243,9 @@ COPY php-hardening.ini /usr/local/etc/php/conf.d/php-hardening.ini
 # stays in place for the dedicated ct-caddy container; the panel's
 # own Caddy reads its own file. Two configs, two paths, no
 # overlap. (post-v0.0.58 hotfix.)
-COPY Caddyfile        /etc/caddy-panel/Caddyfile
-COPY supervisord.conf /etc/supervisord.conf
-COPY entrypoint.sh    /usr/local/bin/entrypoint.sh
+COPY docker/panel/Caddyfile        /etc/caddy-panel/Caddyfile
+COPY docker/panel/supervisord.conf /etc/supervisord.conf
+COPY docker/panel/entrypoint.sh    /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 WORKDIR /var/www/html

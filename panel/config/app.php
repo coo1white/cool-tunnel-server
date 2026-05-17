@@ -18,11 +18,16 @@ return [
     // GCM envelope (`tag` field present, 12-byte iv). The legacy
     // CBC envelope (`mac` field present, 16-byte iv) returns
     // InvalidPayload, which makes ct-server-core silently drop the
-    // account from the rendered users list (the warning surfaces
-    // as a `traffic:rollup` log line but no user-visible error).
-    // Pinning GCM here means setCleartextPassword() writes the
-    // shape Rust expects; save the affected accounts once after
-    // this change to re-encrypt existing rows.
+    // affected ServerConfig field at render time.
+    //
+    // v0.4.0 — the encrypted-at-rest surface is the ServerConfig
+    // `reality_private_key` column (Laravel's `encrypted` cast wraps
+    // Crypt::encryptString on write, Crypt::decryptString on read).
+    // ProxyAccount.uuid is plain text — the UUID IS the credential and
+    // a DB dump containing the encrypted-at-rest form recovers to
+    // cleartext under APP_KEY exposure anyway (APP_KEY lives on the
+    // same volume), so the wrapper added complexity without real
+    // defence-in-depth for that column.
     'cipher' => 'AES-256-GCM',
     'key' => env('APP_KEY'),
     // APP_PREVIOUS_KEYS: comma-separated list of older APP_KEYs that

@@ -1,50 +1,48 @@
 # syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Cool Tunnel Server — Caddy front door (v0.3.0+).
+# Cool Tunnel Server — Caddy front door (v0.4.0+).
 #
 # Architecture evolution:
 #
 #   v0.1.x: HAProxy SNI :443 → sing-box (NaiveProxy server) | ghost
-#           Caddy on :8444 (panel). Three containers. Sing-box bumps
-#           kept drifting the NaiveProxy padding wire format vs the
-#           macOS client's bundled naive binary.
-#   v0.2.x: collapsed to one Caddy with klzgrad/forwardproxy@naive
-#           plugin baked in. Worked for ~weeks but klzgrad's fork has
-#           been effectively frozen since 2025-01-18 (commit d62c80d
-#           "Add Naive padding protocol v1") while klzgrad/naiveproxy
-#           kept iterating on the client-side preamble + padding
-#           protocols. By v148 (May 2026) the bundled Mac naive
-#           emitted a preamble that the v1-only server doesn't
-#           recognise; the tunnel set up the CONNECT and then closed
-#           before any target bytes flowed — exactly the same class
-#           of drift v0.2.0 was supposed to fix.
-#   v0.3.0: Caddy stops being the NaiveProxy server entirely. It
-#           keeps ACME + panel reverse-proxy + SNI routing, but the
-#           naive forward-proxy role moves to a sibling ct-naive
-#           container that runs the actual `naive` binary (same
-#           upstream tag the macOS client bundles). Same binary on
-#           both ends → guaranteed wire compatibility forever, no
-#           padding-protocol drift surface.
+#           Caddy on :8444 (panel). Three containers. Padding-format
+#           drift between sing-box's naive plugin and the macOS
+#           client's bundled naive binary.
+#   v0.2.x: Caddy with klzgrad/forwardproxy@naive plugin. Same wire-
+#           format drift class hit by the next major naive bump on
+#           the Mac side; klzgrad/forwardproxy frozen Jan 2025.
+#   v0.3.0: tried to run naive itself as the server. Wrong premise —
+#           naive --listen only accepts socks/http/redir, NEVER https.
+#           naive is a client-only binary; klzgrad/forwardproxy was
+#           always the only naive-protocol-aware server. Abandoned.
+#   v0.4.0: drop naive entirely. Server runs sing-box (SagerNet) in
+#           VLESS+Reality mode; macOS client also runs sing-box
+#           (same upstream tag, same binary on both ends via the
+#           singbox-core/ shared package). Reality replaces ACME-
+#           issued TLS for the proxy: sing-box's handshake captures
+#           the destination site's TLS (e.g. www.microsoft.com:443)
+#           and uses Reality cryptography under that cover. Caddy's
+#           ACME-cert role shrinks to JUST the panel subdomain.
 #
-# v0.3.0 Caddy roles:
+# v0.4.0 Caddy roles:
 #
-#   - binds :80 (HTTP-01 ACME challenges + http→https redirect)
-#   - binds :443 with mholt/caddy-l4 layer4 SNI router:
-#       SNI = <DOMAIN>        → raw TCP proxy to ct-naive:443
-#                               (ct-naive terminates TLS with the
-#                                naive.<DOMAIN> cert it reads from
-#                                the shared /data volume)
-#       SNI = <PANEL_DOMAIN>  → fall-through to inner Caddy HTTP
-#                               server on 127.0.0.1:8443, which
-#                               terminates TLS and reverse_proxies
+#   - binds :80 (HTTP-01 ACME for panel.<DOMAIN> + http→https redir)
+#   - binds :443 with mholt/caddy-l4 layer4 SNI splitter:
+#       SNI = panel.<DOMAIN>  → tcp/127.0.0.1:8443 → inner Caddy
+#                               HTTPS terminator → reverse_proxy
 #                               panel:9000
-#   - manages BOTH TLS certs via auto-https; ct-naive reads its
-#     cert from the shared volume (read-only mount).
+#       any other SNI         → tcp/ct-singbox:443 (sing-box does
+#                               its own Reality TLS; Caddy doesn't
+#                               terminate or hold a cert for this)
+#   - manages ONE cert (panel.<DOMAIN>). The proxy path doesn't
+#     need an ACME cert because Reality fakes a real destination
+#     site's TLS (operator picks www.microsoft.com or similar in
+#     ServerConfig.reality_dest_host).
 #
-# Plugin: github.com/mholt/caddy-l4 baked in via xcaddy. The
-# klzgrad/forwardproxy@naive plugin is GONE — its wire format is
-# the very thing v0.3.0 routes around.
+# Plugin: github.com/mholt/caddy-l4 baked in via xcaddy. No more
+# klzgrad/forwardproxy@naive — sing-box has replaced it on the
+# proxy path entirely.
 #
 # Why Caddy 2.11.3: caddy-l4 v0.1.1+ requires Go 1.25+, which only
 # arrived in caddy:2.11.x builders. The v0.2.x Dockerfile head

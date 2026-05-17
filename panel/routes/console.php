@@ -34,19 +34,14 @@ $logFailure = static function (string $cmd) {
     };
 };
 
-// Roll aggregate counters from per-connection bytes into per-account
-// totals every minute. Cheap because it runs against a small table.
-Sched::command('traffic:rollup')->everyMinute()
-    ->withoutOverlapping()
-    ->onOneServer()
-    ->onFailure($logFailure('traffic:rollup'));
-
-// Disable accounts that have hit their quota or expiry. Hourly is
-// fine — sing-box's basic_auth check is cheap, and 60 minutes of
-// over-quota use is acceptable; tighten if you care.
-Sched::command('quota:enforce')->hourly()
-    ->withoutOverlapping()
-    ->onFailure($logFailure('quota:enforce'));
+// v0.4.0 — `traffic:rollup` and `quota:enforce` scheduler entries
+// removed. Both shelled into `ct-server-core {traffic,quota} ...`
+// CLI subcommands that read from sing-box's clash admin API; v0.4.0
+// sing-box VLESS+Reality exposes no clash API at all, so per-user
+// traffic + quota enforcement moves out of the Rust core. Operator-
+// side instrumentation (out-of-stack metrics, manual quota review)
+// is the v0.4.0 interim posture until a sing-box-native equivalent
+// surface is wired (post-v0.4.0 roadmap).
 
 // Re-render sing-box config + reload as a safety net in case a model
 // event missed (e.g. queue worker died mid-flight).

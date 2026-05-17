@@ -19,10 +19,13 @@ class ProxyAccountFactory extends Factory
 
     public function definition(): array
     {
-        // The model's $fillable excludes password_hash and
-        // password_cleartext_encrypted (H2 hardening). Use
-        // afterMaking + setCleartextPassword to populate them
-        // through the right channel.
+        // The model's $fillable excludes `uuid` (the VLESS credential
+        // must be set through regenerateUuid() so callers can never
+        // plant an attacker-controlled value). The booted() `creating`
+        // hook auto-generates one on save() if none is set, but we
+        // pre-seed in afterMaking so factory-built (non-saved)
+        // instances still carry a valid UUID for unit tests that
+        // serialise them.
         return [
             'username' => 'tu'.Str::random(8),
             'label' => fake()->word(),
@@ -38,10 +41,10 @@ class ProxyAccountFactory extends Factory
     public function configure(): static
     {
         return $this->afterMaking(function (ProxyAccount $account) {
-            // Always have a cleartext password set so tests that
-            // exercise the subscription manifest path don't trip
-            // over the cleartext-missing-skip in the renderer.
-            $account->setCleartextPassword('test-password-'.Str::random(12));
+            // Always have a UUID set so tests that exercise the
+            // subscription manifest path don't trip over the missing-
+            // credential skip in the renderer.
+            $account->regenerateUuid();
         });
     }
 

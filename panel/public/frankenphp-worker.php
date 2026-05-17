@@ -18,12 +18,14 @@ if (! file_exists($octaneWorker)) {
 }
 
 // v0.0.81 robustness-review fix (item 4): refuse to boot with an
-// empty APP_KEY. Without it every `password_cleartext_encrypted`
-// blob fails to decrypt and every subscription HMAC fails to sign;
-// the framework's exception handler then catches the throws per
-// request and degrades each subscription URL to 200-with-cover-
-// site bytes. Real users see "subscription URL stopped working"
-// while operators see no panel error and assume an upstream issue.
+// empty APP_KEY. Without it every encrypted-at-rest column (v0.4.0:
+// ServerConfig.reality_private_key; the renderer needs cleartext to
+// pass into `singbox-core render-server`) fails to decrypt, and every
+// subscription HMAC fails to sign; the framework's exception handler
+// then catches the throws per request and degrades each subscription
+// URL to 200-with-cover-site bytes. Real users see "subscription URL
+// stopped working" while operators see no panel error and assume an
+// upstream issue.
 //
 // Fail HERE, at boot, so the operator gets a clear startup signal
 // (supervisord prints stderr; `docker compose logs panel` shows it

@@ -6,7 +6,7 @@ declare(strict_types=1);
 
 namespace App\MessageHandlers;
 
-use App\Contracts\NaiveConfigGeneratorInterface;
+use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Messages\ReloadSingBox;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
@@ -16,20 +16,18 @@ use Symfony\Component\Messenger\Attribute\AsMessageHandler;
  *
  * Class name preserved (still `ReloadSingBox*`) because the message
  * type + symfony bindings are referenced from external dispatch
- * sites; renaming would force a coordinated churn. The behaviour
- * underneath has shifted twice:
+ * sites; renaming would force a coordinated churn. The renderer
+ * underneath has shifted four times:
  *
- *   v0.1.x  — render sing-box config.json; PUT to clash-API for
- *             a live reload.
+ *   v0.1.x  — render sing-box config.json; PUT to clash-API.
  *   v0.2.x  — render Caddyfile basic_auth block; reload Caddy.
- *   v0.3.0+ — render /data/config/naive.json. ct-naive's Bun
- *             supervisor file-watches the path and respawns naive
- *             within ~250 ms. NO reload-side shell-out is needed
- *             here — the file write IS the reload trigger. This
- *             also means we no longer depend on the broken
- *             docker-exec path in CtServerCore::reloadCaddy()
- *             (the panel container lacks the docker CLI, a known
- *             v0.2.x limitation).
+ *   v0.3.x  — render /data/config/naive.json (then ct-naive's
+ *             supervisor file-watched it). Abandoned: naive can't
+ *             actually run as an HTTPS server.
+ *   v0.4.0+ — render /data/config/singbox.json via singbox-core.
+ *             ct-singbox's `singbox-core supervise` file-watches
+ *             the path and respawns sing-box within ~250 ms. No
+ *             reload-side shell-out from PHP.
  *
  *   - Hash-idempotent at the renderer layer.
  *   - `null` from the generator means "nothing changed".
@@ -39,7 +37,7 @@ use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 final class ReloadSingBoxHandler
 {
     public function __construct(
-        private readonly NaiveConfigGeneratorInterface $generator,
+        private readonly SingBoxConfigGeneratorInterface $generator,
         private readonly LoggerInterface $logger,
     ) {}
 
@@ -47,10 +45,10 @@ final class ReloadSingBoxHandler
     {
         $hash = $this->generator->renderToFile();
         if ($hash !== null) {
-            // File write is the reload primitive. ct-naive's
-            // supervisor will respawn naive on its next debounced
+            // File write is the reload primitive. ct-singbox's
+            // supervisor will respawn sing-box on its next debounced
             // file-watch tick (~250 ms).
-            $this->logger->info('naive.reload.rendered', [
+            $this->logger->info('singbox.reload.rendered', [
                 'hash' => $hash,
                 'reason' => $message->reason,
             ]);
@@ -58,7 +56,7 @@ final class ReloadSingBoxHandler
             return;
         }
 
-        $this->logger->debug('naive.reload.handler_no_op_on_render_null', [
+        $this->logger->debug('singbox.reload.handler_no_op_on_render_null', [
             'reason' => $message->reason,
         ]);
     }

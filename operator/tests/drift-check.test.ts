@@ -1,178 +1,193 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/tests/drift-check.test.ts — pure-logic tests for the
-// three-way cleartext drift detector.
+// three-way credential drift detector.
 //
-// v0.3.0+ pulls the proxy-side credentials from the rendered
-// /data/config/naive.json (the supervisor's file-watch input)
-// instead of v0.2.x's Caddyfile basic_auth lines or v0.1.x's
-// sing-box config.json. The legacy parser parseCaddyfileBasicAuth
-// is retained for migration windows where the operator still has
-// a v0.2.x Caddyfile sitting next to a v0.3.x naive.json; its
-// tests stay green.
+// v0.4.0+ pulls the proxy-side credentials from the rendered
+// /data/config/singbox.json (the singbox-core supervise watch
+// target). The credential type is now a VLESS UUID per account.
+// The legacy parsers (parseNaiveJsonAuth, parseCaddyfileBasicAuth)
+// are kept for migration windows; their tests stay green.
 
 import { test, expect } from "bun:test";
 import {
     classifyRow,
     parseCaddyfileBasicAuth,
     parseNaiveJsonAuth,
+    parseSingboxJsonUsers,
     parseSubscriptionResponse,
     buildReport,
     renderTable,
     type DriftRow,
 } from "../src/util/drift-check";
 
-// ---------- parseNaiveJsonAuth (v0.3.0+) ----------
+// ---------- parseSingboxJsonUsers (v0.4.0+) ----------
 
-const REPRESENTATIVE_NAIVE_JSON = JSON.stringify({
-    schema: 1,
-    domain: "naive.example.com",
-    listen_port: 443,
-    user: "alice",
-    password: "pw-alice",
-    acme_directory_dir: "acme-v02.api.letsencrypt.org-directory",
+const REPRESENTATIVE_SINGBOX_JSON = JSON.stringify({
+    log: { level: "info", timestamp: true },
+    inbounds: [
+        {
+            type: "vless",
+            tag: "vless-in",
+            listen: "::",
+            listen_port: 443,
+            users: [
+                { name: "alice", uuid: "550e8400-e29b-41d4-a716-446655440000", flow: "xtls-rprx-vision" },
+                { name: "bob", uuid: "6ba7b810-9dad-11d1-80b4-00c04fd430c8", flow: "xtls-rprx-vision" },
+            ],
+            tls: {
+                enabled: true,
+                server_name: "www.microsoft.com",
+                reality: { enabled: true, handshake: { server: "www.microsoft.com", server_port: 443 }, private_key: "REDACTED", short_id: [""] },
+            },
+        },
+    ],
+    outbounds: [{ type: "direct", tag: "direct" }, { type: "block", tag: "block" }],
 });
 
-test("parseNaiveJsonAuth extracts (user, password) from the rendered naive.json", () => {
-    expect(parseNaiveJsonAuth(REPRESENTATIVE_NAIVE_JSON)).toEqual([
-        { username: "alice", password: "pw-alice" },
+test("parseSingboxJsonUsers extracts every VLESS user (name + uuid)", () => {
+    expect(parseSingboxJsonUsers(REPRESENTATIVE_SINGBOX_JSON)).toEqual([
+        { username: "alice", uuid: "550e8400-e29b-41d4-a716-446655440000" },
+        { username: "bob", uuid: "6ba7b810-9dad-11d1-80b4-00c04fd430c8" },
     ]);
 });
 
-test("parseNaiveJsonAuth returns [] on stub renderer output (empty user/password)", () => {
-    // Stub form the renderer emits when no active account exists —
-    // supervisor refuses to spawn naive until the next render fills
-    // these in. Drift checker treats this as "naive carries no
-    // credentials" rather than "naive carries empty credentials".
-    const stub = JSON.stringify({
-        schema: 1,
-        domain: "naive.example.com",
-        listen_port: 443,
-        user: "",
-        password: "",
-        acme_directory_dir: "acme-v02.api.letsencrypt.org-directory",
+test("parseSingboxJsonUsers ignores non-VLESS inbounds", () => {
+    const cfg = JSON.stringify({
+        inbounds: [
+            {
+                type: "socks",
+                tag: "socks-in",
+                listen: "127.0.0.1",
+                listen_port: 1080,
+                users: [{ username: "x", password: "y" }],
+            },
+            {
+                type: "vless",
+                tag: "vless-in",
+                listen: "::",
+                listen_port: 443,
+                users: [{ name: "real-user", uuid: "uuid-here", flow: "xtls-rprx-vision" }],
+                tls: { enabled: true, server_name: "x", reality: { enabled: true, handshake: { server: "x", server_port: 443 }, private_key: "x", short_id: [""] } },
+            },
+        ],
+        outbounds: [],
     });
-    expect(parseNaiveJsonAuth(stub)).toEqual([]);
+    expect(parseSingboxJsonUsers(cfg)).toEqual([{ username: "real-user", uuid: "uuid-here" }]);
 });
 
-test("parseNaiveJsonAuth returns [] on parse error (malformed JSON, cover-site, etc.)", () => {
-    expect(parseNaiveJsonAuth("not json at all")).toEqual([]);
-    expect(parseNaiveJsonAuth("")).toEqual([]);
-    expect(parseNaiveJsonAuth("[]")).toEqual([]);
-    expect(parseNaiveJsonAuth("null")).toEqual([]);
+test("parseSingboxJsonUsers returns [] on parse error", () => {
+    expect(parseSingboxJsonUsers("not json")).toEqual([]);
+    expect(parseSingboxJsonUsers("")).toEqual([]);
+    expect(parseSingboxJsonUsers("null")).toEqual([]);
+    expect(parseSingboxJsonUsers("[]")).toEqual([]);
 });
 
-test("parseNaiveJsonAuth ignores extra fields (schema-forward-compat)", () => {
-    const future = JSON.stringify({
+test("parseSingboxJsonUsers skips users with empty name or uuid", () => {
+    const cfg = JSON.stringify({
+        inbounds: [
+            {
+                type: "vless",
+                users: [
+                    { name: "", uuid: "abc" },
+                    { name: "alice", uuid: "" },
+                    { name: "bob", uuid: "def" },
+                ],
+            },
+        ],
+        outbounds: [],
+    });
+    expect(parseSingboxJsonUsers(cfg)).toEqual([{ username: "bob", uuid: "def" }]);
+});
+
+test("parseSingboxJsonUsers handles multiple vless inbounds", () => {
+    const cfg = JSON.stringify({
+        inbounds: [
+            { type: "vless", users: [{ name: "alice", uuid: "uuid-a" }] },
+            { type: "vless", users: [{ name: "bob", uuid: "uuid-b" }] },
+        ],
+        outbounds: [],
+    });
+    expect(parseSingboxJsonUsers(cfg)).toEqual([
+        { username: "alice", uuid: "uuid-a" },
+        { username: "bob", uuid: "uuid-b" },
+    ]);
+});
+
+// ---------- parseNaiveJsonAuth (v0.3.x legacy) ----------
+
+test("parseNaiveJsonAuth maps v0.3.x password into uuid-shaped SingboxUser", () => {
+    const naive = JSON.stringify({
         schema: 1,
         domain: "naive.example.com",
         listen_port: 443,
         user: "alice",
         password: "pw-alice",
         acme_directory_dir: "acme-v02.api.letsencrypt.org-directory",
-        // Hypothetical v0.4.x additions:
-        rate_limit_per_user: 100,
-        cert_renew_strategy: "alpn",
     });
-    expect(parseNaiveJsonAuth(future)).toEqual([
-        { username: "alice", password: "pw-alice" },
-    ]);
+    expect(parseNaiveJsonAuth(naive)).toEqual([{ username: "alice", uuid: "pw-alice" }]);
 });
 
-test("parseNaiveJsonAuth rejects type-mismatched user/password", () => {
-    const bad = JSON.stringify({
-        user: 42,
-        password: "pw",
-    });
-    expect(parseNaiveJsonAuth(bad)).toEqual([]);
+test("parseNaiveJsonAuth returns [] on empty user/password (stub)", () => {
+    expect(
+        parseNaiveJsonAuth(
+            JSON.stringify({ user: "", password: "", domain: "x" }),
+        ),
+    ).toEqual([]);
 });
 
 // ---------- parseCaddyfileBasicAuth (v0.2.x legacy) ----------
 
-// Kept around so a v0.3.0-upgrade operator with a stale Caddyfile
-// next to a fresh naive.json still gets a clean tooling experience.
-// New v0.3.x call sites use parseNaiveJsonAuth above.
-
-const REPRESENTATIVE_CADDYFILE = `
-{
-    email admin@example.com
-    auto_https disable_redirects
-}
-
-:80 {
-    redir https://{host}{uri} 308
-}
-
+test("parseCaddyfileBasicAuth still pulls basic_auth lines (forensic-only)", () => {
+    const caddy = `
 proxy.example.com {
     route {
         forward_proxy {
             basic_auth alice pw-alice
-            basic_auth bob pw-bob
-            hide_ip
-            hide_via
-            probe_resistance abc123.localhost
         }
     }
-}
-
-panel.proxy.example.com {
-    reverse_proxy panel:9000
-}
-`;
-
-test("parseCaddyfileBasicAuth extracts every basic_auth in the forward_proxy block", () => {
-    expect(parseCaddyfileBasicAuth(REPRESENTATIVE_CADDYFILE)).toEqual([
-        { username: "alice", password: "pw-alice" },
-        { username: "bob", password: "pw-bob" },
-    ]);
-});
-
-test("parseCaddyfileBasicAuth never throws on malformed Caddyfile (degrades to [])", () => {
-    expect(parseCaddyfileBasicAuth("{{{{ not a caddyfile")).toEqual([]);
-});
-
-test("parseCaddyfileBasicAuth handles multiple forward_proxy blocks (defence-in-depth)", () => {
-    const fragment = `
-a.example.com {
-    forward_proxy {
-        basic_auth alice pw-alice
-    }
-}
-b.example.com {
-    forward_proxy {
-        basic_auth bob pw-bob
-    }
-}
-`;
-    expect(parseCaddyfileBasicAuth(fragment)).toEqual([
-        { username: "alice", password: "pw-alice" },
-        { username: "bob", password: "pw-bob" },
-    ]);
+}`;
+    expect(parseCaddyfileBasicAuth(caddy)).toEqual([{ username: "alice", uuid: "pw-alice" }]);
 });
 
 // ---------- parseSubscriptionResponse ----------
 
-test("parseSubscriptionResponse extracts profiles[]", () => {
+test("parseSubscriptionResponse extracts uuid-shaped profiles[] (v0.4.0+)", () => {
     const body = JSON.stringify({
         version: 1,
         server: "naive.example.com",
-        profiles: [{ host: "naive.example.com", port: 443, username: "alice", password: "pw" }],
+        profiles: [
+            { host: "naive.example.com", port: 443, username: "alice", uuid: "uuid-here" },
+        ],
         capabilities: {},
         signature: "deadbeef",
     });
     const r = parseSubscriptionResponse(body);
     expect(r).not.toBeNull();
-    expect(r!.version).toBe(1);
     expect(r!.profiles).toEqual([
-        { host: "naive.example.com", port: 443, username: "alice", password: "pw" },
+        { host: "naive.example.com", port: 443, username: "alice", uuid: "uuid-here" },
     ]);
 });
 
-test("parseSubscriptionResponse returns null on cover-site (HTML)", () => {
-    expect(parseSubscriptionResponse("<!doctype html><html>...</html>")).toBeNull();
+test("parseSubscriptionResponse accepts legacy v0.3.x `password` key during transition", () => {
+    // Transition window: a server still on v0.3.x emits the old
+    // shape; the operator's drift detector accepts it so the
+    // pre-v3.0.0 client cut doesn't silently flag "no credentials".
+    const body = JSON.stringify({
+        version: 1,
+        server: "naive.example.com",
+        profiles: [
+            { host: "naive.example.com", port: 443, username: "alice", password: "legacy" },
+        ],
+    });
+    const r = parseSubscriptionResponse(body);
+    expect(r).not.toBeNull();
+    expect(r!.profiles).toEqual([
+        { host: "naive.example.com", port: 443, username: "alice", uuid: "legacy" },
+    ]);
 });
 
-test("parseSubscriptionResponse returns null when version field absent", () => {
-    expect(parseSubscriptionResponse('{"server":"x","profiles":[]}')).toBeNull();
+test("parseSubscriptionResponse returns null on cover-site HTML", () => {
+    expect(parseSubscriptionResponse("<!doctype html><html></html>")).toBeNull();
 });
 
 // ---------- classifyRow ----------
@@ -182,78 +197,74 @@ function row(opts: Partial<DriftRow> & { username: string; accountId?: number })
         accountId: opts.accountId ?? 1,
         username: opts.username,
         db: opts.db ?? null,
-        naive: opts.naive ?? null,
+        singbox: opts.singbox ?? null,
         subscription: opts.subscription ?? null,
     };
 }
 
-test("classifyRow ok when all three layers agree", () => {
-    const r = row({ username: "alice", db: "pw", naive: "pw", subscription: "pw" });
+test("classifyRow ok when all three layers agree on the UUID", () => {
+    const r = row({ username: "alice", db: "uuid-a", singbox: "uuid-a", subscription: "uuid-a" });
     expect(classifyRow(r).severity).toBe("ok");
+    expect(classifyRow(r).summary).toContain("VLESS UUID");
 });
 
-test("classifyRow fails on db↔naive drift (the credential-rotation-not-rendered case)", () => {
-    const r = row({ username: "alice", db: "new-pw", naive: "old-pw", subscription: "new-pw" });
+test("classifyRow fails on db↔singbox drift", () => {
+    const r = row({ username: "alice", db: "new", singbox: "old", subscription: "new" });
     const f = classifyRow(r);
     expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("db↔naive");
+    expect(f.summary).toContain("db↔singbox");
 });
 
 test("classifyRow fails on db↔subscription drift", () => {
-    const r = row({ username: "alice", db: "new-pw", naive: "new-pw", subscription: "old-pw" });
-    const f = classifyRow(r);
-    expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("db↔subscription");
+    const r = row({ username: "alice", db: "new", singbox: "new", subscription: "old" });
+    expect(classifyRow(r).summary).toContain("db↔subscription");
 });
 
-test("classifyRow fails when naive has no user but DB does", () => {
-    const r = row({ username: "alice", db: "pw", naive: null, subscription: "pw" });
-    const f = classifyRow(r);
-    expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("render naive");
+test("classifyRow fails when singbox has no user but DB does", () => {
+    const r = row({ username: "alice", db: "uuid", singbox: null, subscription: "uuid" });
+    expect(classifyRow(r).summary).toContain("render singbox");
 });
 
-test("classifyRow warns when subscription returns cover-site (null)", () => {
-    const r = row({ username: "alice", db: "pw", naive: "pw", subscription: null });
+test("classifyRow warns on subscription cover-site", () => {
+    const r = row({ username: "alice", db: "uuid", singbox: "uuid", subscription: null });
     expect(classifyRow(r).severity).toBe("warn");
 });
 
-test("classifyRow fails on phantom naive user (DB row absent)", () => {
-    const r = row({ username: "ghost", db: null, naive: "pw" });
-    const f = classifyRow(r);
-    expect(f.severity).toBe("fail");
-    expect(f.summary).toContain("phantom");
+test("classifyRow fails on phantom singbox user (DB absent)", () => {
+    const r = row({ username: "ghost", db: null, singbox: "uuid" });
+    expect(classifyRow(r).severity).toBe("fail");
+    expect(classifyRow(r).summary).toContain("phantom");
 });
 
 // ---------- buildReport / renderTable ----------
 
-test("buildReport ok = false if any finding is fail", () => {
+test("buildReport ok=true when every row aligned", () => {
     const r = buildReport([
-        row({ username: "alice", db: "pw", naive: "pw", subscription: "pw" }),
-        row({ username: "bob", accountId: 2, db: "x", naive: "y", subscription: "z" }),
-    ]);
-    expect(r.ok).toBe(false);
-});
-
-test("buildReport ok = true when every row is ok", () => {
-    const r = buildReport([
-        row({ username: "alice", db: "pw", naive: "pw", subscription: "pw" }),
-        row({ username: "bob", accountId: 2, db: "pw2", naive: "pw2", subscription: "pw2" }),
+        row({ username: "alice", db: "x", singbox: "x", subscription: "x" }),
+        row({ username: "bob", accountId: 2, db: "y", singbox: "y", subscription: "y" }),
     ]);
     expect(r.ok).toBe(true);
 });
 
-test("renderTable never leaks cleartext", () => {
+test("buildReport ok=false if any row drifts", () => {
+    const r = buildReport([
+        row({ username: "alice", db: "x", singbox: "x", subscription: "x" }),
+        row({ username: "bob", accountId: 2, db: "y", singbox: "Y", subscription: "y" }),
+    ]);
+    expect(r.ok).toBe(false);
+});
+
+test("renderTable never leaks UUIDs into output", () => {
     const r = buildReport([
         row({
             username: "alice",
-            db: "super-secret-cleartext",
-            naive: "different-secret",
-            subscription: "super-secret-cleartext",
+            db: "super-secret-uuid",
+            singbox: "different-uuid",
+            subscription: "super-secret-uuid",
         }),
     ]);
     const table = renderTable(r);
-    expect(table).not.toContain("super-secret-cleartext");
-    expect(table).not.toContain("different-secret");
+    expect(table).not.toContain("super-secret-uuid");
+    expect(table).not.toContain("different-uuid");
     expect(table).toContain("DIFF");
 });

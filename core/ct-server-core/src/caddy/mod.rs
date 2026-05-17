@@ -288,21 +288,30 @@ mod tests {
         assert!(body.contains("acme_ca https://acme-v02.api.letsencrypt.org/directory"));
         // layer4 SNI router.
         assert!(body.contains("layer4 {"));
-        assert!(body.contains("sni proxy.example.com"));
+        // v0.4.0 SNI matcher: scopes the panel.<DOMAIN> subdomain to
+        // the inner :8443 Caddy site; everything else (Reality
+        // cover-site SNI like www.microsoft.com) falls through to
+        // ct-singbox.
+        assert!(body.contains("sni panel.proxy.example.com"));
         // caddy-l4's short-form proxy directive — `proxy <host>:<port>`.
-        // Block form (`proxy { upstream tcp/<host>:<port> }`) is
-        // equivalent but the renderer emits the short form.
-        assert!(body.contains("proxy ct-naive:443"));
+        // v0.4.0: cover-site SNI → tcp/ct-singbox:443 (the sing-box
+        // VLESS+Reality container); panel SNI → 127.0.0.1:8443
+        // (the inner Caddy reverse-proxy site).
+        assert!(body.contains("proxy ct-singbox:443"));
         assert!(body.contains("proxy 127.0.0.1:8443"));
         // Inner panel site block.
         assert!(body.contains("https://panel.proxy.example.com:8443"));
         assert!(body.contains("reverse_proxy panel:9000"));
-        // Inner naive cert-acquisition stub.
-        assert!(body.contains("https://proxy.example.com:8443"));
-        // No more v0.2.x forward_proxy / probe_resistance / basic_auth.
+        // v0.4.0: NO proxy-domain ACME cert anymore — Reality replaces
+        // ACME on the proxy path. The v0.3.x cert-acquisition stub
+        // for naive.<DOMAIN> is intentionally absent.
+        assert!(!body.contains("https://proxy.example.com:8443"));
+        // No v0.2.x forward_proxy / probe_resistance / basic_auth.
         assert!(!body.contains("forward_proxy"));
         assert!(!body.contains("probe_resistance"));
         assert!(!body.contains("basic_auth"));
+        // No v0.3.x ct-naive routing either.
+        assert!(!body.contains("ct-naive"));
     }
 
     // PHP-side reader is panel/app/Services/CaddyfileGenerator.php:

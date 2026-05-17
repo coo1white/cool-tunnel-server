@@ -8,7 +8,6 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\ProxyAccountResource\Pages;
 use App\Models\ProxyAccount;
-use App\Services\PasswordGenerator;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Notifications\Actions\Action;
@@ -18,12 +17,12 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
-// Manage proxy accounts (the {username, password} entries that end
-// up in sing-box's naive inbound `users` array). On create / regen
-// we show the cleartext ONCE in a notification; the cleartext is
-// also persisted encrypted (Laravel Crypt → AES-256-GCM) so
-// ct-server-core can render it into the sing-box config without
-// needing to ask the operator again.
+// Manage proxy accounts (the {name, uuid} entries that end up in
+// sing-box's `vless` inbound users[] array under VLESS+Reality).
+// On create / regen we show the UUID ONCE in a notification; the UUID
+// IS the credential — like an API key — and is persisted in plain
+// text. There is no "show existing UUID" path by design; lose it,
+// regenerate.
 
 class ProxyAccountResource extends Resource
 {
@@ -49,7 +48,7 @@ class ProxyAccountResource extends Resource
                         ->maxLength(64)
                         ->unique(ignoreRecord: true)
                         ->autocomplete('off')
-                        ->helperText('ASCII letters, digits, dashes, underscores. The client will use this as basic-auth username.'),
+                        ->helperText('ASCII letters, digits, dashes, underscores. Used as the VLESS user `name` for log readability; the per-account credential is the UUID assigned at create / regen.'),
 
                     Forms\Components\TextInput::make('label')
                         ->maxLength(255)
@@ -83,9 +82,9 @@ class ProxyAccountResource extends Resource
                         ->seconds(false),
                 ])->columns(2),
 
-            Forms\Components\Placeholder::make('password_note')
-                ->label('Password')
-                ->content('A new random password is generated when you create this account; the cleartext is shown once and not stored in any log. Use the "Regenerate password" action to issue a new one later.')
+            Forms\Components\Placeholder::make('uuid_note')
+                ->label('UUID')
+                ->content('A fresh VLESS UUID is generated when you create this account; it is shown once and not stored in any log. Use the "Regenerate UUID" action to rotate it later — the old UUID stops authenticating the moment sing-box reloads.')
                 ->visibleOn('create'),
         ]);
     }
@@ -123,8 +122,8 @@ class ProxyAccountResource extends Resource
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
-                Tables\Actions\Action::make('regenerate_password')
-                    ->label('Regenerate password')
+                Tables\Actions\Action::make('regenerate_uuid')
+                    ->label('Regenerate UUID')
                     ->icon('heroicon-o-key')
                     ->color('warning')
                     ->requiresConfirmation()
@@ -138,38 +137,30 @@ class ProxyAccountResource extends Resource
                     // ProxyAccountPolicy adds a per-record scope. Today
                     // single-admin makes every authenticated user the
                     // admin, so a simple auth-check is sufficient.
-                    // (Audit hardening — separate from the existing
-                    // RateLimiter login throttle, which gates the
-                    // panel-entry step.)
                     ->authorize(fn (): bool => auth()->check())
                     ->action(function (ProxyAccount $record) {
-                        $pw = PasswordGenerator::make();
-                        $record->setCleartextPassword($pw['cleartext']);
+                        $uuid = $record->regenerateUuid();
                         $record->save();
 
                         $subUrl = $record->subscriptionUrl();
-                        $body = $pw['cleartext'];
+                        $body = $uuid;
                         if ($subUrl !== null) {
                             $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
                         }
 
                         Notification::make()
-                            ->title('New password — copy now, shown once')
+                            ->title('New UUID — copy now, shown once')
                             ->body($body)
                             ->success()
                             ->persistent()
                             ->send();
 
                         // Follow-up warning when APP_KEY is unset — the
-                        // password generated fine but the subscription
-                        // URL silently dropped out of the success body.
-                        // Pre-fix the operator had no signal that
-                        // sub-URLs were unavailable; symptom was "the
-                        // sister `show_subscription_url` action shows
-                        // the same APP_KEY error, but only if I click
-                        // it specifically." Same diagnostic copy as
-                        // `show_subscription_url` keeps the recovery
-                        // path consistent across both actions.
+                        // UUID rotated fine but the subscription URL
+                        // silently dropped out of the success body.
+                        // Same diagnostic copy as `show_subscription_url`
+                        // keeps the recovery path consistent across
+                        // both actions.
                         if ($subUrl === null) {
                             Notification::make()
                                 ->title('Subscription URL not generated')

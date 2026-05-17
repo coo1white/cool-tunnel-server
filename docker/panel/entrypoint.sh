@@ -211,16 +211,17 @@ php artisan route:cache   --no-interaction || true
 rm -rf storage/framework/views/* 2>/dev/null || true
 php artisan view:cache    --no-interaction || true
 
-# Render the initial Caddyfile + naive.json from the DB so both
+# Render the initial Caddyfile + singbox.json from the DB so both
 # servers have something to load on first boot.
 # CaddyfileGenerator writes to /etc/caddy (mounted from caddy_etc
-# volume); NaiveConfigGenerator writes /data/config/naive.json
-# (mounted from naive_config volume, RO into ct-naive). v0.3.0+:
-# the v0.1.x singbox:render artisan is retained as dead-code for
-# transitional ct-server-core compatibility but no longer fires
-# here (its /etc/sing-box/ output has no consumer post-v0.2.0).
+# volume); SingboxConfigGenerator shells to singbox-core which
+# writes /data/config/singbox.json (mounted from singbox_config
+# volume, RO into ct-singbox). v0.4.0+: the v0.1.x singbox:render
+# artisan (the OLD sing-box-on-the-wire one) and the v0.3.x
+# naive:render artisan are both retired; only `singbox:render`
+# (which is the NEW VLESS+Reality renderer) fires here.
 php artisan caddyfile:render --no-interaction || true
-php artisan naive:render     --no-interaction || true
+php artisan singbox:render   --no-interaction || true
 
 # Sentinel for install.sh — signals first-boot setup (composer +
 # migrate + cache + render) is finished and it's safe to query

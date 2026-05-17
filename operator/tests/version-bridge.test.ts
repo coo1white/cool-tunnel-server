@@ -5,11 +5,11 @@
 import { test, expect } from "bun:test";
 import {
     classifyBridge,
-    classifyNaiveBridge,
-    normaliseNaiveVersion,
+    classifySingboxBridge,
+    normaliseSingboxVersion,
     operatorBinaryVersion,
     parseCoreVersionOutput,
-    parseNaiveVersionOutput,
+    parseSingboxVersionOutput,
     parsePanelConfigVersion,
     type LayerVersion,
 } from "../src/util/version-bridge";
@@ -135,88 +135,76 @@ test("classifyBridge: no layer readable → canonical=null, agreed=false", () =>
     expect(r.agreed).toBe(false);
 });
 
-// ---------- normaliseNaiveVersion ----------
+// ---------- normaliseSingboxVersion (v0.4.0+) ----------
 
-test("normaliseNaiveVersion strips leading 'v' and trailing rebuild suffix", () => {
-    expect(normaliseNaiveVersion("v148.0.7778.96-5")).toBe("148.0.7778.96");
+test("normaliseSingboxVersion strips leading 'v'", () => {
+    expect(normaliseSingboxVersion("v1.13.12")).toBe("1.13.12");
 });
 
-test("normaliseNaiveVersion is idempotent on already-normalised input", () => {
-    expect(normaliseNaiveVersion("148.0.7778.96")).toBe("148.0.7778.96");
+test("normaliseSingboxVersion is idempotent on already-normalised input", () => {
+    expect(normaliseSingboxVersion("1.13.12")).toBe("1.13.12");
 });
 
-test("normaliseNaiveVersion does NOT strip trailing version segments (4-part)", () => {
-    // The 4th `.96` is part of the version, not a rebuild suffix.
-    // Only `-N` after the last digit is a rebuild suffix.
-    expect(normaliseNaiveVersion("v148.0.7778.96")).toBe("148.0.7778.96");
+test("normaliseSingboxVersion preserves trailing pre-release / build suffixes", () => {
+    // Unlike v0.3.x naive (which used a `-N` rebuild suffix we'd
+    // strip), SagerNet/sing-box uses semver tags. `1.13.12-rc1`
+    // is a different release from `1.13.12` and must compare
+    // distinctly.
+    expect(normaliseSingboxVersion("v1.13.12-rc1")).toBe("1.13.12-rc1");
 });
 
-// ---------- parseNaiveVersionOutput ----------
+// ---------- parseSingboxVersionOutput ----------
 
-test("parseNaiveVersionOutput extracts the version from `naive X.Y.Z.W`", () => {
-    expect(parseNaiveVersionOutput("naive 148.0.7778.96\n")).toBe("148.0.7778.96");
+test("parseSingboxVersionOutput extracts the version from `sing-box version X.Y.Z`", () => {
+    expect(parseSingboxVersionOutput("sing-box version 1.13.12\n")).toBe("1.13.12");
 });
 
-test("parseNaiveVersionOutput is tolerant of trailing build metadata", () => {
-    expect(parseNaiveVersionOutput("naive 148.0.7778.96 (custom build)")).toBe("148.0.7778.96");
+test("parseSingboxVersionOutput is tolerant of multi-line output (env + tags)", () => {
+    const out =
+        "sing-box version 1.13.12\nEnvironment: go1.22.0 linux/amd64\nTags: with_quic,with_wireguard\n";
+    expect(parseSingboxVersionOutput(out)).toBe("1.13.12");
 });
 
-test("parseNaiveVersionOutput rejects unrelated output", () => {
-    expect(parseNaiveVersionOutput("bash: naive: command not found")).toBeNull();
+test("parseSingboxVersionOutput rejects unrelated output", () => {
+    expect(parseSingboxVersionOutput("bash: sing-box: command not found")).toBeNull();
 });
 
-// ---------- classifyNaiveBridge ----------
+// ---------- classifySingboxBridge ----------
 
-test("classifyNaiveBridge: manifest agrees with server + client → agreed", () => {
-    const r = classifyNaiveBridge(
-        layer("naive-server", "148.0.7778.96"),
-        layer("naive-server", "148.0.7778.96"),
-        layer("naive-client", "148.0.7778.96"),
+test("classifySingboxBridge: pin agrees with running server → agreed", () => {
+    const r = classifySingboxBridge(
+        layer("singbox-pin", "1.13.12"),
+        layer("singbox-server", "1.13.12"),
     );
     expect(r.agreed).toBe(true);
-    expect(r.canonical).toBe("148.0.7778.96");
+    expect(r.canonical).toBe("1.13.12");
 });
 
-test("classifyNaiveBridge: client drifts → mismatch flagged", () => {
-    const r = classifyNaiveBridge(
-        layer("naive-server", "148.0.7778.96"),
-        layer("naive-server", "148.0.7778.96"),
-        layer("naive-client", "147.0.0.0"),
+test("classifySingboxBridge: server drifts from pin → mismatch flagged", () => {
+    const r = classifySingboxBridge(
+        layer("singbox-pin", "1.13.12"),
+        layer("singbox-server", "1.13.11"),
     );
     expect(r.agreed).toBe(false);
-    expect(r.canonical).toBe("148.0.7778.96");
-    expect(r.mismatches.map((l) => l.layer)).toEqual(["naive-client"]);
+    expect(r.canonical).toBe("1.13.12");
+    expect(r.mismatches.map((l) => l.layer)).toEqual(["singbox-server"]);
 });
 
-test("classifyNaiveBridge: manifest missing, both running agree → still agreed", () => {
-    // Manifest absent doesn't break the fundamental server==client
-    // invariant; we fall back to the running binaries.
-    const r = classifyNaiveBridge(
-        layer("naive-server", null),
-        layer("naive-server", "148.0.7778.96"),
-        layer("naive-client", "148.0.7778.96"),
+test("classifySingboxBridge: pin missing, server reachable → falls back to server", () => {
+    // Pin absent doesn't break the audit; we fall back to whatever
+    // the running binary reports as the canonical.
+    const r = classifySingboxBridge(
+        layer("singbox-pin", null),
+        layer("singbox-server", "1.13.12"),
     );
     expect(r.agreed).toBe(true);
-    expect(r.canonical).toBe("148.0.7778.96");
+    expect(r.canonical).toBe("1.13.12");
 });
 
-test("classifyNaiveBridge: manifest missing AND running binaries disagree → mismatch", () => {
-    const r = classifyNaiveBridge(
-        layer("naive-server", null),
-        layer("naive-server", "148.0.7778.96"),
-        layer("naive-client", "147.0.0.0"),
-    );
-    expect(r.agreed).toBe(false);
-    // Canonical falls back to the first readable layer.
-    expect(r.canonical).toBe("148.0.7778.96");
-    expect(r.mismatches.map((l) => l.layer)).toEqual(["naive-client"]);
-});
-
-test("classifyNaiveBridge: nothing readable → no canonical", () => {
-    const r = classifyNaiveBridge(
-        layer("naive-server", null),
-        layer("naive-server", null),
-        layer("naive-client", null),
+test("classifySingboxBridge: nothing readable → no canonical", () => {
+    const r = classifySingboxBridge(
+        layer("singbox-pin", null),
+        layer("singbox-server", null),
     );
     expect(r.agreed).toBe(false);
     expect(r.canonical).toBeNull();

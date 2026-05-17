@@ -4,47 +4,52 @@
 # install.sh handles first-time bootstrap; this file is the source
 # of truth for what is running in production.
 #
-# Architecture (v0.3.0+, one-line per layer):
+# Architecture (v0.4.0+, one-line per layer):
 #
-#   :80  → caddy     ACME HTTP-01 challenges + http→https redirects.
-#                    Manages two certs: <DOMAIN> (used by ct-naive)
-#                    and PANEL_DOMAIN (used by Caddy itself).
+#   :80  → caddy     ACME HTTP-01 for the PANEL subdomain only +
+#                    http→https redirect. Reality on the proxy path
+#                    means the proxy domain doesn't need an ACME cert.
 #
-#   :443 → caddy     mholt/caddy-l4 layer4 SNI router:
-#                       SNI = <DOMAIN>        → raw TCP proxy to
-#                                               ct-naive:443. naive
-#                                               terminates TLS itself
-#                                               using the cert from
-#                                               the shared caddy_data
-#                                               volume.
-#                       SNI = <PANEL_DOMAIN>  → fall-through to inner
-#                                               Caddy HTTPS server on
-#                                               127.0.0.1:8443, which
-#                                               terminates TLS and
-#                                               reverse-proxies
-#                                               panel:9000.
+#   :443 → caddy     mholt/caddy-l4 layer4 SNI splitter:
+#                       SNI = PANEL_DOMAIN    → tcp/127.0.0.1:8443
+#                                               (inner Caddy HTTPS
+#                                                terminator →
+#                                                reverse_proxy
+#                                                panel:9000)
+#                       any other SNI         → tcp/ct-singbox:443
+#                                               (sing-box does its
+#                                                own Reality TLS;
+#                                                Caddy never sees
+#                                                the decrypted bytes)
 #
-#         naive      v0.3.0 NEW. klzgrad/naiveproxy `naive` binary
-#                    running as server (same upstream tag the macOS
-#                    client bundles — wire-level compatibility is
-#                    the whole point of v0.3.0). Bun supervisor
-#                    watches /data/config/naive.json (panel writes)
-#                    and /data/caddy/certificates/ (Caddy renews);
-#                    respawns naive on change.
+#         singbox    v0.4.0 NEW. SagerNet/sing-box binary running
+#                    in VLESS + Reality server mode. Managed by
+#                    `singbox-core supervise` (a self-contained
+#                    Bun-compiled binary built from singbox-core/).
+#                    Same singbox-core source is also embedded in
+#                    the macOS client (Cool Tunnel.app), so server
+#                    and client are guaranteed to speak the same
+#                    sing-box protocol version pinned in
+#                    singbox-core/singbox.upstream.json.
 #
-#         panel      Filament 3 admin (PHP). Writes naive.json
-#                    directly via PHP json_encode + atomic write,
-#                    plus shells out to ct-server-core (Rust) for
-#                    the (now static) Caddyfile render.
+#         panel      Filament 3 admin (PHP). Writes
+#                    /data/config/singbox.json via singbox-core
+#                    render-server (Bun, replacing the v0.3.x Rust
+#                    renderer). Manages Reality keypair + per-user
+#                    UUIDs instead of basic-auth passwords.
 #
 #         db / redis MariaDB + Redis.
 #
-# v0.1.x: 3 containers (HAProxy + sing-box + ghost-Caddy). v0.2.x:
-# 1 container (Caddy + klzgrad/forwardproxy@naive plugin). v0.3.x:
-# 2 containers (Caddy + naive). The split-and-pair design eliminates
-# the padding-protocol drift surface that bit v0.1 (sing-box) and
-# v0.2 (forwardproxy plugin) — see docker/caddy/Dockerfile head
-# comment for the full drift history.
+# Drift surface history:
+#   v0.1.x: HAProxy + sing-box + ghost-Caddy. Sing-box's naive plugin
+#           lagged klzgrad/naiveproxy upstream → padding drift.
+#   v0.2.x: Caddy + klzgrad/forwardproxy@naive. forwardproxy@naive
+#           branch frozen Jan 2025 → preamble drift vs current naive.
+#   v0.3.0: Tried to run naive itself as server. WRONG: naive's
+#           --listen flag does not support https; naive is client-only.
+#   v0.4.0: sing-box (VLESS+Reality) on both ends. Same upstream
+#           project, one binary, one config schema, one version pin.
+#           Drift class structurally eliminated.
 
 # v0.0.17 hardening defaults — applied to every long-running service
 # via YAML anchor merge (`<<: *svc-hardening`). Three properties:
@@ -137,32 +142,37 @@ services:
     image: cool-tunnel-server-caddy:latest
     container_name: ct-caddy
     restart: unless-stopped
-    # 1 GB-VPS sizing (v0.3.0). Caddy now owns ACME + L4 SNI router
-    # + panel reverse_proxy (no forward_proxy; that moved to
-    # ct-naive). Measured load is lighter than v0.2.x without the
-    # naive byte-pump in the same process; the cap stays at 192 MiB
+    # 1 GB-VPS sizing (v0.4.0). Caddy is purely L4 SNI splitter +
+    # inner panel reverse_proxy now (Reality on the proxy path means
+    # Caddy doesn't terminate TLS for naive.<DOMAIN> at all; sing-box
+    # does its own Reality handshake). Memory cap stays at 192 MiB
     # to absorb the L4 connection table for many concurrent SNI
-    # routings before OOM-kill, with headroom over the ~50 MiB
-    # measured idle.
+    # routings before OOM-kill, with headroom over the ~30 MiB
+    # measured idle (lighter than v0.3.x — fewer certs to manage).
     mem_limit: 192m
     # Each L4 connection is a goroutine (cheap, not a pid). 96 OS
     # threads cover Go's M:N scheduling + ACME + reverse_proxy +
-    # inner :8443 HTTPS server. Preserved from v0.2.x.
+    # inner :8443 HTTPS server.
     pids_limit: 96
     cap_add:
       - NET_BIND_SERVICE
     ports:
       - "80:80"             # ACME HTTP-01 challenges + HTTP→HTTPS redirect
-      - "443:443"           # L4 SNI router. <DOMAIN> SNI → ct-naive:443
-                            # (raw TCP, naive terminates TLS).
-                            # <PANEL_DOMAIN> SNI → inner Caddy HTTPS
-                            # server on 127.0.0.1:8443 → panel:9000.
+      - "443:443"           # L4 SNI splitter:
+                            #   panel.<DOMAIN> SNI → inner Caddy HTTPS
+                            #                        (127.0.0.1:8443)
+                            #                        → reverse_proxy
+                            #                          panel:9000
+                            #   any other SNI      → tcp/ct-singbox:443
+                            #                        (sing-box does
+                            #                         its own Reality
+                            #                         TLS)
     volumes:
       # The panel renders Caddyfile into this shared volume.
       - caddy_etc:/etc/caddy
-      # Caddy stores certs + ACME state under /data. Shared RO with
-      # ct-naive (v0.3.0+) so naive can read its TLS cert without
-      # running its own ACME path.
+      # Caddy stores certs + ACME state under /data. v0.4.0+ caddy
+      # only manages ONE cert (the panel subdomain); the proxy path
+      # has no cert because Reality fakes the destination site's TLS.
       - caddy_data:/data
     depends_on:
       panel:
@@ -170,40 +180,43 @@ services:
     networks:
       - ct-net
 
-  naive:
+  singbox:
     <<: *svc-hardening
     build:
-      context: ./docker/naive
-    image: cool-tunnel-server-naive:latest
-    container_name: ct-naive
+      # Context is the repo root so the Dockerfile can COPY the
+      # singbox-core/ source tree from there for the `bun build
+      # --compile` stage.
+      context: .
+      dockerfile: docker/singbox/Dockerfile
+    image: cool-tunnel-server-singbox:latest
+    container_name: ct-singbox
     restart: unless-stopped
-    # 1 GB-VPS sizing (v0.3.0). naive's footprint is dominated by
-    # the Chromium TLS stack — measured idle ~70 MiB, peak with
-    # ~50 concurrent CONNECT sessions ~120 MiB. 192 MiB cap matches
-    # the v0.1.x sing-box budget; OOM-kill on overflow flags a
-    # session-leak regression. Raise alongside concurrent-user
-    # growth.
+    # 1 GB-VPS sizing (v0.4.0). sing-box's footprint at idle is ~40
+    # MiB (Go runtime + Reality state machine); per-session memory is
+    # under 200 KiB for VLESS+Reality. 192 MiB cap matches caddy's
+    # for symmetry; OOM-kill on overflow flags a session-leak
+    # regression. Raise alongside concurrent-user growth past a few
+    # hundred sessions.
     mem_limit: 192m
-    # naive uses goroutines per CONNECT — light on pids. Bun
-    # supervisor adds a handful of JS threads. 96 is generous.
+    # sing-box is a Go binary — each session is a goroutine, not a
+    # pid. The Bun supervisor adds a handful of JS threads. 96 is
+    # generous; cap protects against a runaway crash-loop fork bomb.
     pids_limit: 96
-    # NET_BIND_SERVICE on the binary's file-cap (set in the
-    # Dockerfile) lets the non-root `naive` user bind :443 inside
-    # the container. cap_add here grants it at the cgroup level —
-    # both are required (same belt-and-braces pattern as ct-caddy).
+    # NET_BIND_SERVICE granted at the cgroup level here; the
+    # docker/singbox/Dockerfile sets the matching file-cap on
+    # /usr/local/bin/sing-box so the non-root `singbox` user can
+    # bind :443 inside the container.
     cap_add:
       - NET_BIND_SERVICE
-    # No `ports:` block — ct-naive is reachable only on the
-    # docker-internal ct-net. Public :443 traffic enters via ct-caddy's
-    # layer4 SNI router, which proxies the matching SNI to
-    # ct-naive:443.
+    # No `ports:` block — ct-singbox is reachable only on the
+    # docker-internal ct-net. Public :443 traffic enters via
+    # ct-caddy's layer4 SNI splitter, which forwards the non-panel
+    # SNI traffic to ct-singbox:443.
     volumes:
-      # Cert pair lives at /data/caddy/certificates/.../{<DOMAIN>}/.
-      # Read-only — only ct-caddy mutates this volume.
-      - caddy_data:/data/caddy:ro
-      # Panel writes /data/config/naive.json; supervisor watches.
+      # Panel writes /data/config/singbox.json; the supervisor
+      # (singbox-core) file-watches and respawns sing-box on change.
       # Read-only — only the panel writes here.
-      - naive_config:/data/config:ro
+      - singbox_config:/data/config:ro
     depends_on:
       caddy:
         condition: service_started
@@ -213,12 +226,15 @@ services:
   panel:
     <<: *svc-hardening
     build:
-      # Context is docker/panel/ so the Dockerfile's
-      # `COPY opcache.ini …` etc. resolve to docker/panel/opcache.ini.
-      # The Rust core binary comes in via the CT_CORE_IMAGE arg's
-      # `FROM` reference, not the build context, so a narrow
-      # context is fine.
-      context: ./docker/panel
+      # Context is the repo ROOT (not ./docker/panel) so the
+      # Dockerfile's singbox-core-build stage can COPY singbox-core/
+      # from the repo root. v0.3.x had the narrower ./docker/panel
+      # context; v0.4.0+ widens it for the Bun-compile stage. All
+      # the existing `COPY opcache.ini …` lines were rewritten to
+      # the absolute-from-context form (`COPY docker/panel/opcache.ini
+      # …`) in the same commit.
+      context: .
+      dockerfile: docker/panel/Dockerfile
       args:
         CT_CORE_IMAGE: cool-tunnel-server-core:latest
     image: cool-tunnel-server-panel:latest
@@ -344,11 +360,12 @@ services:
       # render path picks up Caddy's renewals. RO — only Caddy
       # writes this volume.
       - caddy_data:/data/caddy:ro
-      # v0.3.0+: panel writes naive.json (credentials + listen port)
-      # to this shared volume on every credential change. ct-naive's
-      # supervisor watches the same path and respawns naive when
-      # the file mtime changes. RW — panel is the only writer.
-      - naive_config:/data/config
+      # v0.4.0+: panel writes singbox.json (Reality keypair + per-user
+      # VLESS UUIDs + listen port) to this shared volume on every
+      # credential change. ct-singbox's supervisor (singbox-core)
+      # watches the same path and respawns sing-box when the file
+      # mtime changes. RW — panel is the only writer.
+      - singbox_config:/data/config
     depends_on:
       db:
         condition: service_healthy
@@ -499,20 +516,21 @@ services:
 volumes:
   caddy_etc:
   caddy_data:
-  # v0.3.0+: panel renders naive.json here; ct-naive's supervisor
-  # watches the file and respawns naive on change. Panel RW,
-  # ct-naive RO. v0.1.x → v0.2.x dropped singbox / haproxy
-  # volumes; v0.2.x → v0.3.x adds this one.
-  naive_config:
+  # v0.4.0+: panel renders /data/config/singbox.json here; ct-singbox's
+  # supervisor (singbox-core) watches the file and respawns sing-box on
+  # change. Panel RW, ct-singbox RO. v0.3.x had a similar `naive_config`
+  # volume that this replaces.
+  singbox_config:
   panel_storage:
   db_data:
   redis_data:
 
 networks:
-  # ct-net: the "front" network. caddy + panel + naive (v0.3.0+)
+  # ct-net: the "front" network. caddy + panel + singbox (v0.4.0+)
   # sit here. Has internet access (caddy needs ACME outbound, panel
-  # needs composer install at build time, naive needs to reach the
-  # operator-requested target hosts).
+  # needs composer install at build time, sing-box needs to reach
+  # the Reality destination host and the operator-requested target
+  # hosts).
   ct-net:
     driver: bridge
 
