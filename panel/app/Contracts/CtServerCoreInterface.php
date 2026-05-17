@@ -59,8 +59,10 @@ interface CtServerCoreInterface
     /** @return array<mixed> */
     public function componentCheck(string $manifestsDir = '/srv/manifests'): array;
 
-    /** @return array<mixed> */
-    public function probeAntiTracking(?string $via, string $target): array;
+    // probeAntiTracking() removed in v0.4.0 — the probe spawned a
+    // /usr/local/bin/naive subprocess that v0.4.0 no longer bundles
+    // in the panel image; the underlying ct-server-core `probe
+    // anti-tracking` subcommand is gone alongside.
 
     /** @return array<mixed> */
     public function canaryProbe(): array;

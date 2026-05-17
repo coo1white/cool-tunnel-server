@@ -13,8 +13,6 @@ import type { Recipe } from "./types";
 import { $, capture, which } from "../../util/sh";
 
 const DESCRIBE = `No active proxy account exists in the database. Without one:
-  - The anti-tracking probe (readiness check 10) has no
-    credentials to test with and fails NG.
   - End-users have no subscription URL to import into their
     Mac client.
 

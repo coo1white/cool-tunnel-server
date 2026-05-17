@@ -5,7 +5,7 @@
 import { test, expect } from "bun:test";
 import { TOPICS, TOPIC_SLUGS, renderTopic, renderTopicList } from "../help";
 
-test("TOPIC_SLUGS covers the legacy 11 scripts/help.sh topics plus the binary-only drift+wire-probe pair", () => {
+test("TOPIC_SLUGS covers the legacy 11 scripts/help.sh topics plus the binary-only drift topic", () => {
     expect(TOPIC_SLUGS).toEqual([
         "getting-started",
         "install",
@@ -18,10 +18,11 @@ test("TOPIC_SLUGS covers the legacy 11 scripts/help.sh topics plus the binary-on
         "backup",
         "restore",
         "troubleshooting",
-        // Bun-native operator verbs (no scripts/help.sh counterpart;
-        // these wrap operator/src/tasks/drift.ts + wire-probe.ts).
+        // Bun-native operator verb (no scripts/help.sh counterpart;
+        // wraps operator/src/tasks/drift.ts). The wire-probe topic
+        // was retired in v0.4.0 alongside the `ct wire-probe`
+        // command — see operator/help.ts head comment.
         "drift",
-        "wire-probe",
     ]);
 });
 

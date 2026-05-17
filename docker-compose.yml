@@ -144,8 +144,8 @@ services:
     restart: unless-stopped
     # 1 GB-VPS sizing (v0.4.0). Caddy is purely L4 SNI splitter +
     # inner panel reverse_proxy now (Reality on the proxy path means
-    # Caddy doesn't terminate TLS for naive.<DOMAIN> at all; sing-box
-    # does its own Reality handshake). Memory cap stays at 192 MiB
+    # Caddy doesn't terminate TLS for <DOMAIN> at all; sing-box does
+    # its own Reality handshake). Memory cap stays at 192 MiB
     # to absorb the L4 connection table for many concurrent SNI
     # routings before OOM-kill, with headroom over the ~30 MiB
     # measured idle (lighter than v0.3.x — fewer certs to manage).

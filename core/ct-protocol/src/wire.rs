@@ -25,9 +25,6 @@ pub enum WireRequestV1 {
     /// Disable accounts past quota / expiry; re-render + reload if
     /// any changes.
     EnforceQuota,
-    /// Active anti-tracking probe. Returns which mitigations the
-    /// outside actually sees.
-    ProbeAntiTracking,
     /// Health check — every dependency reachable?
     Health,
 }
@@ -51,11 +48,6 @@ pub enum WireResponseV1 {
     QuotaEnforced {
         disabled: usize,
         reload_triggered: bool,
-    },
-    AntiTrackingProbe {
-        hide_ip_effective: bool,
-        hide_via_effective: bool,
-        probe_resistance_effective: bool,
     },
     HealthOk,
     Error {

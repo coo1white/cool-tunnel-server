@@ -176,26 +176,11 @@ const CHECKS: ReadinessCheck[] = [
             };
         },
     },
-    {
-        slot: 10, label: "Anti-tracking probe", structural: false,
-        async run({ env }) {
-            const url = env["LNC_TEST_PROXY_URL"];
-            if (!url) {
-                return {
-                    ok: false,
-                    detail: `Set LNC_TEST_PROXY_URL=https://user:pass@${env["DOMAIN"] ?? "DOMAIN"}:443 to enable`,
-                };
-            }
-            const r = await capture(
-                $`bash -c "docker compose exec -T panel ct-server-core probe anti-tracking --via ${url} 2>/dev/null"`,
-            );
-            const ok = /"hide_ip_effective":true/.test(r.stdout) && /"hide_via_effective":true/.test(r.stdout);
-            if (ok) return { ok: true, detail: "hide_ip + hide_via effective" };
-            // Defense-in-depth: scrub any leaked creds before logging.
-            const safe = r.stdout.replace(/([a-zA-Z+]+:\/\/)[^/@\s"]+:[^/@\s"]+@/g, "$1***:***@");
-            return { ok: false, detail: `Anti-tracking probe failed: ${safe.slice(0, 300)}` };
-        },
-    },
+    // Slot 10 (anti-tracking probe) removed in v0.4.0 — the probe
+    // shelled to `ct-server-core probe anti-tracking`, which spawned
+    // /usr/local/bin/naive in client mode against the deployment.
+    // v0.4.0 removed naive from the panel image, so the check was
+    // guaranteed-FAIL at runtime.
 ];
 
 async function readLine(): Promise<string> {
@@ -287,7 +272,7 @@ export class ReadinessTask implements Task {
         const groups = [
             { name: "Structural (must pass)", slots: [1, 2, 3, 4] },
             { name: "Operational", slots: [5, 6, 7, 8] },
-            { name: "Functional", slots: [9, 10] },
+            { name: "Functional", slots: [9] },
         ];
 
         for (const g of groups) {

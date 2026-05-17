@@ -446,10 +446,8 @@ Next topic:  ./scripts/help.sh readiness
 
     Functional:
       9. Cover-site invariant holds (anti-fingerprint)
-     10. Bundled NaiveProxy anti-tracking probe
-         (requires LNC_TEST_PROXY_URL env)
 
-  Score >= 9 / 10 -> PASS, ready to publicly launch.
+  Score >= 8 / 9 -> PASS, ready to publicly launch.
   Any structural fail caps the score at 7 regardless.
 
 When to run:
@@ -626,16 +624,15 @@ Topics:  ./scripts/help.sh   (list all)
 
       DB              ProxyAccount::password_cleartext_encrypted,
                       decrypted via Laravel Crypt.
-      sing-box        users[].password in /etc/sing-box/config.json,
-                      what naive-in actually checks incoming
-                      CONNECTs against.
-      subscription    The password field clients import from
+      sing-box        users[].uuid in /data/config/singbox.json,
+                      what sing-box VLESS-in actually authenticates
+                      incoming connections against.
+      subscription    The credential field clients import from
                       https://<panel>/api/v1/subscription/<token>.
 
-  Drift between any pair means clients see a "200 OK Padding:..." +
-  RST cover-site response when they try to connect — the exact
-  symptom that looks like 'tunnel doesn't work' with no actionable
-  error in the macOS client.
+  Drift between any pair means clients fail authentication when
+  they try to connect — the exact symptom that looks like 'tunnel
+  doesn't work' with no actionable error in the macOS client.
 
 When to run:
   - After any credential rotation (operator-driven or auto-sync)
@@ -646,8 +643,6 @@ When to run:
   - On a schedule (cron-friendly; exit 0 = clean, 1 = drift)
 
 What it does NOT do:
-  - Run the actual wire negotiation (see 'ct wire-probe' for that).
-    Drift checks values; wire-probe checks PROTOCOL behaviour.
   - Decrypt or print cleartext to the terminal. The table column
     is 'same' / 'DIFF' / 'absent' only.
 
@@ -666,59 +661,13 @@ Repair recipes (per finding):
                             ./ct render singbox
 `,
     },
-    "wire-probe": {
-        title: "wire-probe — wire-protocol drift detection",
-        body: `What it does:
-  Spawns a real NaiveProxy client against your deployment's upstream,
-  pushes a real CONNECT through it via curl-over-SOCKS, and reports
-  whether the NaiveProxy 'Padding:' extension negotiated. Catches
-  the class of bug where a naive binary advertises the right
-  '--version' but is a build that doesn't emit the padding header
-  the server requires.
-
-  Today's exact incident: a bundled macOS naive binary tested fine
-  with --version, ran fine with --help, but auth always failed
-  against sing-box because no Padding header was emitted. This
-  task would have caught the regression on a developer machine
-  before release.
-
-When to run:
-  - Before tagging a release of either the client or the server
-  - After updating sing-box or the bundled NaiveProxy
-  - On a schedule against staging if you have a stable account
-  - When a client reports auth-fail despite 'ct drift' showing OK
-
-Usage:
-  ct wire-probe --username U --password PW [flags]
-
-  Flags:
-    --binary PATH      naive binary to test (default: 'naive' on
-                       PATH; pass the bundled .app/Contents/Resources/
-                       naive when validating a client build)
-    --server HOST      upstream hostname (default: \$DOMAIN from .env)
-    --port N           upstream port (default: 443)
-    --target HOST:PORT what to fetch through the tunnel
-                       (default: www.google.com:443)
-
-Outcomes the task reports:
-  padding_negotiated      naive client + server protocol agree;
-                          tunnel works end-to-end. PASS.
-  missing_padding         curl saw RST + naive never logged
-                          'negotiated padding type'. The binary
-                          is the bug. FAIL.
-  auth_failure_cover_site naive negotiated padding but credentials
-                          rejected. Run 'ct drift' next. FAIL.
-  tls_handshake_failed    Never reached the CONNECT layer. Check
-                          haproxy SNI + caddy ACME. FAIL.
-  connect_timeout         Upstream port blackholed by firewall. FAIL.
-  naive_didnt_start       Listener never bound. Bad binary path. FAIL.
-
-Security:
-  The cleartext password lands in a 0700 temp dir's 0600 config
-  file, removed on exit. It does NOT appear in argv (ps -ef-safe)
-  and does NOT appear in the report output.
-`,
-    },
+    // The "wire-probe" topic was removed in v0.4.0 along with the
+    // `ct wire-probe` command. The probe spawned the upstream
+    // klzgrad/naiveproxy client to validate padding negotiation —
+    // v0.4.0 pivoted the proxy to sing-box VLESS+Reality, which has
+    // no padding extension. The class of bug it caught (binary
+    // versions that advertise the right `--version` but skip the
+    // padding header) is now structurally impossible.
 };
 
 export const TOPIC_SLUGS: readonly string[] = Object.keys(TOPICS);
