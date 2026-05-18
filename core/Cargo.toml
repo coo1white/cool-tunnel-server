@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version       = "0.4.2"
+version       = "0.4.3"
 edition       = "2021"
 # 1.85 introduced edition2024 (needed by clap_lex 1.1); some sqlx
 # transitives (icu_*) further require 1.86; v0.0.49's cargo-chef

@@ -43,7 +43,7 @@ RUN cd singbox-core \
 # ----------------------------------------------------------------------
 FROM alpine:3.21 AS singbox-fetch
 
-RUN apk add --no-cache curl tar ca-certificates
+RUN apk add --no-cache curl tar ca-certificates gcompat libstdc++ libgcc
 
 COPY --from=bun-build /build/singbox-core-linux-x64 /usr/local/bin/singbox-core
 # We need singbox.upstream.json to be at the path version.ts resolves
@@ -60,10 +60,9 @@ RUN /usr/local/bin/singbox-core install --target-dir /out --no-verify \
 # ----------------------------------------------------------------------
 FROM alpine:3.21 AS runtime
 
-# gcompat is not needed — sing-box is statically-linked Go. We do need
-# ca-certificates for ACME (if sing-box ever does its own ACME) and for
-# Reality's outbound dial to the destination host.
-RUN apk add --no-cache ca-certificates libcap \
+# sing-box is statically-linked Go. singbox-core is a Bun-compiled
+# glibc binary and needs Alpine's gcompat plus libstdc++/libgcc.
+RUN apk add --no-cache ca-certificates libcap gcompat libstdc++ libgcc \
     && addgroup -S singbox -g 65532 \
     && adduser -S singbox -G singbox -u 65532 -h /home/singbox
 

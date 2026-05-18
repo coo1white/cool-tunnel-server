@@ -24,6 +24,23 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.3] — 2026-05-18 — singbox Alpine runtime dependency hotfix
+
+This patch fixes the next VPS install blocker found after `v0.4.2`:
+the `singbox` Docker build could compile `singbox-core`, but Alpine
+could not execute the Bun-compiled binary during the `singbox-fetch`
+stage.
+
+### Fixed
+
+- **`docker/singbox`: add Bun binary runtime dependencies to Alpine
+  stages.** The Bun `bun-linux-x64` compile output is a glibc x86_64
+  binary that needs Alpine `gcompat`, `libstdc++`, and `libgcc`.
+  Both `singbox-fetch` and final `runtime` now install those packages
+  before running or copying `singbox-core`.
+
+---
+
 ## [0.4.2] — 2026-05-18 — Operator bootstrap hotfix
 
 This patch fixes the `v0.4.1` upgrade deadlock seen on a Debian VPS:
@@ -11131,7 +11148,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...v0.4.0
