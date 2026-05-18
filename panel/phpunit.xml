@@ -54,6 +54,5 @@
          value (already set above) but ALSO need the in-controller
          RateLimiter to use a fast backend — `array` cache above
          provides that. -->
-    <env name="CT_CLASH_SECRET_SEED" value="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"/>
   </php>
 </phpunit>

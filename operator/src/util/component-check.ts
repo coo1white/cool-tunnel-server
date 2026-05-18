@@ -44,21 +44,16 @@ by component (read the FIRST one whose component matches):
   sing-box    -> docker compose logs --tail=60 sing-box
                  docker compose exec panel ct-server-core --json singbox render
                  Common: rendered config invalid, port collision,
-                         Clash API reload rejected, naive padding
-                         regressed.
-
-  haproxy     -> docker compose logs --tail=40 haproxy
-                 docker compose exec panel ct-server-core haproxy render
-                 Common: cfg parse error after SIGHUP, stats socket
-                         permissions, backend health timeout.
+                         missing Reality key material, or supervisor
+                         restart loop.
 
   redis       -> docker compose exec -T -e REDISCLI_AUTH="$REDIS_PASSWORD" redis redis-cli PING
                  Should print PONG. NG usually means AUTH failure
                  from a stale password.
 
   ct-server-core -> docker compose logs --tail=40 ct-core-daemon
-                 Common: Redis URL parse (v0.0.88-class), Clash API
-                         unreachable, manifest pin drift.
+                 Common: Redis auth/config mismatch or manifest pin
+                         drift.
 
   caddy       -> docker compose logs --tail=40 caddy
                  Common: ACME failure (DNS, port 80/443 blocked),

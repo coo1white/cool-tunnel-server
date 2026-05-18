@@ -61,33 +61,33 @@ test("kbToGb floors to whole GB (1 GB = 1024 MB = 1024*1024 KB)", () => {
 
 test("classifyStackUp: all required services running → ok", () => {
     const r = classifyStackUp(
-        ["panel", "sing-box", "haproxy"],
-        new Set(["panel", "sing-box", "haproxy", "redis", "db"]),
+        ["panel", "caddy"],
+        new Set(["panel", "caddy", "singbox", "redis", "db"]),
     );
     expect(r.ok).toBe(true);
     expect(r.missing).toEqual([]);
-    expect(r.runningCount).toBe(3);
+    expect(r.runningCount).toBe(2);
     expect(r.summary).toContain("stack is up");
 });
 
 test("classifyStackUp: some required missing → ok=true (partial) with summary", () => {
     const r = classifyStackUp(
-        ["panel", "sing-box", "haproxy"],
+        ["panel", "caddy"],
         new Set(["panel"]),
     );
     expect(r.ok).toBe(true); // partial-up doesn't refuse to proceed
-    expect(r.missing).toEqual(["sing-box", "haproxy"]);
+    expect(r.missing).toEqual(["caddy"]);
     expect(r.runningCount).toBe(1);
     expect(r.summary).toContain("partially up");
 });
 
 test("classifyStackUp: ALL required missing → ok=false with install.sh hint", () => {
     const r = classifyStackUp(
-        ["panel", "sing-box", "haproxy"],
+        ["panel", "caddy"],
         new Set(),
     );
     expect(r.ok).toBe(false);
-    expect(r.missing).toEqual(["panel", "sing-box", "haproxy"]);
+    expect(r.missing).toEqual(["panel", "caddy"]);
     expect(r.runningCount).toBe(0);
     expect(r.failure).toBeDefined();
     expect(r.failure!.diag).toContain("install.sh");

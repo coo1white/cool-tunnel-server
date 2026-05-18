@@ -45,9 +45,8 @@ struct Cli {
     //                  panel-side SingBoxConfigGenerator).
     //   output         (was SINGBOX_CONFIG_PATH; only consumer was the
     //                  deleted Rust renderer + credentials::assert_locked).
-    //   admin_url      (was SINGBOX_CLASH_URL; sing-box VLESS+Reality has
-    //                  no clash admin API at all).
-    //   admin_secret   (was SINGBOX_CLASH_SECRET; same — no clash API).
+    //   admin_url / admin_secret (old clash API settings; sing-box
+    //                  VLESS+Reality has no clash admin API).
     // The corresponding env vars in docker-compose are deprecated; if
     // they're set the binary silently ignores them (clap with no matching
     // arg is a no-op).
@@ -128,7 +127,7 @@ enum Cmd {
 #[derive(Subcommand, Debug)]
 enum CanaryOp {
     /// Run one self-probe (DoH-resolve apex + TCP-connect to
-    /// haproxy:443) and append the result to ServerConfig.
+    /// caddy:443) and append the result to ServerConfig.
     /// `self_probe_history`. Wired into the Laravel scheduler
     /// (every 5 min) by panel/routes/console.php.
     Probe,

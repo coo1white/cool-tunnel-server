@@ -46,11 +46,9 @@ Next topic:  ./ct help install
   - Asks you to copy .env.example -> .env if missing, then
     checks the file is mode 0600 (refuses to proceed otherwise)
   - Cross-validates .env values: DOMAIN, ACME_EMAIL,
-    DB_PASSWORD, REDIS_PASSWORD, PANEL_DOMAIN, CT_CLASH_SUBNET,
-    CT_CLASH_SINGBOX_IP, port 80/443 are free, DNS A record
-    matches host IP
-  - Builds all images (ct-server-core + sing-box + panel +
-    haproxy + caddy)
+    DB_PASSWORD, DB_ROOT_PASSWORD, REDIS_PASSWORD, PANEL_DOMAIN,
+    port 80/443 are free, DNS A record matches host IP
+  - Builds all images (ct-server-core + caddy + sing-box + panel)
   - Brings the stack up; panel's entrypoint runs the first
     migration + initial Caddyfile/sing-box render
   - Waits for ACME (Let's Encrypt) to acquire the cert
@@ -100,11 +98,11 @@ Next topic:  ./ct help update
     - git pull --ff-only
     - Auto-migrate legacy .env (PANEL_DOMAIN, APP_URL)
     - Rebuild ct-server-core (Rust)
-    - Rebuild sing-box + panel + haproxy
-    - 'compose up -d' to recreate containers with new images
+    - Rebuild caddy + singbox + panel
+    - Bring the new panel image up, then caddy + singbox
     - Wait for panel entrypoint sentinel
-    - Re-render sing-box config, reload daemon
-    - Re-render haproxy config, SIGHUP
+    - Re-render Caddyfile and reload Caddy
+    - Let ct-singbox pick up the panel-rendered singbox.json
     - Component check (post-swap)
 
 When to run:
@@ -127,8 +125,8 @@ Common failure modes:
   - Disk full            -> 'docker system prune -af' usually
                             reclaims 1-5 GB
   - Build failure        -> diagnostic block names the most
-                            common causes per image (sing-box
-                            vs panel vs haproxy)
+                            common causes per image (caddy,
+                            singbox, panel)
   - Component check NG   -> diagnostic block names the NG
                             component + per-component
                             log-tail recipe
@@ -154,7 +152,7 @@ Next topic:  ./ct help doctor
     Prerequisites          docker compose, .env mode
     Structural             DNS, ports 80/443, ACME cert expiry
     Application            /up endpoint, component check
-    Compose stack          6 services up, 5 supervisord progs
+    Compose stack          5 services up, supervisord progs
     Resources              disk + RAM headroom
     Info                   release version, active users,
                            Messenger queue depth
@@ -256,7 +254,7 @@ Next topic:  ./ct help fix
   Walks through every install / runtime issue we've seen on real
   deployments, in order, and offers to fix each one interactively.
   Each issue is explained in plain English -- you do NOT need to
-  understand Docker, sing-box, HAProxy, or IPv6 to use it.
+  understand Docker, sing-box, Caddy, or IPv6 to use it.
 
   For each detected issue you can:
     [a]pply    -- run the fix (shows what it will do first)
@@ -286,12 +284,9 @@ boot stages come first):
                                  (must run BEFORE any compose-based
                                   recipe -- none of them work without
                                   a live daemon)
-   2. compose_service_down       NEW v0.1.3: a service in compose.yml
-                                 is supposed to be running but isn't
-                                 (e.g. haproxy exited after SIGHUP
-                                  re-exec, host :443 unbound, browsers
-                                  see ERR_CONNECTION_REFUSED). Fix:
-                                  compose up -d.
+   2. compose_service_down       a service in compose.yml is supposed
+                                 to be running but isn't. Fix:
+                                 compose up -d.
    3. zombie_docker_proxy        port :80/:443 held by an orphan
                                  docker-proxy from a failed earlier
                                  \`compose up\` attempt
@@ -300,29 +295,28 @@ boot stages come first):
    6. ipv6_dns_unreachable       Caddy ACME hits IPv6 dead-end
                                  (common on Vultr -- they advertise
                                   IPv6 but don't actually route it)
-   7. haproxy_backend_dns        HAProxy can't see caddy / sing-box
-   8. missing_tls_cert           sing-box waiting on Let's Encrypt
-   9. singbox_domain_resolver    sing-box 1.13+ DoH config regression
-  10. singbox_outbound_ipv4_only host can't reach the open internet
+   7. missing_tls_cert           sing-box waiting on Caddy certs
+   8. singbox_domain_resolver    sing-box 1.13+ DoH config regression
+   9. singbox_outbound_ipv4_only host can't reach the open internet
                                  over IPv6 -> proxy traffic drops
                                  (this and #6 are the two halves of
                                   the v6-on-Vultr trap)
-  11. panel_restart_loop         panel container "Restarting" instead
+  10. panel_restart_loop         panel container "Restarting" instead
                                  of "Up" -- the v0.0.94-class
                                  composer / Octane / image-stale set
-  12. pending_migrations         DB schema older than running code
+  11. pending_migrations         DB schema older than running code
                                  (restored an old backup; panel boot
                                   migration failed mid-way)
-  13. messenger_queue_stuck      Symfony Messenger Redis stream depth
+  12. messenger_queue_stuck      Symfony Messenger Redis stream depth
                                  >100 (worker died, supervisord didn't
                                   catch SIGCHLD)
-  14. credential_drift           panel / sing-box / Mac out of sync
+  13. credential_drift           panel / sing-box / Mac out of sync
                                  (delegates to 'ct auto-sync')
-  15. no_proxy_account           no enabled accounts in the DB
+  14. no_proxy_account           no enabled accounts in the DB
                                  (skip-fix: prints how-to, doesn't
                                   echo a password)
-  16. legacy_env_shape           .env file from pre-v0.0.68
-  17. stale_deployment           NEW v0.1.3: deployed version is
+  15. legacy_env_shape           .env file from pre-v0.0.68
+  16. stale_deployment           deployed version is
                                  older than the latest release tag
                                  on origin/main. Fix: pulls + runs
                                  ct update. Interactive companion
@@ -477,9 +471,8 @@ Next topic:  ./ct help backup
   Creates a single tarball containing:
     - mariadb mysqldump (full schema + data)
     - caddy_data volume (ACME certs + private keys)
-    - haproxy_admin volume
     - The current .env file
-    - The current sing-box config template
+    - The manifest set
     - The current Caddyfile template
 
   Output filename:  backups/cool-tunnel-<UTC-timestamp>.tar.gz
@@ -513,13 +506,11 @@ Next topic:  ./ct help restore
         title: "restore — recover from a backup tarball",
         body: `What it does:
   Reverses 'ct backup'. Given backups/cool-tunnel-<ts>.tar.gz:
-    - Stops the panel + sing-box + haproxy containers
+    - Refuses to run over an already-running stack
     - Imports the mysqldump into mariadb (replacing current
       schema; existing data is lost)
     - Restores the caddy_data volume (ACME certs)
-    - Restores haproxy_admin volume
-    - Restores .env, sing-box config template, Caddyfile
-      template
+    - Restores .env, manifests, and Caddyfile template
     - Restarts the stack
     - Component check
 

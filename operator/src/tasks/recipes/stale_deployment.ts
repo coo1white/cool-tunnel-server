@@ -40,7 +40,7 @@ Fix: pulls origin/main + runs the standard update flow
   - rebuilds the Rust core + Docker images (cached when nothing
     changed)
   - migrates the database (idempotent)
-  - re-renders sing-box + haproxy configs
+  - re-renders Caddy + sing-box config
   - runs the post-swap component check
   - confirms ✓ Update complete.
 

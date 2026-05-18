@@ -4,8 +4,8 @@
 //
 // Detect: a docker container that is NOT part of the cool-tunnel-server
 // compose project (name doesn't start with "ct-") is publishing host
-// :80 or :443. Fix: stop + remove each offender so caddy / haproxy
-// can bind those ports.
+// :80 or :443. Fix: stop + remove each offender so caddy can bind
+// those ports.
 
 import type { Recipe } from "./types";
 import { $, capture, which } from "../../util/sh";
@@ -31,8 +31,8 @@ binding host port :80 or :443 to the public interface.
 
 Foreign container(s) detected: ${list}
 
-This blocks cool-tunnel's Caddy / HAProxy from starting because
-:80 / :443 are already taken.
+This blocks cool-tunnel's Caddy from starting because :80 / :443
+are already taken.
 
 Fix: stop + remove the foreign container. If you actually want
 to keep it running, the cool-tunnel stack will NEVER work on

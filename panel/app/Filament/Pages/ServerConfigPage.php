@@ -88,7 +88,7 @@ class ServerConfigPage extends Page implements HasForms
                     ])->columns(3),
 
                 Section::make('Anti-tracking')
-                    ->description('Defaults match what NaiveProxy clients expect. Saving regenerates the Caddyfile and sing-box config; ct-singbox picks up file changes automatically.')
+                    ->description('Saving regenerates the Caddyfile and sing-box config; ct-singbox picks up file changes automatically.')
                     ->schema([
                         Toggle::make('anti_tracking_hide_ip')->label('hide_ip'),
                         Toggle::make('anti_tracking_hide_via')->label('hide_via'),
@@ -97,14 +97,12 @@ class ServerConfigPage extends Page implements HasForms
                             ->label('DoH resolver')->url(),
                         // The http3_enabled DB column survives for
                         // forward-compat but is no longer surfaced as
-                        // a toggle: NaiveProxy is HTTP/2-only at the
-                        // protocol level, so enabling it produced a
-                        // recognisable network fingerprint
-                        // (clients try QUIC, fail, fall back). See
-                        // SubscriptionController class docstring.
+                        // a toggle: the current VLESS+Reality stack
+                        // is TCP-only, so advertising HTTP/3 would
+                        // produce a recognisable failed-QUIC fallback.
                         Placeholder::make('http3_note')
                             ->label('HTTP/3 (QUIC)')
-                            ->content('Disabled: NaiveProxy is HTTP/2-only by protocol design. Advertising HTTP/3 caused clients to attempt QUIC and fall back, producing a fingerprintable failure pattern. See cross-platform-clients.md.')
+                            ->content('Disabled: the current VLESS+Reality stack is TCP-only. Advertising HTTP/3 would produce a fingerprintable failed-QUIC fallback.')
                             ->columnSpanFull(),
                     ])->columns(2),
             ])
@@ -117,9 +115,8 @@ class ServerConfigPage extends Page implements HasForms
         $config->fill($this->form->getState())->save();
 
         // v0.0.84 robustness-review fix (item 7): the model's
-        // `updated` hook now dispatches `ReloadServerConfigJob`
-        // (queued) instead of running the renders + clash-API
-        // reload inline inside this request. The notification body
+        // `updated` hook dispatches `ReloadServerConfigJob`
+        // (queued) instead of running renders inline. The notification body
         // reflects the new contract — the row is committed, the
         // Redis fast-path is in flight, and the panel-side
         // render backstop is queued. Pre-fix this said

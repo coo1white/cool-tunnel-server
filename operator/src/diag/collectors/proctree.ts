@@ -4,7 +4,7 @@
 import type { ProcTreeSnapshot } from "../types";
 import { $, capture } from "../../util/sh";
 
-const FILTER = /panel|sing-box|caddy|haproxy|redis|ct-server-core|frankenphp|octane/i;
+const FILTER = /panel|sing-box|caddy|redis|ct-server-core|frankenphp|octane/i;
 
 export async function collectProcTree(): Promise<ProcTreeSnapshot> {
     // Linux ps supports `f` for forest mode; BSD/macOS ps does not.

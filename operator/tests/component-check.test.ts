@@ -9,10 +9,10 @@ test("parseNgComponents: empty input → empty list", () => {
 });
 
 test("parseNgComponents: single NG row extracts the component name", () => {
-    const out = `Component check
+const out = `Component check
   OK panel
   NG sing-box  rendered config invalid
-  OK haproxy
+  OK caddy
 `;
     expect(parseNgComponents(out)).toEqual(["sing-box"]);
 });

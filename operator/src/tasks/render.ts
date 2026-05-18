@@ -8,8 +8,7 @@
 //
 // Usage:
 //   ct-operator render caddyfile [--if-changed]
-//   ct-operator render singbox [--if-changed] [--reload]
-//     --reload is accepted by the panel as a compatibility no-op;
+//   ct-operator render singbox [--if-changed]
 //     ct-singbox's supervisor watches the rendered file.
 
 import type { Task, TaskResult } from "../runner/task";
@@ -37,7 +36,7 @@ export function parseArgs(argv: readonly string[]): { target: Target; passthroug
     }
     const [target, ...passthrough] = rest;
     if (target && RETIRED_TARGETS.has(target)) {
-        return `render: target "${target}" was retired in v0.2.0 (sing-box + HAProxy collapsed into Caddy+forwardproxy). Use: render caddyfile`;
+        return `render: target "${target}" is retired. Current targets: ${TARGETS.join(", ")}`;
     }
     if (!target || !isTarget(target)) {
         return `render: unknown target "${target}" (one of: ${TARGETS.join(", ")})`;
