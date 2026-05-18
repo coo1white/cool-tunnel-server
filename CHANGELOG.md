@@ -24,6 +24,29 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.6] — 2026-05-18 — Caddy reload hotfix
+
+This patch fixes the next `v0.4.5` VPS update blocker:
+`ct update` reached the Caddy reload step, then failed with
+`io failed: No such file or directory (os error 2)`.
+
+### Fixed
+
+- **`ct update` reloads Caddy from the host-side operator.** The old
+  path ran `ct-server-core caddyfile reload` inside the `panel`
+  container; that Rust helper tries to spawn `docker`, but the panel
+  image intentionally does not include the Docker CLI. Update now runs
+  `docker compose exec -T caddy caddy reload --config
+  /etc/caddy/Caddyfile --adapter caddyfile` from the operator process,
+  where Docker is available.
+- **`ct fix` now understands the v0.4 Caddy ACME shape.** The
+  `missing_tls_cert` recipe now checks for the panel-domain cert under
+  `caddy_data`, recreates stale `ct-caddy` containers, restarts Caddy,
+  and waits for the panel certificate. It no longer describes the
+  retired naive/sing-box certificate path.
+
+---
+
 ## [0.4.5] — 2026-05-18 — Update flow caddy startup hotfix
 
 This patch fixes the `v0.4.4` update failure where `docker compose up`
