@@ -273,6 +273,10 @@ readiness: ## strict >=8/9 readiness gate (cron/CI suitable)
 doctor: ## operator-friendly health dashboard (PASS/WARN/FAIL + remediation hints)
 	./ct doctor
 
+.PHONY: auto-diag
+auto-diag: ## read-only diagnostic bundle saved under diagnostics/
+	./ct auto-diag
+
 .PHONY: auto-sync
 auto-sync: ## credential-lock audit + auto-correct agent (cron-friendly)
 	./ct auto-sync

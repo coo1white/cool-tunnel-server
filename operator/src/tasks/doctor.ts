@@ -11,6 +11,7 @@ import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
 import { collectBallast } from "../diag/collectors/ballast";
+import { probeRealityClock } from "../util/reality-clock";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -97,6 +98,17 @@ async function checkEnvFile(c: CheckCtx): Promise<CheckLine> {
             hint: "cp .env.example .env && $EDITOR .env",
         };
     }
+}
+
+async function checkRealityClock(_c: CheckCtx): Promise<CheckLine> {
+    const r = await probeRealityClock();
+    return {
+        group: G_PREREQ,
+        label: "Reality clock",
+        severity: r.status,
+        detail: r.detail,
+        hint: r.hint,
+    };
 }
 
 async function checkDns(c: CheckCtx): Promise<CheckLine> {
@@ -486,6 +498,7 @@ async function infoMessengerDepth(c: CheckCtx): Promise<CheckLine> {
 const CHECKS: CheckFn[] = [
     checkComposeAvailable,
     checkEnvFile,
+    checkRealityClock,
     checkDns,
     checkPorts,
     checkAcmeCert,

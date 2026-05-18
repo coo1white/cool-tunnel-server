@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/ballast.ts — critical-invariant check, dedicated runner.
 //
-// The same 10 checks that doctor appends as the "Ballast Stones" group,
+// The same 11 checks that doctor appends as the "Ballast Stones" group,
 // extracted as a standalone subcommand. Use case: cron / CI loops that
 // want to assert just the must-pass invariants without the noise of
 // doctor's PASS/WARN dashboard.

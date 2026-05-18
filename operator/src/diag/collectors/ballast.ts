@@ -8,6 +8,7 @@
 import type { BallastCheckResult, BallastResult, CheckStatus } from "../types";
 import type { RunContext } from "../../runner/context";
 import { $, capture, which } from "../../util/sh";
+import { probeRealityClock } from "../../util/reality-clock";
 
 interface CheckOutcome {
     status: CheckStatus;
@@ -150,6 +151,14 @@ const CHECKS: Check[] = [
             const r = await capture($`docker compose ps singbox --status running --quiet`);
             if (!r.ok) return { status: "fail", detail: r.stderr.split("\n")[0] ?? "compose ps failed" };
             return r.stdout.trim() ? { status: "pass" } : { status: "fail", detail: "singbox not running" };
+        },
+    },
+    {
+        slug: "reality-clock-window",
+        title: "Host UTC clock inside Reality auth window",
+        async run() {
+            const r = await probeRealityClock();
+            return { status: r.status, detail: r.detail };
         },
     },
     {

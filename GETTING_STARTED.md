@@ -207,21 +207,21 @@ the laptop's.
 
 ## Step 7 — Verify the launch is solid
 
-There's a built-in readiness check that runs nine probes and gives
+There's a built-in readiness check that runs ten probes and gives
 you a percentage score:
 
 ```sh
 ./ct readiness
 ```
 
-It checks DNS, ports, ACME, UFW, BBR, NTP, components, the Redis
-revocation bridge, and the cover-site invariant.
+It checks DNS, ports, ACME, UFW, BBR, NTP, the Reality clock window,
+components, the Redis revocation bridge, and the cover-site invariant.
 
-≥ 8 / 9 (~89 %) = ready to ship.
-≤ 7 / 9 = read the NG lines, fix them, run again.
+≥ 9 / 10 = ready to ship.
+≤ 8 / 10 = read the NG lines, fix them, run again.
 
 The four "structural" checks (DNS / ports / ACME / UFW) cap your
-score at 7 if any is NG, regardless of the other checks — those
+score at 8 if any is NG, regardless of the other checks — those
 are non-negotiable.
 
 ---

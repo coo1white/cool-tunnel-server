@@ -11,6 +11,7 @@ test("TOPIC_SLUGS covers the legacy 11 ct help topics plus the binary-only drift
         "install",
         "update",
         "doctor",
+        "auto-diag",
         "auto-sync",
         "fix",
         "auto-update",

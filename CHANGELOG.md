@@ -35,6 +35,16 @@ surface after the v0.4 move to Caddy L4 plus sing-box VLESS/Reality.
   runbook, glossary, architecture, operations, and security docs were
   condensed around the active five-service model: Caddy L4, sing-box,
   panel, MariaDB, Redis, and the host operator.
+- **Operator diagnostics now include Reality clock-window health.**
+  `ct doctor`, `ct readiness`, and the cron-friendly ballast checks
+  compare host UTC against the rendered sing-box
+  `tls.reality.max_time_difference` budget and point operators at the
+  NTP plus sing-box restart remediation when skew would break VLESS
+  Reality handshakes.
+- **`ct auto-diag` collects a support bundle.** The operator can now
+  write a redacted diagnostic report under `diagnostics/` with version,
+  git state, resources, compose state, doctor, ballast, version bridge,
+  drift, and recent logs.
 - **Runtime probes and operator help now target the active front door.**
   Canary checks use `caddy:443`, and the operator command/help surface
   no longer presents HAProxy recovery as a live fix path.
