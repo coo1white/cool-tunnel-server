@@ -15,13 +15,14 @@
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
 //   5. compose build core-builder (Rust)
 //   6. compose build caddy singbox panel
-//   7. compose up -d panel caddy singbox
+//   7. compose up -d panel
 //   8. wait for panel entrypoint sentinel
-//   9. php artisan migrate --force
-//  10. ct-server-core caddyfile render
-//  11. ct-server-core caddyfile reload
-//  12. component_check_strict /srv/manifests
-//  13. fetch_operator_binary.sh (non-fatal)
+//   9. clear stale non-running ct-caddy, then compose up -d caddy singbox
+//  10. php artisan migrate --force
+//  11. ct-server-core caddyfile render
+//  12. ct-server-core caddyfile reload
+//  13. component_check_strict /srv/manifests
+//  14. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
 import { die, makeTerm, ANSI } from "./src/util/term";
@@ -230,26 +231,43 @@ async function panelEntrypointDone(): Promise<boolean> {
     return r.ok;
 }
 
+export function shouldRemoveStaleCaddy(state: string): boolean {
+    return state === "created" || state === "exited" || state === "dead";
+}
+
+async function removeStaleCaddy(): Promise<void> {
+    const state = (await capture($`docker inspect -f {{.State.Status}} ct-caddy`)).stdout.trim();
+    if (shouldRemoveStaleCaddy(state)) {
+        warn(`removing stale ct-caddy (state=${state}) from prior attempt`);
+        const rm = await capture($`docker rm -f ct-caddy`);
+        if (!rm.ok) {
+            dieWithDiag(
+                "failed to remove stale ct-caddy",
+                rm.stderr.split("\n").slice(0, 5).join("\n") || "docker rm -f ct-caddy",
+            );
+        }
+    }
+}
+
 async function bringNewImagesUp(): Promise<void> {
-    step("Bring new panel + caddy + singbox images up (entrypoint runs migrate + render)");
-    // v0.4.0: caddy + singbox + panel. Panel's entrypoint shells
-    // out to `ct-server-core caddyfile render` AND
-    // `singbox-core render-server` on startup (via
-    // SingBoxConfigGenerator), so by the time bringNewImagesUp
-    // returns, /etc/caddy/Caddyfile + /data/config/singbox.json
-    // are both on disk. caddy reads the Caddyfile directly;
-    // ct-singbox's supervisor file-watches singbox.json and
-    // (re)spawns sing-box once both file + cert are present.
+    step("Bring new panel image up (entrypoint runs migrate + render)");
+    // v0.4.0: panel's entrypoint shells out to
+    // `ct-server-core caddyfile render` AND `singbox-core
+    // render-server` on startup (via SingBoxConfigGenerator).
+    // Start panel first and wait for the sentinel before the
+    // public-facing services start; otherwise caddy can boot
+    // against an absent /etc/caddy/Caddyfile and compose aborts
+    // with ct-caddy left in Created state.
     //
     // --remove-orphans cleans up containers from removed services
     // (e.g. ct-naive lingering from a v0.3.x box, ct-haproxy from
     // a v0.1.x box, or a future service we retire). Safer than
     // the default that would leave orphans mapping ports.
-    const r = await capture($`docker compose up -d --remove-orphans panel caddy singbox`);
-    if (!r.ok) {
+    const panel = await capture($`docker compose up -d --remove-orphans panel`);
+    if (!panel.ok) {
         dieWithDiag(
-            "compose up -d panel caddy singbox failed",
-            r.stderr.split("\n").slice(0, 5).join("\n") || "check `docker compose ps`",
+            "compose up -d panel failed",
+            panel.stderr.split("\n").slice(0, 5).join("\n") || "check `docker compose ps panel`",
         );
     }
     if (
@@ -263,6 +281,16 @@ async function bringNewImagesUp(): Promise<void> {
         dieWithDiag(
             "panel entrypoint did not finish within 90s",
             "docker compose logs --tail=120 panel",
+        );
+    }
+
+    step("Bring new caddy + singbox images up");
+    await removeStaleCaddy();
+    const r = await capture($`docker compose up -d caddy singbox`);
+    if (!r.ok) {
+        dieWithDiag(
+            "compose up -d caddy singbox failed",
+            r.stderr.split("\n").slice(0, 5).join("\n") || "check `docker compose ps`",
         );
     }
 }
