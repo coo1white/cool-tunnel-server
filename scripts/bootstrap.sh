@@ -118,6 +118,16 @@ fi
 
 cd "$INSTALL_DIR"
 
+# Fetch the ct-operator binary now (idempotent; no-op if already on
+# disk and SHA-matched). The 580-line install workflow is in TS now
+# (operator/install.ts) — install.sh is a thin shim that prefers
+# this binary. Doing the fetch here means the user's first
+# `./scripts/install.sh` doesn't need a network round-trip + the
+# fetch step is visible alongside the rest of the bootstrap output.
+# Failure is non-fatal: install.sh falls back to `bun run` and
+# prints actionable advice if neither path is available.
+./scripts/fetch_operator_binary.sh || warn "fetch_operator_binary failed; install.sh will retry or fall back to bun"
+
 # ---------- 4. .env scaffold (auto-generate strong secrets) ----------------
 
 if [ ! -f .env ]; then

@@ -18,6 +18,7 @@ Usage:
   ct-operator <command> [options]
 
 Commands:
+  install        First-time bootstrap on a fresh Debian VPS
   doctor         Run health checks on the running deployment
   fix            Detect and interactively repair common issues
   readiness      Strict >=8/9 readiness gate; cron/CI suitable
@@ -58,6 +59,10 @@ function parseFlags(args: readonly string[]): Flags {
 
 async function loadTask(cmd: string): Promise<Task | null> {
     switch (cmd) {
+        case "install": {
+            const { InstallTask } = await import("./tasks/install");
+            return new InstallTask();
+        }
         case "doctor": {
             const { DoctorTask } = await import("./tasks/doctor");
             return new DoctorTask();
