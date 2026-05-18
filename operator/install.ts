@@ -20,10 +20,10 @@
 //  10.  Build caddy / singbox / panel images
 //  11.  Start db + redis; wait for MariaDB healthcheck
 //  12.  Start panel; wait for entrypoint sentinel; verify migrations + seed
-//  13.  Re-render Caddyfile from the seeded DB
+//  13.  Re-render Caddyfile + singbox.json from the seeded DB
 //  14.  Pre-flight: DNS A-records + port-80 reachability for ACME
-//  15.  Start Caddy (clear zombie ct-caddy first); wait for both TLS certs
-//  16.  Start singbox
+//  15.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
+//  16.  Verify singbox
 //  17.  Create the first Filament admin user (interactive ct:make-admin)
 //  18.  Strict component check
 //  19.  Print success banner
@@ -441,7 +441,7 @@ schema change failed).`,
     ok("migrations applied + default seed in place");
 }
 
-// ---------- step 15: re-render Caddyfile after seed -----------------------
+// ---------- step 15: re-render configs after seed -------------------------
 
 async function reRenderCaddyfile(): Promise<void> {
     step("Re-render Caddyfile from the seeded DB");
@@ -453,6 +453,30 @@ async function reRenderCaddyfile(): Promise<void> {
         return;
     }
     ok("Caddyfile re-rendered to /etc/caddy/Caddyfile (caddy_etc volume)");
+}
+
+async function reRenderSingbox(): Promise<void> {
+    step("Re-render singbox.json from the seeded DB");
+    const r = await capture(
+        $`docker compose exec -T panel php artisan singbox:render --no-interaction`,
+    );
+    if (!r.ok) {
+        dieWithDiag(
+            "singbox.json render failed",
+            `docker compose logs --tail=120 panel
+docker compose exec -T panel php artisan singbox:render --no-interaction`,
+        );
+    }
+
+    const file = await capture($`docker compose exec -T panel test -s /data/config/singbox.json`);
+    if (!file.ok) {
+        dieWithDiag(
+            "singbox.json was not written",
+            `docker compose exec -T panel ls -l /data/config
+docker compose logs --tail=120 panel`,
+        );
+    }
+    ok("singbox.json rendered to /data/config/singbox.json (singbox_config volume)");
 }
 
 // ---------- step 16: DNS + port 80 preflight ------------------------------
@@ -512,10 +536,10 @@ async function probePort80(publicIp: string): Promise<void> {
     }
 }
 
-// ---------- step 17: start caddy + wait for certs -------------------------
+// ---------- step 17: start caddy + singbox + wait for panel cert ----------
 
 async function bringUpCaddy(env: InstallEnv): Promise<void> {
-    step(`Start Caddy (ACME — :80 challenges; manages certs for ${env.DOMAIN} and ${env.PANEL_DOMAIN})`);
+    step(`Start Caddy + singbox (ACME — :80 challenges; Caddy manages cert for ${env.PANEL_DOMAIN})`);
     // v0.1.9 fix: clear a stale ct-caddy from a prior failed attempt
     // so `compose up` doesn't hit "bind 0.0.0.0:80: address already
     // in use" forever.
@@ -524,35 +548,26 @@ async function bringUpCaddy(env: InstallEnv): Promise<void> {
         warn(`removing stale ct-caddy (state=${state}) from prior attempt`);
         await capture($`docker rm -f ct-caddy`);
     }
-    const up = await capture($`docker compose up -d caddy`);
-    if (!up.ok) dieWithDiag("compose up -d caddy failed", up.stderr.split("\n").slice(0, 5).join("\n"));
-    ok("caddy running on :80");
-    warn("Caddy will fetch the TLS certs from Let's Encrypt now; both");
-    warn("domains usually obtain in 10-60 s. Tail logs with:");
+    const up = await capture($`docker compose up -d caddy singbox`);
+    if (!up.ok) dieWithDiag("compose up -d caddy singbox failed", up.stderr.split("\n").slice(0, 5).join("\n"));
+    ok("caddy running on :80/:443 and singbox starting behind the SNI splitter");
+    warn("Caddy will fetch the panel TLS cert from Let's Encrypt now;");
+    warn("this usually obtains in 10-60 s. Tail logs with:");
     warn("    docker compose logs -f --tail=80 caddy");
 
     const caFolder = env.ACME_DIRECTORY.includes("staging")
         ? "acme-staging-v02.api.letsencrypt.org-directory"
         : "acme-v02.api.letsencrypt.org-directory";
-    const apexCert = `/data/caddy/certificates/${caFolder}/${env.DOMAIN}/${env.DOMAIN}.crt`;
     const panelCert = `/data/caddy/certificates/${caFolder}/${env.PANEL_DOMAIN}/${env.PANEL_DOMAIN}.crt`;
 
-    step("Wait for Caddy to obtain both TLS certificates (up to 90 s)");
+    step("Wait for Caddy to obtain the panel TLS certificate (up to 90 s)");
     const caddyAcmeHint = `docker compose logs --tail=120 caddy
 Then check, in order:
-  (1) DNS A records for ${env.DOMAIN} + ${env.PANEL_DOMAIN} point at this server's public IP
+  (1) DNS A record for ${env.PANEL_DOMAIN} points at this server's public IP
   (2) cloud-firewall TCP/80 inbound is open
   (3) Caddy didn't crash-loop
   (4) Let's Encrypt rate limit not hit (https://letsencrypt.org/docs/rate-limits/)
       — switch to staging via ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory in .env if you've been retrying`;
-
-    const apexOk = await waitFor({
-        label: `Caddy cert (apex) at ${apexCert}`,
-        maxAttempts: 45,
-        intervalMs: 2000,
-        probe: async () => (await capture($`docker compose exec -T caddy test -f ${apexCert}`)).ok,
-    });
-    if (!apexOk) dieWithDiag(`Caddy apex cert never appeared after 90s`, caddyAcmeHint);
 
     const panelOk = await waitFor({
         label: `Caddy cert (panel) at ${panelCert}`,
@@ -566,12 +581,18 @@ Then check, in order:
 // ---------- step 18: start singbox ----------------------------------------
 
 async function bringUpSingbox(env: InstallEnv): Promise<void> {
-    step("Start singbox (reads apex cert from caddy_data, singbox.json from singbox_config)");
-    const r = await capture($`docker compose up -d singbox`);
-    if (!r.ok) dieWithDiag("compose up -d singbox failed", r.stderr.split("\n").slice(0, 5).join("\n"));
+    step("Verify singbox (reads singbox.json from singbox_config)");
+    const r = await capture($`docker compose ps singbox --status running --quiet`);
+    if (!r.ok || !r.stdout.trim()) {
+        dieWithDiag(
+            "singbox is not running",
+            `docker compose ps singbox
+docker compose logs --tail=80 singbox`,
+        );
+    }
     ok("singbox running (sing-box VLESS+Reality, supervised by singbox-core)");
     ok("  Caddy's layer-4 SNI splitter routes :443 traffic:");
-    ok(`    SNI=${env.DOMAIN}       → singbox (VLESS+Reality)`);
+    ok(`    non-panel SNI     → singbox (VLESS+Reality)`);
     ok(`    SNI=${env.PANEL_DOMAIN} → inner panel listener`);
 }
 
@@ -707,6 +728,7 @@ export async function runInstall(): Promise<number> {
     await bringUpDataLayer();
     await bringUpPanel();
     await reRenderCaddyfile();
+    await reRenderSingbox();
     await preflightDnsAndPort80(env);
     await bringUpCaddy(env);
     await bringUpSingbox(env);

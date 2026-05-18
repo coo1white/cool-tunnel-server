@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/tests/render.test.ts — argv parser for the `render` subcommand.
 //
-// v0.2.0+ only `caddyfile` is a live target; `haproxy` and `singbox`
-// produce a friendly "retired in v0.2.0" hint so an operator running
-// pre-v0.2.0 muscle memory or scrollback gets a useful message.
+// v0.4.0+ supports both `caddyfile` and `singbox`; `haproxy` remains
+// retired and produces a friendly hint for old runbooks.
 
 import { test, expect } from "bun:test";
 import { parseArgs } from "../src/tasks/render";
 
-test("parseArgs accepts caddyfile (the only live target in v0.2.0+)", () => {
+test("parseArgs accepts caddyfile", () => {
     const r = parseArgs(["bun", "operator", "render", "caddyfile"]);
     expect(typeof r).toBe("object");
     if (typeof r !== "object") return;
@@ -22,6 +21,22 @@ test("parseArgs preserves passthrough args after caddyfile", () => {
     if (typeof r !== "object") return;
     expect(r.target).toBe("caddyfile");
     expect(r.passthrough).toEqual(["--if-changed"]);
+});
+
+test("parseArgs accepts singbox", () => {
+    const r = parseArgs(["bun", "operator", "render", "singbox"]);
+    expect(typeof r).toBe("object");
+    if (typeof r !== "object") return;
+    expect(r.target).toBe("singbox");
+    expect(r.passthrough).toEqual([]);
+});
+
+test("parseArgs preserves passthrough args after singbox", () => {
+    const r = parseArgs(["bun", "operator", "render", "singbox", "--if-changed", "--reload"]);
+    expect(typeof r).toBe("object");
+    if (typeof r !== "object") return;
+    expect(r.target).toBe("singbox");
+    expect(r.passthrough).toEqual(["--if-changed", "--reload"]);
 });
 
 test("parseArgs filters operator-global flags from passthrough", () => {
@@ -48,12 +63,6 @@ test("parseArgs friendly-rejects retired v0.1.x targets (haproxy)", () => {
     expect(typeof r).toBe("string");
     expect(r as string).toContain("retired in v0.2.0");
     expect(r as string).toContain("Use: render caddyfile");
-});
-
-test("parseArgs friendly-rejects retired v0.1.x targets (singbox)", () => {
-    const r = parseArgs(["bun", "operator", "render", "singbox"]);
-    expect(typeof r).toBe("string");
-    expect(r as string).toContain("retired in v0.2.0");
 });
 
 test("parseArgs errors when render verb missing from argv", () => {

@@ -218,7 +218,7 @@ services:
       # Read-only — only the panel writes here.
       - singbox_config:/data/config:ro
     depends_on:
-      caddy:
+      panel:
         condition: service_started
     networks:
       - ct-net
