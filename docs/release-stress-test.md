@@ -74,7 +74,7 @@ The JSON files have a uniform shape:
 ```json
 {
   "timestamp": "2026-05-03T14-22-09Z",
-  "domain": "cookie.coolwhite.space",
+  "domain": "proxy.example.com",
   "passed": 2,
   "failed": 0,
   "skipped": 0,

@@ -8,7 +8,7 @@
 // Schema of --input (matches ClientRenderInput in config/render.ts):
 //
 //   {
-//     "server_host": "naive.coolwhite.space",
+//     "server_host": "proxy.example.com",
 //     "server_port": 443,
 //     "uuid": "...",
 //     "reality_public_key": "<base64url>",

@@ -86,7 +86,7 @@ malformed.
 
 Browser → `https://panel.test.your-zone.com/admin` → log in with the
 email + password set during `make install` → **Proxy Accounts** →
-**New proxy account** → username `test1` → Save.
+**New proxy account** → username `demo-user` → Save.
 
 Copy the **Subscription URL** from the green notification.
 

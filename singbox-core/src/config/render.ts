@@ -25,7 +25,7 @@ import type {
 
 /** Inputs the server renderer accepts. */
 export interface ServerRenderInput {
-    /** The proxy domain (e.g. naive.coolwhite.space). Used as SNI hint only. */
+    /** The proxy domain (e.g. proxy.example.com). Used as SNI hint only. */
     readonly domain: string;
     /** Listen port for VLESS inbound; production-canonical is 443. */
     readonly listen_port: number;
@@ -110,7 +110,7 @@ export function renderServerConfig(input: ServerRenderInput): SingboxConfig {
 // ---------- Client render ----------------------------------------------------
 
 export interface ClientRenderInput {
-    /** Cool Tunnel server FQDN — e.g. naive.coolwhite.space. */
+    /** Cool Tunnel server FQDN — e.g. proxy.example.com. */
     readonly server_host: string;
     readonly server_port: number;
     readonly uuid: string;
