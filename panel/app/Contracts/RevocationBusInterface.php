@@ -12,7 +12,7 @@ namespace App\Contracts;
  * `cool_tunnel:revocations` channel.
  *
  * The bus is the ≤100 ms hot path of the dual-path defense
- * (paired with the queued slow-path render+reload backstop in
+ * (paired with the queued slow-path render backstop in
  * `App\Messages\ReloadSingBox` / `ReloadServerConfig`).
  *
  * All publish methods are fire-and-forget. Failures (Redis

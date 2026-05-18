@@ -135,7 +135,7 @@ class ServerConfig extends Model
     protected static function booted(): void
     {
         // Dual-path on update: Redis pub/sub (≤100ms hot path) plus
-        // ReloadServerConfig Messenger message (slow-path render+reload
+        // ReloadServerConfig Messenger message (slow-path render
         // backstop). Both run via DB::afterCommit so a rollback in the
         // surrounding Filament transaction doesn't queue a phantom
         // reload, and the worker can't read stale state between
@@ -157,9 +157,9 @@ class ServerConfig extends Model
                     Log::warning('serverconfig.reload.dispatch_failed', [
                         'err' => $e->getMessage(),
                         'type' => $e::class,
-                        'note' => 'Messenger bus dispatch failed; row committed but slow-path render+reload was not queued. '
+                        'note' => 'Messenger bus dispatch failed; row committed but slow-path render was not queued. '
                             .'Redis fast-path (if Redis is up) is unaffected; the every-5-min '
-                            .'`singbox:render --if-changed --reload` scheduled command will reconcile.',
+                            .'`singbox:render --if-changed` scheduled command will reconcile.',
                     ]);
                 }
             });

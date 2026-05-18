@@ -5,19 +5,16 @@
 //! routing on :443, and an inner :8443 HTTPS panel reverse-proxy.
 //! The naive forward-proxy role moved to a sibling ct-naive
 //! container. As a side effect, the Caddyfile has NO per-account
-//! data — it's a function of ServerConfig only (Domain,
-//! PanelDomain, AcmeEmail, AcmeDirectory). The dynamic basic_auth
-//! rendering that lived here in v0.2.x is gone; that logic moved
-//! to `crate::naive`.
+//! data — it's a function of `ServerConfig` only (`Domain`,
+//! `PanelDomain`, `AcmeEmail`, `AcmeDirectory`). The dynamic
+//! `basic_auth` rendering that lived here in v0.2.x is gone.
 //!
 //! Practical consequences:
-//!   - `render()` no longer reads the proxy_accounts table.
-//!   - `active_users` in the JSON outcome is fixed at 0 (kept on
-//!     the wire for PHP-side compatibility; the panel reads the
-//!     real number via `crate::naive::render`).
-//!   - Reload still uses `docker exec ct-caddy caddy reload`. The
-//!     panel container's lack of `docker` CLI access remains a
-//!     pending followup — tracked separately for v0.3.x.
+//!   - `render()` no longer reads the `proxy_accounts` table.
+//!   - `active_users` in the JSON outcome is fixed at 0 for
+//!     PHP-side compatibility.
+//!   - Caddy reloads are driven by the host-side operator, where
+//!     Docker access belongs.
 
 use crate::db;
 use crate::template;
@@ -26,10 +23,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::MySqlPool;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 #[derive(Debug, Serialize)]
 pub struct CaddyRenderOutcome {
@@ -37,10 +32,10 @@ pub struct CaddyRenderOutcome {
     pub bytes: usize,
     pub hash: String,
     pub changed: bool,
-    /// v0.2.x reported the basic_auth account count baked into the
+    /// v0.2.x reported the `basic_auth` account count baked into the
     /// rendered Caddyfile; v0.3.0+ the Caddyfile carries no
     /// per-account data, so this stays as 0 here. The accurate
-    /// count lives on `NaiveRenderOutcome.active_users`.
+    /// field remains for PHP-side compatibility.
     pub active_users: usize,
 }
 
@@ -133,52 +128,6 @@ pub async fn render(
                 active_users: 0,
             })?
         );
-    }
-    Ok(())
-}
-
-/// Tell Caddy to reload the on-disk Caddyfile.
-///
-/// Used after a ServerConfig change (Domain / PanelDomain / ACME
-/// email / ACME directory). In v0.3.0+ this is the only path that
-/// triggers Caddyfile rendering — account changes affect
-/// `naive.json` instead, which ct-naive's supervisor file-watches
-/// without needing this reload primitive at all.
-///
-/// Implementation shells out to `docker exec ct-caddy caddy reload
-/// --config <path>`. Caddy validates the new config BEFORE swapping;
-/// a parse error leaves the running config in place.
-///
-/// Known follow-up: when called from inside the panel container, the
-/// `docker` CLI is absent; the exec fails with ENOENT. The
-/// operator's manual `docker compose restart caddy` works around it.
-/// Moving to the admin-API `/load` endpoint over ct-net is tracked
-/// as a v0.3.x followup.
-pub async fn reload(caddyfile_path: &str) -> Result<()> {
-    let mut cmd = Command::new("docker");
-    cmd.args([
-        "exec",
-        "ct-caddy",
-        "caddy",
-        "reload",
-        "--config",
-        caddyfile_path,
-    ]);
-    let out = tokio::time::timeout(Duration::from_secs(15), cmd.output())
-        .await
-        .map_err(|_| Error::ExternalCommandTimedOut {
-            command: "docker exec ct-caddy caddy reload",
-            timeout: Duration::from_secs(15),
-            hint: "`caddy reload` via docker exec timed out after 15s. \
-                       Is the ct-caddy container running? `docker compose ps caddy`"
-                .to_owned(),
-        })??;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(Error::ExternalCommandFailed {
-            command: "docker exec ct-caddy caddy reload",
-            stderr: stderr.into_owned(),
-        });
     }
     Ok(())
 }

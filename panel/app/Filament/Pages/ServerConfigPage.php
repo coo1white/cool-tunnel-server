@@ -88,7 +88,7 @@ class ServerConfigPage extends Page implements HasForms
                     ])->columns(3),
 
                 Section::make('Anti-tracking')
-                    ->description('Defaults match what NaiveProxy clients expect. Saving regenerates the Caddyfile and the sing-box config, then hot-reloads both.')
+                    ->description('Defaults match what NaiveProxy clients expect. Saving regenerates the Caddyfile and sing-box config; ct-singbox picks up file changes automatically.')
                     ->schema([
                         Toggle::make('anti_tracking_hide_ip')->label('hide_ip'),
                         Toggle::make('anti_tracking_hide_via')->label('hide_via'),
@@ -122,7 +122,7 @@ class ServerConfigPage extends Page implements HasForms
         // reload inline inside this request. The notification body
         // reflects the new contract — the row is committed, the
         // Redis fast-path is in flight, and the panel-side
-        // render+reload backstop is queued. Pre-fix this said
+        // render backstop is queued. Pre-fix this said
         // "regenerated; hot-reloading" unconditionally, even when
         // the inline shell-outs had silently failed and the
         // on-disk config still reflected the previous state.
@@ -141,7 +141,7 @@ class ServerConfigPage extends Page implements HasForms
             Notification::make()
                 ->title('Server config saved')
                 ->body(
-                    'Reload queued. The Redis fast-path is already in flight (≤100ms); the panel-side render+reload backstop will land within seconds. '
+                    'Reload queued. The Redis fast-path is already in flight (≤100ms); the panel-side render backstop will land within seconds. '
                     .'If the Components page reports drift after a minute, check `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
                 )
                 ->success()
@@ -151,7 +151,7 @@ class ServerConfigPage extends Page implements HasForms
                 ->title('Server config saved (reload path degraded)')
                 ->body(
                     'The DB row was committed, but Redis appears unreachable from the panel right now. The Redis fast-path and the Messenger backstop will both fail until Redis recovers. '
-                    .'The every-5-min `singbox:render --if-changed --reload` scheduler will reconcile once Redis is back. Run `docker compose ps redis` and grep `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
+                    .'The every-5-min `singbox:render --if-changed` scheduler will reconcile once Redis is back. Run `docker compose ps redis` and grep `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
                 )
                 ->warning()
                 ->persistent()

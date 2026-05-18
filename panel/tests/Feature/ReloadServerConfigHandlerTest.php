@@ -8,7 +8,6 @@ namespace Tests\Feature;
 
 use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
-use App\Contracts\SingBoxReloaderInterface;
 use App\MessageHandlers\ReloadServerConfigHandler;
 use App\Messages\ReloadServerConfig;
 use PHPUnit\Framework\Attributes\Test;
@@ -20,13 +19,9 @@ use Tests\TestCase;
 //      (Domain / PanelDomain / ACME bindings only) but a
 //      domain/email change must propagate before the sing-box
 //      renderer tries to compute the new cert path.
-//   2. If Caddyfile changed, reload Caddy (still uses the legacy
-//      SingBoxReloader::reload() interface, whose concrete
-//      implementation now wraps caddy-reload).
-//   3. Render /data/config/singbox.json. ct-singbox's
+//   2. Render /data/config/singbox.json. ct-singbox's
 //      `singbox-core supervise` file-watches the path and respawns
-//      sing-box automatically — no explicit reload-side shell-out
-//      from PHP.
+//      sing-box automatically.
 
 class ReloadServerConfigHandlerTest extends TestCase
 {
@@ -40,34 +35,29 @@ class ReloadServerConfigHandlerTest extends TestCase
     }
 
     #[Test]
-    public function handler_renders_caddy_first_then_singbox_then_reloads_caddy_on_change(): void
+    public function handler_renders_caddy_first_then_singbox(): void
     {
         $caddy = new RecordingCaddyGenerator('sha256-caddy');
         $singbox = new RecordingSingBoxGenerator('sha256-singbox');
-        $reloader = new RecordingSingBoxReloader;
         $this->app->instance(CaddyfileGeneratorInterface::class, $caddy);
         $this->app->instance(SingBoxConfigGeneratorInterface::class, $singbox);
-        $this->app->instance(SingBoxReloaderInterface::class, $reloader);
 
         $this->app->make(ReloadServerConfigHandler::class)(new ReloadServerConfig(reason: 'test'));
 
         $this->assertSame(
-            ['caddy', 'reload', 'singbox'],
+            ['caddy', 'singbox'],
             self::$invocationLog,
-            'Caddyfile render MUST come before singbox render (cert path feeds in); '
-            .'Caddy reload MUST come between them if the Caddyfile changed.',
+            'Caddyfile render MUST come before singbox render (cert path feeds in).',
         );
     }
 
     #[Test]
-    public function handler_skips_caddy_reload_when_caddyfile_unchanged(): void
+    public function handler_still_renders_singbox_when_caddyfile_unchanged(): void
     {
         $caddy = new RecordingCaddyGenerator(null);  // "unchanged"
         $singbox = new RecordingSingBoxGenerator('sha256-singbox');
-        $reloader = new RecordingSingBoxReloader;
         $this->app->instance(CaddyfileGeneratorInterface::class, $caddy);
         $this->app->instance(SingBoxConfigGeneratorInterface::class, $singbox);
-        $this->app->instance(SingBoxReloaderInterface::class, $reloader);
 
         $this->app->make(ReloadServerConfigHandler::class)(new ReloadServerConfig(reason: 'test'));
 
@@ -76,11 +66,6 @@ class ReloadServerConfigHandlerTest extends TestCase
             1,
             $singbox->renderCalls,
             'singbox.json still renders even if Caddyfile was unchanged.',
-        );
-        $this->assertSame(
-            0,
-            $reloader->reloadCalls,
-            'Caddy reload MUST be skipped when the Caddyfile render returned null.',
         );
     }
 
@@ -117,18 +102,5 @@ final class RecordingSingBoxGenerator implements SingBoxConfigGeneratorInterface
         ReloadServerConfigHandlerTest::recordInvocation('singbox');
 
         return $this->hash;
-    }
-}
-
-final class RecordingSingBoxReloader implements SingBoxReloaderInterface
-{
-    public int $reloadCalls = 0;
-
-    public function reload(): bool
-    {
-        $this->reloadCalls++;
-        ReloadServerConfigHandlerTest::recordInvocation('reload');
-
-        return true;
     }
 }

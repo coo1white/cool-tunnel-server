@@ -2,7 +2,7 @@
 //! Per-key fixed-window debouncer + leading-edge throttle with
 //! trailing flush. Used by [`crate::redis_bridge`] to collapse a
 //! burst of revocation messages — bulk Filament saves can fire
-//! dozens per second — down to one Caddyfile re-render + reload per
+//! dozens per second — down to one rendered config update per
 //! window.
 //!
 //! Two primitives, both single-threaded by design (wrap in
@@ -18,11 +18,11 @@
 //! 2. [`Coalescer`] — leading-edge fire with a trailing flush. When
 //!    a burst arrives, fire **once now**, suppress the rest, then
 //!    fire **once more** at `window` if anything was suppressed.
-//!    This is the right shape for "reload Caddy" — the operator
-//!    sees an immediate reload AND the final reload reflects the
-//!    last save in the burst. Without the trailing flush, the last
-//!    Filament save could be silently held back for `window` ms; with
-//!    only the trailing flush, every burst pays one window of
+//!    This is the right shape for "render the latest config" — the
+//!    operator gets an immediate write AND the final write reflects
+//!    the last save in the burst. Without the trailing flush, the
+//!    last Filament save could be silently held back for `window` ms;
+//!    with only the trailing flush, every burst pays one window of
 //!    latency before the user sees anything.
 //!
 //! ## Window choice
@@ -44,8 +44,8 @@ use std::time::{Duration, Instant};
 pub const PRUNE_THRESHOLD: usize = 64;
 
 /// Default suppression window. Matches the macOS client's
-/// `ANOMALY_DEBOUNCE` constant; chosen so consecutive Caddy reloads
-/// don't overlap (~30 ms each) and bulk-save UX stays responsive.
+/// `ANOMALY_DEBOUNCE` constant; chosen so config renders stay
+/// coalesced and bulk-save UX stays responsive.
 pub const DEFAULT_WINDOW: Duration = Duration::from_millis(100);
 
 /// Per-key fixed-window debouncer. See module docs.
@@ -218,7 +218,7 @@ impl Coalescer {
     /// actually had something to flush; `false` if the burst happened
     /// to end exactly at the leading edge and no extra flush was
     /// needed (in which case the consumer can skip the work entirely
-    /// — but checking here is cheaper than an empty render+reload).
+    /// — but checking here is cheaper than an empty render).
     pub fn on_flush(&mut self, now: Instant) -> bool {
         let had_pending = self.pending_flush;
         self.pending_flush = false;
@@ -415,7 +415,7 @@ mod tests {
     }
 
     /// Stress: 100,000 events inside a 100ms window. Exactly one
-    /// FireNow* and at most one trailing flush — total 2 reloads.
+    /// `FireNow` and at most one trailing flush — total 2 renders.
     /// 10× the previous version of this test.
     #[test]
     fn coalescer_stress_burst_collapses_to_at_most_two_fires() {

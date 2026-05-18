@@ -18,12 +18,11 @@ pub enum WireRequestV1 {
     /// Re-render Caddyfile from the current DB state. Returns the
     /// new SHA-256 (or null if unchanged).
     RenderCaddyfile,
-    /// POST the rendered Caddyfile to Caddy's admin API.
+    /// Retired in v0.4.0; Caddy reloads are operator-owned.
     ReloadCaddy,
     /// Pull metrics + roll deltas into `traffic_logs`.
     CollectTraffic,
-    /// Disable accounts past quota / expiry; re-render + reload if
-    /// any changes.
+    /// Disable accounts past quota / expiry; retired in v0.4.0.
     EnforceQuota,
     /// Health check — every dependency reachable?
     Health,

@@ -702,7 +702,7 @@ within ~100 ms (Redis pub/sub → sing-box reload).
 Caddy is the ACME side; it renews automatically and writes the
 fresh cert + key to the `caddy_data` volume. The cert mtime is
 folded into the sing-box render-change hash, so the next
-`singbox:render --if-changed --reload` (scheduled every minute)
+`singbox:render --if-changed` (scheduled every five minutes)
 picks the new material up automatically — no manual reload step.
 
 To force a renewal cycle, restart Caddy (it re-checks on boot):

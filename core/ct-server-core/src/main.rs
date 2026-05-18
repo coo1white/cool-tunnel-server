@@ -68,11 +68,10 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Caddyfile generation + Caddy reload. v0.4.0: Caddy is the
-    /// layer4 SNI splitter (panel.* → inner :8443, everything else →
+    /// Caddyfile generation. v0.4.0: Caddy is the layer4 SNI
+    /// splitter (panel.* → inner :8443, everything else →
     /// tcp/ct-singbox:443) plus the inner panel reverse-proxy. No
-    /// per-account state here — that lives in /data/config/singbox.json
-    /// (singbox-core's output, file-watched by ct-singbox's supervisor).
+    /// per-account state here; that lives in /data/config/singbox.json.
     Caddyfile {
         #[command(subcommand)]
         op: CaddyfileOp,
@@ -183,20 +182,6 @@ enum CaddyfileOp {
         #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
         output: String,
     },
-    /// Tell Caddy to reload the on-disk Caddyfile in place.
-    ///
-    /// v0.2.0+: replaces the `server reload` path that used to PUT
-    /// the rendered sing-box config to sing-box's clash API. Now
-    /// runs `caddy reload --config /etc/caddy/Caddyfile` inside
-    /// the ct-caddy container via `docker exec`. Graceful — Caddy
-    /// drains in-flight connections, swaps the new config in, and
-    /// resumes serving with no dropped TLS handshakes.
-    Reload {
-        /// Override Caddyfile path (must match what the ct-caddy
-        /// container reads — typically /etc/caddy/Caddyfile).
-        #[arg(long, env = "CADDYFILE_PATH", default_value = "/etc/caddy/Caddyfile")]
-        output: String,
-    },
 }
 
 fn main() -> ExitCode {
@@ -301,7 +286,6 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 let pool = db::connect(&cli.database_url).await?;
                 caddy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
-            CaddyfileOp::Reload { output } => caddy::reload(&output).await,
         },
         Cmd::Daemon {
             socket,

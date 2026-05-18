@@ -13,8 +13,8 @@ use Symfony\Component\Process\Process;
 // Thin wrapper around the ct-server-core Rust binary.
 //
 // Every PHP service that still routes through ct-server-core (Caddyfile
-// rendering / reloading, component manifest checks, canary probes, the
-// PanelDomain SoT helper) calls into this one helper.
+// rendering, component manifest checks, canary probes, the PanelDomain
+// SoT helper) calls into this one helper.
 //
 // v0.4.0 — sing-box rendering moved out of this path. The panel-side
 // SingBoxConfigGenerator now shells directly to
@@ -116,27 +116,6 @@ final class CtServerCore implements CtServerCoreInterface
     public function renderCaddyfile(): array
     {
         return $this->run(['caddyfile', 'render']);
-    }
-
-    /**
-     * Caddy reload — graceful, zero-downtime config swap inside the
-     * ct-caddy container.
-     *
-     * Implementation in core/ct-server-core/src/caddy/mod.rs::reload
-     * shells out to `docker exec ct-caddy caddy reload --config <output>`.
-     * Caddy validates the new Caddyfile BEFORE swapping; a parse
-     * error leaves the running config in place. The TimeoutSec 30
-     * matches the Rust-side 15s ceiling on the inner docker exec
-     * with extra headroom for the docker round-trip.
-     *
-     * SingBoxReloader::reload() calls this in v0.2.0+ (the
-     * sing-box clash-API path is retired). Class name preserved
-     * for AppServiceProvider binding compatibility — see
-     * SingBoxReloader.php's head comment.
-     */
-    public function reloadCaddy(): array
-    {
-        return $this->run(['caddyfile', 'reload'], timeoutSec: 30);
     }
 
     public function componentList(string $manifestsDir = '/srv/manifests'): array

@@ -8,13 +8,11 @@ syscalls matter:
 
 | Subcommand | What it does |
 | --- | --- |
-| `ct-server-core caddyfile render` | Reads `proxy_accounts` + `server_configs` from the DB, substitutes into `Caddyfile.tpl`, writes atomically to `/etc/caddy/Caddyfile`. Returns the SHA-256 of the result. |
-| `ct-server-core caddyfile validate` | Runs `caddy validate` on the rendered file (catches syntax errors before reload). |
-| `ct-server-core caddy reload` | POSTs the rendered Caddyfile to Caddy's admin API on the unix socket; graceful, no dropped connections. |
-| `ct-server-core traffic collect` | Scrapes Caddy `/metrics`, parses Prometheus text, upserts deltas into `traffic_logs` + `proxy_accounts.used_bytes`. |
-| `ct-server-core quota enforce` | Disables accounts past expiry or quota. Re-renders + reloads if any state changed. |
-| `ct-server-core probe anti-tracking` | Active check — runs a synthetic CONNECT through the local proxy and verifies `hide_ip` / `hide_via` are actually working. |
-| `ct-server-core daemon` | Long-running mode — listens on a unix socket and accepts JSON requests from the panel. Faster than `Process::spawn` per call because the DB pool stays warm. |
+| `ct-server-core caddyfile render` | Reads `server_configs` from the DB, substitutes into `Caddyfile.tpl`, writes atomically to `/etc/caddy/Caddyfile`. Returns the SHA-256 of the result. |
+| `ct-server-core daemon` | Long-running mode for the panel socket, Redis revocation bridge, and internal metrics endpoint. |
+| `ct-server-core component list/check` | Lists or verifies pinned component manifests. |
+| `ct-server-core canary probe/status` | Runs and reports the self-probe canary. |
+| `ct-server-core admin panel-domain` | Prints the resolved panel hostname. |
 
 The wire format is the same `Request`/`Response`/`Event` JSON-over-
 stdio used by the macOS client's Rust core, so the design intuitions

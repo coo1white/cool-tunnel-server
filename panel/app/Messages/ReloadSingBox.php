@@ -7,13 +7,13 @@ declare(strict_types=1);
 namespace App\Messages;
 
 /**
- * Request to re-render sing-box's config from current DB state
- * and hot-reload the sing-box container if the rendered config
- * changed.
+ * Request to re-render sing-box's config from current DB state.
+ * ct-singbox's supervisor picks up changed files and restarts
+ * sing-box.
  *
  * Representation-free: the handler always reads current DB
  * state. Two messages back-to-back coalesce naturally — the
- * first re-renders + reloads, the second short-circuits inside
+ * first re-renders, the second short-circuits inside
  * `SingBoxConfigGeneratorInterface::renderToFile()` on the hash
  * compare.
  *

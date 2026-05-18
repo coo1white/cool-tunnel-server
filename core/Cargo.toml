@@ -10,7 +10,7 @@
 #   ├── ct-protocol/        Pure-Rust shared types, no async, no I/O.
 #   │                       What every client links against.
 #   └── ct-server-core/     Server-only binary (CLI + daemon mode).
-#                           Talks to MariaDB, sing-box clash API, metrics.
+#                           Talks to MariaDB, Redis, DoH, and metrics.
 
 [workspace]
 resolver = "2"

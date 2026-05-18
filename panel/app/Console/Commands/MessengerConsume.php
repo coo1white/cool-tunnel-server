@@ -27,9 +27,8 @@ use Symfony\Component\Messenger\Worker;
  * Why an Artisan wrapper rather than calling Symfony Console's
  * `bin/console messenger:consume` directly: Laravel's bootstrap
  * is required for `app(...)` resolution of the
- * `SingBoxConfigGeneratorInterface` / `SingBoxReloaderInterface`
- * / `CaddyfileGeneratorInterface` bindings that the handlers
- * depend on. The cleanest reuse of that bootstrap is Artisan.
+ * handler service bindings. The cleanest reuse of that bootstrap
+ * is Artisan.
  *
  * Stop conditions:
  *   - `--time-limit`: hard wall-clock cap. Defaults to 3600s
