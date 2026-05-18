@@ -20,7 +20,7 @@
 //   9. clear stale non-running ct-caddy, then compose up -d caddy singbox
 //  10. php artisan migrate --force
 //  11. ct-server-core caddyfile render
-//  12. ct-server-core caddyfile reload
+//  12. caddy reload from the host-side operator
 //  13. component_check_strict /srv/manifests
 //  14. fetch_operator_binary.sh (non-fatal)
 
@@ -235,6 +235,22 @@ export function shouldRemoveStaleCaddy(state: string): boolean {
     return state === "created" || state === "exited" || state === "dead";
 }
 
+export function caddyReloadCommand(): string[] {
+    return [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "caddy",
+        "caddy",
+        "reload",
+        "--config",
+        "/etc/caddy/Caddyfile",
+        "--adapter",
+        "caddyfile",
+    ];
+}
+
 async function removeStaleCaddy(): Promise<void> {
     const state = (await capture($`docker inspect -f {{.State.Status}} ct-caddy`)).stdout.trim();
     if (shouldRemoveStaleCaddy(state)) {
@@ -326,22 +342,19 @@ async function renderCaddyfile(): Promise<void> {
 
 async function reloadCaddy(): Promise<void> {
     step("Reload Caddy (graceful — drains in-flight connections)");
-    // v0.3.0+ unchanged from v0.2.x in shape: Caddy's reload is
-    // graceful + zero-downtime. Implementation:
-    // `docker exec ct-caddy caddy reload --config /etc/caddy/Caddyfile`.
-    // Note: from inside the panel container this currently fails
-    // because docker CLI is absent — a known v0.2.x carry-over.
-    // When `update` runs from the host (this code path) the docker
-    // CLI is on the host PATH and the exec succeeds. The "from
-    // panel" path is exercised on credential changes via the
-    // Filament UI; we ignore failure there until the admin-API
-    // reload follow-up lands.
-    const r = await capture(
-        $`docker compose exec -T panel ct-server-core caddyfile reload`,
-    );
+    // Run Caddy's reload from the operator/host side. Calling
+    // `ct-server-core caddyfile reload` inside the panel container
+    // tries to spawn `docker`, but the panel image intentionally
+    // does not ship a Docker CLI; that surfaced on v0.4.5 VPS
+    // updates as `io failed: No such file or directory (os error 2)`.
+    // `docker compose exec caddy ...` keeps Docker access in the
+    // operator process where it belongs while still using Caddy's
+    // graceful config swap.
+    const [bin, ...args] = caddyReloadCommand();
+    const r = await capture($`${bin} ${args}`);
     if (!r.ok) {
         dieWithDiag(
-            "ct-server-core caddyfile reload failed",
+            "caddy reload failed",
             r.stderr.split("\n")[0] ??
                 "check `docker compose logs --tail=40 caddy` and that ct-caddy is running",
         );
