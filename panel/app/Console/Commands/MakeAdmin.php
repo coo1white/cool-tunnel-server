@@ -51,6 +51,8 @@ use Illuminate\Support\Facades\Validator;
 
 class MakeAdmin extends Command
 {
+    private const SMART_QUOTE_PATTERN = '/[\x{2018}\x{2019}\x{201A}\x{201B}\x{201C}\x{201D}\x{201E}\x{201F}]/u';
+
     protected $signature = 'ct:make-admin
                             {--name= : Display name (prompts if omitted; ignored on --force update of existing user)}
                             {--email= : Email address (prompts if omitted)}
@@ -65,6 +67,12 @@ class MakeAdmin extends Command
         $name = $this->option('name') ?: ($force ? '' : $this->ask('Name'));
         $email = $this->option('email') ?: $this->ask('Email address');
         $password = $this->option('password') ?: $this->secret('Password');
+
+        if (self::containsSmartQuote((string) $password)) {
+            $this->error('Password contains smart quotes. UTF-8 passwords are supported, but smart quotes are usually pasted shell delimiters; re-run with straight shell quotes or no quotes around simple passwords.');
+
+            return self::FAILURE;
+        }
 
         // On --force update, name is optional (we don't overwrite
         // the existing display name unless explicitly given).
@@ -135,5 +143,10 @@ class MakeAdmin extends Command
 
             return self::FAILURE;
         }
+    }
+
+    private static function containsSmartQuote(string $value): bool
+    {
+        return preg_match(self::SMART_QUOTE_PATTERN, $value) === 1;
     }
 }

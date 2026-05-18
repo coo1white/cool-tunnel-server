@@ -34,6 +34,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  utf8:
+    name: utf8 (project text / runtime contract)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/check-utf8.sh
+      - name: Compose runtime UTF-8 locale contract
+        run: |
+          grep -q '^x-utf8-env:' docker-compose.yml
+          grep -q 'LANG: C.UTF-8' docker-compose.yml
+          grep -q 'LC_ALL: C.UTF-8' docker-compose.yml
+
   rust:
     name: rust (build / test / clippy / fmt)
     runs-on: ubuntu-24.04
@@ -120,6 +133,12 @@ jobs:
           done < <(find app database/migrations database/seeders config bootstrap routes \
                     -name '*.php' -type f -print0)
           exit "$fail"
+
+      - name: PHP runtime UTF-8 defaults
+        working-directory: panel
+        run: |
+          test "$(php -r 'echo ini_get("default_charset");')" = "UTF-8"
+          test "$(php -r 'echo mb_internal_encoding();')" = "UTF-8"
 
       - name: composer validate
         working-directory: panel

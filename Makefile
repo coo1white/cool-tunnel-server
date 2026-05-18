@@ -37,7 +37,17 @@ help: ## list available targets
 # ---------- CI gate (exactly what GitHub Actions runs) ------------
 
 .PHONY: ci
-ci: rust-fmt-check rust-clippy rust-test php-syntax composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord secrets-argv ## full local CI gate
+ci: utf8-check compose-utf8-runtime rust-fmt-check rust-clippy rust-test php-syntax php-utf8-runtime composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord secrets-argv ## full local CI gate
+
+.PHONY: utf8-check
+utf8-check: ## verify every tracked Rust/Bun/PHP/Shell/Docker/config/doc text file is valid UTF-8
+	./scripts/check-utf8.sh
+
+.PHONY: compose-utf8-runtime
+compose-utf8-runtime: ## verify compose services inherit the UTF-8 runtime locale contract
+	@grep -q '^x-utf8-env:' docker-compose.yml
+	@grep -q 'LANG: C.UTF-8' docker-compose.yml
+	@grep -q 'LC_ALL: C.UTF-8' docker-compose.yml
 
 # Cycle 3 / v0.0.55 — cross-language SoT parity guard. Runs both
 # the PHP and Rust panel-hostname resolvers against fixture envs and
@@ -187,6 +197,11 @@ php-syntax: ## php -l on every panel/**/*.php
 	done < <(find app database/migrations database/seeders config bootstrap routes \
 		-name '*.php' -type f -print0)
 	@echo "    php-syntax: clean"
+
+.PHONY: php-utf8-runtime
+php-utf8-runtime: ## verify PHP runtime text defaults are UTF-8
+	@test "$$(cd panel && php -r 'echo ini_get("default_charset");')" = "UTF-8"
+	@test "$$(cd panel && php -r 'echo mb_internal_encoding();')" = "UTF-8"
 
 # Round 23 — match the GitHub Actions audit workflow's `composer
 # audit` job so an operator running `make ci` locally sees the

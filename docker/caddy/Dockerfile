@@ -71,6 +71,8 @@ RUN xcaddy build \
 # Stage 2 — runtime
 # ----------------------------------------------------------------------
 FROM caddy:2.11.3-alpine
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # Replace the stock Caddy binary with our xcaddy build. The image's
 # existing entrypoint + CMD + capabilities (NET_BIND_SERVICE so it

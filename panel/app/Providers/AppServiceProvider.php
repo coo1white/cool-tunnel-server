@@ -84,6 +84,13 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Project text standard: all application-level plain text is
+        // UTF-8. PHP's default_charset is pinned in docker/panel/
+        // php-hardening.ini; set mbstring's runtime default here
+        // because mbstring.internal_encoding is deprecated as an INI
+        // directive on modern PHP.
+        mb_internal_encoding('UTF-8');
+
         // URL scheme handling — historical context.
         //
         // Pre-FrankenPHP-runtime-swap, this method called

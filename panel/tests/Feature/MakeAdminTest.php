@@ -160,6 +160,36 @@ class MakeAdminTest extends TestCase
     }
 
     #[Test]
+    public function rejects_password_wrapped_in_smart_quotes(): void
+    {
+        $this->artisan('ct:make-admin', [
+            '--name' => 'Alice',
+            '--email' => 'alice@example.com',
+            '--password' => "\u{201C}1234567890\u{201D}",
+        ])
+            ->expectsOutputToContain('Password contains smart quotes')
+            ->assertExitCode(1);
+
+        $this->assertNull(User::where('email', 'alice@example.com')->first());
+    }
+
+    #[Test]
+    public function accepts_utf8_password_without_smart_quotes(): void
+    {
+        $password = 'pässwörd-安全-123';
+
+        $this->artisan('ct:make-admin', [
+            '--name' => 'Alice',
+            '--email' => 'alice@example.com',
+            '--password' => $password,
+        ])->assertExitCode(0);
+
+        $u = User::where('email', 'alice@example.com')->first();
+        $this->assertNotNull($u);
+        $this->assertTrue(Hash::check($password, $u->password));
+    }
+
+    #[Test]
     public function rejects_invalid_email(): void
     {
         $this->artisan('ct:make-admin', [
