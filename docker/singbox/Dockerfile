@@ -59,6 +59,8 @@ RUN /usr/local/bin/singbox-core install --target-dir /out --no-verify \
 # Stage 3 — runtime
 # ----------------------------------------------------------------------
 FROM alpine:3.21 AS runtime
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # sing-box is statically-linked Go. singbox-core is a Bun-compiled
 # glibc binary and needs Alpine's gcompat plus libstdc++/libgcc.

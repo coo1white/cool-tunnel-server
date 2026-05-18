@@ -62,6 +62,8 @@ RUN cd singbox-core \
 # the runtime is the cleanest path versus version-pinning the
 # transitive dep down.
 FROM dunglas/frankenphp:1-php8.4-alpine
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # Strip the FrankenPHP binary's file capabilities. The dunglas
 # image ships the binary with `cap_net_bind_service+ep` so it

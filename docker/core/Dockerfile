@@ -181,6 +181,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # `COPY --from=ct-core-stage /usr/local/bin/ct-server-core` then
 # fails with "/usr/local/bin/ct-server-core: not found".
 FROM alpine:3.20 AS runtime
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 COPY --from=builder /ct-server-core /usr/local/bin/ct-server-core
 ENTRYPOINT ["/usr/local/bin/ct-server-core"]
 CMD ["--help"]

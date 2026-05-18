@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Text files in this repository are UTF-8; normalize line endings in
+# Git so clones on any operator workstation/VPS stay consistent.
+# UTF-8 validity is enforced by scripts/check-utf8.sh in CI.
+* text=auto eol=lf
+
