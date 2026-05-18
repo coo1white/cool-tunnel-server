@@ -18,34 +18,52 @@ before relying on a version bump as a compatibility signal.
 
 ### Removed
 
-- **ct-server-core: delete v0.3.x clash-API surface.** The
-  `src/singbox/`, `src/quota.rs`, `src/metrics.rs`, `src/admin.rs`,
-  `src/credentials.rs`, and `src/laravel_crypt.rs` modules are gone;
-  the v0.4.0 sing-box VLESS+Reality server exposes no clash admin
-  API, so per-user traffic + quota enforcement + cleartext-password
-  decryption all lose their callable side. Cascading deletions:
-  `Cmd::{Singbox,Server,Traffic,Quota,Guard}` + their sub-enums +
-  `Cmd::Admin::ClashSecret` removed from the CLI; the daemon's
-  `WireRequestV1::{RenderCaddyfile,CollectTraffic,EnforceQuota}` arms
-  now return `UnsupportedOperation`; `redis_bridge::fire_reload` is
-  a logged no-op (panel-side `SingBoxConfigGenerator` does the actual
-  render via singbox-core); the orphaned `db::active_proxy_accounts /
-  record_caddyfile_hash / upsert_traffic / add_used_bytes` queries +
-  their `.sqlx/` offline cache entries are gone. CLI flags
-  `--template / --output / --admin-url / --admin-secret` removed
-  from the top-level Cli (their env vars become silently-ignored
-  no-ops).
-- **panel: drop the artisan + Laravel-scheduler entries** that fed
-  the deleted Rust surface — `traffic:rollup` (every-minute) and
-  `quota:enforce` (hourly) cron entries removed from
-  `routes/console.php`; `app/Console/Commands/{QuotaEnforce,
-  TrafficRollup}.php` + `app/Services/TrafficCollector.php` deleted.
-  `CtServerCoreInterface::{reloadSingBox,collectTraffic,enforceQuota}`
-  + their concrete implementations gone (no remaining callers).
-
 ### Fixed
 
 ### Security
+
+---
+
+## [0.4.1] — 2026-05-18 — Install-port release plus singbox-core Bun 1.1 build/runtime fix
+
+This patch release combines the active post-v0.4 install work into
+the mainline and fixes the `make install` failure observed on a
+fresh Debian VPS after the install script fast-forwarded to the
+latest `main`.
+
+### Added
+
+- **operator: `ct install` / `operator/install.ts`** — first-time
+  install flow ported from `scripts/install.sh` into the Bun
+  operator while preserving the installer stages, prompts, Docker
+  build/start sequencing, first-admin creation, ACME checks, and
+  component-check finish gate.
+
+### Changed
+
+- **`scripts/install.sh`** is now a thin compatibility wrapper: it
+  dispatches to a downloaded `ct-operator` binary when present and
+  falls back to `bun run operator/install.ts` for source checkouts.
+
+### Fixed
+
+- **singbox-core Docker build under floating TypeScript/Bun types.**
+  The `docker/singbox/Dockerfile` typecheck stage floated to newer
+  `@types/bun` / TypeScript definitions and failed on X25519
+  `CryptoKeyPair`, literal-default inference in `supervise`, and
+  WebCrypto `BufferSource` typing. The type boundaries now compile
+  cleanly with the dependency versions pulled by Bun 1.1.45.
+- **`reality-keygen` on Bun 1.1.45.** Bun 1.1.45 on Linux can compile
+  the package but throws `NotSupportedError` for X25519 WebCrypto at
+  runtime. `reality-keygen` now falls back to an in-tree RFC 7748
+  X25519 implementation when WebCrypto lacks support, with a known
+  test vector pinned in `singbox-core/tests/reality-keygen.test.ts`.
+
+### Security
+
+- No security-sensitive behaviour change intended. The keygen fallback
+  still uses `crypto.getRandomValues` for private-key material and
+  emits the same base64url Reality key format.
 
 ---
 
@@ -11088,7 +11106,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.0...v0.2.1
