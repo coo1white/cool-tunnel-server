@@ -5,7 +5,7 @@
 import type { JournalSlice } from "../types";
 import { $, capture, which } from "../../util/sh";
 
-const DEFAULT_UNITS = ["panel", "sing-box", "caddy", "haproxy", "redis"];
+const DEFAULT_UNITS = ["panel", "sing-box", "caddy", "redis"];
 const TAIL = 100;
 
 export async function collectJournal(

@@ -13,7 +13,7 @@ class CanaryProbe extends Command
 {
     protected $signature = 'canary:probe';
 
-    protected $description = 'Run one self-probe canary cycle (DoH-resolve apex + TCP-connect to haproxy:443); appends to ServerConfig.self_probe_history';
+    protected $description = 'Run one self-probe canary cycle (DoH-resolve apex + TCP-connect to caddy:443); appends to ServerConfig.self_probe_history';
 
     public function handle(CtServerCore $core): int
     {

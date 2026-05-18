@@ -3,10 +3,7 @@
 // ct fix recipe 2.
 //
 // Detect: any service declared in compose.yml is NOT in the running set
-// right now. Fix: `docker compose up -d`. This is the v0.1.3 incident
-// recipe — a SIGHUP reload exited haproxy, leaving 443 unbound, and
-// the panel_restart_loop / haproxy_backend_dns recipes didn't catch
-// it because they require a restart-loop state.
+// right now. Fix: `docker compose up -d`.
 
 import type { Recipe } from "./types";
 import { $, capture, which } from "../../util/sh";
@@ -34,20 +31,15 @@ running is currently NOT running.
 Missing services: ${list}
 
 What this means in practice:
-  - If haproxy is missing -> host port 443 is unbound -> every
-    browser request to the panel or proxy gets connection-refused.
+  - If caddy is missing   -> host ports 80/443 are unbound; panel
+    and proxy traffic both lose their public entry point.
   - If panel is missing   -> the admin UI is gone; proxy continues
     working until next render but new accounts can't be created.
-  - If caddy is missing   -> ACME cert renewals stop; if the
-    current cert is still valid, the proxy keeps working for now.
   - If sing-box is missing -> the proxy itself is down.
 
-Common cause: a previous \`ct update\` ran an in-place reload of
-one of the services (e.g. haproxy SIGHUP) and the reload caused
-the container to exit instead of re-exec. Other v0.1.2-era recipes
-(haproxy_backend_dns, panel_restart_loop) only catch containers in
-a *restart loop*; this recipe is for the "container is just gone"
-case.
+Common cause: a previous deploy or host reboot left one service
+stopped while the rest of the compose project stayed up. This recipe
+is for the "container is just gone" case.
 
 Fix: \`docker compose up -d\` brings every declared service back
 to Up state. Existing services that are already healthy are

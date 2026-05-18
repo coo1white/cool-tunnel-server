@@ -16,7 +16,7 @@
 //! The probe is deliberately ANCOUNT-only and does NOT extract the
 //! resolved IP. Callers that need the IP would parse the answer
 //! section; today nobody does, and the reachability tests
-//! (canary's "TCP-connect to docker-internal haproxy" + the
+//! (canary's "TCP-connect to docker-internal caddy" + the
 //! component verifier's "DoH endpoint OK") work fine without it.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};

@@ -319,8 +319,8 @@ services:
       # The panel service receives every key from .env via the
       # `env_file: - .env` directive below — that's the canonical
       # delivery for credentials (DB_USERNAME, DB_PASSWORD,
-      # REDIS_PASSWORD, CT_CLASH_SECRET_SEED, etc.) and any other
-      # operator-tunable values. The `environment:` keys below are
+      # REDIS_PASSWORD, etc.) and any other operator-tunable values.
+      # The `environment:` keys below are
       # only those that need to be different from .env or that
       # don't live in .env at all (container-internal hostnames,
       # render paths, derived URLs). Pre-v0.0.46 this block also
@@ -343,10 +343,8 @@ services:
       # reads the discrete vars directly and accepts any password
       # bytes — mirror of v0.0.25's MariaDB-URL hotfix.
       # Where the CaddyfileGenerator (panel) writes the rendered Caddyfile.
-      # v0.2.0+ this is the SINGLE rendered config the entire front
-      # door reads — Caddy in this stack owns ACME + forward_proxy
-      # (the role formerly held by sing-box) + reverse_proxy (the
-      # role formerly held by the ghost :8444 Caddy + HAProxy SNI).
+      # Caddy in this stack owns ACME, layer4 SNI splitting, and the
+      # panel reverse-proxy.
       CADDYFILE_PATH:         /etc/caddy/Caddyfile
       CADDYFILE_TEMPLATE:     /srv/caddy/Caddyfile.tpl
       # Where the daemon's own JSON-over-unix-socket lives.
@@ -558,9 +556,3 @@ networks:
   ct-data:
     driver: bridge
     internal: true
-
-  # v0.2.0: dropped the `ct-clash` management-plane network when
-  # sing-box was retired. The orphan `ipam:` block that used to sit
-  # here was removed in v0.3.0 — it was malformed-but-tolerated YAML
-  # since the parent network definition was already gone. No
-  # functional change; just deleting the stale config block.

@@ -1,190 +1,60 @@
 # Architecture
 
-Cool Tunnel Server is a **three-layer stack** that mirrors the
-Cool Tunnel client's three-layer stack one-to-one:
+Cool Tunnel Server is a five-service stack:
 
-|  | UI tier | Glue tier (cross-platform Rust) | TLS / ACME | Anti-tracking engine |
-| --- | --- | --- | --- | --- |
-| **Server** | Filament 3 (PHP / Laravel) | `ct-server-core` (Rust) + shared `ct-protocol` | Caddy 2 (stock; ACME-only) | sing-box (`naive` inbound, GPL-3.0) |
-| **macOS client (today)** | SwiftUI + AppKit | `cool-tunnel-core` (Rust) | (system trust store) | Bundled `naive` Mach-O |
-| **Future iOS / Android / Windows / Linux desktop clients** | Per-platform native | Same `ct-protocol` + per-platform `ct-client-core` | (system trust store) | Per-platform `naive` |
+| Service | Role |
+| --- | --- |
+| `caddy` | Public `:80`/`:443` front door. Handles ACME for `PANEL_DOMAIN` and uses `mholt/caddy-l4` to split TLS by SNI. |
+| `singbox` | VLESS + Reality proxy engine. Reads `/data/config/singbox.json` and is supervised by `singbox-core`. |
+| `panel` | Laravel + Filament admin UI, subscription endpoint, scheduler, queue worker, and `ct-server-core` daemon. |
+| `db` | MariaDB state: config, accounts, admins, and app data. |
+| `redis` | Cache, sessions, queues, and revocation/reload pub/sub. |
 
-**Why Caddy is in the diagram:** sing-box ships its own ACME
-implementation, but it lacks Caddy's CertMagic-grade reliability —
-no multi-challenge fallback, terser error messages, smaller community.
-For an operator deploying to a fresh VPS, "ACME just works" is worth
-its own container. Caddy here is **stock, no plugins** (the historical
-`forwardproxy` plugin is gone — see `CHANGELOG.md` for the v0.0.2 pivot).
-Caddy only manages the TLS cert and writes it to a shared volume;
-sing-box reads from that volume and does the actual TLS termination
-+ proxying on `:443`.
+## Front Door
 
-The two horizontal lines that connect every row are:
+```text
+:80
+  caddy
+    ACME HTTP-01 for PANEL_DOMAIN
+    HTTP -> HTTPS redirects
 
-1. **`ct-protocol`** — the same Rust crate every client and the
-   server pull from. Defines `ProfileV1`, `SubscriptionManifestV1`,
-   the JSON wire format, and the **component manifest** schema.
-2. **NaiveProxy protocol** — HTTP/2 CONNECT over TLS, with the
-   probe-resistance + traffic-padding shape that makes it look like
-   plain HTTPS browsing. The server speaks it via sing-box's `naive`
-   inbound; clients speak it via the `naive` binary they bundle.
-   Same wire, two implementations of the same protocol.
-
-## Component-as-machine-part
-
-Every replaceable piece — sing-box, the Rust crates, the panel image,
-the database, the cache — is declared in `manifests/*.upstream.json`.
-The shape is defined once in `ct-protocol::components` so server and
-every Rust-cored client agree.
-
-Each component carries:
-
-- A pinned **version**.
-- An optional pinned **SHA-256** (binaries / images).
-- A **verify spec**: a command to run that proves the installed
-  artifact actually works, plus an expected substring or zero-exit.
-
-`ct-server-core component check` walks every manifest, runs each
-verifier, and prints an OK/NG line per component. Same data renders
-in the Filament *Components* page. The macOS client today uses the
-same pattern for its bundled `naive` via `naive.upstream.json` +
-`NaiveBinaryResolver`; it'll move under `ct-protocol`'s shared schema
-once we cut that integration.
-
-```
-                      ┌──────────────────────────────────────┐
-                      │  manifests/*.upstream.json            │
-                      │  ┌──────────────┐  ┌──────────────┐  │
-                      │  │ sing-box     │  │ naiveproxy   │  │
-                      │  │ ct-server-…  │  │ ct-protocol  │  │
-                      │  │ panel        │  │ mariadb      │  │
-                      │  │ redis        │  │ …            │  │
-                      │  └──────────────┘  └──────────────┘  │
-                      └──────────────────────────────────────┘
-                                        ▲
-                                        │ schema = ct_protocol::components
-                                        │
-            ┌────────────────────────────┼─────────────────────────────┐
-            │                            │                             │
-            ▼                            ▼                             ▼
-   ┌─────────────────┐         ┌─────────────────┐          ┌─────────────────┐
-   │ ct-server-core  │         │ Filament        │          │ Future client   │
-   │ component check │         │ Components page │          │ Components view │
-   │ (CLI + daemon)  │         │ (PHP)           │          │ (Rust + native) │
-   └─────────────────┘         └─────────────────┘          └─────────────────┘
+:443
+  caddy layer4 SNI splitter
+    SNI == PANEL_DOMAIN -> 127.0.0.1:8443 -> panel:9000
+    any other SNI       -> ct-singbox:443 -> VLESS + Reality
 ```
 
-## Inside the server box
+Caddy does not decrypt proxy traffic. Reality TLS terminates inside
+sing-box on the proxy path. The panel path terminates in Caddy's inner
+HTTPS listener and reverse-proxies to FrankenPHP on `panel:9000`.
 
-```
-                   ┌─────────────────────────────────────────────┐
-                   │             Filament admin (PHP)             │
-                   │   ProxyAccount / FakeWebsite / ServerConfig  │
-                   │   resources, Components page,                │
-                   │   subscription endpoint                      │
-                   └────────────────┬────────────────────────────┘
-                                    │ Process::spawn /
-                                    │ unix-socket JSON
-                   ┌────────────────▼────────────────────────────┐
-                   │           ct-server-core (Rust)              │
-                   │   singbox::render    admin::reload (clash)   │
-                   │   metrics::collect   quota::enforce          │
-                   │   probe::anti_tracking  components::check    │
-                   │   redis_bridge (Coalescer + pub/sub)         │
-                   └─────┬──────────────────────────────────┬────┘
-                         │                                  │
-            atomic write to                                 │ PUT /configs?path=…
-            /etc/sing-box/config.json                       │ (clash-API TCP, 9090)
-                         ▼                                  │
-                   ┌──────────────────────────────────┐    │
-                   │           sing-box                 │◀──┘
-                   │   naive inbound { users }          │
-                   │   tls { cert+key from              │
-                   │     /data/caddy/certificates/... } │
-                   │   listen :443 (h2)                 │
-                   └──────────────────────────────────┘
-                         ▲
-                         │ TLS:443
-                         │
-              ┌──────────┴────────────┐
-              │  Cool Tunnel client    │
-              │  (any platform)        │
-              │  → naive (CONNECT)     │
-              └────────────────────────┘
+## Render And Reload
 
-(The panel container — FrankenPHP (Caddy + PHP in-process) +
-Laravel Octane workers + Filament + the ct-server-core daemon
-under supervisord — is reachable via the loopback host port-map
-at 127.0.0.1:9000 only; there is no `:443` SNI fallback to it
-from sing-box at v1.13.11. See `docs/design/sni-router-v0.1.md`
-for the deferred public cover-site path under R1-1.)
+- The panel writes sing-box input from DB state.
+- `singbox-core render-server` renders `/data/config/singbox.json`.
+- `ct-singbox` watches that file and respawns sing-box when it changes.
+- `ct-server-core caddyfile render` renders `/etc/caddy/Caddyfile`.
+- `ct update` reloads Caddy from the host-side operator.
+
+There is no clash API or HAProxy reload path in the current runtime.
+
+## Component Manifests
+
+Every replaceable runtime part is pinned under
+`manifests/*.upstream.json`. `ct-server-core component check
+--manifests /srv/manifests` runs the verifier for each manifest and
+prints an OK/NG table. `ct update`, `ct doctor`, and the panel
+Components page all use that contract.
+
+## Client Contract
+
+Clients consume the subscription manifest from:
+
+```text
+https://<PANEL_DOMAIN>/api/v1/subscription/<token>
 ```
 
-### What runs where
-
-- **`sing-box` container** — sing-box with the `naive` inbound.
-  Multi-user `users` array (cleartext passwords from the panel,
-  decrypted at render time). Built-in ACME on :80; TLS-terminating
-  HTTP/2 CONNECT on :443. There is no `:443` SNI fallback at
-  v1.13.11 (upstream schema gap, tracked under R1-1; design seed
-  at `docs/design/sni-router-v0.1.md`). The clash-API HTTP listener
-  is bound to `172.30.0.10:9090` on the internal-only `ct-clash`
-  docker network (the static IP is configurable via
-  `CT_CLASH_SINGBOX_IP`; the bind is rendered into sing-box's
-  config at `clash-api`). Network membership IS the security
-  boundary here: only the `panel` container is on `ct-clash`, so
-  caddy / haproxy / db / redis cannot reach the management
-  endpoint even though it answers to a docker-routable address.
-  This is what `ct-server-core` PUTs `/configs?force=true&path=…`
-  to for hot reloads. (H3 audit 2026-05-04 hardened this past the
-  earlier "0.0.0.0:9090, docker-bridge-only" model.)
-- **`panel` container** — FrankenPHP (Caddy + PHP 8.4 in one
-  process) + Laravel Octane in worker mode + Laravel + Filament,
-  plus a copy of the `ct-server-core` Rust binary on PATH and the
-  ct-server-core daemon running under supervisord. The PHP services
-  in `app/Services/` are thin shell-outs to the Rust binary; the
-  Rust daemon owns the Redis pub/sub subscription with the burst
-  Coalescer. Worker mode keeps Laravel booted in long-lived
-  workers between requests — the panel "Save → reload" round-trip
-  drops by the boot cost (~30-50 ms) per cycle vs. classic
-  request-scoped FPM.
-- **`db` container** — MariaDB. Stores everything: proxy accounts
-  (incl. encrypted cleartext passwords), fake-site templates, server
-  config, traffic rollups, panel admins.
-- **`redis` container** — cache, sessions, queue, and the
-  `cool_tunnel:revocations` pub/sub channel.
-
-## Why split UI / glue / engine three ways
-
-Each layer has a different change cadence:
-
-| Layer | Change cadence | Driven by |
-| --- | --- | --- |
-| **UI** | Daily | Operator preferences, new admin features |
-| **Rust glue** | Weekly to monthly | Wire-format changes, new diagnostic probes |
-| **NaiveProxy engine (sing-box)** | Tied to upstream releases | Censorship-resistance research |
-
-Mixing them in one process means an upstream sing-box rev bump
-forces you to redeploy your UI. The split lets each piece move on
-its own schedule, with the **component manifests** giving you a
-machine-readable record of what version of each piece you're
-running and a one-line OK/NG check before you trust it.
-
-## How a client uses this
-
-A future `ct-client-core` (any platform) would:
-
-1. Pull `ct-protocol` as a Cargo dep.
-2. Use `ProfileV1::parse` to validate user-pasted URLs.
-3. Use `SubscriptionManifestV1` to deserialize the JSON the panel
-   serves at `/api/v1/subscription/<token>` and verify its
-   `X-CT-Signature` header.
-4. Use `ComponentManifestV1` to render its own *Components* tab
-   with the local `naive` binary and the local Rust core checked
-   the same way the server checks its own components.
-5. Speak NaiveProxy (HTTP/2 CONNECT) to the server's :443 — same
-   wire as today, regardless of whether the server is sing-box,
-   forwardproxy-on-Caddy, or some future implementation.
-
-Nothing client-side has to know any PHP exists. The protocol crate
-is the contract; everything else is implementation detail.
+The manifest carries the server host, port, VLESS UUID, Reality public
+key, short IDs, and the sing-box version pin. The shared Rust protocol
+crate defines the manifest schema so server and clients agree on the
+wire format.

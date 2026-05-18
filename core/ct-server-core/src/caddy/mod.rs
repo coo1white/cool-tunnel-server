@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Caddyfile rendering (v0.3.0+ — static template).
+//! Caddyfile rendering.
 //!
-//! v0.3.0 reduced Caddy's role to three jobs: ACME, layer4 SNI
-//! routing on :443, and an inner :8443 HTTPS panel reverse-proxy.
-//! The naive forward-proxy role moved to a sibling ct-naive
-//! container. As a side effect, the Caddyfile has NO per-account
-//! data — it's a function of `ServerConfig` only (`Domain`,
-//! `PanelDomain`, `AcmeEmail`, `AcmeDirectory`). The dynamic
-//! `basic_auth` rendering that lived here in v0.2.x is gone.
+//! Caddy's role is ACME for the panel domain, layer4 SNI routing on
+//! :443, and an inner :8443 HTTPS panel reverse-proxy. Proxy traffic
+//! is forwarded untouched to ct-singbox, where Reality TLS terminates.
+//! The Caddyfile has no per-account data; it is a function of
+//! `ServerConfig` plus `PanelDomain`.
 //!
 //! Practical consequences:
 //!   - `render()` no longer reads the `proxy_accounts` table.
@@ -32,10 +30,8 @@ pub struct CaddyRenderOutcome {
     pub bytes: usize,
     pub hash: String,
     pub changed: bool,
-    /// v0.2.x reported the `basic_auth` account count baked into the
-    /// rendered Caddyfile; v0.3.0+ the Caddyfile carries no
-    /// per-account data, so this stays as 0 here. The accurate
-    /// field remains for PHP-side compatibility.
+    /// The Caddyfile carries no per-account data, so this stays 0.
+    /// The field remains for PHP-side compatibility.
     pub active_users: usize,
 }
 
@@ -251,23 +247,21 @@ mod tests {
         // Inner panel site block.
         assert!(body.contains("https://panel.proxy.example.com:8443"));
         assert!(body.contains("reverse_proxy panel:9000"));
-        // v0.4.0: NO proxy-domain ACME cert anymore — Reality replaces
-        // ACME on the proxy path. The v0.3.x cert-acquisition stub
-        // for naive.<DOMAIN> is intentionally absent.
+        // No proxy-domain ACME cert: Reality handles the proxy path.
         assert!(!body.contains("https://proxy.example.com:8443"));
         // No v0.2.x forward_proxy / probe_resistance / basic_auth.
         assert!(!body.contains("forward_proxy"));
         assert!(!body.contains("probe_resistance"));
         assert!(!body.contains("basic_auth"));
-        // No v0.3.x ct-naive routing either.
+        // No retired ct-naive routing either.
         assert!(!body.contains("ct-naive"));
     }
 
     // PHP-side reader is panel/app/Services/CaddyfileGenerator.php:
     // reads `$out['changed']` + `$out['hash']` with `?? <default>`.
     // active_users stays in the JSON for compat with the Filament
-    // components page, but is always 0 in v0.3.0+ (the real account
-    // count comes from the naive renderer).
+    // components page, but is always 0 because Caddy has no
+    // per-account data.
     #[test]
     fn render_outcome_json_pins_php_visible_keys() {
         let out = CaddyRenderOutcome {

@@ -32,11 +32,11 @@ test("parseArgs accepts singbox", () => {
 });
 
 test("parseArgs preserves passthrough args after singbox", () => {
-    const r = parseArgs(["bun", "operator", "render", "singbox", "--if-changed", "--reload"]);
+    const r = parseArgs(["bun", "operator", "render", "singbox", "--if-changed"]);
     expect(typeof r).toBe("object");
     if (typeof r !== "object") return;
     expect(r.target).toBe("singbox");
-    expect(r.passthrough).toEqual(["--if-changed", "--reload"]);
+    expect(r.passthrough).toEqual(["--if-changed"]);
 });
 
 test("parseArgs filters operator-global flags from passthrough", () => {
@@ -61,8 +61,9 @@ test("parseArgs rejects unknown target", () => {
 test("parseArgs friendly-rejects retired v0.1.x targets (haproxy)", () => {
     const r = parseArgs(["bun", "operator", "render", "haproxy"]);
     expect(typeof r).toBe("string");
-    expect(r as string).toContain("retired in v0.2.0");
-    expect(r as string).toContain("Use: render caddyfile");
+    expect(r as string).toContain("retired");
+    expect(r as string).toContain("caddyfile");
+    expect(r as string).toContain("singbox");
 });
 
 test("parseArgs errors when render verb missing from argv", () => {

@@ -51,7 +51,7 @@ Sched::command('singbox:render --if-changed')->everyFiveMinutes()
     ->onFailure($logFailure('singbox:render'));
 
 // Self-probe canary — DoH-resolve apex + TCP-connect to
-// haproxy:443; result writes to ServerConfig.self_probe_history
+// caddy:443; result writes to ServerConfig.self_probe_history
 // for the panel to surface as a "last N failed" banner (operator-
 // facing context: docs/going-to-china.md).
 //

@@ -6,7 +6,7 @@
 //!   1. Reads ServerConfig.{domain, doh_resolver}.
 //!   2. DoH-resolves `domain` IN A through the operator's chosen
 //!      resolver (shared `util::doh` helper). Asserts ≥1 answer.
-//!   3. TCP-connects to docker-internal `haproxy:443` (the SNI
+//!   3. TCP-connects to docker-internal `caddy:443` (the SNI
 //!      router's listening port).
 //!   4. Atomically appends the result to
 //!      `server_configs.self_probe_history` (JSON column, trimmed
@@ -41,7 +41,7 @@ use tokio::time::timeout;
 /// `canary status` operator inspection without growing the column.
 const MAX_HISTORY: usize = 10;
 
-/// TCP-connect timeout for the docker-internal haproxy probe.
+/// TCP-connect timeout for the docker-internal Caddy probe.
 const TCP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Semantic contract for the canary probe boundary.
@@ -58,7 +58,7 @@ const TCP_TIMEOUT: Duration = Duration::from_secs(5);
 #[doc(alias = "self-probe-contract")]
 const CANARY_PROBE_CONTRACT: SemanticContract = SemanticContract::new(
     "canary-self-probe-v1",
-    "scheduled DoH plus docker-internal haproxy TCP probe",
+    "scheduled DoH plus docker-internal caddy TCP probe",
     "Record the canary result before propagating failure so UI, CLI, and scheduler all converge on the same observed state.",
     RecoveryScope::Request,
     PRINCIPLE_LOCAL_RECOVERY,
@@ -86,7 +86,7 @@ const CANARY_HISTORY_CONTRACT: SemanticContract = SemanticContract::new(
 ///
 /// Implementations must not write history themselves. Separating measurement
 /// from persistence lets AI-generated tests inject deterministic success and
-/// failure outcomes without a live DoH resolver or haproxy container.
+/// failure outcomes without a live DoH resolver or Caddy container.
 #[doc(alias = "rag-canary-probe-contract")]
 #[doc(alias = "consensus-alignment-contract")]
 trait CanaryProbe: ContractBoundary {
@@ -101,7 +101,7 @@ trait CanaryHistoryStore: ContractBoundary {
     async fn append(&self, entry: &CanaryEntry) -> Result<()>;
 }
 
-/// Production canary signal: DoH A lookup plus TCP connect to haproxy.
+/// Production canary signal: DoH A lookup plus TCP connect to Caddy.
 struct DockerNetworkCanary;
 
 impl ContractBoundary for DockerNetworkCanary {
@@ -278,11 +278,11 @@ async fn run_probe(domain: &str, doh_url: &str) -> std::result::Result<(), Strin
         { otel_key::NETWORK_TRANSPORT } = "tcp",
         { otel_key::NETWORK_PROTOCOL_NAME } = "tcp",
         { otel_key::RPC_SYSTEM } = "ct-canary",
-        { otel_key::URL_PATH } = "haproxy:443",
+        { otel_key::URL_PATH } = "caddy:443",
         { otel_key::CT_STATUS_CODE } = tracing::field::Empty,
     );
     let _span_guard = span.enter();
-    let tcp_result = timeout(TCP_TIMEOUT, TcpStream::connect("haproxy:443")).await;
+    let tcp_result = timeout(TCP_TIMEOUT, TcpStream::connect("caddy:443")).await;
     match tcp_result {
         Ok(Ok(_stream)) => {
             span.record(otel_key::CT_STATUS_CODE, "ok");
@@ -293,12 +293,12 @@ async fn run_probe(domain: &str, doh_url: &str) -> std::result::Result<(), Strin
         }
         Ok(Err(e)) => {
             span.record(otel_key::CT_STATUS_CODE, "connect_error");
-            return Err(format!("TCP connect to haproxy:443 failed: {e}"));
+            return Err(format!("TCP connect to caddy:443 failed: {e}"));
         }
         Err(_) => {
             span.record(otel_key::CT_STATUS_CODE, "timeout");
             return Err(format!(
-                "TCP connect to haproxy:443 timed out after {TCP_TIMEOUT:?}"
+                "TCP connect to caddy:443 timed out after {TCP_TIMEOUT:?}"
             ));
         }
     }

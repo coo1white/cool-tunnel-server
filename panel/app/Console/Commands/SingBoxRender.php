@@ -17,19 +17,11 @@ use Illuminate\Console\Command;
  * cert-mtime folded in), so running this in a tight loop is safe
  * and cheap. ct-singbox's supervisor watches the rendered file and
  * restarts sing-box when the file changes.
- *
- * v0.0.10 and earlier: this file was a copy of CaddyfileRender.php
- * and declared `class CaddyfileRender`, which collided with the
- * actual CaddyfileRender.php at Laravel boot ("Cannot declare
- * class App\Console\Commands\CaddyfileRender, because the name is
- * already in use"). Fixed by giving this file the class it should
- * have always had.
  */
 class SingBoxRender extends Command
 {
     protected $signature = 'singbox:render
-                            {--if-changed : Compatibility option; rendering is always hash-idempotent}
-                            {--reload     : Compatibility no-op; file-watch handles reloads}';
+                            {--if-changed : Accepted for scheduler/operator calls; rendering is always hash-idempotent}';
 
     protected $description = 'Render the sing-box config from the DB';
 

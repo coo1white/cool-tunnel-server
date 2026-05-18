@@ -54,11 +54,11 @@ high, **90 days** for medium / low.
 
 | Category | Examples |
 | --- | --- |
-| **Auth bypass** | Sneaking past basic_auth on the naive inbound; bypassing the panel admin login |
+| **Auth bypass** | Bypassing VLESS UUID auth; bypassing the panel admin login |
 | **Privilege escalation** | A proxy user reaching the Filament admin or DB; a `viewer`-role admin bypassing `User::canAccessPanel()` |
 | **Credential disclosure** | Cleartext password leak via tracing, logs, error responses; subscription HMAC tokens persisted in any log file |
 | **Memory safety** | Anything reachable from untrusted input that triggers UB in Rust (we `forbid(unsafe_code)`) |
-| **Cryptographic weakness** | Wrong AEAD nonce reuse, weak HMAC verification, broken cert pinning, deterministic clash-API bearer derivation |
+| **Cryptographic weakness** | Wrong AEAD nonce reuse, weak HMAC verification, broken cert pinning, weak Reality key handling |
 | **Supply-chain integrity** | A pinned manifest's verifier passing on a tampered binary |
 | **Denial-of-service** | An unauthed CONNECT or panel request that takes down sing-box / panel / db |
 | **Information leak via probe** | An unauthed probe that fingerprints us as a proxy despite probe-resistance settings |
@@ -69,7 +69,6 @@ high, **90 days** for medium / low.
 | Category | Why |
 | --- | --- |
 | Operator misconfiguration | The `.env` file is the operator's responsibility (passwords, DOMAIN, etc.) |
-| Issues in the upstream NaiveProxy protocol | Report to klzgrad/naiveproxy |
 | Issues in sing-box itself | Report to SagerNet/sing-box |
 | Issues in the macOS client | Report to coo1white/cool-tunnel |
 | Censorship-system specific fingerprinting that requires a known censor's cooperation | This is research, not a vulnerability |
@@ -121,22 +120,12 @@ The server ships with:
   (v0.0.13 + v0.0.14): per-(email|ip), per-ip, and per-email —
   defeating both single-email IP-rotation and single-IP
   email-rotation brute-force shapes.
-- **Three internal-only docker networks** isolate the management
-  surface from the proxy data plane (v0.0.13 introduced
-  `ct-clash`): `ct-data` (db + redis), `ct-clash` (panel ↔
-  sing-box clash-API — caddy is deliberately NOT a member), and
-  `ct-net` (the public-facing leg). A compromised caddy cannot
-  reach the management plane; a compromised db cannot phone home.
-  The `ct-clash` subnet is operator-tunable via `CT_CLASH_SUBNET`
-  / `CT_CLASH_SINGBOX_IP` for collision recovery (v0.0.14).
-- **Per-install random clash-API bearer**: derived from
-  `sha256("ct-clash-secret-v1:" || CT_CLASH_SECRET_SEED)`; install
-  generates the seed from `/dev/urandom` on first boot. Rotating
-  the seed invalidates any captured bearer.
+- **Network isolation**: `ct-net` carries the public-facing Caddy,
+  panel, and sing-box traffic; `ct-data` is internal-only for db,
+  redis, and panel. A compromised db or redis cannot phone home.
 - **Refuse-to-boot guards** on missing `APP_KEY` (subscription
-  endpoint) and missing `CT_CLASH_SECRET_SEED` (clash-API
-  rendering) — fail-loud with a remediation hint rather than
-  silently falling back to a deterministic default.
+  endpoint) — fail-loud with a remediation hint rather than silently
+  falling back to a deterministic default.
 - **`DB::afterCommit` semantics on every `ProxyAccount` save +
   delete** (v0.0.15). A rolled-back transaction never leaves a
   Redis ghost-revocation flag or a phantom queued reload — the

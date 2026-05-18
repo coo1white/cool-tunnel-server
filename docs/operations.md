@@ -80,12 +80,9 @@ What `ct update` does, in plain terms:
 6. **Brings up** the new panel image and waits for the entrypoint
    sentinel.
 7. **Runs migrations** (no-op if nothing pending).
-8. **Re-renders** sing-box config; asserts `db = rendered = manifest =
-   mac-config` credential-lock invariant (refuses to proceed on drift,
-   without printing passwords).
-9. **Restarts** sing-box for a clean state purge.
-10. **SIGHUPs** HAProxy for a graceful re-exec.
-11. **Component check** on the post-swap runtime; reports any NG with
+8. **Re-renders** the Caddyfile and reloads Caddy from the host-side
+   operator.
+9. **Component check** on the post-swap runtime; reports any NG with
     a named component and per-component log-tail recipe.
 
 ✅ **Good**: ends with `✓ Update complete.` and `ct doctor` afterward
@@ -130,10 +127,8 @@ Creates `backups/cool-tunnel-<UTC-timestamp>.tar.gz` containing:
 
 - MariaDB dump (full schema + data)
 - The `caddy_data` Docker volume (ACME certificates + private keys)
-- The `haproxy_admin` volume
 - Your `.env` (with all secrets)
-- The current sing-box config template
-- The current Caddyfile template
+- The manifest set and render templates
 
 The tarball is mode 0600 by default. Two important things:
 
@@ -203,7 +198,7 @@ docker compose logs --tail=200 panel \
   | grep -iE 'error|fatal|critical|warn'
 ```
 
-Replace `panel` with one of: `singbox`, `caddy`, `haproxy`, `db`, `redis`.
+Replace `panel` with one of: `singbox`, `caddy`, `db`, `redis`.
 
 Quick triage rules:
 
@@ -212,8 +207,9 @@ Quick triage rules:
   log.
 - **502 from the panel domain** → Caddy can't reach FrankenPHP. Check
   panel container is running (`docker compose ps panel`).
-- **Subscription URLs don't reach sing-box** → SNI router misroute.
-  Check `docker compose logs haproxy`.
+- **Subscription URLs don't reach sing-box** → Caddy SNI routing or
+  sing-box startup issue. Check `docker compose logs caddy` and
+  `docker compose logs singbox`.
 - **Cert errors in browser** → Caddy ACME failure. Check
   `docker compose logs caddy | grep -iE 'acme|cert'`.
 
@@ -353,17 +349,14 @@ For operators who want to understand the exact sequence:
 3. `git pull --ff-only` to the latest tag on `main`.
 4. Auto-migrates legacy `.env` shape (PANEL_DOMAIN placement, APP_URL
    hostname) if needed; idempotent on already-canonical files.
-5. Rebuilds the Rust core + panel + sing-box + HAProxy images.
+5. Rebuilds the Rust core + caddy + panel + sing-box images.
    Subsequent runs hit the BuildKit cache and finish in seconds.
 6. Brings the new panel image up and waits for the entrypoint
    sentinel.
 7. Runs Laravel migrations (no-op if nothing pending).
-8. Re-renders sing-box config; asserts `ct-server-core guard
-   credential-lock` (`db = rendered = manifest = mac-config`) —
-   refuses to proceed on drift, without printing passwords.
-9. Restarts sing-box for a clean state purge.
-10. SIGHUPs HAProxy for a graceful re-exec.
-11. Component check on the post-swap runtime.
+8. Re-renders the Caddyfile and reloads Caddy from the host-side
+   operator.
+9. Component check on the post-swap runtime.
 
 If anything fails mid-update, the `flock` auto-releases on script
 exit and the whole script is idempotent — just re-run `ct update`.

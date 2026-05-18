@@ -12,21 +12,19 @@
 //   2.  IPv6 broken-route advisory (auto-disable handled in bootstrap.sh)
 //   3.  acquireOpLock (per-project flock; re-execs self under flock)
 //   4.  Pre-flight: .env (existence, 0600 mode, bcrypt-hash scan, value sanity)
-//   5.  Cross-validate CT_CLASH_SUBNET ↔ CT_CLASH_SINGBOX_IP
-//   6.  Generate CT_CLASH_SECRET_SEED on first run
-//   7.  Pre-flight: clone freshness vs origin/main (interactive)
-//   8.  Pre-flight: leftover Docker state from prior attempt (interactive)
-//   9.  Build ct-server-core (release / release-small profile)
-//  10.  Build caddy / singbox / panel images
-//  11.  Start db + redis; wait for MariaDB healthcheck
-//  12.  Start panel; wait for entrypoint sentinel; verify migrations + seed
-//  13.  Re-render Caddyfile + singbox.json from the seeded DB
-//  14.  Pre-flight: DNS A-records + port-80 reachability for ACME
-//  15.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
-//  16.  Verify singbox
-//  17.  Create the first Filament admin user (interactive ct:make-admin)
-//  18.  Strict component check
-//  19.  Print success banner
+//   5.  Pre-flight: clone freshness vs origin/main (interactive)
+//   6.  Pre-flight: leftover Docker state from prior attempt (interactive)
+//   7.  Build ct-server-core (release / release-small profile)
+//   8.  Build caddy / singbox / panel images
+//   9.  Start db + redis; wait for MariaDB healthcheck
+//  10.  Start panel; wait for entrypoint sentinel; verify migrations + seed
+//  11.  Re-render Caddyfile + singbox.json from the seeded DB
+//  12.  Pre-flight: DNS A-records + port-80 reachability for ACME
+//  13.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
+//  14.  Verify singbox
+//  15.  Create the first Filament admin user (interactive ct:make-admin)
+//  16.  Strict component check
+//  17.  Print success banner
 
 import { spawnSync } from "node:child_process";
 import { $, capture, runStreaming, which } from "./src/util/sh";
@@ -149,6 +147,7 @@ async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
         warn("ACME_EMAIL is still the placeholder; Let's Encrypt sends renewal warnings to it");
     }
     requireEnv(env, "DB_PASSWORD", "openssl rand -base64 32 # paste into .env DB_PASSWORD=");
+    requireEnv(env, "DB_ROOT_PASSWORD", "openssl rand -base64 32 # paste into .env DB_ROOT_PASSWORD=");
     requireEnv(env, "REDIS_PASSWORD", "openssl rand -base64 32 # paste into .env REDIS_PASSWORD=");
 
     // PANEL_DOMAIN gate (v0.0.33 R1-1/R1-2): default to panel.${DOMAIN}
@@ -170,35 +169,6 @@ async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
         if (!(await promptYn("Continue anyway (e.g. for local docker-only testing)?", "n"))) {
             die("aborted on placeholder PANEL_DOMAIN", "edit .env");
         }
-    }
-
-    // Cross-validate CT_CLASH_SUBNET vs CT_CLASH_SINGBOX_IP (v0.0.17
-    // DX win from loop-3 audit). Both default values share the same
-    // /24 prefix; operators who override one must update both.
-    const subnet = get("CT_CLASH_SUBNET");
-    const singboxIp = get("CT_CLASH_SINGBOX_IP");
-    if (subnet && singboxIp) {
-        const subnetPrefix = subnet.replace(/\.\d+\/\d+$/, "");
-        const ipPrefix = singboxIp.replace(/\.\d+$/, "");
-        if (subnetPrefix !== ipPrefix) {
-            die(
-                `CT_CLASH_SINGBOX_IP=${singboxIp} is not inside CT_CLASH_SUBNET=${subnet}`,
-                "edit .env so both lines share the first three octets, e.g. CT_CLASH_SUBNET=10.99.99.0/24 + CT_CLASH_SINGBOX_IP=10.99.99.10",
-            );
-        }
-    }
-
-    // R2-2 (audit 2026-05-04): generate CT_CLASH_SECRET_SEED on first
-    // run so the clash-API bearer derivation isn't publicly seeded
-    // from ACME_EMAIL (CT-log-recoverable).
-    if (!get("CT_CLASH_SECRET_SEED")) {
-        const r = await capture($`openssl rand -hex 32`);
-        if (!r.ok) die("openssl rand -hex 32 failed", r.stderr.trim());
-        const seed = r.stdout.trim();
-        await upsertEnvKey("CT_CLASH_SECRET_SEED", seed);
-        ok("generated CT_CLASH_SECRET_SEED (clash-API bearer seed; .env updated)");
-    } else {
-        ok("CT_CLASH_SECRET_SEED already set");
     }
 
     return {

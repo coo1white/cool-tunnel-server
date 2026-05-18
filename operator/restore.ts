@@ -5,7 +5,7 @@
 // Bring a fresh box up from a backup.ts/backup.sh tarball.
 // Companion to operator/backup.ts. Stages:
 //   1. Untar into tmp/restore
-//   2. Restore .env + manifests + render templates
+//   2. Restore .env + manifests + Caddy template
 //   3. compose up -d db redis; wait for DB healthy
 //   4. mariadb import the dump
 //   5. Restore caddy_data volume from caddy_data.tgz
@@ -100,20 +100,17 @@ export async function runRestore(backupPath: string): Promise<number> {
 
     // ---------- Stage 2 ----------
     step("Restore .env, manifests, templates");
-    // .env contains the operator's DOMAIN / *_PASSWORD /
-    // CT_CLASH_SECRET_SEED edits — without it sing-box won't
-    // render the same config and prior subscription tokens won't
-    // verify.
+    // .env contains the operator's DOMAIN / *_PASSWORD / APP_KEY edits.
+    // Without it the panel cannot decrypt stored data and subscription
+    // signatures will not verify.
     await capture($`cp tmp/restore/.env .env`);
     chmodSync(".env", 0o600);
     await capture($`cp -r tmp/restore/manifests .`);
-    // Templates: legacy backups (pre-round-9) may lack one or more;
-    // the in-tree post-update template is the correct fallback in
-    // that case, so the cp failures are non-fatal.
-    await capture($`cp tmp/restore/sing-box/config.json.tpl sing-box/config.json.tpl`);
+    // Template: legacy backups may lack it; the in-tree post-update
+    // template is the correct fallback in that case, so cp failure is
+    // non-fatal.
     await capture($`cp tmp/restore/caddy/Caddyfile.tpl caddy/Caddyfile.tpl`);
-    await capture($`cp tmp/restore/haproxy/haproxy.cfg.tpl haproxy/haproxy.cfg.tpl`);
-    ok(".env restored (mode 0600), manifests + templates in place");
+    ok(".env restored (mode 0600), manifests + Caddy template in place");
 
     // ---------- Stage 3 ----------
     const loaded = await loadDotenv([".env"]);
@@ -138,8 +135,8 @@ export async function runRestore(backupPath: string): Promise<number> {
     // mariadb client auto-reads MYSQL_PWD when no -p is given —
     // the secret never reaches `ps -ef` inside the container or
     // any host-side process collector. v0.0.17 hygiene.
-    const dbPw = env["MARIADB_ROOT_PASSWORD"] ?? "";
-    const dbName = env["MARIADB_DATABASE"] ?? "cooltunnel";
+    const dbPw = env["DB_ROOT_PASSWORD"] ?? "";
+    const dbName = env["DB_DATABASE"] ?? "cooltunnel";
     {
         const r = await capture(
             $`docker compose exec -T -e MYSQL_PWD=${dbPw} db mariadb -u root ${dbName} < tmp/restore/db.sql`,
@@ -226,10 +223,10 @@ Next:
   2. Confirm proxy: ./ct readiness
   3. Test subscription: curl one of the manifest URLs you had before
 
-If the restored .env had a different CT_CLASH_SECRET_SEED than the
-running stack expected (you ran restore mid-flight without first
-\`compose down\`), bearer mismatches will show up as panel→sing-box
-clash-API 401s — \`docker compose restart panel sing-box\` resolves it.
+If the restored .env differs from the environment the current
+containers booted with, recreate the stack so panel, Caddy, and
+sing-box all read the same values:
+  docker compose up -d --force-recreate
 `);
     return 0;
 }

@@ -8,8 +8,6 @@
 //   - caddy_data.tgz         caddy ACME state (cert + private keys)
 //   - .env                   secrets + tenant config
 //   - manifests/             release manifest set
-//   - sing-box/config.json.tpl, caddy/Caddyfile.tpl, haproxy/
-//     haproxy.cfg.tpl        render-input templates
 //
 // File mode is 0600 (operator-only) per the round-9 DR audit; the
 // tarball contains both APP_KEY and the encrypted password blobs —
@@ -53,9 +51,7 @@ async function dumpDatabase(env: Record<string, string>, dest: string): Promise<
 async function snapshotCaddyData(volumeName: string, destInTmp: string): Promise<void> {
     step("Snapshot caddy_data volume (ACME certificates + private keys)");
     // Quiesce caddy first — a cert renewal completing mid-tar would
-    // land a half-written *.crt or *.key in the archive. Proxy
-    // traffic on :443 is unaffected (sing-box serves the in-memory
-    // cert until next reload).
+    // land a half-written *.crt or *.key in the archive.
     const wasRunning = await serviceRunning("caddy");
     if (wasRunning) {
         await capture($`docker compose stop caddy`);
@@ -75,12 +71,8 @@ async function snapshotCaddyData(volumeName: string, destInTmp: string): Promise
 
 async function bundleTarball(outPath: string): Promise<void> {
     step(`Bundle into ${outPath}`);
-    // haproxy/haproxy.cfg.tpl added in round 9 — pre-fix backup
-    // missed it; restore would silently fall back to the
-    // post-update tree's template. All three render-input
-    // templates are now captured.
     const r = await capture(
-        $`tar -czf ${outPath} -C tmp db.sql caddy_data.tgz -C .. .env manifests sing-box/config.json.tpl caddy/Caddyfile.tpl haproxy/haproxy.cfg.tpl`,
+        $`tar -czf ${outPath} -C tmp db.sql caddy_data.tgz -C .. .env manifests caddy/Caddyfile.tpl`,
     );
     if (!r.ok) {
         die(`tar bundle failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
@@ -99,8 +91,8 @@ export async function runBackup(): Promise<number> {
     process.umask(0o077);
 
     // Resolve cwd to repo root so relative paths (.env, manifests,
-    // sing-box/, caddy/, haproxy/) resolve correctly when invoked
-    // from anywhere. `ensureRepoRoot` is /$bunfs-safe; see its
+    // caddy/) resolve correctly when invoked from anywhere.
+    // `ensureRepoRoot` is /$bunfs-safe; see its
     // docstring for the dev-vs-compiled-binary detection.
     ensureRepoRoot(import.meta.url);
 

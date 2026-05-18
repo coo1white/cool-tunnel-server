@@ -7,7 +7,7 @@
 //! `PANEL_DOMAIN`-or-fallback-to-`panel.<DOMAIN>` derivation. v0.0.51,
 //! v0.0.53, and v0.0.54 each fixed one site; this module collapses
 //! the derivation into a single function that all in-tree Rust
-//! callers (haproxy renderer, caddy renderer, CLI helpers) and PHP
+//! callers (Caddy renderer, CLI helpers) and PHP
 //! callers (via panel/config/cool-tunnel.php::panel_domain, mirrored
 //! shape) read from.
 //!
@@ -49,8 +49,8 @@ pub fn panel_domain_from(panel_domain_env: &str, domain_env: &str) -> Result<Str
 }
 
 /// Read the two env vars and resolve. Used by every Rust callsite
-/// that needs the panel hostname — CLI subcommands, the haproxy
-/// renderer's caller, the caddy renderer's caller.
+/// that needs the panel hostname — CLI subcommands and the Caddy
+/// renderer's caller.
 pub fn panel_domain() -> Result<String> {
     panel_domain_from(
         std::env::var("PANEL_DOMAIN").unwrap_or_default().as_str(),
@@ -106,9 +106,8 @@ mod tests {
     fn both_empty_fails_fast() {
         // The fail-fast contract per the Cycle 3 operator directive:
         // never silently produce "panel." (with an empty base) — that
-        // would route to a malformed URL and surface as a runtime
-        // render failure or a 0-byte hostname in haproxy.cfg. Loud
-        // error at resolve time is the right operator-feedback shape.
+        // would route to a malformed URL. Loud error at resolve time
+        // is the right operator-feedback shape.
         // Match-on-Result rather than `unwrap_err()` to keep the
         // workspace's `clippy::unwrap_used = deny` lint happy.
         let msg = match panel_domain_from("", "") {
