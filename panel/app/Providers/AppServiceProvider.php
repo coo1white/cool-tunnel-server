@@ -12,14 +12,12 @@ use App\Contracts\CtServerCoreInterface;
 use App\Contracts\RevocationBusInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Contracts\SingboxPinReaderInterface;
-use App\Contracts\SingBoxReloaderInterface;
 use App\Services\CaddyfileGenerator;
 use App\Services\ComponentChecker;
 use App\Services\CtServerCore;
 use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
 use App\Services\SingboxPinReader;
-use App\Services\SingBoxReloader;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -53,7 +51,6 @@ class AppServiceProvider extends ServiceProvider
         // exactly one renderer, and capital-B is the canonical name
         // throughout consumers + tests.
         SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
-        SingBoxReloaderInterface::class => SingBoxReloader::class,
         CaddyfileGeneratorInterface::class => CaddyfileGenerator::class,
         // v0.4.0+ — splices the pinned sing-box upstream tag into
         // SubscriptionController's server_singbox_pin block. Reads
@@ -71,7 +68,6 @@ class AppServiceProvider extends ServiceProvider
         // resolving by class name continue to work without churn.
         $this->app->singleton(CtServerCore::class);
         $this->app->singleton(SingBoxConfigGenerator::class);
-        $this->app->singleton(SingBoxReloader::class);
         $this->app->singleton(CaddyfileGenerator::class);
         $this->app->singleton(SingboxPinReader::class);
         $this->app->singleton(ComponentChecker::class);

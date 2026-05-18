@@ -9,6 +9,8 @@
 // Usage:
 //   ct-operator render caddyfile [--if-changed]
 //   ct-operator render singbox [--if-changed] [--reload]
+//     --reload is accepted by the panel as a compatibility no-op;
+//     ct-singbox's supervisor watches the rendered file.
 
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";

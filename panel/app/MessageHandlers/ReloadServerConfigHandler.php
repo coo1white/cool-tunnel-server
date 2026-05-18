@@ -8,7 +8,6 @@ namespace App\MessageHandlers;
 
 use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
-use App\Contracts\SingBoxReloaderInterface;
 use App\Messages\ReloadServerConfig;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
@@ -21,10 +20,7 @@ use Symfony\Component\Messenger\Attribute\AsMessageHandler;
  *   1. Render the Caddyfile (still mostly-static — only Domain /
  *      PanelDomain / ACME email / ACME directory live in there).
  *      A domain/email change re-renders cleanly; hash-idempotent.
- *   2. If the Caddyfile changed, reload Caddy (legacy
- *      SingBoxReloader::reload() interface that now shells to
- *      caddy-reload).
- *   3. Render /data/config/singbox.json via SingBoxConfigGenerator
+ *   2. Render /data/config/singbox.json via SingBoxConfigGenerator
  *      (shells to `singbox-core render-server`). A ServerConfig
  *      change can affect the Reality keypair / dest_host / domain
  *      embedded in the singbox config, so we always re-render.
@@ -40,16 +36,12 @@ final class ReloadServerConfigHandler
     public function __construct(
         private readonly CaddyfileGeneratorInterface $caddy,
         private readonly SingBoxConfigGeneratorInterface $singbox,
-        private readonly SingBoxReloaderInterface $reloader,
         private readonly LoggerInterface $logger,
     ) {}
 
     public function __invoke(ReloadServerConfig $message): void
     {
-        $caddyHash = $this->caddy->renderToFile();
-        if ($caddyHash !== null) {
-            $this->reloader->reload();
-        }
+        $this->caddy->renderToFile();
 
         $singboxHash = $this->singbox->renderToFile();
         if ($singboxHash === null) {

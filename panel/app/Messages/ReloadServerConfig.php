@@ -8,9 +8,9 @@ namespace App\Messages;
 
 /**
  * Request to re-render Caddyfile + sing-box config from the
- * current `ServerConfig` row and hot-reload sing-box if its
- * config changed. Caddy picks up the new file via its admin-API
- * file-watch path; no explicit reload call is needed.
+ * current `ServerConfig` row. ct-singbox's supervisor picks up
+ * the sing-box file change; the host-side operator owns explicit
+ * Caddy reloads during updates.
  *
  * Caddyfile render runs FIRST so the operator's "I changed the
  * panel domain" case lands the new TLS cert path before sing-

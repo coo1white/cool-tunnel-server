@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Redis;
 // One end of the revocation bridge: the Filament panel writes here
 // on every ProxyAccount or ServerConfig save / delete. The Rust
 // daemon (ct-server-core daemon) is subscribed on the other end and
-// re-renders Caddyfile + reloads Caddy on each message.
+// re-renders the live sing-box config on each message.
 //
 // Two surfaces, both backed by the same Redis instance the panel
 // already uses for cache + queue + sessions:
@@ -61,7 +61,7 @@ final class RedisRevocationBus implements RevocationBusInterface
         $this->publish(['kind' => 'server_config_changed']);
     }
 
-    /** Force a re-render + reload. Useful for the operator's "Sync now" button. */
+    /** Force a re-render. Useful for the operator's "Sync now" button. */
     public function announceResync(): void
     {
         $this->publish(['kind' => 'resync']);
@@ -100,9 +100,8 @@ final class RedisRevocationBus implements RevocationBusInterface
     {
         // Redis pub/sub is best-effort: if the daemon isn't listening
         // (or Redis is down), we don't want to fail the panel save.
-        // The panel already calls CaddyfileGenerator + CaddyReloader
-        // synchronously as a backstop, so a missed pub/sub costs at
-        // most one extra render+reload cycle.
+        // The panel already queues a render as a backstop, so a
+        // missed pub/sub costs at most one extra render cycle.
         try {
             Redis::publish(self::CHANNEL, json_encode($payload, JSON_UNESCAPED_SLASHES));
         } catch (\Throwable $e) {

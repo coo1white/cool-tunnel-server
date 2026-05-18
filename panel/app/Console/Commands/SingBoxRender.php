@@ -7,18 +7,16 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Services\SingBoxConfigGenerator;
-use App\Services\SingBoxReloader;
 use Illuminate\Console\Command;
 
 /**
  * `php artisan singbox:render` — write sing-box's config.json from
- * the panel's DB state, optionally hot-reload via the clash API.
+ * the panel's DB state.
  *
  * Idempotent. SingBoxConfigGenerator dedupes by SHA-256 (with
  * cert-mtime folded in), so running this in a tight loop is safe
- * and cheap. The scheduled task at every minute calls this with
- * --if-changed --reload, so a cert renewal flips the hash and
- * triggers exactly one reload.
+ * and cheap. ct-singbox's supervisor watches the rendered file and
+ * restarts sing-box when the file changes.
  *
  * v0.0.10 and earlier: this file was a copy of CaddyfileRender.php
  * and declared `class CaddyfileRender`, which collided with the
@@ -30,28 +28,22 @@ use Illuminate\Console\Command;
 class SingBoxRender extends Command
 {
     protected $signature = 'singbox:render
-                            {--if-changed : Only reload if the rendered file actually changed}
-                            {--reload     : Reload sing-box via clash API after a successful render}';
+                            {--if-changed : Compatibility option; rendering is always hash-idempotent}
+                            {--reload     : Compatibility no-op; file-watch handles reloads}';
 
-    protected $description = 'Render the sing-box config from the DB via ct-server-core (and optionally hot-reload sing-box)';
+    protected $description = 'Render the sing-box config from the DB';
 
-    public function handle(SingBoxConfigGenerator $gen, SingBoxReloader $reloader): int
+    public function handle(SingBoxConfigGenerator $gen): int
     {
         $newHash = $gen->renderToFile();
 
         if ($newHash === null) {
             $this->info('sing-box config unchanged');
-            if (! $this->option('if-changed') && $this->option('reload')) {
-                $reloader->reload();
-            }
 
             return self::SUCCESS;
         }
 
         $this->info("sing-box config rendered hash={$newHash}");
-        if ($this->option('reload')) {
-            $reloader->reload();
-        }
 
         return self::SUCCESS;
     }

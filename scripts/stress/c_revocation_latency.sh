@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # c_revocation_latency.sh — measure ms from "operator clicks
 # Disable" to "the user is removed from sing-box's loaded config"
-# via the Redis revocation bus + clash-API hot-reload.
+# via the Redis revocation bus + ct-singbox file-watch reload.
 #
 # The CHANGELOG claims ≤100 ms for this path (leading-edge fire +
 # trailing-flush coalescer; see core/ct-server-core/src/redis_bridge.rs
@@ -26,12 +26,10 @@
 #   5. Poll the rendered config file at 5 ms cadence. The daemon
 #      pipeline on a fired event is:
 #           render() — DB → users → atomic-write config.json
-#           reload() — clash-API PUT /configs?force=true&path=…
 #      We measure to the moment `stress-runner` is no longer in
 #      the rendered file: that's the "user is gone" instant from
-#      sing-box's perspective. (We could also measure to "clash
-#      reload responded 200" but the file is what sing-box reads,
-#      so the file is the authoritative end-of-pipeline signal.)
+#      sing-box's perspective. The file is what ct-singbox's
+#      supervisor watches, so it is the authoritative signal.
 #   6. Capture T_drop. Report (T_drop - T_disable) ms.
 #
 # Why we don't measure via a long-lived CONNECT through the
@@ -91,7 +89,7 @@ ok "account #$account_id provisioned"
 #    deterministic against any config-cache state.
 step "Render sing-box config and confirm stress-runner is in users list"
 docker compose exec -T panel \
-    php artisan singbox:render --reload >/dev/null 2>&1 \
+    php artisan singbox:render >/dev/null 2>&1 \
     || die "singbox:render failed" "check panel logs"
 
 if ! grep -q "\"username\":\"$USERNAME\"" "$CONFIG_FILE"; then
@@ -164,7 +162,7 @@ docker compose exec -T panel \
     php artisan stress:provision --no-interaction \
     --username "$USERNAME" >/dev/null 2>&1 || true
 docker compose exec -T panel \
-    php artisan singbox:render --reload >/dev/null 2>&1 || true
+    php artisan singbox:render >/dev/null 2>&1 || true
 
 if [[ "$T_drop" == 0 ]]; then
     elapsed=2000

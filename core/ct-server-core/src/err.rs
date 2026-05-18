@@ -87,17 +87,6 @@ pub enum Error {
         op: &'static str,
         source: std::io::Error,
     },
-    /// External process did not finish within the hard timeout.
-    ExternalCommandTimedOut {
-        command: &'static str,
-        timeout: Duration,
-        hint: String,
-    },
-    /// External process completed with a non-zero status.
-    ExternalCommandFailed {
-        command: &'static str,
-        stderr: String,
-    },
     /// External process could not be spawned.
     ProcessSpawn {
         program: &'static str,
@@ -115,14 +104,6 @@ pub enum Error {
         address: String,
         timeout: Duration,
     },
-    /// sing-box clash API returned an HTTP error.
-    ClashApiStatus {
-        endpoint: &'static str,
-        status: reqwest::StatusCode,
-        body: String,
-    },
-    /// sing-box clash API request failed before a usable response.
-    ClashApi { op: &'static str, message: String },
     /// Request frame exceeded the configured byte limit.
     FrameTooLarge { limit: usize },
     /// Peer closed before a complete request frame was received.
@@ -175,13 +156,6 @@ impl Error {
         }
     }
 
-    pub fn clash(op: &'static str, message: impl Into<String>) -> Self {
-        Self::ClashApi {
-            op,
-            message: message.into(),
-        }
-    }
-
     pub fn probe(message: impl Into<String>) -> Self {
         Self::Probe {
             message: message.into(),
@@ -223,13 +197,9 @@ impl Error {
             | Self::TemplateRender { .. }
             | Self::MissingParent { .. } => "configuration_error",
             Self::Sql(_) => "database_error",
-            Self::Http(_) | Self::ClashApi { .. } | Self::ClashApiStatus { .. } => {
-                "upstream_http_error"
-            }
+            Self::Http(_) => "upstream_http_error",
             Self::Redis(_) => "redis_error",
-            Self::ExternalCommandTimedOut { .. }
-            | Self::ExternalCommandFailed { .. }
-            | Self::ProcessSpawn { .. }
+            Self::ProcessSpawn { .. }
             | Self::ProcessExitedEarly { .. }
             | Self::ProcessStartTimeout { .. } => "process_error",
             Self::SemaphoreClosed { .. } => "internal_backpressure_error",
@@ -257,7 +227,7 @@ impl fmt::Display for Error {
             Self::Http(e) => write!(f, "HTTP client error: {e}"),
             Self::Redis(e) => write!(f, "Redis error: {e}"),
             Self::Template(e) => write!(f, "template error: {e}"),
-            Self::Config { message } => f.write_str(message),
+            Self::Config { message } | Self::Probe { message } => f.write_str(message),
             Self::Validation { component, message } => {
                 write!(f, "{component} validation failed: {message}")
             }
@@ -272,18 +242,6 @@ impl fmt::Display for Error {
             }
             Self::AtomicWrite { path, op, source } => {
                 write!(f, "atomic write `{path}` failed during {op}: {source}")
-            }
-            Self::ExternalCommandTimedOut {
-                command,
-                timeout,
-                hint,
-            } => write!(
-                f,
-                "`{command}` timed out after {}s. {hint}",
-                timeout.as_secs()
-            ),
-            Self::ExternalCommandFailed { command, stderr } => {
-                write!(f, "`{command}` failed: {stderr}")
             }
             Self::ProcessSpawn { program, source } => {
                 write!(f, "could not spawn `{program}`: {source}")
@@ -301,12 +259,6 @@ impl fmt::Display for Error {
                 address,
                 timeout,
             } => write!(f, "`{program}` did not bind {address} within {timeout:?}"),
-            Self::ClashApiStatus {
-                endpoint,
-                status,
-                body,
-            } => write!(f, "sing-box clash {endpoint} failed: {status} - {body}"),
-            Self::ClashApi { op, message } => write!(f, "sing-box clash {op}: {message}"),
             Self::FrameTooLarge { limit } => {
                 write!(f, "request frame exceeds {limit} bytes")
             }
@@ -327,7 +279,6 @@ impl fmt::Display for Error {
             }
             Self::TaskJoin { task, source } => write!(f, "{task} task failed: {source}"),
             Self::NotFound { resource, id } => write!(f, "{resource} not found: {id}"),
-            Self::Probe { message } => f.write_str(message),
         }
     }
 }
@@ -350,12 +301,8 @@ impl std::error::Error for Error {
             Self::Config { .. }
             | Self::Validation { .. }
             | Self::MissingParent { .. }
-            | Self::ExternalCommandTimedOut { .. }
-            | Self::ExternalCommandFailed { .. }
             | Self::ProcessExitedEarly { .. }
             | Self::ProcessStartTimeout { .. }
-            | Self::ClashApiStatus { .. }
-            | Self::ClashApi { .. }
             | Self::FrameTooLarge { .. }
             | Self::FrameIncomplete
             | Self::ReadTimeout { .. }

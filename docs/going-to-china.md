@@ -143,7 +143,7 @@ docker compose logs --tail=50 sing-box | grep -iE 'error|fatal' | tail -5
 
 If any step fails, the most likely culprit is the DoH resolver
 (see step 1 of the pre-departure checklist). Switch in panel,
-`docker compose exec panel ct-server-core singbox render --reload`,
+`docker compose exec -T panel php artisan singbox:render`,
 re-test.
 
 ---

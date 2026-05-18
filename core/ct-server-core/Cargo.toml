@@ -7,7 +7,7 @@ license.workspace      = true
 repository.workspace   = true
 authors.workspace      = true
 publish.workspace      = true
-description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — sing-box config rendering, clash-API hot-reload, metrics scraping, quota enforcement, anti-tracking probe, Redis revocation bridge. AGPL-3.0-only; see ../../LICENSE. Copyright (C) 2026 coolwhite LLC."
+description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering, component checks, self-probe canary, internal metrics, and Redis revocation bridge. AGPL-3.0-only; see ../../LICENSE. Copyright (C) 2026 coolwhite LLC."
 readme      = "README.md"
 
 [[bin]]

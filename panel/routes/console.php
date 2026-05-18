@@ -43,9 +43,10 @@ $logFailure = static function (string $cmd) {
 // is the v0.4.0 interim posture until a sing-box-native equivalent
 // surface is wired (post-v0.4.0 roadmap).
 
-// Re-render sing-box config + reload as a safety net in case a model
-// event missed (e.g. queue worker died mid-flight).
-Sched::command('singbox:render --if-changed --reload')->everyFiveMinutes()
+// Re-render sing-box config as a safety net in case a model event
+// missed (e.g. queue worker died mid-flight). ct-singbox's
+// supervisor file-watch handles reloads when the file changes.
+Sched::command('singbox:render --if-changed')->everyFiveMinutes()
     ->withoutOverlapping()
     ->onFailure($logFailure('singbox:render'));
 

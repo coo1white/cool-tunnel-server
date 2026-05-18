@@ -665,8 +665,8 @@ async fn handle(req: WireRequestV1, pool: &MySqlPool) -> Result<WireResponseV1> 
         }),
         WireRequestV1::ReloadCaddy => Err(Error::UnsupportedOperation {
             operation: "reload_caddy",
-            message: "v0.4.0: reload via `ct-server-core caddyfile reload` (CLI subcommand) \
-                      rather than the daemon wire path; that subcommand still works.",
+            message: "v0.4.0: Caddy reloads are operator-owned and run from the host side \
+                      via `docker compose exec caddy caddy reload`.",
         }),
         WireRequestV1::CollectTraffic => Err(Error::UnsupportedOperation {
             operation: "collect_traffic",

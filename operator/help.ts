@@ -235,8 +235,8 @@ What it does NOT do:
     most-likely causes listed.
 
 Already covered without explicit auto-sync runs:
-  - Laravel's scheduler runs 'singbox:render --if-changed
-    --reload' every 5 minutes (see panel/routes/console.php).
+  - Laravel's scheduler runs 'singbox:render --if-changed'
+    every 5 minutes (see panel/routes/console.php).
     That handles the routine case of 'DB updated, sing-box
     not yet re-rendered' within 5 min, silently. auto-sync is
     the explicit-and-loud version of that, plus the

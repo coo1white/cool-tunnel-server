@@ -245,7 +245,7 @@ async fn run_subscriber(
                 // up our state when it runs.
             }
             Decision::FireNow | Decision::FireNowAndScheduleFlush => {
-                fire_reload("leading", metrics).await;
+                fire_reload("leading", metrics);
                 if matches!(decision, Decision::FireNowAndScheduleFlush) {
                     schedule_flush(tracker.clone(), metrics.map(Arc::clone));
                 }
@@ -268,7 +268,7 @@ async fn run_subscriber(
 /// Pre-v0.4.0 this function rendered sing-box config + posted a clash-
 /// API reload. Both surfaces are gone (renderer moved to singbox-core;
 /// sing-box VLESS+Reality has no clash API).
-async fn fire_reload(edge: &'static str, metrics: Option<&Arc<MetricsRegistry>>) {
+fn fire_reload(edge: &'static str, metrics: Option<&Arc<MetricsRegistry>>) {
     tracing::debug!(edge, "revocation announce observed (no-op in v0.4.0)");
     if let Some(m) = metrics {
         m.note_coalescer_fire(edge);
@@ -299,7 +299,7 @@ fn schedule_flush(tracker: Arc<Mutex<FlushTracker>>, metrics: Option<Arc<Metrics
             g.coalescer.on_flush(Instant::now())
         };
         if needs_flush {
-            fire_reload("trailing", metrics.as_ref()).await;
+            fire_reload("trailing", metrics.as_ref());
         } else {
             tracing::debug!("trailing flush skipped — no suppressed events");
         }

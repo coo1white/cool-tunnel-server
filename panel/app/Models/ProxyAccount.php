@@ -31,22 +31,22 @@ use Symfony\Component\Messenger\MessageBusInterface;
 // without real defence-in-depth.
 //
 // Anytime an account is created, edited, or deleted we re-render
-// sing-box's config.json and ask sing-box to hot-reload. Two paths
-// fire in sequence:
+// sing-box's config.json. ct-singbox's supervisor file-watch handles
+// the restart. Two paths fire in sequence:
 //
 //   1. Redis pub/sub → ct-server-core daemon picks it up within ~1ms,
-//      runs through the Coalescer (≤2 reloads per 100ms window
-//      regardless of burst size), and reloads. This is the ≤100ms
+//      runs through the Coalescer (≤2 renders per 100ms window
+//      regardless of burst size). This is the ≤100ms
 //      hot path operators feel — fired SYNCHRONOUSLY from booted()
 //      because the announce is already fire-and-forget at the
 //      Redis-pub level.
 //
-//   2. ASYNCHRONOUS PHP-side render+reload as a backstop, dispatched
+//   2. ASYNCHRONOUS PHP-side render as a backstop, dispatched
 //      to Symfony Messenger's Redis Streams transport (see
 //      App\Messages\ReloadSingBox + App\MessageHandlers\
 //      ReloadSingBoxHandler). [program:messenger] picks it up,
-//      renders, reloads. Both layers dedupe by SHA-256, so racing
-//      reloads (e.g. worker firing while another save is mid-flight)
+//      renders. Both layers dedupe by SHA-256, so racing
+//      renders (e.g. worker firing while another save is mid-flight)
 //      reduce to a no-op-after-first.
 
 /**
