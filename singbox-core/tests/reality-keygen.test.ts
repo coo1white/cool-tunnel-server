@@ -2,7 +2,10 @@
 // singbox-core/tests/reality-keygen.test.ts — X25519 keypair shape.
 
 import { test, expect } from "bun:test";
-import { generateRealityKeypair } from "../src/subcommands/reality-keygen.ts";
+import {
+    deriveRealityPublicKeyForTest,
+    generateRealityKeypair,
+} from "../src/subcommands/reality-keygen.ts";
 import { base64urlDecode } from "../src/util/base64url.ts";
 
 test("generateRealityKeypair returns base64url-encoded 32-byte X25519 keys", async () => {
@@ -26,4 +29,15 @@ test("generateRealityKeypair produces unique keypairs per call", async () => {
     const b = await generateRealityKeypair();
     expect(a.privateKeyB64u).not.toBe(b.privateKeyB64u);
     expect(a.publicKeyB64u).not.toBe(b.publicKeyB64u);
+});
+
+test("deriveRealityPublicKeyForTest matches the RFC 7748 X25519 vector", () => {
+    const privateKey = Buffer.from(
+        "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+        "hex",
+    );
+    const publicKey = deriveRealityPublicKeyForTest(new Uint8Array(privateKey));
+    expect(Buffer.from(publicKey).toString("hex")).toBe(
+        "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+    );
 });

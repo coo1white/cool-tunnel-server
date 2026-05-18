@@ -34,7 +34,15 @@ interface ParsedArgs {
     readonly help: boolean;
 }
 
-const DEFAULTS = {
+const DEFAULTS: Readonly<{
+    config: string;
+    singboxBin: string;
+    healthzHost: string;
+    healthzPort: number;
+    bootTimeoutMs: number;
+    debounceMs: number;
+    graceMs: number;
+}> = {
     config: "/data/config/singbox.json",
     singboxBin: "/usr/local/bin/sing-box",
     healthzHost: "127.0.0.1",
@@ -42,7 +50,7 @@ const DEFAULTS = {
     bootTimeoutMs: 60_000,
     debounceMs: 250,
     graceMs: 5_000,
-} as const;
+};
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
     let config = DEFAULTS.config;
