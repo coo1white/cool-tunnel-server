@@ -64,5 +64,5 @@ return [
         'ACME_DIRECTORY',
         'https://acme-v02.api.letsencrypt.org/directory'
     ),
-    'version' => '0.4.1',
+    'version' => '0.4.2',
 ];

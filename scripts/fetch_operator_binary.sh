@@ -52,10 +52,19 @@ URL_BASE="https://github.com/coo1white/cool-tunnel-server/releases/download/v${V
 BIN_DIR="operator/bin"
 mkdir -p "$BIN_DIR"
 
+curl_fetch() {
+    curl -fsSL \
+        --connect-timeout "${CT_FETCH_CONNECT_TIMEOUT:-10}" \
+        --max-time "${CT_FETCH_MAX_TIME:-300}" \
+        --retry "${CT_FETCH_RETRIES:-2}" \
+        --retry-delay 2 \
+        "$@"
+}
+
 # Fetch the manifest first. If the release doesn't exist yet (dev
 # branch ahead of any tag, or a release that hasn't been cut),
 # this is a no-op — the .sh fallbacks keep working.
-SUMS=$(curl -fsSL "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
+SUMS=$(curl_fetch "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
 if [[ -z "$SUMS" ]]; then
     echo "fetch_operator_binary: no SHA256SUMS at ${URL_BASE} (release not published?). Skipping."
     exit 0
@@ -78,7 +87,7 @@ fi
 
 echo "fetch_operator_binary: downloading ${TARGET} for v${VERSION}..."
 NEW="${BIN_DIR}/${TARGET}.new"
-if ! curl -fsSL -o "$NEW" "${URL_BASE}/${TARGET}"; then
+if ! curl_fetch -o "$NEW" "${URL_BASE}/${TARGET}"; then
     echo "fetch_operator_binary: download failed for ${URL_BASE}/${TARGET}" >&2
     rm -f "$NEW"
     exit 1

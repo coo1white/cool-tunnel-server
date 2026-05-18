@@ -207,40 +207,49 @@ EOF
 
 # ---------- ct-operator binary self-bootstrap --------------------
 #
-# Compare the binary's reported version against panel/config/cool-
-# tunnel.php (the panel-deployed version, our canonical source of
-# truth). If they disagree, fetch the matching binary from the
-# GitHub Release before dispatching. Closes the deploy-skew hole
-# that ate hours on the v0.1.12 → v0.1.13 update (the operator
-# binary on disk was v0.1.12 but `./ct update` had become a
-# binary-only subcommand in v0.1.13 — wrapper dispatched, binary
-# replied "unknown command: update", recovery required a manual
-# curl). Skip via CT_SKIP_OPERATOR_BOOTSTRAP=1.
+# Compare the binary on disk against panel/config/cool-tunnel.php
+# (the panel-deployed version, our canonical source of truth). If
+# the binary is missing or stale, fetch the matching binary from the
+# GitHub Release before dispatching. Closes both deploy-skew holes:
+#   - stale binary after a version bump
+#   - no binary after `git pull` moves a VPS onto a binary-only verb
+# Skip via CT_SKIP_OPERATOR_BOOTSTRAP=1.
 operator_bootstrap_if_skewed() {
     local op_bin="$1"
     [[ "${CT_SKIP_OPERATOR_BOOTSTRAP:-}" == "1" ]] && return 0
-    [[ -x "$op_bin" ]] || return 0   # No binary → nothing to bootstrap.
 
     local deployed
     deployed=$(grep -E "^\s*'version'\s*=>" "$SCRIPT_DIR/panel/config/cool-tunnel.php" 2>/dev/null \
         | head -1 | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
     [[ -z "$deployed" ]] && return 0   # Can't read panel config → skip.
 
-    local installed
-    installed=$("$op_bin" version 2>/dev/null | head -1 | tr -d '[:space:]' || true)
-    [[ -z "$installed" ]] && return 0   # Binary won't talk → skip.
-    [[ "$installed" == "$deployed" ]] && return 0   # Already in sync.
+    local installed=""
+    if [[ -x "$op_bin" ]]; then
+        installed=$("$op_bin" version 2>/dev/null | head -1 | tr -d '[:space:]' || true)
+        [[ "$installed" == "$deployed" ]] && return 0   # Already in sync.
+    fi
 
-    printf 'ct: operator binary v%s ≠ deployed v%s; fetching matching binary…\n' \
-        "$installed" "$deployed" >&2
+    if [[ -z "$installed" ]]; then
+        printf 'ct: operator binary missing; fetching v%s…\n' "$deployed" >&2
+    else
+        printf 'ct: operator binary v%s ≠ deployed v%s; fetching matching binary…\n' \
+            "$installed" "$deployed" >&2
+    fi
 
     local arch="$2" os="$3"
     local url="https://github.com/coo1white/cool-tunnel-server/releases/download/v${deployed}/ct-operator-${os}-${arch}"
     local sums="https://github.com/coo1white/cool-tunnel-server/releases/download/v${deployed}/SHA256SUMS"
     local target="ct-operator-${os}-${arch}"
     local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/ct-operator.XXXXXX") || return 1
+    local curl_common=(
+        -fsSL
+        --connect-timeout "${CT_FETCH_CONNECT_TIMEOUT:-10}"
+        --max-time "${CT_FETCH_MAX_TIME:-300}"
+        --retry "${CT_FETCH_RETRIES:-2}"
+        --retry-delay 2
+    )
 
-    if ! curl -fsSL "$url" -o "$tmp"; then
+    if ! curl "${curl_common[@]}" "$url" -o "$tmp"; then
         printf 'ct: download failed (%s); continuing with stale binary\n' "$url" >&2
         rm -f "$tmp"
         return 0
@@ -248,7 +257,7 @@ operator_bootstrap_if_skewed() {
     # SHA-256 verify against the release's manifest.
     if command -v sha256sum >/dev/null 2>&1; then
         local sums_body expected actual
-        sums_body=$(curl -fsSL "$sums" 2>/dev/null || true)
+        sums_body=$(curl "${curl_common[@]}" "$sums" 2>/dev/null || true)
         if [[ -n "$sums_body" ]]; then
             expected=$(printf '%s' "$sums_body" | awk -v t="$target" '$2==t || $2=="*"t {print $1; exit}')
             actual=$(sha256sum "$tmp" | awk '{print $1}')
@@ -261,6 +270,7 @@ operator_bootstrap_if_skewed() {
         fi
     fi
     chmod +x "$tmp"
+    mkdir -p "$(dirname "$op_bin")"
     mv "$tmp" "$op_bin"
     printf 'ct: bootstrapped operator binary to v%s\n' "$deployed" >&2
 }

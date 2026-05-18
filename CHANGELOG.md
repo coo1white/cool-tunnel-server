@@ -24,6 +24,31 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.2] — 2026-05-18 — Operator bootstrap hotfix
+
+This patch fixes the `v0.4.1` upgrade deadlock seen on a Debian VPS:
+after `git pull` moved the checkout to `v0.4.1`, binary-only
+commands such as `./ct update` and `./ct doctor` failed before they
+could fetch the `ct-operator` binary.
+
+### Fixed
+
+- **`ct` binary bootstrap now handles missing operators.** The
+  dispatcher now fetches the matching signed release binary when
+  `operator/bin/ct-operator-<os>-<arch>` is absent, not only when an
+  existing binary is stale. This lets `./ct update`, `./ct doctor`,
+  `./ct help`, and other binary-backed commands recover directly after
+  a source-only fast-forward.
+- **`scripts/install.sh` now retries the operator fetch before
+  dispatch.** Failed or partial installs can rerun `make install`
+  without manually discovering `make operator-fetch` first.
+- **Operator binary downloads are bounded.** The release-asset fetcher
+  now uses curl connect/overall timeouts plus retries so a stalled
+  GitHub connection fails with an actionable message instead of
+  hanging indefinitely.
+
+---
+
 ## [0.4.1] — 2026-05-18 — Install-port release plus singbox-core Bun 1.1 build/runtime fix
 
 This patch release combines the active post-v0.4 install work into
@@ -11106,7 +11131,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.2.1...v0.3.0
