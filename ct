@@ -7,6 +7,7 @@
 #   ct install      first-time bootstrap on a fresh VPS
 #   ct fix          interactive auto-diagnose-and-repair agent
 #   ct doctor       read-only health dashboard
+#   ct auto-diag    read-only diagnostic bundle for support
 #   ct update       pull latest, rebuild, hot-swap
 #   ct status       one-shot "what's running"
 #   ct logs         tail every container's logs
@@ -54,6 +55,7 @@ EVERYDAY COMMANDS
   install        first-time bootstrap on a fresh VPS (~5-10 min)
   fix            interactive auto-diagnose-and-repair (the "I'm stuck" command)
   doctor         read-only health dashboard (PASS / WARN / FAIL)
+  auto-diag      read-only diagnostic bundle saved under diagnostics/
   update         pull the latest release, rebuild, hot-swap
   status         one-shot "what's running" check
   logs           tail every container's logs
@@ -368,6 +370,7 @@ case "$cmd" in
     install)      exec ./scripts/install.sh             "$@" ;;
     fix)          dispatch_via_operator fix       "" "$@" ;;
     doctor)       dispatch_via_operator doctor    "" "$@" ;;
+    auto-diag)    dispatch_via_operator auto-diag "" "$@" ;;
     update)       dispatch_via_operator update    "" "$@" ;;
     backup)       dispatch_via_operator backup    "" "$@" ;;
     restore)      dispatch_via_operator restore   "" "$@" ;;

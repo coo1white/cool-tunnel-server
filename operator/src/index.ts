@@ -20,8 +20,9 @@ Usage:
 Commands:
   install        First-time bootstrap on a fresh Debian VPS
   doctor         Run health checks on the running deployment
+  auto-diag      Run read-only diagnostics and write diagnostics/*.txt
   fix            Detect and interactively repair common issues
-  readiness      Strict >=8/9 readiness gate; cron/CI suitable
+  readiness      Strict >=9/10 readiness gate; cron/CI suitable
   ballast        Critical-invariant check only (no narration; cron-friendly)
   render         Re-render caddyfile/singbox config from the DB
   auto-sync      Credential-lock audit + auto-correct agent
@@ -66,6 +67,10 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "doctor": {
             const { DoctorTask } = await import("./tasks/doctor");
             return new DoctorTask();
+        }
+        case "auto-diag": {
+            const { AutoDiagTask } = await import("./tasks/auto-diag");
+            return new AutoDiagTask();
         }
         case "fix": {
             const { FixTask } = await import("./tasks/fix");

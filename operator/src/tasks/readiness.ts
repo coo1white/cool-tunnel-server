@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/readiness.ts — TS port of ct readiness.
 //
-// Nine checks (slot 10 retired in v0.4.0 — see CHECKS array). Pass
-// >= 8/9 to ship. Structural checks 1-4 cap the final score at 7 if
-// any of them is NG (cap stays below the 8/9 threshold so structural
+// Ten checks. Pass >= 9/10 to ship. Structural checks 1-4 cap the
+// final score at 8 if any of them is NG (cap stays below the 9/10 threshold so structural
 // failure always means FAIL). Exit 0 on pass, 1 on fail.
 //
 // On fail with interactive stdin, offer tactical retreat (git checkout
@@ -15,6 +14,7 @@ import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
+import { probeRealityClock } from "../util/reality-clock";
 
 interface CheckResult {
     ok: boolean;
@@ -104,7 +104,14 @@ const CHECKS: ReadinessCheck[] = [
         },
     },
     {
-        slot: 7, label: "Components", structural: false,
+        slot: 7, label: "Reality clock", structural: false,
+        async run() {
+            const r = await probeRealityClock();
+            return { ok: r.status === "pass", detail: r.detail };
+        },
+    },
+    {
+        slot: 8, label: "Components", structural: false,
         async run() {
             const r = await capture(
                 $`bash -c "docker compose exec -T panel ct-server-core component check --manifests /srv/manifests 2>&1 || true"`,
@@ -116,7 +123,7 @@ const CHECKS: ReadinessCheck[] = [
         },
     },
     {
-        slot: 8, label: "Redis bridge", structural: false,
+        slot: 9, label: "Redis bridge", structural: false,
         async run({ env }) {
             const pw = env["REDIS_PASSWORD"];
             if (!pw) return { ok: false, detail: "REDIS_PASSWORD unset" };
@@ -146,7 +153,7 @@ const CHECKS: ReadinessCheck[] = [
         },
     },
     {
-        slot: 9, label: "Cover invariant", structural: false,
+        slot: 10, label: "Cover invariant", structural: false,
         async run({ env }) {
             const haveCurl = await capture(
                 $`bash -c "docker compose exec -T panel sh -c 'command -v curl' >/dev/null 2>&1"`,
@@ -268,8 +275,8 @@ export class ReadinessTask implements Task {
 
         const groups = [
             { name: "Structural (must pass)", slots: [1, 2, 3, 4] },
-            { name: "Operational", slots: [5, 6, 7, 8] },
-            { name: "Functional", slots: [9] },
+            { name: "Operational", slots: [5, 6, 7, 8, 9] },
+            { name: "Functional", slots: [10] },
         ];
 
         for (const g of groups) {
@@ -292,21 +299,21 @@ export class ReadinessTask implements Task {
         }
 
         let score = pass;
-        if (structuralFails > 0 && score > 7) score = 7;
-        const pct = Math.floor((score * 100) / 9);
-        process.stdout.write(`Score: ${score}/9 (${pct}%)\n`);
+        if (structuralFails > 0 && score > 8) score = 8;
+        const pct = Math.floor((score * 100) / CHECKS.length);
+        process.stdout.write(`Score: ${score}/${CHECKS.length} (${pct}%)\n`);
         if (structuralFails > 0) {
-            process.stdout.write(`Structural fail(s): ${structuralFails} — score capped at 7.\n`);
+            process.stdout.write(`Structural fail(s): ${structuralFails} — score capped at 8.\n`);
         }
 
-        if (score >= 8) {
+        if (score >= 9) {
             process.stdout.write(`Result: PASS — ready to ship.\n`);
-            return { ok: true, code: 0, summary: `${score}/9`, json: { score, results } };
+            return { ok: true, code: 0, summary: `${score}/${CHECKS.length}`, json: { score, results } };
         }
 
         process.stdout.write(`Result: FAIL — fix flagged checks before launch.\n`);
         if (ctx.interactive) await offerRecovery(ctx);
 
-        return { ok: false, code: 1, summary: `${score}/9`, json: { score, results } };
+        return { ok: false, code: 1, summary: `${score}/${CHECKS.length}`, json: { score, results } };
     }
 }

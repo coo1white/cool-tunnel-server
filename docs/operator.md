@@ -55,9 +55,10 @@ the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
 | Command            | What it does                                                           |
 |--------------------|------------------------------------------------------------------------|
 | `ct doctor`        | PASS/WARN/FAIL health dashboard, including a Ballast Stones group at the end. No state mutation. |
+| `ct auto-diag`     | Read-only support bundle: doctor, ballast, version bridge, drift, compose state, resources, and log tail saved under `diagnostics/`. |
 | `ct fix`           | Interactive recipe walker. Same 17 recipes as `ct fix`.        |
-| `ct readiness`     | Strict ≥8/9 launch gate. Offers tactical retreat / rebuild on fail.    |
-| `ct ballast`       | Run the 10 critical-invariant checks only. Exit 0 if no FAIL, 1 otherwise. Cron-friendly. |
+| `ct readiness`     | Strict ≥9/10 launch gate. Offers tactical retreat / rebuild on fail.   |
+| `ct ballast`       | Run the 11 critical-invariant checks only. Exit 0 if no FAIL, 1 otherwise. Cron-friendly. |
 | `ct-operator self-update` | Pull a signed binary update from GitHub Releases.               |
 | `ct-operator version` | Print the embedded build version.                                   |
 
@@ -87,11 +88,13 @@ failure and embeds the results in the AI-paste payload.
 6. **caddy-acme** — `caddy_data` volume holds a cert for `$PANEL_DOMAIN`
    not expiring in the next 7 days.
 7. **singbox-running** — `docker compose ps singbox` shows it running.
-8. **sot-parity** — `scripts/verify_sot.sh` agrees (PHP and Rust impls
+8. **reality-clock-window** — host UTC clock is inside sing-box
+   Reality's configured `max_time_difference` auth window.
+9. **sot-parity** — `scripts/verify_sot.sh` agrees (PHP and Rust impls
    of `panel_domain` produce identical output).
-9. **ct-operator-version** — compiled `ct-operator` binary version
+10. **ct-operator-version** — compiled `ct-operator` binary version
    matches the panel's expected `OPERATOR_BINARY_VERSION`.
-10. **ct-core-version** — `ct-server-core --version` matches the version
+11. **ct-core-version** — `ct-server-core --version` matches the version
     pinned in `core/ct-server-core/Cargo.toml`.
 
 Edits to the list live in [src/diag/collectors/ballast.ts](../operator/src/diag/collectors/ballast.ts).

@@ -42,8 +42,8 @@ exactly what to run next.
 Exit code 0 means everything is green or only warnings (no FAILs).
 Cron-suitable.
 
-For a stricter "is the system ready to publicly launch?" gate (≥8/9
-checks PASS, structural fails cap the score at 7), use:
+For a stricter "is the system ready to publicly launch?" gate (≥9/10
+checks PASS, structural fails cap the score at 8), use:
 
 ```sh
 ct readiness
@@ -370,7 +370,8 @@ The most-used `make` targets:
 | Command | What it does |
 |---------|--------------|
 | `make doctor` | Health dashboard (PASS / WARN / FAIL + remediation hints) |
-| `make readiness` | Strict ≥8/9 readiness gate (cron/CI suitable) |
+| `make auto-diag` | Read-only diagnostic bundle saved under `diagnostics/` |
+| `make readiness` | Strict ≥9/10 readiness gate (cron/CI suitable) |
 | `make status` | Quick "are containers up?" check |
 | `make components` | 12-row table of every dependency |
 | `make update` | Pull, rebuild, migrate, render, verify, reload |

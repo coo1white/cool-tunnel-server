@@ -149,7 +149,8 @@ Next topic:  ./ct help doctor
   Runs ~13 health checks against the live stack and prints a
   PASS / WARN / FAIL table grouped by area:
 
-    Prerequisites          docker compose, .env mode
+    Prerequisites          docker compose, .env mode,
+                           Reality clock window
     Structural             DNS, ports 80/443, ACME cert expiry
     Application            /up endpoint, component check
     Compose stack          5 services up, supervisord progs
@@ -172,8 +173,8 @@ Difference from 'make readiness':
   doctor    -> 'show me everything I should look at'
                 Permissive: WARN is informational, exit 0
   readiness -> 'is the system ready to publicly launch?'
-                Strict: needs >=8/9 checks PASS, structural
-                fails cap the score at 7, exit 1 if not ready
+                Strict: needs >=9/10 checks PASS, structural
+                fails cap the score at 8, exit 1 if not ready
 
 Output anatomy:
   - Table at top: rows like '  [PASS] Disk   repo 47G, ...'
@@ -186,6 +187,47 @@ Exit codes:
   1   - one or more FAIL rows
 
 Next topic:  ./ct help readiness
+`,
+    },
+    "auto-diag": {
+        title: "auto-diag — support diagnostic bundle",
+        body: `What it does:
+  Runs the read-only checks operators usually paste manually:
+
+    - ct version
+    - git status + recent commits
+    - host resource snapshot
+    - docker compose ps --all
+    - ct doctor
+    - ct ballast
+    - ct version-bridge
+    - ct drift
+    - docker compose logs tail
+
+  It continues after failures and writes one redacted report:
+
+    diagnostics/ct-auto-diag-<UTC-timestamp>.txt
+
+When to run:
+  - Right after an update looks stuck
+  - Before asking for support
+  - After a VPS reboot when you want one complete status packet
+
+Options:
+  --tail N     log lines per service (default 120)
+  --no-logs    skip docker compose logs
+  --json       print the structured summary
+
+What it does NOT do:
+  - Repair anything. Use ct fix for interactive repair.
+  - Upload the report anywhere. You choose what to share.
+
+Exit codes:
+  0   every section exited 0
+  1   one or more diagnostic sections failed
+  2   usage error
+
+Next topic:  ./ct help fix
 `,
     },
     "auto-sync": {
@@ -421,10 +463,10 @@ Next topic:  ./ct help readiness
     "readiness": {
         title: "readiness — ship-readiness gate",
         body: `What it does:
-  Runs exactly 9 checks against the live stack and applies a
+  Runs exactly 10 checks against the live stack and applies a
   strict scoring rule:
 
-    Structural (caps score at 7 if any FAIL):
+    Structural (caps score at 8 if any FAIL):
       1. DNS resolves to host IP
       2. Ports 80/443 listening
       3. ACME cert from Let's Encrypt
@@ -433,15 +475,17 @@ Next topic:  ./ct help readiness
     Operational:
       5. Kernel tuned (BBR, rmem_max >= 7.5 MB)
       6. Clock synchronised (NTP)
-      7. Component check all OK
-      8. Redis revocation bridge alive (publishes a test
+      7. Reality clock window safe (UTC skew inside
+         max_time_difference, default 1m)
+      8. Component check all OK
+      9. Redis revocation bridge alive (publishes a test
          resync + waits for daemon ack)
 
     Functional:
-      9. Cover-site invariant holds (anti-fingerprint)
+      10. Cover-site invariant holds (anti-fingerprint)
 
-  Score >= 8 / 9 -> PASS, ready to publicly launch.
-  Any structural fail caps the score at 7 regardless.
+  Score >= 9 / 10 -> PASS, ready to publicly launch.
+  Any structural fail caps the score at 8 regardless.
 
 When to run:
   - Pre-launch gate (one-time)
@@ -453,14 +497,14 @@ What it does NOT do:
   - Day-to-day health monitoring. Use 'make doctor' for that.
   - Auto-recover anything. Read-only.
 
-The Redis bridge check (step 8) DOES publish a test message
+The Redis bridge check (step 9) DOES publish a test message
 to cool_tunnel:revocations. This is intentional and harmless
 (the Rust daemon logs an ack and moves on), but it is the one
 non-read-only operation in the script.
 
 Exit codes:
-  0   - PASS (score >= 8)
-  1   - FAIL (score < 8 OR any structural fail)
+  0   - PASS (score >= 9)
+  1   - FAIL (score < 9 OR any structural fail)
 
 Next topic:  ./ct help backup
 `,
