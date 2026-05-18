@@ -71,14 +71,14 @@ ct backup        # snapshot DB + .env + ACME certs
 
 ### Update to a release
 
-Run this from the VPS checkout. Replace `v0.4.5` with the release you
+Run this from the VPS checkout. Replace `v0.4.7` with the release you
 want to deploy.
 
 ```sh
 cd /opt/cool-tunnel-server
 
 git fetch origin --tags
-git checkout v0.4.5
+git checkout v0.4.7
 
 ./ct update
 ./ct doctor
@@ -94,7 +94,7 @@ Only if the edits are disposable, reset the checkout and retry:
 
 ```sh
 git reset --hard
-git checkout v0.4.5
+git checkout v0.4.7
 ./ct update
 ./ct doctor
 ```

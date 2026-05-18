@@ -24,6 +24,35 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.7] — 2026-05-18 — Current-stack cleanup
+
+This patch trims stale operator-facing content and dead compatibility
+surface after the v0.4 move to Caddy L4 plus sing-box VLESS/Reality.
+
+### Changed
+
+- **Core docs now describe the current runtime stack.** The component,
+  runbook, glossary, architecture, operations, and security docs were
+  condensed around the active five-service model: Caddy L4, sing-box,
+  panel, MariaDB, Redis, and the host operator.
+- **Runtime probes and operator help now target the active front door.**
+  Canary checks use `caddy:443`, and the operator command/help surface
+  no longer presents HAProxy recovery as a live fix path.
+- **UTF-8 text handling is now enforced.** CI, Docker images, PHP
+  runtime checks, and repository attributes pin UTF-8 behavior so mixed
+  locale hosts fail early instead of producing mojibake.
+
+### Removed
+
+- **Retired HAProxy/NaiveProxy/clash scaffolding.** Old recovery
+  recipes, backup notes, install prompts, env examples, and PHPUnit env
+  entries for retired components were removed from active paths.
+- **Dead render compatibility flag.** The no-op `singbox:render --reload`
+  option was removed; callers should keep using `--if-changed` for the
+  live safe-render path.
+
+---
+
 ## [0.4.6] — 2026-05-18 — Caddy reload hotfix
 
 This patch fixes the next `v0.4.5` VPS update blocker:
@@ -11191,7 +11220,11 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.6...v0.4.7
+[0.4.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.0...v0.4.1
