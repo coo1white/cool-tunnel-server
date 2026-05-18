@@ -12,10 +12,8 @@ inline.
 > **Tested on** Debian 12 minimal cloud images. Steps that diverge
 > on 10 / 11 / 13 are flagged with a `🟢` badge under each section.
 >
-> **Reference:** the author's earlier walk-through at
-> [blog.coolwhite.space/?page_id=59](https://blog.coolwhite.space/?page_id=59)
-> covers the original bare Caddy + naive recipe; this guide builds
-> on it and adds the panel layer.
+> **Reference:** this guide builds on the original bare Caddy + naive
+> deployment shape and adds the panel layer.
 
 ---
 

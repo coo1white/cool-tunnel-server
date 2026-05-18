@@ -582,7 +582,7 @@ recurringly bit us is gone.**
   live Vultr box: vanilla Caddy 2.11.3 + klzgrad/forwardproxy on
   port `:8443` (alongside production sing-box on :443), pointed
   the macOS client's bundled naive binary at it. Result:
-  `code=200`, tunneled public IP `207.148.75.238`, end-to-end
+  `code=200`, tunneled public IP `203.0.113.42`, end-to-end
   645ms. Caddy stdout: `forward_proxy negotiated padding type:
   Variant1`. The wire protocol path is proven.
 
@@ -1794,7 +1794,7 @@ and `make <target>` still works — `ct` is purely a discoverability
 shim.
 
 Motivated by a real new-operator install incident on a fresh Vultr
-instance (2026-05-14, naive.coolwhite.space): a fresh `install.sh`
+instance (2026-05-14, proxy.example.com): a fresh `install.sh`
 ran to 10/10 readiness but the macOS client could not actually
 proxy traffic — server-side sing-box accepted the CONNECT, returned
 `HTTP/1.1 200 OK`, then RST'd the tunnel because its outbound
@@ -3957,7 +3957,7 @@ unchanged.
   - `ct-server-core component check --manifests /srv/manifests` reports
     all components OK after the manifest correction.
   - Bundled `naive` local adapter returned `http_code=204` through
-    `https://alice:<password>@cookie.coolwhite.space:443`.
+    `https://alice:<password>@proxy.example.com:443`.
 - PR #65 CI:
   - `rust (build / test / clippy / fmt)`
   - `manifest drift`
@@ -5890,9 +5890,9 @@ itself was confirmed working by the two-command check on the VPS:
 
 ```
 $ docker compose exec panel ct-server-core admin panel-domain
-panel.cookie.coolwhite.space
+panel.proxy.example.com
 $ docker compose exec panel php artisan tinker --execute='echo config("cool-tunnel.panel_domain");'
-panel.cookie.coolwhite.space
+panel.proxy.example.com
 ```
 
 The script's output was the bug, not the contract.

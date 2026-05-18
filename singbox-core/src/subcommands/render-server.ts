@@ -8,13 +8,13 @@
 // Schema of --input (matches ServerRenderInput in config/render.ts):
 //
 //   {
-//     "domain": "naive.coolwhite.space",
+//     "domain": "proxy.example.com",
 //     "listen_port": 443,
 //     "reality_private_key": "<X25519 base64url>",
 //     "reality_short_ids": ["", "0123abcd"],
 //     "reality_dest_host": "www.microsoft.com",
 //     "reality_dest_port": 443,
-//     "accounts": [{ "username": "test1", "uuid": "..." }],
+//     "accounts": [{ "username": "demo-user", "uuid": "..." }],
 //     "log_level": "info"
 //   }
 

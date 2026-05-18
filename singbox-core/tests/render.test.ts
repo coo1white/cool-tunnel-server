@@ -20,7 +20,7 @@ const SERVER_INPUT: ServerRenderInput = {
     reality_short_ids: [""],
     reality_dest_host: "www.microsoft.com",
     reality_dest_port: 443,
-    accounts: [{ username: "test1", uuid: "550e8400-e29b-41d4-a716-446655440000" }],
+    accounts: [{ username: "demo-user", uuid: "550e8400-e29b-41d4-a716-446655440000" }],
 };
 
 test("renderServerConfig produces a valid-shape VLESS+Reality inbound", () => {
