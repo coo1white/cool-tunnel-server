@@ -165,9 +165,9 @@ async function checkPorts(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function checkAcmeCert(c: CheckCtx): Promise<CheckLine> {
-    const domain = c.env["DOMAIN"];
+    const domain = c.env["PANEL_DOMAIN"] || (c.env["DOMAIN"] ? `panel.${c.env["DOMAIN"]}` : "");
     if (!domain) {
-        return { group: G_STRUCT, label: "ACME cert", severity: "warn", detail: "skipped (DOMAIN unset)" };
+        return { group: G_STRUCT, label: "ACME cert", severity: "warn", detail: "skipped (PANEL_DOMAIN and DOMAIN unset)" };
     }
     const probe = await capture(
         $`bash -c "echo | timeout 6 openssl s_client -servername ${domain} -connect ${domain}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null"`,
@@ -264,9 +264,9 @@ async function checkComponents(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
-    // v0.2.0+: caddy + panel + db + redis only. sing-box and haproxy
-    // retired (collapsed into Caddy+forwardproxy).
-    const services = ["caddy", "panel", "db", "redis"];
+    // v0.4.0+: caddy + singbox + panel + db + redis. Caddy is the
+    // public SNI splitter; singbox is the VLESS+Reality proxy behind it.
+    const services = ["caddy", "singbox", "panel", "db", "redis"];
     const ps = await capture($`docker compose ps --format json`);
     if (!ps.ok || !ps.stdout.trim()) {
         return {

@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/render.ts — one-shot config render subcommand.
 //
-// v0.2.0+ Caddy is the single front door (ACME + forward_proxy +
-// reverse_proxy in one container), so `caddyfile` is the only
-// render target left. Pre-v0.2.0 callers passed `haproxy` or
-// `singbox` here; both are rejected with a "target retired in
-// v0.2.0" hint so an operator running a half-migrated stack sees
-// a clear message instead of an obscure subcommand error.
+// v0.4.0+ has two live render targets:
+//   - caddyfile: ct-server-core still owns the Caddyfile renderer.
+//   - singbox: panel-side SingBoxConfigGenerator shells to singbox-core.
+// `haproxy` stays retired.
 //
 // Usage:
 //   ct-operator render caddyfile [--if-changed]
+//   ct-operator render singbox [--if-changed] [--reload]
 
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 
-const TARGETS = ["caddyfile"] as const;
+const TARGETS = ["caddyfile", "singbox"] as const;
 type Target = typeof TARGETS[number];
 
 // Targets that were valid in v0.1.x but no longer have a backing
-// service. Surface a v0.2.0-cut hint rather than a generic "unknown
+// service. Surface a retirement hint rather than a generic "unknown
 // target" error so operators reading old runbooks know what changed.
-const RETIRED_TARGETS = new Set(["haproxy", "singbox"]);
+const RETIRED_TARGETS = new Set(["haproxy"]);
 
 function isTarget(s: string): s is Target {
     return (TARGETS as readonly string[]).includes(s);
@@ -60,10 +59,10 @@ export class RenderTask implements Task {
             return { ok: false, code: 2, summary: "no docker", skipBridge: true };
         }
 
-        ctx.logger.info(`rendering ${target} config via ct-server-core`);
-        const r = await capture(
-            $`docker compose exec -T panel ct-server-core --json ${target} render ${passthrough}`,
-        );
+        ctx.logger.info(`rendering ${target} config`);
+        const r = target === "singbox"
+            ? await capture($`docker compose exec -T panel php artisan singbox:render ${passthrough}`)
+            : await capture($`docker compose exec -T panel ct-server-core --json ${target} render ${passthrough}`);
         if (r.stdout) process.stdout.write(r.stdout);
         if (r.stderr) process.stderr.write(r.stderr);
         if (!r.ok) {
@@ -72,6 +71,16 @@ export class RenderTask implements Task {
                 code: r.code || 1,
                 summary: `${target} render failed (exit ${r.code})`,
             };
+        }
+        if (target === "singbox") {
+            const file = await capture($`docker compose exec -T panel test -s /data/config/singbox.json`);
+            if (!file.ok) {
+                return {
+                    ok: false,
+                    code: 1,
+                    summary: "singbox render did not write /data/config/singbox.json",
+                };
+            }
         }
         return { ok: true, code: 0, summary: `${target} rendered` };
     }

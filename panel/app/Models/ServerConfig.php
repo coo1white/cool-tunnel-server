@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Process;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Throwable;
 
@@ -65,11 +66,70 @@ class ServerConfig extends Model
     {
         // firstOrCreate keeps the singleton invariant under concurrent
         // first-boot seeding.
-        return static::firstOrCreate(['id' => 1], [
+        $cfg = static::firstOrCreate(['id' => 1], [
             'domain' => config('cool-tunnel.domain'),
             'acme_email' => config('cool-tunnel.acme_email'),
             'acme_directory' => config('cool-tunnel.acme_directory'),
         ]);
+
+        if (app()->environment('testing')) {
+            return $cfg;
+        }
+
+        $cfg->ensureRealityKeypair();
+
+        return $cfg;
+    }
+
+    /**
+     * First-boot Reality bootstrap. Migration defaults deliberately keep the
+     * keypair nullable; this fills it from the bundled singbox-core binary the
+     * first time the singleton row is read by seed/render paths.
+     */
+    public function ensureRealityKeypair(): void
+    {
+        if (
+            (string) ($this->reality_private_key ?? '') !== ''
+            && (string) ($this->reality_public_key ?? '') !== ''
+        ) {
+            return;
+        }
+
+        $result = Process::timeout(15)->run(['/usr/local/bin/singbox-core', 'reality-keygen', '--json']);
+        if (! $result->successful()) {
+            Log::critical('serverconfig.reality_keygen_failed', [
+                'exit' => $result->exitCode(),
+                'stderr' => substr(trim($result->errorOutput()), 0, 240),
+            ]);
+
+            return;
+        }
+
+        try {
+            $pair = json_decode(trim($result->output()), true, flags: JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            Log::critical('serverconfig.reality_keygen_non_json', [
+                'err' => $e->getMessage(),
+            ]);
+
+            return;
+        }
+
+        $private = is_array($pair) ? (string) ($pair['private_key'] ?? '') : '';
+        $public = is_array($pair) ? (string) ($pair['public_key'] ?? '') : '';
+        if ($private === '' || $public === '') {
+            Log::critical('serverconfig.reality_keygen_missing_fields', []);
+
+            return;
+        }
+
+        $this->forceFill([
+            'reality_private_key' => $private,
+            'reality_public_key' => $public,
+            'reality_short_ids' => $this->reality_short_ids ?: [''],
+        ])->saveQuietly();
+
+        $this->refresh();
     }
 
     protected static function booted(): void

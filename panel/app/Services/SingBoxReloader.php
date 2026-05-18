@@ -7,18 +7,17 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Contracts\SingBoxReloaderInterface;
-use Illuminate\Support\Facades\Log;
 
-// Thin shell-out to `ct-server-core caddyfile reload` (v0.2.0+).
+// No-op reload shim for the v0.4.0 sing-box path.
 //
 // v0.1.x: shelled out to `ct-server-core server reload`, which
 // PUT the rendered sing-box config.json to sing-box's clash API.
-// v0.2.0 collapsed sing-box and HAProxy into Caddy+forwardproxy;
-// the reload primitive moved to `docker exec ct-caddy caddy
-// reload --config /etc/caddy/Caddyfile`, called from
-// CtServerCore::reloadCaddy(). Caddy validates the new config
-// before swapping; in-flight connections drain gracefully; no
-// dropped TLS handshakes on a config bump.
+// v0.2.x/v0.3.x: this compatibility interface was temporarily used
+// for Caddy/naive reload paths while the architecture moved around.
+// v0.4.0 restored a dedicated ct-singbox container. Its supervisor
+// file-watches /data/config/singbox.json and respawns sing-box after
+// the panel atomically writes a new config, so PHP has nothing to do
+// after a successful render.
 //
 // Class name MUST stay `SingBoxReloader` for AppServiceProvider
 // binding-path compatibility (`app(SingBoxReloader::class)`,
@@ -29,26 +28,8 @@ use Illuminate\Support\Facades\Log;
 
 class SingBoxReloader implements SingBoxReloaderInterface
 {
-    public function __construct(
-        private CtServerCore $core,
-    ) {}
-
     public function reload(): bool
     {
-        try {
-            $this->core->reloadCaddy();
-
-            return true;
-        } catch (\Throwable $e) {
-            // Broader than \RuntimeException — see CaddyfileGenerator
-            // for rationale (an undefined-method Error broke this
-            // path silently between v0.0.4 and v0.0.10).
-            Log::warning('caddy.reload.failed', [
-                'err' => $e->getMessage(),
-                'type' => get_class($e),
-            ]);
-
-            return false;
-        }
+        return true;
     }
 }
