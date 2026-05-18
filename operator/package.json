@@ -1,6 +1,6 @@
 {
   "name": "ct-operator",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Cool Tunnel Server operator CLI — doctor/fix/readiness/self-update, compiled to a single Bun binary.",
   "license": "AGPL-3.0-only",
   "type": "module",
