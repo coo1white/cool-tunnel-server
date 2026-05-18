@@ -67,6 +67,70 @@ ct update        # pull latest release, rebuild, hot-swap
 ct backup        # snapshot DB + .env + ACME certs
 ```
 
+## Common VPS workflows
+
+### Update to a release
+
+Run this from the VPS checkout. Replace `v0.4.5` with the release you
+want to deploy.
+
+```sh
+cd /opt/cool-tunnel-server
+
+git fetch origin --tags
+git checkout v0.4.5
+
+./ct update
+./ct doctor
+```
+
+If `git checkout` reports local changes, inspect them first:
+
+```sh
+git status
+```
+
+Only if the edits are disposable, reset the checkout and retry:
+
+```sh
+git reset --hard
+git checkout v0.4.5
+./ct update
+./ct doctor
+```
+
+### Register or recover an admin user
+
+Fresh installs prompt for the first Filament admin user. Updates do not
+create or reset admins automatically, so use the panel container command
+when you need to create an admin later:
+
+```sh
+docker compose exec panel php artisan ct:make-admin
+```
+
+To reset an existing admin password, re-promote the account to admin,
+and re-enable it:
+
+```sh
+docker compose exec panel php artisan ct:make-admin --force --email=you@example.com
+```
+
+For a fully non-interactive create or reset:
+
+```sh
+docker compose exec panel php artisan ct:make-admin \
+  --name="Admin" \
+  --email="you@example.com" \
+  --password="change-this-long-password"
+```
+
+Then log in at:
+
+```text
+https://<PANEL_DOMAIN>/admin
+```
+
 ## What's running
 
 A live deployment has five containers:
