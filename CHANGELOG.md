@@ -24,6 +24,26 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.5] — 2026-05-18 — Update flow caddy startup hotfix
+
+This patch fixes the `v0.4.4` update failure where `docker compose up`
+could leave `ct-caddy` in `Created`, then `ct doctor` reported `/up`
+and `caddy-acme` failures while the panel was still warming up.
+
+### Fixed
+
+- **`ct update` now starts the panel before the public front door.**
+  The panel entrypoint renders `/etc/caddy/Caddyfile` and
+  `/data/config/singbox.json`; update now waits for the entrypoint
+  sentinel before starting `caddy` and `singbox`, matching the
+  first-install ordering.
+- **`ct update` removes stale non-running `ct-caddy` containers before
+  retrying Caddy.** `Created`, `Exited`, and `Dead` containers from a
+  prior failed compose attempt are removed so Docker can recreate the
+  front-door container cleanly without carrying a stuck port reservation.
+
+---
+
 ## [0.4.3] — 2026-05-18 — singbox Alpine runtime dependency hotfix
 
 This patch fixes the next VPS install blocker found after `v0.4.2`:
