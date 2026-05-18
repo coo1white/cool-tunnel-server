@@ -60,7 +60,7 @@ Next topic:  ./ct help install
 When to run:
   - Fresh box, never deployed before
   - After a backup -> restore cycle (idempotent)
-  - When something is so broken that 'update.sh' refuses to
+  - When something is so broken that 'ct update' refuses to
     proceed and 'doctor' shows the stack as down
 
 Common failure modes:
@@ -86,7 +86,7 @@ Next topic:  ./ct help update
 `,
     },
     "update": {
-        title: "update.sh — pull a new release, rebuild, hot-swap",
+        title: "update — pull a new release, rebuild, hot-swap",
         body: `What it does:
   Pre-flight:
     - Network reachable (github.com + registry-1.docker.io)
@@ -120,9 +120,8 @@ What it does NOT do:
     cached; old containers stay running until you re-run)
 
 Common failure modes:
-  - Uncommitted changes  -> the new preflight_clean_tree
-                            offers stash / discard / abort
-                            (v0.0.96 fix)
+  - Uncommitted changes  -> 'ct update' preflight offers
+                            stash / discard / abort
   - Network unreachable  -> diagnostic block lists ping /
                             dig / curl / proxy commands to try
   - Disk full            -> 'docker system prune -af' usually
@@ -147,7 +146,7 @@ Next topic:  ./ct help doctor
 `,
     },
     "doctor": {
-        title: "doctor.sh — health dashboard",
+        title: "doctor — health dashboard",
         body: `What it does:
   Runs ~13 health checks against the live stack and prints a
   PASS / WARN / FAIL table grouped by area:
@@ -192,7 +191,7 @@ Next topic:  ./ct help readiness
 `,
     },
     "auto-sync": {
-        title: "auto_sync.sh — credential-lock audit + auto-correct agent",
+        title: "auto-sync — credential-lock audit + auto-correct agent",
         body: `What it does:
   Runs the credential-lock guard (ct-server-core guard
   credential-lock). The guard asserts the four-way invariant:
@@ -252,7 +251,7 @@ Next topic:  ./ct help fix
 `,
     },
     "fix": {
-        title: "fix.sh — the 'I'm stuck' command",
+        title: "fix — the 'I'm stuck' command",
         body: `What it does:
   Walks through every install / runtime issue we've seen on real
   deployments, in order, and offers to fix each one interactively.
@@ -266,8 +265,8 @@ Next topic:  ./ct help fix
     [q]uit     -- stop the agent
 
 When to run:
-  - 'install.sh' got partway through and failed
-  - 'update.sh' got partway through and failed
+  - 'ct install' got partway through and failed
+  - 'ct update' got partway through and failed
   - Cool Tunnel (Mac client) connects briefly then drops
   - Browsers behind the proxy can't load websites
   - 'make doctor' shows FAIL rows you don't understand
@@ -318,7 +317,7 @@ boot stages come first):
                                  >100 (worker died, supervisord didn't
                                   catch SIGCHLD)
   14. credential_drift           panel / sing-box / Mac out of sync
-                                 (delegates to auto_sync.sh)
+                                 (delegates to 'ct auto-sync')
   15. no_proxy_account           no enabled accounts in the DB
                                  (skip-fix: prints how-to, doesn't
                                   echo a password)
@@ -330,7 +329,7 @@ boot stages come first):
                                  to \`ct auto-update\` (the unattended
                                   cron-fired version).
 
-When asking for help, paste the SUMMARY at the end of fix.sh's
+When asking for help, paste the SUMMARY at the end of 'ct fix'
 output (number detected / fixed / skipped / failed). That + the
 recipe slug of any FAILED entry is enough to triage almost
 anything.
@@ -344,7 +343,7 @@ Next topic:  ./ct help auto-update
 `,
     },
     "auto-update": {
-        title: "auto_update.sh — unattended release-pulling agent",
+        title: "auto-update — unattended release-pulling agent",
         body: `What it does:
   Checks origin/main for a newer release tag. If the deployed
   version is older AND the running stack is currently healthy,
@@ -426,7 +425,7 @@ Next topic:  ./ct help readiness
 `,
     },
     "readiness": {
-        title: "late-night-comeback.sh — readiness gate",
+        title: "readiness — ship-readiness gate",
         body: `What it does:
   Runs exactly 9 checks against the live stack and applies a
   strict scoring rule:
@@ -473,7 +472,7 @@ Next topic:  ./ct help backup
 `,
     },
     "backup": {
-        title: "backup.sh — full deployment snapshot",
+        title: "backup — full deployment snapshot",
         body: `What it does:
   Creates a single tarball containing:
     - mariadb mysqldump (full schema + data)
@@ -511,9 +510,9 @@ Next topic:  ./ct help restore
 `,
     },
     "restore": {
-        title: "restore.sh — recover from a backup tarball",
+        title: "restore — recover from a backup tarball",
         body: `What it does:
-  Reverses backup.sh. Given backups/cool-tunnel-<ts>.tar.gz:
+  Reverses 'ct backup'. Given backups/cool-tunnel-<ts>.tar.gz:
     - Stops the panel + sing-box + haproxy containers
     - Imports the mysqldump into mariadb (replacing current
       schema; existing data is lost)
@@ -526,7 +525,7 @@ Next topic:  ./ct help restore
 
 When to run:
   - Migrating to a new VPS (clone the repo, copy the backup
-    tarball, run restore.sh)
+    tarball, run 'ct restore <tarball>')
   - Recovering from a catastrophic incident (DB corruption,
     accidental rm -rf, etc.)
   - Testing backup integrity in a staging environment
@@ -545,7 +544,7 @@ database. There is no 'are you sure?' prompt -- run with care.
 
 Common failure modes:
   - 'database already exists' on re-run -> known issue;
-    restore.sh drops the DB first now, but very old tarballs
+    'ct restore' drops the DB first now, but very old tarballs
     may carry a CREATE DATABASE statement that conflicts.
   - panel does not start post-restore -> usually means the
     .env in the tarball mismatches the current docker-
@@ -580,8 +579,8 @@ Next topic:  ./ct help troubleshooting
      vs 'curl -s4 https://ifconfig.co' for the host's public IP.
    - Update DNS, wait ~5-10 min for propagation, re-run doctor.
 
-4. Update.sh refuses to start ("stack is entirely down")
-   - You probably want install.sh, not update.sh.
+4. 'ct update' refuses to start ("stack is entirely down")
+   - You probably want 'ct install', not 'ct update'.
    - But: 'docker compose ps' first to confirm.
 
 5. /up endpoint returns non-200 or connection-refused
@@ -589,12 +588,12 @@ Next topic:  ./ct help troubleshooting
    - 'docker compose logs --tail=80 panel' -- did Octane crash?
 
 6. Component check shows NG
-   - The update.sh diagnostic block names the NG component
+   - 'ct update' diagnostic block names the NG component
      and lists per-component log-tail recipes.
    - For doctor: rerun and read the Remediation block.
 
 7. 'git pull' blocked by uncommitted changes
-   - The preflight_clean_tree helper offers s / d / a
+   - 'ct update' preflight offers s / d / a
      (stash with label / discard / abort).
    - Stash with label is recoverable: 'git stash pop'.
 
