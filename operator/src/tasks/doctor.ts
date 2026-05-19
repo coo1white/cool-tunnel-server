@@ -28,6 +28,7 @@ const G_STRUCT = "Structural (network reachability)";
 const G_APP = "Application";
 const G_COMPOSE = "Compose stack";
 const G_RES = "Resources";
+const G_LATENCY = "Latency diagnostics";
 const G_INFO = "Info (no PASS/FAIL contribution)";
 const G_BALLAST = "Ballast Stones (critical invariants)";
 const G_ERR = "Errors";
@@ -275,6 +276,161 @@ async function checkComponents(_c: CheckCtx): Promise<CheckLine> {
     return { group: G_APP, label: "Components", severity: "pass", detail: `${ok}/${ok} OK` };
 }
 
+type CurlTiming = {
+    code: string;
+    connectMs: number;
+    tlsMs: number;
+    ttfbMs: number;
+    totalMs: number;
+    remote: string;
+};
+
+function parseCurlTiming(out: string): CurlTiming | null {
+    const fields = Object.fromEntries(
+        out.trim().split(/\s+/)
+            .map((part) => {
+                const i = part.indexOf("=");
+                return i > 0 ? [part.slice(0, i), part.slice(i + 1)] : null;
+            })
+            .filter((x): x is [string, string] => x !== null),
+    );
+    const seconds = (key: string): number => {
+        const n = Number(fields[key] ?? "0");
+        return Number.isFinite(n) ? Math.round(n * 1000) : 0;
+    };
+    if (!fields["code"]) return null;
+    return {
+        code: fields["code"],
+        connectMs: seconds("connect"),
+        tlsMs: seconds("tls"),
+        ttfbMs: seconds("ttfb"),
+        totalMs: seconds("total"),
+        remote: fields["remote"] ?? "",
+    };
+}
+
+async function curlTiming(url: string): Promise<CurlTiming | null> {
+    const fmt = "code=%{http_code} connect=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total} remote=%{remote_ip}";
+    const r = await capture(
+        $`curl -4 -sS -o /dev/null -w ${fmt} --connect-timeout 4 --max-time 8 ${url}`,
+    );
+    const parsed = parseCurlTiming(r.stdout);
+    if (!r.ok && parsed?.code === "000") return parsed;
+    return parsed;
+}
+
+async function checkVpsEgressLatency(_c: CheckCtx): Promise<CheckLine> {
+    const t = await curlTiming("https://www.cloudflare.com/cdn-cgi/trace");
+    if (!t) {
+        return {
+            group: G_LATENCY,
+            label: "VPS egress",
+            severity: "warn",
+            detail: "could not measure Cloudflare over IPv4",
+            hint: "curl -4 -w '%{time_total}\\n' https://www.cloudflare.com/cdn-cgi/trace",
+        };
+    }
+    const detail = `cf total=${t.totalMs}ms tls=${t.tlsMs}ms ttfb=${t.ttfbMs}ms remote=${t.remote || "?"}`;
+    if (t.code === "000" || t.totalMs > 1500) {
+        return {
+            group: G_LATENCY,
+            label: "VPS egress",
+            severity: "fail",
+            detail,
+            hint: "Check VPS provider egress, DNS, and firewall; compare curl -4 to several sites",
+        };
+    }
+    if (t.totalMs > 500) {
+        return {
+            group: G_LATENCY,
+            label: "VPS egress",
+            severity: "warn",
+            detail,
+            hint: "VPS outbound is slower than expected; compare provider region and route",
+        };
+    }
+    return { group: G_LATENCY, label: "VPS egress", severity: "pass", detail };
+}
+
+async function checkPanelPublicLatency(c: CheckCtx): Promise<CheckLine> {
+    const domain = c.env["PANEL_DOMAIN"] || (c.env["DOMAIN"] ? `panel.${c.env["DOMAIN"]}` : "");
+    if (!domain) {
+        return { group: G_LATENCY, label: "Panel RTT", severity: "warn", detail: "skipped (PANEL_DOMAIN and DOMAIN unset)" };
+    }
+    const t = await curlTiming(`https://${domain}/up`);
+    if (!t) {
+        return {
+            group: G_LATENCY,
+            label: "Panel RTT",
+            severity: "warn",
+            detail: "could not measure public /up endpoint",
+            hint: `curl -4 -w '%{time_total}\\n' https://${domain}/up`,
+        };
+    }
+    const detail = `/up total=${t.totalMs}ms connect=${t.connectMs}ms tls=${t.tlsMs}ms ttfb=${t.ttfbMs}ms`;
+    if (t.code !== "200") {
+        return {
+            group: G_LATENCY,
+            label: "Panel RTT",
+            severity: "warn",
+            detail: `HTTP ${t.code}; ${detail}`,
+            hint: `curl -vk https://${domain}/up`,
+        };
+    }
+    if (t.totalMs > 1500) {
+        return {
+            group: G_LATENCY,
+            label: "Panel RTT",
+            severity: "warn",
+            detail,
+            hint: "High panel RTT means client-to-VPS route is slow before the tunnel does any work",
+        };
+    }
+    return { group: G_LATENCY, label: "Panel RTT", severity: "pass", detail };
+}
+
+async function checkSingboxDirectStrategy(_c: CheckCtx): Promise<CheckLine> {
+    const r = await capture(
+        $`docker compose exec -T panel jq -rc '.outbounds[]? | select(.type=="direct" and .tag=="direct")' /data/config/singbox.json`,
+    );
+    if (!r.ok || !r.stdout.trim()) {
+        return {
+            group: G_LATENCY,
+            label: "Direct dial",
+            severity: "warn",
+            detail: "could not read rendered direct outbound",
+            hint: "docker compose exec -T panel jq '.outbounds' /data/config/singbox.json",
+        };
+    }
+    try {
+        const direct = JSON.parse(r.stdout.trim().split("\n")[0]!) as Record<string, unknown>;
+        const strategy = String(direct["domain_strategy"] ?? "");
+        const connect = String(direct["connect_timeout"] ?? "");
+        const fallback = String(direct["fallback_delay"] ?? "");
+        const detail = strategy
+            ? `domain_strategy=${strategy} connect_timeout=${connect || "-"} fallback_delay=${fallback || "-"}`
+            : "no domain_strategy in rendered direct outbound";
+        if (strategy === "prefer_ipv4" || strategy === "ipv4_only") {
+            return { group: G_LATENCY, label: "Direct dial", severity: "pass", detail };
+        }
+        return {
+            group: G_LATENCY,
+            label: "Direct dial",
+            severity: "warn",
+            detail,
+            hint: "Set SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4 or ipv4_only, then ./ct render singbox",
+        };
+    } catch {
+        return {
+            group: G_LATENCY,
+            label: "Direct dial",
+            severity: "warn",
+            detail: "rendered direct outbound is not valid JSON",
+            hint: "docker compose exec -T panel jq '.outbounds' /data/config/singbox.json",
+        };
+    }
+}
+
 async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
     // v0.4.0+: caddy + singbox + panel + db + redis. Caddy is the
     // public SNI splitter; singbox is the VLESS+Reality proxy behind it.
@@ -504,6 +660,9 @@ const CHECKS: CheckFn[] = [
     checkAcmeCert,
     checkUpEndpoint,
     checkComponents,
+    checkSingboxDirectStrategy,
+    checkVpsEgressLatency,
+    checkPanelPublicLatency,
     checkContainerHealth,
     checkSupervisord,
     checkDisk,
@@ -573,7 +732,7 @@ export class DoctorTask implements Task {
             fail++;
         }
 
-        for (const g of [G_PREREQ, G_STRUCT, G_APP, G_COMPOSE, G_RES, G_BALLAST, G_INFO, G_ERR]) {
+        for (const g of [G_PREREQ, G_STRUCT, G_APP, G_COMPOSE, G_RES, G_LATENCY, G_BALLAST, G_INFO, G_ERR]) {
             const lines = grouped.get(g);
             if (!lines || lines.length === 0) continue;
             process.stdout.write(`\n${BOLD}${g}${RESET}\n`);

@@ -215,6 +215,18 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
             'reality_dest_port' => 443,
             'accounts' => $accounts,
             'log_level' => 'info',
+            'direct_domain_strategy' => (string) config(
+                'cool-tunnel.singbox_direct_domain_strategy',
+                'prefer_ipv4'
+            ),
+            'direct_connect_timeout' => (string) config(
+                'cool-tunnel.singbox_direct_connect_timeout',
+                '2s'
+            ),
+            'direct_fallback_delay' => (string) config(
+                'cool-tunnel.singbox_direct_fallback_delay',
+                '100ms'
+            ),
         ];
     }
 }

@@ -19,6 +19,7 @@ import type {
     BlockOutbound,
     DnsOutbound,
     RouteBlock,
+    type DirectDomainStrategy,
 } from "./types.ts";
 
 // ---------- Server render ----------------------------------------------------
@@ -52,6 +53,16 @@ export interface ServerRenderInput {
     readonly accounts: readonly ServerAccountInput[];
     /** Log level. Production default: "info". */
     readonly log_level?: "trace" | "debug" | "info" | "warn" | "error";
+    /**
+     * Strategy for server-side direct outbound DNS answers. Defaults
+     * to prefer_ipv4 because many VPS providers expose broken IPv6
+     * routes; operators can set ipv4_only when IPv6 is fully disabled.
+     */
+    readonly direct_domain_strategy?: DirectDomainStrategy | "";
+    /** Server-side direct outbound connect timeout, e.g. "2s". */
+    readonly direct_connect_timeout?: string;
+    /** Delay before trying the fallback address family, e.g. "100ms". */
+    readonly direct_fallback_delay?: string;
 }
 
 export interface ServerAccountInput {
@@ -97,7 +108,13 @@ export function renderServerConfig(input: ServerRenderInput): SingboxConfig {
         },
     };
 
-    const directOut: DirectOutbound = { type: "direct", tag: "direct" };
+    const directOut: DirectOutbound = {
+        type: "direct",
+        tag: "direct",
+        domain_strategy: input.direct_domain_strategy || "prefer_ipv4",
+        connect_timeout: input.direct_connect_timeout || "2s",
+        fallback_delay: input.direct_fallback_delay || "100ms",
+    };
     const blockOut: BlockOutbound = { type: "block", tag: "block" };
 
     return {
