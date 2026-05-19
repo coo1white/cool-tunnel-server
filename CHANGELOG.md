@@ -24,6 +24,49 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.8] — 2026-05-19 — Operator UX and readiness repair
+
+This patch ships the post-0.4.7 operator polish found during real VPS
+upgrade/install testing: clearer install prompts, visible wait
+heartbeats, a `ct reinstall` alias, and readiness checks that match
+the active Caddy L4 plus sing-box VLESS/Reality stack.
+
+### Added
+
+- **`ct reinstall` command alias.** Re-running the installer is now a
+  first-class command and Makefile target; it follows the same safe
+  install path and asks before any destructive Docker-volume wipe.
+- **Wait-loop progress heartbeats.** Long operator waits now print a
+  periodic `... waiting for <step>` line so the CLI no longer appears
+  frozen during slow VPS boot, ACME, or service warm-up windows.
+
+### Changed
+
+- **Install and fix prompts are quieter and more direct.** Prior Docker
+  state now gets a concise preserve-or-wipe prompt, and `ct fix` uses a
+  compact apply/skip/explain/quit prompt instead of repeating host and
+  path details.
+- **Credential-sync control is centralized.** Fix recipes and
+  auto-sync now share one command surface for credential-lock checks,
+  singbox renders, config reads, logs, restarts, and container state.
+  The live path is the panel-owned artisan renderer plus the
+  `singbox` compose service.
+
+### Fixed
+
+- **Readiness ACME check now probes the panel domain.** The previous
+  gate could inspect the cover/proxy hostname and report an unrelated
+  public certificate as an ACME failure even while the panel
+  certificate was healthy.
+- **Readiness Redis bridge check recognizes current v0.4 daemon logs.**
+  The check now accepts the active subscriber/announcement messages
+  rather than only older reload strings.
+- **Credential drift remediation uses current v0.4 commands.** The
+  repair path no longer points at retired `ct-server-core` guard/render
+  command strings or old sing-box service names.
+
+---
+
 ## [0.4.7] — 2026-05-18 — Current-stack cleanup
 
 This patch trims stale operator-facing content and dead compatibility
@@ -11230,7 +11273,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.4...v0.4.5

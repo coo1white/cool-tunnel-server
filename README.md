@@ -71,33 +71,54 @@ ct backup        # snapshot DB + .env + ACME certs
 
 ### Update to a release
 
-Run this from the VPS checkout. Replace `v0.4.7` with the release you
-want to deploy.
+Latest confirmed release: `v0.4.8`.
+
+Run this on the VPS:
 
 ```sh
 cd /opt/cool-tunnel-server
 
+./ct backup
+
 git fetch origin --tags
-git checkout v0.4.7
+git checkout v0.4.8
 
 ./ct update
 ./ct doctor
 ```
 
-If `git checkout` reports local changes, inspect them first:
+If the VPS is very old and `./ct` is missing or broken, refresh the
+checkout and fetch the operator binary first:
+
+```sh
+cd /opt/cool-tunnel-server
+git fetch origin --tags
+git checkout v0.4.8
+chmod +x ./ct ./scripts/*.sh
+./scripts/fetch_operator_binary.sh || true
+./ct update
+./ct doctor
+```
+
+If `git checkout v0.4.8` complains about local changes:
 
 ```sh
 git status
 ```
 
-Only if the edits are disposable, reset the checkout and retry:
+If you did not intentionally edit those files on the VPS, stash them and
+continue:
 
 ```sh
-git reset --hard
-git checkout v0.4.7
+git stash push -m "pre-v0.4.8-vps-local-changes"
+git checkout v0.4.8
 ./ct update
 ./ct doctor
 ```
+
+Do not skip the backup. `ct update` handles legacy `.env` migration,
+rebuilds containers, runs database migrations, re-renders config, and
+restarts the stack.
 
 ### Register or recover an admin user
 
