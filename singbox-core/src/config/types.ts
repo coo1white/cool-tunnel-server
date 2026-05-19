@@ -101,9 +101,14 @@ export interface RealityClientConfig {
     readonly short_id: string;
 }
 
+export type DirectDomainStrategy = "prefer_ipv4" | "prefer_ipv6" | "ipv4_only" | "ipv6_only";
+
 export interface DirectOutbound {
     readonly type: "direct";
     readonly tag: string;
+    readonly domain_strategy?: DirectDomainStrategy;
+    readonly connect_timeout?: string;
+    readonly fallback_delay?: string;
 }
 
 export interface BlockOutbound {

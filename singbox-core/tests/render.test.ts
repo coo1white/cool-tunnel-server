@@ -39,6 +39,30 @@ test("renderServerConfig produces a valid-shape VLESS+Reality inbound", () => {
     expect(inbound.tls.reality.private_key).toBe(SERVER_INPUT.reality_private_key);
 });
 
+test("renderServerConfig defaults direct outbound to IPv4-preferred dial", () => {
+    const cfg = renderServerConfig(SERVER_INPUT);
+    const direct = cfg.outbounds.find((o) => o.type === "direct");
+    expect(direct).toBeDefined();
+    if (direct?.type !== "direct") throw new Error("unreachable");
+    expect(direct.domain_strategy).toBe("prefer_ipv4");
+    expect(direct.connect_timeout).toBe("2s");
+    expect(direct.fallback_delay).toBe("100ms");
+});
+
+test("renderServerConfig accepts explicit direct outbound dial strategy", () => {
+    const cfg = renderServerConfig({
+        ...SERVER_INPUT,
+        direct_domain_strategy: "ipv4_only",
+        direct_connect_timeout: "1500ms",
+        direct_fallback_delay: "50ms",
+    });
+    const direct = cfg.outbounds.find((o) => o.type === "direct");
+    if (direct?.type !== "direct") throw new Error("unreachable");
+    expect(direct.domain_strategy).toBe("ipv4_only");
+    expect(direct.connect_timeout).toBe("1500ms");
+    expect(direct.fallback_delay).toBe("50ms");
+});
+
 test("renderServerConfig rejects empty accounts", () => {
     expect(() => renderServerConfig({ ...SERVER_INPUT, accounts: [] })).toThrow(
         /at least one account required/,

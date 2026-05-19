@@ -2,7 +2,7 @@
 // operator/src/util/env-migrate.ts — .env auto-migration logic
 // for ct update's "Auto-migrate legacy .env" step.
 //
-// Three idempotent phases (preserving the bash original's order):
+// Four idempotent phases (preserving the bash original's order):
 //   1. Backfill `PANEL_DOMAIN=panel.${DOMAIN}` immediately after
 //      the DOMAIN= line when PANEL_DOMAIN is missing entirely.
 //   2. Relocate PANEL_DOMAIN to BEFORE the first non-comment line
@@ -13,13 +13,19 @@
 //      every invocation.
 //   3. Substitute `APP_URL=https?://${DOMAIN}` → `…${PANEL_DOMAIN}`
 //      (the pre-v0.0.68 APP_URL shape causes Livewire 3 419s).
+//   4. Backfill sing-box direct outbound dial defaults so old VPSes
+//      pick up the persistent IPv4-preferred renderer behaviour.
 //
 // Pure: each function takes `.env` text in, returns the new text +
 // a Change descriptor describing what (if anything) was rewritten.
 // I/O happens in the caller (operator/update.ts).
 
 export interface EnvChange {
-    readonly phase: "panel-domain-backfill" | "panel-domain-relocate" | "app-url-fix";
+    readonly phase:
+        | "panel-domain-backfill"
+        | "panel-domain-relocate"
+        | "app-url-fix"
+        | "singbox-direct-defaults";
     readonly summary: string;
 }
 
@@ -32,6 +38,9 @@ export interface EnvMigrationResult {
 
 const DOMAIN_LINE_RE = /^DOMAIN=(.*)$/m;
 const PANEL_DOMAIN_LINE_RE = /^PANEL_DOMAIN=(.*)$/m;
+const SINGBOX_DIRECT_DOMAIN_STRATEGY_RE = /^SINGBOX_DIRECT_DOMAIN_STRATEGY=/m;
+const SINGBOX_DIRECT_CONNECT_TIMEOUT_RE = /^SINGBOX_DIRECT_CONNECT_TIMEOUT=/m;
+const SINGBOX_DIRECT_FALLBACK_DELAY_RE = /^SINGBOX_DIRECT_FALLBACK_DELAY=/m;
 const LEGACY_APP_URL_RE = /^(APP_URL=https?:\/\/)\$\{DOMAIN\}/m;
 // "non-comment line that references ${PANEL_DOMAIN}" — comments
 // start with optional whitespace then '#'. Used in phase 2.
@@ -153,6 +162,36 @@ export function fixLegacyAppUrl(content: string): { content: string; change: Env
     };
 }
 
+// ---------- Phase 4: sing-box direct outbound defaults ----------
+
+export function backfillSingboxDirectDefaults(content: string): { content: string; change: EnvChange | null } {
+    if (
+        SINGBOX_DIRECT_DOMAIN_STRATEGY_RE.test(content) &&
+        SINGBOX_DIRECT_CONNECT_TIMEOUT_RE.test(content) &&
+        SINGBOX_DIRECT_FALLBACK_DELAY_RE.test(content)
+    ) {
+        return { content, change: null };
+    }
+    const additions = ["", "# v0.4.9 auto-migration — sing-box direct outbound dial policy"];
+    if (!SINGBOX_DIRECT_DOMAIN_STRATEGY_RE.test(content)) {
+        additions.push("SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4");
+    }
+    if (!SINGBOX_DIRECT_CONNECT_TIMEOUT_RE.test(content)) {
+        additions.push("SINGBOX_DIRECT_CONNECT_TIMEOUT=2s");
+    }
+    if (!SINGBOX_DIRECT_FALLBACK_DELAY_RE.test(content)) {
+        additions.push("SINGBOX_DIRECT_FALLBACK_DELAY=100ms");
+    }
+    const block = additions.join("\n");
+    return {
+        content: content.endsWith("\n") ? `${content}${block.slice(1)}\n` : `${content}${block}\n`,
+        change: {
+            phase: "singbox-direct-defaults",
+            summary: "added sing-box direct outbound IPv4-preferred defaults to .env",
+        },
+    };
+}
+
 // ---------- Composer ----------
 
 // Run all three phases in order on a .env body. Each phase is
@@ -174,6 +213,10 @@ export function migrateEnv(content: string): EnvMigrationResult {
     const p3 = fixLegacyAppUrl(cur);
     cur = p3.content;
     if (p3.change) changes.push(p3.change);
+
+    const p4 = backfillSingboxDirectDefaults(cur);
+    cur = p4.content;
+    if (p4.change) changes.push(p4.change);
 
     return { content: cur, changes, warning };
 }

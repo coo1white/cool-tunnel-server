@@ -6,6 +6,7 @@ import {
     backfillPanelDomain,
     relocatePanelDomain,
     fixLegacyAppUrl,
+    backfillSingboxDirectDefaults,
     migrateEnv,
     panelDomainDefLine,
     firstPanelDomainRefLine,
@@ -133,12 +134,49 @@ test("fixLegacyAppUrl: no-op when APP_URL already canonical", () => {
     expect(r.content).toBe(env);
 });
 
-// ---------- migrateEnv (all three phases) ----------
+// ---------- Phase 4: backfillSingboxDirectDefaults ----------
+
+test("backfillSingboxDirectDefaults: appends IPv4-preferred defaults when missing", () => {
+    const env = `DOMAIN=proxy.example.com
+PANEL_DOMAIN=admin.example.com
+APP_URL=https://\${PANEL_DOMAIN}/admin
+`;
+    const r = backfillSingboxDirectDefaults(env);
+    expect(r.change?.phase).toBe("singbox-direct-defaults");
+    expect(r.content).toContain("SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4");
+    expect(r.content).toContain("SINGBOX_DIRECT_CONNECT_TIMEOUT=2s");
+    expect(r.content).toContain("SINGBOX_DIRECT_FALLBACK_DELAY=100ms");
+});
+
+test("backfillSingboxDirectDefaults: no-op when strategy already present", () => {
+    const env = `SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only
+SINGBOX_DIRECT_CONNECT_TIMEOUT=1500ms
+SINGBOX_DIRECT_FALLBACK_DELAY=50ms
+`;
+    const r = backfillSingboxDirectDefaults(env);
+    expect(r.change).toBeNull();
+    expect(r.content).toBe(env);
+});
+
+test("backfillSingboxDirectDefaults: fills missing timeout keys for existing strategy", () => {
+    const env = `SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only
+`;
+    const r = backfillSingboxDirectDefaults(env);
+    expect(r.change?.phase).toBe("singbox-direct-defaults");
+    expect(r.content).toContain("SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only");
+    expect(r.content).toContain("SINGBOX_DIRECT_CONNECT_TIMEOUT=2s");
+    expect(r.content).toContain("SINGBOX_DIRECT_FALLBACK_DELAY=100ms");
+});
+
+// ---------- migrateEnv (all phases) ----------
 
 test("migrateEnv: clean canonical .env is a full no-op", () => {
     const env = `DOMAIN=proxy.example.com
 PANEL_DOMAIN=admin.example.com
 APP_URL=https://\${PANEL_DOMAIN}/admin
+SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4
+SINGBOX_DIRECT_CONNECT_TIMEOUT=2s
+SINGBOX_DIRECT_FALLBACK_DELAY=100ms
 `;
     const r = migrateEnv(env);
     expect(r.changes).toEqual([]);
@@ -153,10 +191,12 @@ ACME_EMAIL=ops@example.com
     const r = migrateEnv(env);
     // Phase 1 (backfill) + Phase 3 (app-url-fix) fire; phase 2
     // doesn't because the freshly-inserted PANEL_DOMAIN already
-    // precedes its reference.
+    // precedes its reference. Phase 4 appends the persistent
+    // sing-box outbound defaults for old installs.
     const phases = r.changes.map((c) => c.phase);
     expect(phases).toContain("panel-domain-backfill");
     expect(phases).toContain("app-url-fix");
+    expect(phases).toContain("singbox-direct-defaults");
     expect(r.content).toContain("PANEL_DOMAIN=panel.proxy.example.com");
     expect(r.content).toContain("APP_URL=https://${PANEL_DOMAIN}/admin");
 });
@@ -168,5 +208,5 @@ ACME_EMAIL=ops@example.com
 PANEL_DOMAIN=admin.example.com
 `;
     const r = migrateEnv(env);
-    expect(r.changes.map((c) => c.phase)).toEqual(["panel-domain-relocate"]);
+    expect(r.changes.map((c) => c.phase)).toEqual(["panel-domain-relocate", "singbox-direct-defaults"]);
 });

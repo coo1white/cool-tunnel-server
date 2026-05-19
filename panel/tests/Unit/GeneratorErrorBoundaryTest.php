@@ -84,6 +84,30 @@ final class GeneratorErrorBoundaryTest extends TestCase
     }
 
     #[Test]
+    public function singbox_render_input_carries_direct_outbound_dial_policy(): void
+    {
+        ServerConfig::factory()->create();
+        ProxyAccount::factory()->create();
+
+        config([
+            'cool-tunnel.singbox_direct_domain_strategy' => 'ipv4_only',
+            'cool-tunnel.singbox_direct_connect_timeout' => '1500ms',
+            'cool-tunnel.singbox_direct_fallback_delay' => '50ms',
+        ]);
+
+        $gen = $this->app->make(SingBoxConfigGenerator::class);
+        $method = new \ReflectionMethod($gen, 'buildRenderInput');
+        $method->setAccessible(true);
+
+        /** @var array<string,mixed> $input */
+        $input = $method->invoke($gen);
+
+        $this->assertSame('ipv4_only', $input['direct_domain_strategy']);
+        $this->assertSame('1500ms', $input['direct_connect_timeout']);
+        $this->assertSame('50ms', $input['direct_fallback_delay']);
+    }
+
+    #[Test]
     public function caddyfile_soft_fails_on_runtime_exception(): void
     {
         $core = $this->createMock(CtServerCoreInterface::class);

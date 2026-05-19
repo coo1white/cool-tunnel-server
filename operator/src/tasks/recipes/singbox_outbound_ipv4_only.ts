@@ -3,12 +3,13 @@
 // port of ct fix recipe 10.
 //
 // Detect: sing-box is up, the host can NOT reach the public internet
-// over IPv6, AND the rendered sing-box config lacks the v0.1.2+
-// "domain_resolver" directive — i.e. outbound traffic to AAAA records
-// will fail and the client will see a post-CONNECT reset.
+// over IPv6, AND the rendered sing-box config does not carry an
+// IPv4-preferring direct outbound strategy. Without that, outbound
+// traffic to AAAA-heavy destinations can spend user-visible time in
+// dead IPv6 attempts before falling back to IPv4.
 //
 // Fix: re-render the sing-box config from the current template (which
-// emits domain_resolver as of v0.1.2). If a legacy
+// emits prefer_ipv4 by default as of v0.4.9). If a legacy
 // docker-compose.override.yml hotfix set
 // ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS, retire it and
 // recreate sing-box so the env var disappears. Otherwise just
@@ -38,7 +39,7 @@ Symptom from the client side:
   - Browsers can't load anything via the proxy
 
 Fix: tell sing-box to prefer IPv4 when reaching the internet. We
-ship a sing-box template (v0.1.2+) that emits the right directive.
+ship a sing-box template (v0.4.9+) that emits the right directive.
 This recipe re-runs the renderer so the running config picks up
 the directive, then restarts sing-box once. Browsers / apps behind
 the proxy work exactly the same after the fix — every website
@@ -57,9 +58,17 @@ async function hostHasIpv6(): Promise<boolean> {
     return r.ok;
 }
 
-async function configHasDomainResolver(): Promise<boolean> {
+async function configHasIpv4Strategy(): Promise<boolean> {
     const r = await readSingboxConfig();
-    return r.ok && r.stdout.includes("domain_resolver");
+    if (!r.ok) return false;
+    try {
+        const cfg = JSON.parse(r.stdout) as { outbounds?: Array<Record<string, unknown>> };
+        const direct = cfg.outbounds?.find((o) => o["type"] === "direct" && o["tag"] === "direct");
+        const strategy = direct?.["domain_strategy"];
+        return strategy === "prefer_ipv4" || strategy === "ipv4_only";
+    } catch {
+        return false;
+    }
 }
 
 async function detectIpv4Only(): Promise<boolean> {
@@ -67,7 +76,7 @@ async function detectIpv4Only(): Promise<boolean> {
     // Healthy IPv6 → recipe doesn't apply.
     if (await hostHasIpv6()) return false;
     // Already has the directive → renderer is up to date.
-    if (await configHasDomainResolver()) return false;
+    if (await configHasIpv4Strategy()) return false;
     return true;
 }
 
@@ -103,7 +112,7 @@ export const recipe: Recipe = {
         return { ok: true };
     },
     async verify() {
-        if (!(await configHasDomainResolver())) return false;
+        if (!(await configHasIpv4Strategy())) return false;
         return await singboxRunning();
     },
 };
