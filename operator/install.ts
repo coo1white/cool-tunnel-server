@@ -291,14 +291,12 @@ async function preflightDockerState(): Promise<void> {
     }
     warn("Docker state from a prior install detected:");
     warn(`  containers: ${containerCount}    volumes: ${volumeCount}`);
-    warn("stale volumes are the #1 cause of 'Access denied for user' on first boot —");
-    warn("the DB image only seeds users on FIRST volume init; if .env DB_PASSWORD");
-    warn("rotated since the last attempt, panel can't authenticate against the old volume.");
-    if (await promptYn("Wipe prior state ('compose down -v') before installing? DESTROYS any DB data", "n")) {
+    warn("wipe only for a fresh reinstall; keep existing state to preserve data");
+    if (await promptYn("Wipe Docker volumes? DESTROYS database data", "n")) {
         await capture($`docker compose down -v`);
         ok("prior containers + volumes removed");
     } else {
-        warn("continuing with existing state — if migrations fail with '1045', this is the cause");
+        ok("keeping existing Docker volumes and database");
     }
 }
 

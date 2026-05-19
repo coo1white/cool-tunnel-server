@@ -16,6 +16,13 @@
 
 import type { Recipe } from "./types";
 import { $, capture, which } from "../../util/sh";
+import {
+    readSingboxConfig,
+    recreateSingbox,
+    renderSingboxConfig,
+    restartSingbox,
+    singboxRunning,
+} from "../../util/credential-control";
 
 const DESCRIBE = `Your server can't reach the public internet over IPv6.
 
@@ -41,15 +48,8 @@ If you upgraded from v0.1.1 and have a docker-compose.override.yml
 that sets ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS=true as a
 hotfix, this recipe also removes that file (no longer needed).`;
 
-const CONFIG_PATH = "/var/lib/docker/volumes/cool-tunnel-server_singbox_etc/_data/config.json";
 const OVERRIDE_PATH = "docker-compose.override.yml";
 const LEGACY_ENV_FLAG = "ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS";
-
-async function singBoxRunning(): Promise<boolean> {
-    if (!(await which("docker"))) return false;
-    const r = await capture($`docker compose ps --status running sing-box`);
-    return r.ok && r.stdout.includes("ct-singbox");
-}
 
 async function hostHasIpv6(): Promise<boolean> {
     if (!(await which("curl"))) return false;
@@ -58,19 +58,14 @@ async function hostHasIpv6(): Promise<boolean> {
 }
 
 async function configHasDomainResolver(): Promise<boolean> {
-    const f = Bun.file(CONFIG_PATH);
-    if (!(await f.exists())) return false;
-    const text = await f.text();
-    return text.includes("domain_resolver");
+    const r = await readSingboxConfig();
+    return r.ok && r.stdout.includes("domain_resolver");
 }
 
 async function detectIpv4Only(): Promise<boolean> {
-    if (!(await singBoxRunning())) return false;
+    if (!(await singboxRunning())) return false;
     // Healthy IPv6 → recipe doesn't apply.
     if (await hostHasIpv6()) return false;
-    // Config file must exist (otherwise we can't reason about it).
-    const cfg = Bun.file(CONFIG_PATH);
-    if (!(await cfg.exists())) return false;
     // Already has the directive → renderer is up to date.
     if (await configHasDomainResolver()) return false;
     return true;
@@ -88,13 +83,11 @@ export const recipe: Recipe = {
     describe: async () => DESCRIBE,
     detect: detectIpv4Only,
     async fix() {
-        const render = await capture(
-            $`docker compose exec -T panel ct-server-core --json singbox render`,
-        );
+        const render = await renderSingboxConfig();
         if (!render.ok) {
             return {
                 ok: false,
-                detail: render.stderr.split("\n")[0] || "ct-server-core singbox render failed",
+                detail: render.stderr.split("\n")[0] || "php artisan singbox:render failed",
             };
         }
 
@@ -102,15 +95,15 @@ export const recipe: Recipe = {
             // Retire the legacy override + recreate sing-box (not
             // restart) so the removed env var actually goes away.
             await capture($`rm -f ${OVERRIDE_PATH}`);
-            await capture($`docker compose up -d sing-box`);
+            await recreateSingbox();
         } else {
-            await capture($`docker compose restart sing-box`);
+            await restartSingbox();
         }
         await new Promise((res) => setTimeout(res, 6000));
         return { ok: true };
     },
     async verify() {
         if (!(await configHasDomainResolver())) return false;
-        return await singBoxRunning();
+        return await singboxRunning();
     },
 };

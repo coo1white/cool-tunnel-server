@@ -3,18 +3,19 @@
 // and auto-correct logic, shared between the `ct-operator
 // auto-sync` task and the `credential_drift` fix recipe.
 //
-// Ported from ct auto-sync. The bash original wraps three
-// docker compose exec calls:
+// Ported from ct auto-sync. This is the strict server-side leader:
+// panel DB is canonical, and generated artifacts are reconciled to it.
 //
-//   1. ct-server-core guard credential-lock   (audit)
-//   2. if NG → ct-server-core --json singbox render   (correct)
-//   3. docker compose restart sing-box        (apply)
+//   1. php artisan credential-lock:check      (audit)
+//   2. if NG → php artisan singbox:render     (correct)
+//   3. docker compose restart singbox         (apply)
 //   4. brief settle, re-audit                  (re-verify)
 //
 // Exposed as a function (with a logger callback) so the recipe
 // and the standalone task can share the implementation.
 
-import { $, capture, which } from "./sh";
+import { which } from "./sh";
+import { credentialLockCheck, renderSingboxConfig, restartSingbox } from "./credential-control";
 
 export interface SyncLogger {
     info(line: string): void;
@@ -30,7 +31,7 @@ export interface SyncResult {
     // "clean"     — no drift on the initial audit
     // "corrected" — drift detected, render + restart succeeded, re-audit passed
     // "render_failed" — drift detected but the singbox render call failed
-    // "restart_failed" — render succeeded but `compose restart sing-box` failed
+    // "restart_failed" — render succeeded but `compose restart singbox` failed
     // "still_drifted" — corrective action ran but re-audit still NG
     // "no_docker" — docker not on PATH; nothing to do
     readonly outcome:
@@ -88,9 +89,7 @@ export async function runCredentialSync(opts: {
     }
 
     // ---------- 1. Initial audit ----------
-    const audit = await capture(
-        $`docker compose exec -T panel ct-server-core guard credential-lock`,
-    );
+    const audit = await credentialLockCheck();
     if (audit.ok) {
         const head = (audit.stdout.replace(/\n/g, " ") || "ok").slice(0, 200);
         say(`no drift detected — ${head}`);
@@ -107,9 +106,7 @@ export async function runCredentialSync(opts: {
 
     // ---------- 2. Re-render sing-box config ----------
     say("attempting corrective action — re-rendering sing-box config");
-    const render = await capture(
-        $`docker compose exec -T panel ct-server-core --json singbox render`,
-    );
+    const render = await renderSingboxConfig();
     if (!render.ok) {
         err("FAILED to re-render sing-box config:");
         dumpIndented(
@@ -127,7 +124,7 @@ export async function runCredentialSync(opts: {
 
     // ---------- 3. Restart sing-box ----------
     say("restarting sing-box container so the new config takes effect");
-    const restart = await capture($`docker compose restart sing-box`);
+    const restart = await restartSingbox();
     if (!restart.ok) {
         err("FAILED to restart sing-box container");
         return {
@@ -138,14 +135,12 @@ export async function runCredentialSync(opts: {
     }
 
     // Brief settle window before re-verification. sing-box restart
-    // is fast (typically <2s) but the naive inbound takes a moment
+    // is fast (typically <2s) but the VLESS inbound takes a moment
     // to bind. Less than 5s is risky on a 1-vCPU box under load.
     await new Promise((r) => setTimeout(r, SETTLE_MS));
 
     // ---------- 4. Re-verify ----------
-    const reaudit = await capture(
-        $`docker compose exec -T panel ct-server-core guard credential-lock`,
-    );
+    const reaudit = await credentialLockCheck();
     if (reaudit.ok) {
         const head = (reaudit.stdout.replace(/\n/g, " ") || "ok").slice(0, 200);
         say(`CORRECTED — credential-lock now reports OK: ${head}`);
@@ -158,7 +153,7 @@ export async function runCredentialSync(opts: {
         reaudit.stdout + reaudit.stderr,
     );
     err("manual investigation required. Most likely causes:");
-    err("  - panel container can't decrypt password_cleartext_encrypted (APP_KEY rotation?)");
+    err("  - panel DB, rendered singbox.json, and subscription manifest still disagree");
     err("  - sing-box config volume has different mount than the renderer writes to");
     err("  - a writer (Filament UI?) is mutating the row between render and verify");
     err("  - the sing-box restart did not pick up the new config (check container logs)");

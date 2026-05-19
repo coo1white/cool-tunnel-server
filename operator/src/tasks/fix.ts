@@ -199,7 +199,7 @@ async function promptAction(
         return "skip";
     }
     for (;;) {
-        process.stderr.write(`  ${slug} -- [a]pply / [s]kip / [e]xplain / [q]uit: `);
+        process.stderr.write(`\n    ? ${slug}: [a]pply / [s]kip / [e]xplain / [q]uit [s] `);
         const reply = (await readLine()).trim().toLowerCase();
         if (reply === "a" || reply === "apply") return "apply";
         if (reply === "s" || reply === "skip" || reply === "") return "skip";
@@ -223,16 +223,8 @@ export class FixTask implements Task {
         // task-specific args through ctx; clean separation between
         // global flags (--json, --no-bridge) and task flags (--auto).
         const autoApply = process.argv.includes("--auto");
-        const hn = (await capture($`hostname`)).stdout.trim() || "?";
-        process.stdout.write(`Cool Tunnel Server -- fix agent${autoApply ? " (--auto)" : ""}\n`);
-        process.stdout.write(`  host=${hn}, ${new Date().toISOString()}\n`);
-        process.stdout.write(`  via ${found.fixSh}\n\n`);
-        process.stdout.write(
-            `Walking ${RECIPES.length} recipes. ` +
-                (autoApply
-                    ? "Auto-apply mode: every detected issue is fixed without prompting.\n\n"
-                    : "For each detected issue: apply / skip / explain / quit.\n\n"),
-        );
+        process.stdout.write(`Cool Tunnel Server — fix${autoApply ? " --auto" : ""}\n`);
+        process.stdout.write(`Checking ${RECIPES.length} recipes...\n\n`);
 
         const counts: Counters = { ok: 0, detected: 0, fixed: 0, skipped: 0, failed: 0 };
 
