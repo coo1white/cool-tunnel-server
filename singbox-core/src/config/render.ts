@@ -19,7 +19,7 @@ import type {
     BlockOutbound,
     DnsOutbound,
     RouteBlock,
-    type DirectDomainStrategy,
+    DirectDomainStrategy,
 } from "./types.ts";
 
 // ---------- Server render ----------------------------------------------------

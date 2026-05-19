@@ -24,6 +24,7 @@
 import { spawn, type Subprocess } from "bun";
 import { existsSync, statSync, watch } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { basename, dirname } from "node:path";
 
 interface ParsedArgs {
     readonly config: string;
@@ -169,6 +170,13 @@ function scheduleRestart(args: ParsedArgs, reason: string): void {
     }, DEFAULTS.debounceMs);
 }
 
+export function isConfigWatchEvent(configPath: string, filename: string | Buffer | null): boolean {
+    // fs.watch reports null filenames on some platforms/backends. Treat
+    // that as relevant so we never miss a config replacement.
+    if (filename == null) return true;
+    return filename.toString() === basename(configPath);
+}
+
 function startHealthz(args: ParsedArgs): void {
     Bun.serve({
         hostname: args.healthzHost,
@@ -210,8 +218,14 @@ export async function runSupervise(argv: readonly string[]): Promise<number> {
     while (Date.now() < deadline) {
         if (existsSync(args.config) && validateConfig(args.singboxBin, args.config)) {
             spawnSingbox(args);
-            // Watch the config file for subsequent changes.
-            watch(args.config, () => scheduleRestart(args, "config_changed"));
+            // Watch the containing directory, not the config file's inode.
+            // render-server writes via temp-file + rename, so watching the
+            // file path can become blind after the first atomic replacement.
+            watch(dirname(args.config), (_event, filename) => {
+                if (isConfigWatchEvent(args.config, filename)) {
+                    scheduleRestart(args, "config_changed");
+                }
+            });
             startHealthz(args);
 
             // Forward parent signals to the child for clean shutdown.
