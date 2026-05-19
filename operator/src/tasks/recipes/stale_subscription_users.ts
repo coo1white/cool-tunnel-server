@@ -9,10 +9,11 @@
 // padding + RST cover-site response because no valid user is
 // loaded server-side.
 //
-// Fix: trigger a re-render via ct-server-core, then restart sing-box.
+// Fix: trigger a re-render via the panel, then restart sing-box.
 
 import type { Recipe } from "./types";
 import { $, capture, which } from "../../util/sh";
+import { readSingboxConfig, renderSingboxConfig, restartSingbox } from "../../util/credential-control";
 
 const DESCRIBE = `sing-box's cached config still has the placeholder user
 \`__no_active_accounts__\`, but the panel DB has at least one
@@ -24,14 +25,12 @@ Symptom: client connects, TLS handshake succeeds, server returns
 That is the project's anti-fingerprint cover-site response — what
 you see when the user / password don't match any active account.
 
-Fix: \`docker compose exec panel ct-server-core --json singbox render\`
+Fix: \`docker compose exec panel php artisan singbox:render --if-changed\`
 to render with the current DB state, then restart sing-box.`;
 
 async function configHasPlaceholder(): Promise<boolean> {
     if (!(await which("docker"))) return false;
-    const r = await capture(
-        $`docker compose exec -T panel cat /etc/sing-box/config.json`,
-    );
+    const r = await readSingboxConfig();
     return r.ok && /__no_active_accounts__/.test(r.stdout);
 }
 
@@ -53,16 +52,14 @@ export const recipe: Recipe = {
         return (await configHasPlaceholder()) && (await dbHasEnabledAccount());
     },
     async fix() {
-        const r = await capture(
-            $`docker compose exec -T panel ct-server-core --json singbox render`,
-        );
+        const r = await renderSingboxConfig();
         if (!r.ok) {
             return {
                 ok: false,
-                detail: r.stderr.split("\n")[0] ?? "ct-server-core singbox render failed",
+                detail: r.stderr.split("\n")[0] ?? "php artisan singbox:render failed",
             };
         }
-        await capture($`docker compose restart sing-box`);
+        await restartSingbox();
         await new Promise((res) => setTimeout(res, 5000));
         return { ok: true };
     },

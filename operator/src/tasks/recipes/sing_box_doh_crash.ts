@@ -6,7 +6,7 @@
 // is the sing-box 1.13 schema break for hostname-form DoH that v0.1.9
 // fixed in the template, but the patch only applies to the renderer
 // — operators on existing deploys still have the broken cached
-// config in the singbox_etc volume until next render.
+// config in the singbox_config volume until next render.
 //
 // Fix: re-render via panel (picks up the v0.1.9 template) + restart
 // sing-box. If render is unavailable, patch the config in place
@@ -16,6 +16,12 @@
 import type { Recipe } from "./types";
 import type { RunContext } from "../../runner/context";
 import { $, capture, which } from "../../util/sh";
+import {
+    renderSingboxConfig,
+    restartSingbox,
+    singboxLogs,
+    singboxState,
+} from "../../util/credential-control";
 
 const DESCRIBE = `sing-box is crash-looping with:
     FATAL: create service: initialize DNS server[0]:
@@ -34,40 +40,28 @@ domain_resolver). Either path produces a config sing-box accepts.`;
 
 async function detectCrash(): Promise<boolean> {
     if (!(await which("docker"))) return false;
-    const ps = await capture($`docker compose ps sing-box --format json`);
-    if (!ps.ok) return false;
-    let state = "";
-    for (const line of ps.stdout.split("\n")) {
-        const t = line.trim();
-        if (!t) continue;
-        try {
-            const row = JSON.parse(t) as { State?: string };
-            state = row.State ?? "";
-        } catch {}
-    }
+    const state = await singboxState();
     if (state !== "restarting") return false;
-    const logs = await capture($`docker compose logs sing-box --tail=20 --no-color`);
+    const logs = await singboxLogs(20, true);
     return logs.ok && /missing domain resolver/i.test(logs.stdout);
 }
 
 async function fixCrash(_ctx: RunContext): Promise<{ ok: boolean; detail?: string }> {
-    // Try the proper path first: re-render via ct-server-core.
-    const render = await capture(
-        $`docker compose exec -T panel ct-server-core --json singbox render`,
-    );
+    // Try the proper path first: re-render via the panel.
+    const render = await renderSingboxConfig();
     if (render.ok) {
-        await capture($`docker compose restart sing-box`);
+        await restartSingbox();
         await new Promise((r) => setTimeout(r, 5000));
         return { ok: true };
     }
     // Fallback: patch the cached config to use 1.1.1.1 (IP-form).
     const patch = await capture(
-        $`docker compose exec -T panel sed -i 's|"server": "dns.alidns.com"|"server": "1.1.1.1"|' /etc/sing-box/config.json`,
+        $`docker compose exec -T panel sed -i 's|"server": "dns.alidns.com"|"server": "1.1.1.1"|' /data/config/singbox.json`,
     );
     if (!patch.ok) {
         return { ok: false, detail: "render and in-place patch both failed" };
     }
-    await capture($`docker compose restart sing-box`);
+    await restartSingbox();
     await new Promise((r) => setTimeout(r, 5000));
     return { ok: true };
 }

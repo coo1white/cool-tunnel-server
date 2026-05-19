@@ -10,6 +10,7 @@
 
 import type { Recipe } from "./types";
 import { $, capture, which } from "../../util/sh";
+import { renderSingboxConfig, restartSingbox, singboxLogs } from "../../util/credential-control";
 
 const DESCRIBE = `sing-box 1.13+ rejects DoH resolvers that use a hostname
 without an explicit "domain_resolver" bootstrap. The panel's
@@ -27,7 +28,7 @@ domain_resolver bootstrap entries (tracked separately).`;
 
 async function detectMissingResolver(): Promise<boolean> {
     if (!(await which("docker"))) return false;
-    const r = await capture($`docker compose logs --tail=30 sing-box`);
+    const r = await singboxLogs(30);
     if (!r.ok) return false;
     return /missing domain resolver for domain server address/.test(r.stdout + r.stderr);
 }
@@ -56,20 +57,18 @@ export const recipe: Recipe = {
                 detail: setR.stderr.split("\n")[0] || "artisan tinker (set DoH resolver) failed",
             };
         }
-        const render = await capture(
-            $`docker compose exec -T panel ct-server-core --json singbox render`,
-        );
+        const render = await renderSingboxConfig();
         if (!render.ok) {
             return {
                 ok: false,
-                detail: render.stderr.split("\n")[0] || "ct-server-core singbox render failed",
+                detail: render.stderr.split("\n")[0] || "php artisan singbox:render failed",
             };
         }
-        const restart = await capture($`docker compose restart sing-box`);
+        const restart = await restartSingbox();
         if (!restart.ok) {
             return {
                 ok: false,
-                detail: restart.stderr.split("\n")[0] || "compose restart sing-box failed",
+                detail: restart.stderr.split("\n")[0] || "compose restart singbox failed",
             };
         }
         await new Promise((res) => setTimeout(res, 8000));

@@ -41,8 +41,8 @@ by component (read the FIRST one whose component matches):
                          migration failed (/tmp/cool-tunnel/migrate-failed),
                          APP_KEY missing, or Octane worker crash.
 
-  sing-box    -> docker compose logs --tail=60 sing-box
-                 docker compose exec panel ct-server-core --json singbox render
+  sing-box    -> docker compose logs --tail=60 singbox
+                 docker compose exec panel php artisan singbox:render --if-changed
                  Common: rendered config invalid, port collision,
                          missing Reality key material, or supervisor
                          restart loop.
