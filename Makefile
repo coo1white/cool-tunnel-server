@@ -254,6 +254,10 @@ manifest-lockstep: ## verify manifest pins match local deployment sources
 install: ## first-time bootstrap (interactive)
 	./scripts/install.sh
 
+.PHONY: reinstall
+reinstall: ## rerun install safely; prompts before any data wipe
+	./ct reinstall
+
 .PHONY: update
 update: ## pull, rebuild, run component check, swap traffic
 	./ct update

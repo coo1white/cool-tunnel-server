@@ -32,6 +32,14 @@ const isTty = process.stdout.isTTY === true;
 const PASS_GLYPH = isTty ? "\x1b[32mOK\x1b[0m" : "OK";
 const FAIL_GLYPH = isTty ? "\x1b[31mNG\x1b[0m" : "NG";
 
+export function readinessAcmeDomain(env: EnvMap): string {
+    return (env["PANEL_DOMAIN"] || env["DOMAIN"] || "").trim();
+}
+
+export function readinessRedisBridgeAcked(logs: string): boolean {
+    return /sing-?box reload(ed)?|caddy reloaded|revocation received|revocation announce observed|redis subscriber attached/i.test(logs);
+}
+
 const CHECKS: ReadinessCheck[] = [
     {
         slot: 1, label: "DNS", structural: true,
@@ -61,8 +69,8 @@ const CHECKS: ReadinessCheck[] = [
     {
         slot: 3, label: "ACME", structural: true,
         async run({ env }) {
-            const domain = env["DOMAIN"];
-            if (!domain) return { ok: false, detail: "ACME — DOMAIN not set" };
+            const domain = readinessAcmeDomain(env);
+            if (!domain) return { ok: false, detail: "ACME — PANEL_DOMAIN/DOMAIN not set" };
             const r = await capture(
                 $`bash -c "echo | timeout 6 openssl s_client -servername ${domain} -connect ${domain}:443 2>/dev/null | openssl x509 -noout -issuer 2>/dev/null"`,
             );
@@ -147,7 +155,7 @@ const CHECKS: ReadinessCheck[] = [
             const logs = await capture(
                 $`docker compose logs --since=5s panel`.quiet(),
             );
-            return /sing-?box reload(ed)?|caddy reloaded|revocation received/i.test(logs.stdout)
+            return readinessRedisBridgeAcked(logs.stdout)
                 ? { ok: true, detail: "Redis bridge alive (daemon ack'd a resync)" }
                 : { ok: false, detail: "Published, but no daemon ack within 3s window" };
         },

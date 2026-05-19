@@ -62,7 +62,7 @@ export async function promptYn(question: string, defaultAnswer: "y" | "n" = "n")
     const rl = createInterface({ input: process.stdin, output: process.stderr });
     try {
         for (;;) {
-            process.stderr.write(`    ${question} ${hint} `);
+            process.stderr.write(`\n    ? ${question} ${hint} `);
             const reply = await readLineFrom(rl);
             const r = parseYn(reply, defaultAnswer);
             if (r === "yes") return true;

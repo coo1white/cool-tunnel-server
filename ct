@@ -53,6 +53,7 @@ USAGE
 
 EVERYDAY COMMANDS
   install        first-time bootstrap on a fresh VPS (~5-10 min)
+  reinstall      rerun install safely; asks before any data wipe
   fix            interactive auto-diagnose-and-repair (the "I'm stuck" command)
   doctor         read-only health dashboard (PASS / WARN / FAIL)
   auto-diag      read-only diagnostic bundle saved under diagnostics/
@@ -368,6 +369,7 @@ cmd="${1:-help}"
 
 case "$cmd" in
     install)      exec ./scripts/install.sh             "$@" ;;
+    reinstall)    exec ./scripts/install.sh             "$@" ;;
     fix)          dispatch_via_operator fix       "" "$@" ;;
     doctor)       dispatch_via_operator doctor    "" "$@" ;;
     auto-diag)    dispatch_via_operator auto-diag "" "$@" ;;
