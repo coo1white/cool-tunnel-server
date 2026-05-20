@@ -14,10 +14,9 @@ namespace App\Contracts;
  * interface to return canned JSON without invoking the real
  * subprocess).
  *
- * `run()` is the low-level dispatcher; the typed helpers
- * (`renderSingBoxConfig`, `componentCheck`, …) are thin
- * wrappers that call it with specific argv. Implementations
- * MAY override either layer.
+ * `run()` is the low-level dispatcher; typed helpers are thin
+ * wrappers that call it with specific argv. Implementations MAY
+ * override either layer.
  *
  * Every method returns a decoded JSON array. Subprocess
  * failures (non-zero exit, timeout, JSON parse error) throw —

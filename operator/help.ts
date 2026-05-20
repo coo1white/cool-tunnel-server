@@ -52,7 +52,7 @@ Next topic:  ./ct help install
   - Brings the stack up; panel's entrypoint runs the first
     migration + initial Caddyfile/sing-box render
   - Waits for ACME (Let's Encrypt) to acquire the cert
-  - Runs component check; reports OK or NG per service
+  - Runs health gates and reports PASS / WARN / FAIL
   - Drops a one-time admin password to stdout; save it
 
 When to run:
@@ -103,7 +103,7 @@ Next topic:  ./ct help update
     - Wait for panel entrypoint sentinel
     - Re-render Caddyfile and reload Caddy
     - Let ct-singbox pick up the panel-rendered singbox.json
-    - Component check (post-swap)
+    - Health gates (post-swap)
 
 When to run:
   - After 'git pull' shows new commits on origin/main
@@ -127,9 +127,8 @@ Common failure modes:
   - Build failure        -> diagnostic block names the most
                             common causes per image (caddy,
                             singbox, panel)
-  - Component check NG   -> diagnostic block names the NG
-                            component + per-component
-                            log-tail recipe
+  - Health gate failed   -> diagnostic block gives the
+                            remediation command to run next
 
 If something goes sideways and the panel container restart-
 loops: 'docker compose logs panel' is the first place to look.
@@ -152,7 +151,7 @@ Next topic:  ./ct help doctor
     Prerequisites          docker compose, .env mode,
                            Reality clock window
     Structural             DNS, ports 80/443, ACME cert expiry
-    Application            /up endpoint, component check
+    Application            /up endpoint, direct-dial config
     Compose stack          5 services up, supervisord progs
     Resources              disk + RAM headroom
     Info                   release version, active users,
@@ -233,8 +232,9 @@ Next topic:  ./ct help fix
     "auto-sync": {
         title: "auto-sync — credential-lock audit + auto-correct agent",
         body: `What it does:
-  Runs the credential-lock guard (ct-server-core guard
-  credential-lock). The guard asserts the four-way invariant:
+  Runs the panel credential-lock guard
+  (php artisan credential-lock:check). The guard asserts the
+  four-way invariant:
 
     db == rendered == manifest == mac-config
 
@@ -477,7 +477,7 @@ Next topic:  ./ct help readiness
       6. Clock synchronised (NTP)
       7. Reality clock window safe (UTC skew inside
          max_time_difference, default 1m)
-      8. Component check all OK
+      8. Direct-dial config sane
       9. Redis revocation bridge alive (publishes a test
          resync + waits for daemon ack)
 
@@ -556,7 +556,7 @@ Next topic:  ./ct help restore
     - Restores the caddy_data volume (ACME certs)
     - Restores .env, manifests, and Caddyfile template
     - Restarts the stack
-    - Component check
+    - Readiness check
 
 When to run:
   - Migrating to a new VPS (clone the repo, copy the backup
@@ -622,10 +622,9 @@ Next topic:  ./ct help troubleshooting
    - 'docker compose ps panel' -- is it running?
    - 'docker compose logs --tail=80 panel' -- did Octane crash?
 
-6. Component check shows NG
-   - 'ct update' diagnostic block names the NG component
-     and lists per-component log-tail recipes.
-   - For doctor: rerun and read the Remediation block.
+6. Doctor or readiness shows FAIL
+   - Rerun and read the Remediation block.
+   - Check the service-specific log command printed there.
 
 7. 'git pull' blocked by uncommitted changes
    - 'ct update' preflight offers s / d / a

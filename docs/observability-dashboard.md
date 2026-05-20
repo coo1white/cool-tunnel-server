@@ -108,8 +108,8 @@ Instrumented network surfaces:
 - internal `/metrics` HTTP scrapes, including 400/404/405 paths
 - sing-box clash API calls (`PUT /configs`, `GET /configs`,
   `GET /metrics`)
-- DoH resolver probes, anti-tracking HTTP probes, and the canary
-  `haproxy:443` TCP connect
+- DoH resolver probes, anti-tracking HTTP probes, and service
+  health checks for the public proxy path
 
 Normal completion is emitted at `TRACE`. Threshold crossings and parse
 failures emit `WARN` and include capped hex dumps (`frame_hex`,

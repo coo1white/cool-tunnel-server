@@ -10,9 +10,8 @@ syscalls matter:
 | --- | --- |
 | `ct-server-core caddyfile render` | Reads `server_configs` from the DB, substitutes into `Caddyfile.tpl`, writes atomically to `/etc/caddy/Caddyfile`. Returns the SHA-256 of the result. |
 | `ct-server-core daemon` | Long-running mode for the panel socket, Redis revocation bridge, and internal metrics endpoint. |
-| `ct-server-core component list/check` | Lists or verifies pinned component manifests. |
-| `ct-server-core canary probe/status` | Runs and reports the self-probe canary. |
 | `ct-server-core admin panel-domain` | Prints the resolved panel hostname. |
+| `ct-server-core version` | Prints the core binary version and protocol version. |
 
 The wire format is the same `Request`/`Response`/`Event` JSON-over-
 stdio used by the macOS client's Rust core, so the design intuitions

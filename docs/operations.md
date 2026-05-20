@@ -35,7 +35,7 @@ ct doctor
 
 That prints a colour-coded PASS / WARN / FAIL dashboard across ~13
 checks (DNS, ports, ACME cert expiry, container health, supervisord
-programs, /up endpoint, component check, disk + RAM headroom). Any
+programs, /up endpoint, direct-dial settings, disk + RAM headroom). Any
 FAIL row comes with a one-line "↳" hint at the bottom telling you
 exactly what to run next.
 
@@ -82,8 +82,8 @@ What `ct update` does, in plain terms:
 7. **Runs migrations** (no-op if nothing pending).
 8. **Re-renders** the Caddyfile and reloads Caddy from the host-side
    operator.
-9. **Component check** on the post-swap runtime; reports any NG with
-    a named component and per-component log-tail recipe.
+9. **Health gates** on the post-swap runtime; reports remediation
+   hints when `doctor` or `readiness` fails.
 
 ✅ **Good**: ends with `✓ Update complete.` and `ct doctor` afterward
 shows mostly PASS.
@@ -356,7 +356,7 @@ For operators who want to understand the exact sequence:
 7. Runs Laravel migrations (no-op if nothing pending).
 8. Re-renders the Caddyfile and reloads Caddy from the host-side
    operator.
-9. Component check on the post-swap runtime.
+9. Health gates on the post-swap runtime.
 
 If anything fails mid-update, the `flock` auto-releases on script
 exit and the whole script is idempotent — just re-run `ct update`.
@@ -373,7 +373,7 @@ The most-used `make` targets:
 | `make auto-diag` | Read-only diagnostic bundle saved under `diagnostics/` |
 | `make readiness` | Strict ≥9/10 readiness gate (cron/CI suitable) |
 | `make status` | Quick "are containers up?" check |
-| `make components` | 12-row table of every dependency |
+| `make components` | Compatibility alias for `./ct doctor` |
 | `make update` | Pull, rebuild, migrate, render, verify, reload |
 | `make backup` | Snapshot DB + .env + ACME state |
 | `make install` | First-time bootstrap (idempotent on re-run) |

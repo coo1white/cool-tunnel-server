@@ -51,12 +51,10 @@ class VersionCommandTest extends TestCase
     #[Test]
     public function emitted_version_matches_pinned_manifest_version(): void
     {
-        // The whole point of Cycle 2: panel/config/cool-tunnel.php's
-        // version key MUST equal manifests/panel.upstream.json's
-        // version field, otherwise the matcher trips VersionMismatch
-        // on every component check on the day the release ships.
-        // `make set-version` keeps the two in lockstep; this test is
-        // the unit-test-time sanity belt.
+        // panel/config/cool-tunnel.php's version key MUST equal
+        // manifests/panel.upstream.json's version field. `make
+        // set-version` keeps the two in lockstep; this test is the
+        // unit-test-time sanity belt.
         $manifestPath = base_path('../manifests/panel.upstream.json');
         $this->assertFileExists($manifestPath);
 

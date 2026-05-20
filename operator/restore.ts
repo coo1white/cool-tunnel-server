@@ -10,8 +10,8 @@
 //   4. mariadb import the dump
 //   5. Restore caddy_data volume from caddy_data.tgz
 //   6. compose up -d panel; wait for entrypoint sentinel
-//   7. compose up -d caddy sing-box
-//   8. Best-effort component check
+//   7. compose up -d caddy singbox
+//   8. Best-effort readiness check
 //
 // Refuses to run over a populated stack. Single-flight under the
 // same per-project flock as backup/install/update.
@@ -116,7 +116,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     const loaded = await loadDotenv([".env"]);
     const env = loaded?.env ?? {};
 
-    step("Bring up db + redis (NOT panel/sing-box yet)");
+    step("Bring up db + redis (NOT panel/singbox yet)");
     {
         const r = await capture($`docker compose up -d db redis`);
         if (!r.ok) die(`compose up -d db redis failed`, r.stderr.split("\n")[0] ?? "");
@@ -170,7 +170,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     ok(`caddy_data restored (ACME certs + private keys, into ${caddyDataVolume})`);
 
     // ---------- Stage 6 ----------
-    step("Bring up panel + caddy + sing-box");
+    step("Bring up panel + caddy + singbox");
     {
         const r = await capture($`docker compose up -d panel`);
         if (!r.ok) die("compose up -d panel failed", r.stderr.split("\n")[0] ?? "");
@@ -191,22 +191,19 @@ export async function runRestore(backupPath: string): Promise<number> {
             "docker compose logs --tail=120 panel",
         );
     }
-    await capture($`docker compose up -d caddy sing-box`);
+    {
+        const r = await capture($`docker compose up -d caddy singbox`);
+        if (!r.ok) die("compose up -d caddy singbox failed", r.stderr.split("\n")[0] ?? "");
+    }
     await new Promise((r) => setTimeout(r, 5000));
 
-    // ---------- Stage 7: best-effort component check ----------
-    step("Component check");
-    // The full component_check_strict helper from scripts/lib.sh
-    // greps for NG in `ct-server-core component check`'s table
-    // output. Replicate that here as a soft warning rather than a
-    // hard die — the bash original `|| warn`s too.
-    const cc = await capture(
-        $`docker compose exec -T panel ct-server-core component check --manifests-dir /srv/manifests`,
-    );
-    if (!cc.ok || /\bNG\b/.test(cc.stdout)) {
-        warn("some components NG — investigate before serving real users");
+    // ---------- Stage 7: best-effort readiness check ----------
+    step("Readiness check");
+    const readiness = await capture($`./ct readiness`);
+    if (!readiness.ok) {
+        warn("readiness check failed — investigate before serving real users");
     } else {
-        ok("all components OK");
+        ok("readiness gate passed");
     }
 
     rmSync("tmp/restore", { recursive: true, force: true });
@@ -215,7 +212,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     process.stdout.write(`
 [1m[32mRestore complete.[0m
 
-  Panel         https://${panelDomain}/admin    (or via SSH-local-port-forward to 127.0.0.1:9000)
+  Panel         https://${panelDomain}/admin
   Subscription  https://${panelDomain}/api/v1/subscription/<token>
 
 Next:
@@ -225,7 +222,7 @@ Next:
 
 If the restored .env differs from the environment the current
 containers booted with, recreate the stack so panel, Caddy, and
-sing-box all read the same values:
+singbox all read the same values:
   docker compose up -d --force-recreate
 `);
     return 0;

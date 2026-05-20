@@ -1,276 +1,139 @@
 # Getting Started
 
-You SSH'd into a fresh Debian VPS. You want a working Cool Tunnel
-Server in 30 minutes. This page is the friendly walkthrough — no
-deep dives, no architecture detours, just commands you paste and
-sentences explaining what each one does.
+Shortest path from a fresh Debian VPS to a running Cool Tunnel Server.
+For the full Debian reference, use
+[`docs/installation-debian.md`](./docs/installation-debian.md).
 
-If something fails, the install script tells you exactly what to
-try next. Read the failure block when it appears; it almost always
-ends with a `↳ try:` line that's the right next step.
+## Requirements
 
-> The deeper, "I want to understand every choice" version of this
-> guide is [`docs/installation-debian.md`](./docs/installation-debian.md).
-> Start there once you've finished this page and want to know *why*.
-
----
-
-## What you need
-
-| Thing | Why |
+| Need | Notes |
 | --- | --- |
-| A VPS running Debian 11, 12, or 13 (1 vCPU, 1+ GB RAM) | Where the proxy lives |
-| `root` SSH access (or a sudoer) | To install Docker |
-| A real domain pointing at the VPS (`A` and ideally `AAAA` records, TTL 300, **proxy disabled** if it's behind Cloudflare) | sing-box uses Let's Encrypt to issue a real cert; ACME needs a real domain |
-| Ports 80/tcp and 443/tcp open at the cloud-provider firewall | Caddy uses 80 for ACME; HAProxy fronts 443/tcp for panel and proxy traffic |
+| Debian 11, 12, or 13 VPS | Debian 12 is the primary target |
+| Root SSH or sudo | Needed for Docker and firewall setup |
+| A domain pointed at the VPS | Set `A` and, if available, `AAAA` records |
+| Ports `80/tcp` and `443/tcp` open | Caddy uses 80 for ACME and 443 for panel/proxy traffic |
+| Docker Engine + Compose v2 | The installer checks this before building |
 
-Five-minute sanity check: from your local machine,
+Before installing, confirm DNS from your laptop:
 
 ```sh
-dig +short A   proxy.example.com   # should match the VPS public IP
-ping -c1 -W2   proxy.example.com   # should reach it
+dig +short A proxy.example.com
 ```
 
-If those don't work, fix DNS first. Everything below assumes DNS
-resolves to the box you're working on.
+The result should be the VPS public IP.
 
----
+## Install
 
-## Step 1 — Get the box ready (one-time prep)
-
-SSH into the VPS as root (or use `sudo -i`). Then:
+SSH into the VPS, then:
 
 ```sh
 apt update && apt -y upgrade
-
-apt install -y \
-    ca-certificates curl gnupg ufw dnsutils \
-    chrony fail2ban unattended-upgrades \
-    git
+apt install -y ca-certificates curl gnupg ufw dnsutils chrony fail2ban unattended-upgrades git
 ```
 
-What this does:
-
-- `ca-certificates curl gnupg` — Docker's apt repo needs them.
-- `ufw` — the firewall we'll use; very Debian-friendly.
-- `dnsutils` — gives you `dig` so you can verify DNS at any point.
-- `chrony` — keeps the clock right. TLS handshakes fail with a
-  drifting clock; this prevents that.
-- `fail2ban` — auto-bans SSH brute-forcers.
-- `unattended-upgrades` — applies security patches automatically.
-- `git` — to clone this repository.
-
-### Open the firewall
+Open the firewall:
 
 ```sh
 ufw allow OpenSSH
-ufw allow 80/tcp        # ACME + http→https
-ufw allow 443/tcp       # the proxy
+ufw allow 80/tcp
+ufw allow 443/tcp
 ufw --force enable
 ```
 
-### Install Docker (official repo, not Debian's old one)
+Install Docker from Docker's official Debian repository, then verify:
 
 ```sh
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg \
-  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
-  | tee /etc/apt/sources.list.d/docker.list >/dev/null
-
-apt update
-apt install -y docker-ce docker-ce-cli containerd.io \
-              docker-buildx-plugin docker-compose-plugin
-
-# Confirm.
 docker version
 docker compose version
 ```
 
-If any of those fail, you'll see a clear error from apt.
-[`docs/installation-debian.md`](./docs/installation-debian.md#5-install-docker-engine--compose-v2)
-has the per-Debian-version notes.
+The detailed Docker steps live in
+[`docs/installation-debian.md`](./docs/installation-debian.md#5-install-docker-engine--compose-v2).
 
-### A bit of kernel tuning (BBR + bigger UDP buffers for HTTP/3)
-
-```sh
-cat >/etc/sysctl.d/99-cool-tunnel.conf <<'EOF'
-net.core.default_qdisc            = fq
-net.ipv4.tcp_congestion_control   = bbr
-net.ipv4.tcp_fastopen             = 3
-net.core.rmem_max                 = 7500000
-net.core.wmem_max                 = 7500000
-EOF
-sysctl --system
-```
-
-You can do this *after* getting the proxy running too — it's not
-on the critical path, just a measurable performance win.
-
----
-
-## Step 2 — Pull the server
+Clone and configure:
 
 ```sh
 cd /opt
 git clone https://github.com/coo1white/cool-tunnel-server.git
 cd cool-tunnel-server
-```
-
-`/opt` is conventional for site-local stacks. Pick anywhere you like.
-
----
-
-## Step 3 — Fill in `.env`
-
-```sh
 cp .env.example .env
-$EDITOR .env       # nano, vim, vi — whichever you have
+$EDITOR .env
 ```
 
-You **must** edit:
+Set these keys in `.env`:
 
-| Key | What to put |
+| Key | Value |
 | --- | --- |
-| `DOMAIN` | the domain you set up DNS for |
-| `ACME_EMAIL` | a real email — Let's Encrypt sends renewal warnings here |
-| `DB_ROOT_PASSWORD` | run `openssl rand -base64 32` and paste the output |
-| `DB_PASSWORD` | a different `openssl rand -base64 32` |
-| `REDIS_PASSWORD` | a third `openssl rand -base64 32` |
+| `DOMAIN` | Proxy/base domain |
+| `PANEL_DOMAIN` | Admin panel hostname, usually `panel.<DOMAIN>` |
+| `ACME_EMAIL` | Email for certificate renewal notices |
+| `DB_ROOT_PASSWORD` | Long random secret |
+| `DB_PASSWORD` | Different long random secret |
+| `REDIS_PASSWORD` | Different long random secret |
 
-The other keys can stay at their defaults.
-
----
-
-## Step 4 — Run the installer
+Install:
 
 ```sh
-./scripts/install.sh
+make install
 ```
 
-The script is interactive: it tells you what each step is doing,
-asks before destructive choices, and prints a `↳ try:` hint if any
-step fails.
+The installer builds the images, migrates the DB, renders Caddy and
+sing-box config, starts the stack, and prompts for the first Filament
+admin user when running interactively.
 
-When it finishes, it'll print the URL of your panel and the
-command to make your first proxy account.
-
----
-
-## Step 5 — Make a proxy account
-
-The admin panel is bound to `127.0.0.1:9000` on the VPS, **not**
-public on `:443/admin`. Public reachability is a deferred v0.1
-item (see `docs/design/sni-router-v0.1.md`). Open it through an
-SSH local-port-forward:
+If you skip admin creation, create one later:
 
 ```sh
-# In a separate terminal on your laptop:
-ssh -N -L 9000:127.0.0.1:9000 root@your-vps
-
-# Leave that running; in your browser, open:
-http://127.0.0.1:9000/admin
+docker compose exec panel php artisan ct:make-admin
 ```
 
-Filament's login page asks for the admin user the installer asked
-you to create. TLS is provided by the SSH session.
+## Use
 
-Inside the panel:
+Open the admin panel:
 
-1. **Proxy accounts → New**.
-2. Fill in a username (`alice`).
-3. Click **Create**.
-4. **Copy the password from the green notification at the top.**
-   This is the only time you'll see it. The bcrypt hash plus a
-   Laravel-Crypt-encrypted copy of the cleartext lands in the DB
-   (sing-box needs the cleartext to check basic_auth).
-
----
-
-## Step 6 — Point the macOS client at it
-
-In Cool Tunnel (the [macOS app](https://github.com/coo1white/cool-tunnel)),
-add a profile with:
-
-```
-naive+https://alice:<password>@your-domain.com:443
+```text
+https://<PANEL_DOMAIN>/admin
 ```
 
-Pick *Smart* mode. Click **Start**. From any browser on the laptop,
-visit https://ifconfig.co — it should show the **server's** IP, not
-the laptop's.
+Create a proxy account in the panel, then use that account's
+subscription URL from:
 
----
+```text
+https://<PANEL_DOMAIN>/api/v1/subscription/<token>
+```
 
-## Step 7 — Verify the launch is solid
+The client profile uses the VLESS+Reality configuration generated by
+the panel and `singbox-core`.
 
-There's a built-in readiness check that runs ten probes and gives
-you a percentage score:
+## Verify
+
+Run the local readiness gate:
 
 ```sh
-./ct readiness
+make readiness
 ```
 
-It checks DNS, ports, ACME, UFW, BBR, NTP, the Reality clock window,
-components, the Redis revocation bridge, and the cover-site invariant.
+Useful quick checks:
 
-≥ 9 / 10 = ready to ship.
-≤ 8 / 10 = read the NG lines, fix them, run again.
+```sh
+docker compose ps
+docker compose logs --tail=120 caddy
+docker compose logs --tail=120 singbox
+docker compose logs --tail=120 panel
+```
 
-The four "structural" checks (DNS / ports / ACME / UFW) cap your
-score at 8 if any is NG, regardless of the other checks — those
-are non-negotiable.
+For operations after install, use
+[`docs/operator-runbook.md`](./docs/operator-runbook.md) and
+[`docs/operations.md`](./docs/operations.md).
 
----
+## What Runs
 
-## When something goes wrong
+| Service | Role |
+| --- | --- |
+| `caddy` | Public front door, ACME, and SNI routing |
+| `singbox` | User proxy service supervised by `singbox-core` |
+| `panel` | Laravel + Filament admin UI and render commands |
+| `db` | MariaDB data store |
+| `redis` | Cache, queue, and revocation bus |
 
-In rough order of "most common first":
-
-| Symptom | Most likely cause | What to do |
-| --- | --- | --- |
-| Browser shows the cover site instead of the panel | Cloudflare proxy is on (orange cloud) — turn it OFF | DNS-only mode in Cloudflare |
-| `dig +short A your-domain` returns nothing or wrong IP | DNS not propagated yet | Wait 5 min, try again |
-| ACME never finishes (cert is self-signed) | Port 80 not reachable | `ufw status` and your cloud firewall |
-| `docker compose logs sing-box` shows clock-skew | NTP not running | `timedatectl set-ntp true` |
-| `docker compose logs panel` shows "could not decrypt" | APP_KEY mismatch between containers | regenerate one proxy account in the panel — that re-encrypts under the current key |
-| Connections feel slow even at low load | BBR not active | `sysctl net.ipv4.tcp_congestion_control` should print `bbr` |
-
-For deeper debugging, [`docs/installation-debian.md`](./docs/installation-debian.md#10-common-gotchas-by-symptom)
-has a full troubleshooting table.
-
-For day-to-day operations after the first install, use
-[`docs/operator-runbook.md`](./docs/operator-runbook.md).
-
----
-
-## What lives where
-
-A one-screen overview of the codebase you just installed:
-
-| Thing | Where | Language |
-| --- | --- | --- |
-| Sing-box config template | `sing-box/config.json.tpl` | Go template |
-| Sing-box server | `docker/sing-box/Dockerfile` | Dockerfile |
-| Rust core (renders the template, hot-reloads sing-box) | `core/ct-server-core/` | Rust |
-| Cross-platform shared crate | `core/ct-protocol/` | Rust |
-| Filament admin panel | `panel/app/Filament/`, `panel/app/Models/`, `panel/app/Services/` | PHP |
-| Cover site templates | `panel/resources/views/fake-sites/` | Blade |
-| Database migrations | `panel/database/migrations/` | PHP |
-| Operator scripts | `scripts/` (sourcing `scripts/lib.sh`) | Bash |
-| Component pin manifests | `manifests/*.upstream.json` | JSON |
-
-If you want a longer "what each layer does" tour, read
-[`docs/architecture.md`](./docs/architecture.md). For the
-component-as-machine-part story, read
-[`docs/components.md`](./docs/components.md).
-
----
-
-## Read before you let anyone else use it
-
-`Disclaimer.md` covers operator responsibility and what the bundled
-components are. It's short. Read it.
+See [`STRUCTURE.md`](./STRUCTURE.md) for the code map.

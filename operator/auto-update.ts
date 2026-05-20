@@ -28,6 +28,7 @@ import { $, capture } from "./src/util/sh";
 import { probeVersions, upgradeAvailable, readCurrentVersion } from "./src/util/release";
 import { acquireOpLock } from "./src/util/op-lock";
 import { ensureRepoRoot } from "./src/util/repo-root";
+import { credentialLockCheck } from "./src/util/credential-control";
 
 // Distinct marker so the inner `./ct update` subprocess (which
 // acquires its own per-project ops flock under the default
@@ -89,9 +90,7 @@ async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reas
         };
     }
     // Credential-lock guard OK?
-    const guard = await capture(
-        $`docker compose exec -T panel ct-server-core guard credential-lock`,
-    );
+    const guard = await credentialLockCheck();
     if (!guard.ok) {
         return {
             ok: false,

@@ -41,10 +41,10 @@ There is no clash API or HAProxy reload path in the current runtime.
 ## Component Manifests
 
 Every replaceable runtime part is pinned under
-`manifests/*.upstream.json`. `ct-server-core component check
---manifests /srv/manifests` runs the verifier for each manifest and
-prints an OK/NG table. `ct update`, `ct doctor`, and the panel
-Components page all use that contract.
+`manifests/*.upstream.json` or the matching deployment source
+(`docker-compose.yml`, Dockerfiles, Composer, Cargo, or
+`singbox-core/singbox.upstream.json`). `ct doctor`, `ct readiness`,
+and `credential-lock:check` are the supported operator health gates.
 
 ## Client Contract
 

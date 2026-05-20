@@ -393,31 +393,11 @@ acquire_op_lock() {
     fi
 }
 
-# component_check_strict [<manifests-dir>]
+# component_check_strict [<ignored>]
 #
-# Run the Rust component checker and fail when any row reports NG.
-# `ct-server-core component check` intentionally exits 0 after
-# printing a mixed OK/NG table because the Filament Components page
-# and JSON callers need the full diagnostic payload. Deployment
-# scripts need stricter semantics: a visible NG row means the release
-# is not healthy enough to declare success. Keep the policy here so
-# install/update/restore/late-night checks agree on the same contract.
+# Compatibility wrapper for older shell entrypoints. The Rust
+# component-check CLI was retired with the v0.4 control-plane split;
+# the supported deploy gate is now the operator readiness check.
 component_check_strict() {
-    local manifests="${1:-/srv/manifests}"
-    local out
-    out=$(mktemp)
-
-    if ! docker compose exec -T panel ct-server-core component check \
-            --manifests "$manifests" | tee "$out"; then
-        rm -f "$out"
-        return 1
-    fi
-
-    if grep -qE '^[[:space:]]*NG[[:space:]]' "$out"; then
-        rm -f "$out"
-        return 1
-    fi
-
-    rm -f "$out"
-    return 0
+    ./ct readiness
 }

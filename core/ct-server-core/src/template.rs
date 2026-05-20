@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Tiny Go-template-style renderer.
 //!
-//! We render `sing-box/config.json.tpl` from a small set of named
-//! values. Rather than pull in a full template engine (`tera`,
+//! We render project templates from a small set of named values.
+//! Rather than pull in a full template engine (`tera`,
 //! `handlebars`, `gtmpl`), this module hand-rolls the subset we
 //! actually need: bare `{{ .FieldName }}` substitution.
 //!

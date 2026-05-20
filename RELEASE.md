@@ -59,9 +59,7 @@ $EDITOR manifests/ct-protocol.upstream.json
 $EDITOR manifests/panel.upstream.json
 
 # Panel runtime version constant — what the `ct:version` artisan
-# command emits, and what manifests/panel.upstream.json's matcher
-# pin compares against. Drift between this and the manifest trips
-# VersionMismatch on the Components page (Cycle 2, v0.0.39).
+# command emits. Keep it aligned with manifests/panel.upstream.json.
 $EDITOR panel/config/cool-tunnel.php   # 'version' => 'X.Y.Z'
 ```
 
@@ -130,10 +128,10 @@ If docker is available locally:
 make pin-images
 ```
 
-This resolves the current `caddy:2.8.4-alpine`, `alpine:3.20`,
-`rust:1.86-alpine`, etc. tags to their image digests and updates
-the Dockerfiles to pin by `@sha256:...`. Commit the digest update
-on top of the release commit (or as a follow-up).
+This resolves the current base-image tags in `operator/pin-images.ts`
+to their image digests and updates the Dockerfiles to pin by
+`@sha256:...`. Commit the digest update on top of the release commit
+(or as a follow-up).
 
 If docker isn't available locally, run `make pin-images` on the
 production VPS after `./ct update`.

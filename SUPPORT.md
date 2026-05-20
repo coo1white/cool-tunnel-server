@@ -36,14 +36,14 @@ precedence.
 
 ## Languages / runtimes (the inside-the-image versions)
 
-| Component | Pinned to | When we re-pin |
-| --- | --- | --- |
-| Rust | `1.86` | When a transitive crate raises the floor |
-| PHP runtime | `dunglas/frankenphp:1-php8.4-alpine` | At PHP minor releases inside the supported window |
-| Caddy | `caddy:2.8.4-alpine` | At Caddy minor releases (security only on patch) |
-| sing-box | `1.10.7` | At sing-box minor releases |
-| MariaDB | `mariadb:11` | At MariaDB minor releases |
-| Redis | `redis:7-alpine` | At Redis minor releases inside the BSD-3 line |
+| Component | Source of truth | Current pin | When we re-pin |
+| --- | --- | --- | --- |
+| Rust | `core/rust-toolchain.toml`, `core/Cargo.toml`, `docker/core/Dockerfile` | `1.88` | When a transitive crate raises the floor |
+| PHP runtime | `docker/panel/Dockerfile`, `panel/composer.json` | `dunglas/frankenphp:1-php8.4-alpine` | At PHP minor releases inside the supported window |
+| Caddy | `docker/caddy/Dockerfile` | `caddy:2.11.3-alpine` | At Caddy minor releases or Caddy module compatibility bumps |
+| sing-box | `singbox-core/singbox.upstream.json` | `v1.13.12` | At sing-box minor releases |
+| MariaDB | `docker-compose.yml` | `mariadb:11.8.6` | At MariaDB minor releases |
+| Redis | `docker-compose.yml`, `docker/panel/Dockerfile` | `redis:7.4.8-alpine` | At Redis minor releases inside the BSD-3 line |
 
 ## Release cadence
 
@@ -101,8 +101,8 @@ migration that depends on the previous minor's schema being in place.
 | `0.1.0` | `1.0.0` | yes |
 
 Run the upgrade with `./ct update`. It rebuilds the images,
-runs DB migrations, runs the OK/NG component check, and only swaps
-traffic over if everything reports OK.
+runs DB migrations, runs health gates, and only swaps traffic over if
+the deployment reports healthy.
 
 ## Reporting bugs
 
@@ -112,7 +112,7 @@ GitHub Issues. Include:
 2. The platform (`cat /etc/os-release` + `uname -r`).
 3. The output of `ct readiness`.
 4. A reproduction or, if it's intermittent, the relevant log
-   excerpts (`docker compose logs --tail=200 panel sing-box caddy`).
+   excerpts (`docker compose logs --tail=200 panel singbox caddy`).
 
 For security issues, see `SECURITY.md` — do not file public GitHub
 issues for those.

@@ -360,19 +360,17 @@ REDIS_PASS=$(openssl rand -base64 32 | tr -d '\n')
 
 # Edit DOMAIN, ACME_EMAIL, and the *_PASSWORD lines. Pick any editor.
 sed -i "s|^DOMAIN=.*|DOMAIN=proxy.example.com|"                .env
+sed -i "s|^PANEL_DOMAIN=.*|PANEL_DOMAIN=panel.proxy.example.com|" .env
 sed -i "s|^ACME_EMAIL=.*|ACME_EMAIL=admin@example.com|"        .env
 sed -i "s|^DB_ROOT_PASSWORD=.*|DB_ROOT_PASSWORD=${DB_ROOT}|"    .env
 sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${DB_PASS}|"              .env
 sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
 ```
 
-> The panel `/admin` is **not** publicly reachable in the current
-> stack — it binds to `127.0.0.1:9000` on the VPS and is opened
-> through an SSH local-port-forward (see step 8 below). Public
-> reachability is a deferred v0.1 architectural item; the design
-> seed lives in `docs/design/sni-router-v0.1.md`. There is no
-> edge basic-auth layer in front of Filament because there is no
-> public surface for it to gate.
+> The admin panel is served at `https://${PANEL_DOMAIN}/admin`.
+> Use a dedicated panel hostname such as `panel.proxy.example.com`;
+> Caddy routes that SNI to the panel and forwards other SNI traffic
+> to sing-box.
 
 ---
 
@@ -538,34 +536,18 @@ bulk-delete admin actions at ~600 MiB.
    `composer install`, `key:generate`, `migrate`, and renders the
    initial `sing-box config.json`.
 5. Prompts you for a first Filament admin user (email + password).
-6. `docker compose up -d sing-box` — ACME kicks in, certs land in
-   `singbox_data` volume.
-7. Tails sing-box logs until it prints `certificate obtained` (or
-   the equivalent ACME success line) for your domain.
+6. `docker compose up -d caddy singbox` — Caddy gets the panel cert
+   and routes non-panel SNI to sing-box.
+7. Tails Caddy and sing-box logs until the panel cert is available
+   and sing-box is running.
 
-When it finishes, the panel is reachable from inside `ct-net` and
-on the VPS host's `127.0.0.1:9000`, but **not directly from the
-public internet**. Public `/admin` reachability is a deferred v0.1
-architectural item (R1-1 / R1-2 in the 2026-05-04 audit — sing-box
-v1.13.11's `naive` inbound has no schema-level fallback to a cover
-site, and the stack has no front-door reverse proxy on `:443`. See
-`docs/design/sni-router-v0.1.md` for the planned path.)
+When it finishes, open:
 
-Open the panel through an SSH local-port-forward from your laptop:
-
-```bash
-# On your laptop, in one terminal:
-ssh -N -L 9000:127.0.0.1:9000 root@<your-vps>
-
-# Leave that running; in your browser:
-http://127.0.0.1:9000/admin
+```text
+https://${PANEL_DOMAIN}/admin
 ```
 
-The forward maps `127.0.0.1:9000` on your laptop to the VPS's
-loopback-bound panel port. Because the bind is loopback-only, no
-one can reach the panel without first holding an SSH session on
-the VPS. Filament's own login page asks for the admin user you
-created in step 5; TLS is provided by the SSH session, not by HTTP.
+Filament's login page asks for the admin user you created in step 5.
 
 ### Check the certificate landed
 
@@ -639,11 +621,9 @@ migrations, re-renders the sing-box config, and `docker compose up -d`.
 ```bash
 ./ct backup
 # → backups/cool-tunnel-YYYY-MM-DD.tar.gz   (mode 0600 — operator-only)
-#   contains: .env (APP_KEY + DB / Redis / clash secrets), db dump
+#   contains: .env (APP_KEY + DB / Redis secrets), db dump
 #             (--single-transaction), caddy_data.tgz (ACME certs +
-#             private keys, post-v0.0.4 swap from sing-box ACME), the
-#             three render-input templates (sing-box, caddy, haproxy)
-#             + manifests/
+#             private keys), manifests/, and deployment templates
 ```
 
 The tarball mode is `0600` — the contents are operator-secret
@@ -672,8 +652,8 @@ Documented disaster-recovery procedure (works on a fresh VPS):
    A records to the new VPS IP. Wait for propagation
    (`dig +short ${DOMAIN}` matches the new IP).
 5. `./ct restore backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz`
-6. Verify: `make components` shows OK across all rows;
-   `curl -ksI https://${PANEL_DOMAIN}/admin` returns 200/302.
+6. Verify: `./ct doctor` has no FAIL rows, `make readiness` passes,
+   and `curl -ksI https://${PANEL_DOMAIN}/admin` returns 200/302.
 
 The restored `.env` brings APP_KEY + DB + Redis + clash secrets
 across, so every existing proxy account's encrypted cleartext
@@ -717,10 +697,10 @@ docker compose restart caddy
 | --- | --- | --- |
 | `dial tcp ...:80: connection refused` during ACME | Port 80 not open at cloud firewall, or another web server running | Check `ss -ltnp | grep :80`; open port at provider firewall |
 | `unable to verify the first certificate` from `curl` | ACME hasn't completed yet (self-signed in use) | `docker logs ct-singbox` and wait |
-| `SSL_ERROR_SYSCALL` from the macOS client | sing-box up but config didn't load — check `docker logs ct-singbox` for the last clash-API reload | `docker exec ct-singbox sing-box check -c /etc/sing-box/config.json` |
+| `SSL_ERROR_SYSCALL` from the macOS client | sing-box up but config did not load | `docker compose logs --tail=120 singbox`; `docker compose exec -T singbox sing-box check -c /data/config/singbox.json` |
 | Connections work but feel slow | BBR not active | `sysctl net.ipv4.tcp_congestion_control` should be `bbr` |
 | QUIC (`Alt-Svc h3`) not advertised | UDP/443 blocked or buffer too small | Open UDP/443 at provider; verify `sysctl net.core.rmem_max` ≥ 7500000 |
-| Browser shows your fake site instead of proxying | Client misconfigured (using HTTP instead of CONNECT), or password wrong | Re-check `naive+https://...` URL on the client |
+| Browser shows your fake site instead of proxying | Client misconfigured, subscription stale, or UUID wrong | Re-import the subscription URL and run `./ct doctor` |
 | `ERR_QUIC_PROTOCOL_ERROR` from clients on some networks | Some Chinese ISPs throttle UDP/443 | Tell client to disable QUIC; clients fall back to HTTP/2 transparently |
 | Cloudflare orange cloud + ACME failing | Cloudflare proxy mangles ACME and re-encrypts traffic | Set the DNS record to **DNS-only** (grey cloud) |
 | Time-related TLS errors | Clock drift | `timedatectl` should say "synchronized: yes" |
@@ -747,11 +727,9 @@ docker compose restart caddy
 - **Two boxes are better than one.** Run a second instance on a
   different cloud / different region as a hot-spare. The macOS
   client supports profile switching.
-- **Audit `ct-server-core component check`** every release. If the
-  panel build ever produces a sing-box image that's missing the
-  `naive` inbound (e.g. someone swapped to a build without it),
-  the proxy will silently degrade to "just an ACME endpoint" and
-  client connections will fail. The OK/NG check is the canary.
+- **Run the health gates** every release. `./ct doctor`,
+  `make readiness`, and `php artisan credential-lock:check` catch
+  most deployment drift before users do.
 - **Use `./ct backup`** — it captures `caddy_data` (ACME
   certs + private keys; ACME moved from sing-box to Caddy in
   v0.0.4) plus the DB dump, the three render-input templates,
@@ -763,11 +741,9 @@ docker compose restart caddy
 - **Public IPv6** — if your VPS has v6, set the `AAAA` record. Some
   censorship systems are weaker over v6, and clients pick up the
   faster path automatically (Happy Eyeballs).
-- **The panel is SSH-tunneled, not public.** `/admin` binds to
-  `127.0.0.1:9000` on the VPS; reach it via `ssh -L 9000:127.0.0.1
-  :9000`. The architectural piece that would make `/admin` reachable
-  on `:443` lives in `docs/design/sni-router-v0.1.md` as a v0.1
-  item; until that ships, treat SSH as the gate.
+- **Protect the panel hostname.** Use a dedicated `PANEL_DOMAIN`,
+  keep admin passwords unique, and leave Cloudflare proxying off for
+  the panel/proxy records so ACME and Reality routing stay predictable.
 
 ---
 

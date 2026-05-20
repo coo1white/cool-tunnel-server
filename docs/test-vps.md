@@ -116,9 +116,9 @@ With a working stack, prove that the update flow is intact:
 
 On a deployment already at `main` HEAD this is mostly a no-op
 (git pull is fast-forward zero, rebuild reuses image layers,
-component check stays OK). It exercises every step in
-`operator/update.ts` against real Docker + the real panel
-entrypoint, which is the part that can't be tested locally.
+health gates stay green). It exercises every step in `operator/update.ts`
+against real Docker + the real panel entrypoint, which is the part
+that can't be tested locally.
 
 ### 7. (Optional) Exercise `ct fix --auto`
 

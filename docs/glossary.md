@@ -20,17 +20,17 @@ Caddy listens on `:443`, routes panel SNI to the panel HTTPS handler,
 and forwards non-panel SNI traffic to sing-box. It also handles ACME
 for the panel domain.
 
-## Component Check
+## Component Pins
 
-`ct-server-core component check --manifests /srv/manifests`. It reads
-the pinned component manifests and reports OK/NG for each runtime
-piece.
+Version records for replaceable runtime pieces. See
+`docs/components.md` for the current source-of-truth files and health
+gates.
 
 ## ct-server-core
 
 The Rust control-plane binary bundled in the panel image. It owns
-Caddyfile rendering, component checks, credential-lock checks, probes,
-and the deterministic daemon FSM.
+Caddyfile rendering, panel-domain resolution, the daemon wire path, and
+the deterministic daemon FSM.
 
 ## docker compose
 
@@ -57,11 +57,10 @@ runs Laravel in Octane worker mode.
 The Great Firewall of China. See `docs/going-to-china.md` for the
 operator runbook.
 
-## OK / NG
+## PASS / WARN / FAIL
 
-The component-check status labels. OK means the runtime matches the
-pin or passed its liveness check. NG means the operator should inspect
-that row before trusting the release.
+The status labels used by `ct doctor`. PASS is healthy, WARN needs
+attention soon, and FAIL should be fixed before trusting the release.
 
 ## panel
 
