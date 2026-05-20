@@ -20,7 +20,6 @@ docker compose ps
 docker compose exec -T panel php artisan ct:version
 docker compose exec -T panel php artisan credential-lock:check
 ./ct doctor
-make readiness
 ```
 
 ## Update
@@ -42,7 +41,6 @@ Verify after update:
 docker compose exec -T panel php artisan ct:version
 docker compose exec -T panel php artisan credential-lock:check
 ./ct doctor
-make readiness
 ```
 
 ## Fix

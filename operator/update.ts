@@ -433,7 +433,7 @@ export async function runUpdate(): Promise<number> {
     await fetchOperatorBinary();
 
     ok("Update complete.");
-    ok("If something looks off, the safe first move is:  ct fix");
+    ok("If something looks off, the safe first move is:  ct doctor");
     return 0;
 }
 

@@ -202,6 +202,22 @@ jobs:
       - run: bun run typecheck
       - run: bun test
 
+  singbox-core:
+    name: singbox-core (typecheck + test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: singbox-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+
   manifests:
     name: manifests (jq parse)
     runs-on: ubuntu-24.04

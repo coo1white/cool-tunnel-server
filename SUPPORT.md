@@ -110,7 +110,7 @@ GitHub Issues. Include:
 
 1. The version you're on (`git rev-parse HEAD` and `git tag --points-at HEAD`).
 2. The platform (`cat /etc/os-release` + `uname -r`).
-3. The output of `ct readiness`.
+3. The output of `ct doctor`.
 4. A reproduction or, if it's intermittent, the relevant log
    excerpts (`docker compose logs --tail=200 panel singbox caddy`).
 

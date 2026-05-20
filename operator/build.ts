@@ -9,8 +9,8 @@
 //
 // Bakes BUILD_VERSION (from package.json) and BUILD_PUBKEY (from
 // CT_OPERATOR_PUBKEY env var) into the compiled binary via --define.
-// The pubkey is consumed by src/tasks/self-update.ts to verify the
-// SHA256SUMS manifest signature; without it, self-update will refuse.
+// The pubkey is embedded so release signatures can be verified by
+// operator release tooling.
 
 import { $ } from "bun";
 
@@ -45,7 +45,7 @@ const pubkey = process.env["CT_OPERATOR_PUBKEY"] ?? "";
 
 if (!pubkey) {
     console.error(
-        "warn: CT_OPERATOR_PUBKEY not set — self-update signature verification will refuse all updates until the binary is rebuilt with a pinned key",
+        "warn: CT_OPERATOR_PUBKEY not set — release signature verification metadata will be empty",
     );
 }
 

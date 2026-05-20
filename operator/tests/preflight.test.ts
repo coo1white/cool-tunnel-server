@@ -204,5 +204,5 @@ test("classifyIpv6Preflight: broken IPv6 + failed auto-fix → warn with recover
         fixResult: { ok: false, detail: "permission denied on sysctl.d" },
     });
     expect(r.action).toBe("warn");
-    expect(r.detail).toContain("./ct fix --auto");
+    expect(r.detail).toContain("./ct update");
 });

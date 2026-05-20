@@ -43,8 +43,8 @@ There is no clash API or HAProxy reload path in the current runtime.
 Every replaceable runtime part is pinned under
 `manifests/*.upstream.json` or the matching deployment source
 (`docker-compose.yml`, Dockerfiles, Composer, Cargo, or
-`singbox-core/singbox.upstream.json`). `ct doctor`, `ct readiness`,
-and `credential-lock:check` are the supported operator health gates.
+`singbox-core/singbox.upstream.json`). `ct doctor` and
+`credential-lock:check` are the supported operator health gates.
 
 ## Client Contract
 

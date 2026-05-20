@@ -86,7 +86,7 @@ async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reas
     if (!ps.ok || !ps.stdout.split("\n").map((s) => s.trim()).includes("panel")) {
         return {
             ok: false,
-            reason: "stack pre-flight: panel container is not running\nrefusing to auto-upgrade an unhealthy stack — run 'ct fix' first",
+            reason: "stack pre-flight: panel container is not running\nrefusing to auto-upgrade an unhealthy stack — run 'ct doctor' first",
         };
     }
     // Credential-lock guard OK?
@@ -94,7 +94,7 @@ async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reas
     if (!guard.ok) {
         return {
             ok: false,
-            reason: "stack pre-flight: credential-lock guard reports NG\nrefusing to auto-upgrade — run 'ct fix' (recipe credential_drift)",
+            reason: "stack pre-flight: credential-lock guard reports NG\nrefusing to auto-upgrade — run 'docker compose exec -T panel php artisan credential-lock:check'",
         };
     }
     return { ok: true };
@@ -116,9 +116,7 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
         });
     }
 
-    // Don't recursively suggest `ct fix` on our own die() calls —
-    // auto-update failures need their own error path, not a chain
-    // to the interactive agent.
+    // Auto-update failures need their own error path.
     process.env["CT_NO_FIX_HINT"] = "1";
 
     const log = makeLog(opts.quiet);
@@ -177,7 +175,7 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
         : await capture($`./ct update`);
     if (!update.ok) {
         log.err("./ct update failed — stack may be in a partial state");
-        log.err("re-run interactively: ct update   (or: ct fix to walk the recipes)");
+        log.err("re-run interactively: ct update   (then: ct doctor for diagnostics)");
         return 1;
     }
     if (!opts.quiet) {

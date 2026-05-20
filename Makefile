@@ -273,25 +273,9 @@ deploy: update ## alias of update; deploy the latest fast-forwarded release
 backup: ## snapshot db + .env + caddy data into backups/
 	./ct backup
 
-.PHONY: readiness
-readiness: ## strict >=8/9 readiness gate (cron/CI suitable)
-	./ct readiness
-
 .PHONY: doctor
 doctor: ## operator-friendly health dashboard (PASS/WARN/FAIL + remediation hints)
 	./ct doctor
-
-.PHONY: auto-diag
-auto-diag: ## read-only diagnostic bundle saved under diagnostics/
-	./ct auto-diag
-
-.PHONY: auto-sync
-auto-sync: ## credential-lock audit + auto-correct agent (cron-friendly)
-	./ct auto-sync
-
-.PHONY: fix
-fix: ## interactive multi-recipe auto-diagnose-and-repair agent (the "I'm stuck" command)
-	./ct fix
 
 .PHONY: auto-update
 auto-update: ## unattended release-pulling agent (default-OFF; `ct auto-update enable` to schedule)

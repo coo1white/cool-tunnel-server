@@ -11,7 +11,7 @@
 //   5. Restore caddy_data volume from caddy_data.tgz
 //   6. compose up -d panel; wait for entrypoint sentinel
 //   7. compose up -d caddy singbox
-//   8. Best-effort readiness check
+//   8. Best-effort health check
 //
 // Refuses to run over a populated stack. Single-flight under the
 // same per-project flock as backup/install/update.
@@ -197,13 +197,13 @@ export async function runRestore(backupPath: string): Promise<number> {
     }
     await new Promise((r) => setTimeout(r, 5000));
 
-    // ---------- Stage 7: best-effort readiness check ----------
-    step("Readiness check");
-    const readiness = await capture($`./ct readiness`);
-    if (!readiness.ok) {
-        warn("readiness check failed — investigate before serving real users");
+    // ---------- Stage 7: best-effort health check ----------
+    step("Health check");
+    const doctor = await capture($`./ct doctor`);
+    if (!doctor.ok) {
+        warn("doctor reported failures — investigate before serving real users");
     } else {
-        ok("readiness gate passed");
+        ok("doctor gate passed");
     }
 
     rmSync("tmp/restore", { recursive: true, force: true });
@@ -217,7 +217,7 @@ export async function runRestore(backupPath: string): Promise<number> {
 
 Next:
   1. Tail logs:    docker compose logs -f --tail=80
-  2. Confirm proxy: ./ct readiness
+  2. Confirm health: ./ct doctor
   3. Test subscription: curl one of the manifest URLs you had before
 
 If the restored .env differs from the environment the current

@@ -610,11 +610,11 @@ What to do next:
 
   3. Import the subscription URL into the macOS client.
 
-  4. Run the readiness gate:
-       ${bold}./ct readiness${reset}
+  4. Run the health gate:
+       ${bold}./ct doctor${reset}
 
 If something looks wrong, the safe first move is:
-       ${bold}${green}ct fix${reset}        (interactive diagnose-and-repair)
+       ${bold}${green}ct doctor${reset}        (PASS / WARN / FAIL dashboard)
 
 To have this box auto-pull new releases (default OFF, opt-in):
        ${bold}sudo ct auto-update enable${reset}

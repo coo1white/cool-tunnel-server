@@ -1,7 +1,7 @@
 # ct-operator
 
 Operator CLI for Cool Tunnel Server. Replaces selected shell maintenance
-scripts (`ct doctor`, `ct fix`, `ct readiness`)
+scripts (`ct doctor`, `ct render`, `ct update`)
 with a single Bun-compiled binary.
 
 The legacy shell scripts remain in `scripts/` as a fallback; the top-level
@@ -41,14 +41,15 @@ bun run src/index.ts doctor
 bun run src/index.ts --help
 ```
 
-## Self-update trust model
+## Release trust model
 
 Releases publish `SHA256SUMS` + `SHA256SUMS.sig`. The binary verifies the
 signature against an ed25519 pubkey baked in at build time via the
-`CT_OPERATOR_PUBKEY` env var. Without a pubkey, `self-update` refuses all
-updates. See `docs/operator.md` for keygen + CI wiring.
+`CT_OPERATOR_PUBKEY` env var. See `docs/operator.md` for keygen + CI
+wiring.
 
 ## Status
 
-Phase 1: scaffolding only. Phases 2–6 fill in diagnostics, task ports,
-self-update, ct/Makefile wiring, and release artifacts.
+Current source implements the commands listed in `src/index.ts`; keep
+`ct`, Makefile targets, docs, and release artifacts aligned with that
+dispatcher.

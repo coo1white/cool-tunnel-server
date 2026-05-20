@@ -108,10 +108,9 @@ async function main(): Promise<number> {
         if (v !== undefined) env[k] = v;
     }
     // The compiled binary's BUILD_VERSION is a TS-level constant
-    // (set via `bun build --compile --define`); the ballast
-    // ct-operator-version check needs access to it via ctx.env so
-    // it can compare against panel/config/cool-tunnel.php. Inject
-    // it under a reserved internal key.
+    // (set via `bun build --compile --define`). Inject it under a
+    // reserved internal key so tasks can compare themselves against
+    // panel/config/cool-tunnel.php when needed.
     env["_CT_OPERATOR_OWN_VERSION"] = VERSION;
 
     const ctx: RunContext = {
