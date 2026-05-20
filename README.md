@@ -71,7 +71,7 @@ ct backup        # snapshot DB + .env + ACME certs
 
 ### Update to a release
 
-Latest confirmed release: `v0.4.9`.
+Latest confirmed release: `v0.4.10`.
 
 Run this on the VPS:
 
@@ -81,7 +81,7 @@ cd /opt/cool-tunnel-server
 ./ct backup
 
 git fetch origin --tags
-git checkout v0.4.9
+git checkout v0.4.10
 
 ./ct update
 ./ct doctor
@@ -93,14 +93,14 @@ checkout and fetch the operator binary first:
 ```sh
 cd /opt/cool-tunnel-server
 git fetch origin --tags
-git checkout v0.4.9
+git checkout v0.4.10
 chmod +x ./ct ./scripts/*.sh
 ./scripts/fetch_operator_binary.sh || true
 ./ct update
 ./ct doctor
 ```
 
-If `git checkout v0.4.9` complains about local changes:
+If `git checkout v0.4.10` complains about local changes:
 
 ```sh
 git status
@@ -110,8 +110,8 @@ If you did not intentionally edit those files on the VPS, stash them and
 continue:
 
 ```sh
-git stash push -m "pre-v0.4.9-vps-local-changes"
-git checkout v0.4.9
+git stash push -m "pre-v0.4.10-vps-local-changes"
+git checkout v0.4.10
 ./ct update
 ./ct doctor
 ```

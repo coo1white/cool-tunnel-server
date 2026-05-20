@@ -24,6 +24,41 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.10] — 2026-05-20 — Protocol catalog combo
+
+This release pairs with `cool-tunnel` v3.0.5 and makes the web panel
+the source of truth for generated client options.
+
+### Added
+
+- **Protocol catalog on proxy-account creation.** Operators can select
+  sing-box protocol choices for new users, including Shadowsocks,
+  VMess, VLESS + Reality, Trojan, Hysteria/Hysteria2, TUIC,
+  WireGuard, Tor, SSH, and NaiveProxy catalog entries.
+- **Reality destination selector and latency labels.** Account creation
+  now surfaces configured Reality destination choices and shows latency
+  data where a safe TCP probe is available.
+- **Client defaults in subscription manifests.** Server manifests can
+  carry fresh-profile local port defaults so client imports stay aligned
+  with operator intent.
+
+### Changed
+
+- Subscription manifests now include each profile's selected protocol
+  metadata while requiring a rendered VLESS + Reality entry so generated
+  URLs remain directly usable today.
+- Staged protocols are advertised as catalog metadata, not as active
+  rendered tunnel configs, keeping current deployments stable while
+  preparing the server/client combo for broader sing-box support.
+
+### Fixed
+
+- Hardened protocol selection normalization and manifest validation so
+  invalid or drifted protocol choices fall back safely instead of
+  producing unusable client imports.
+
+---
+
 ## [0.4.8] — 2026-05-19 — Operator UX and readiness repair
 
 This patch ships the post-0.4.7 operator polish found during real VPS
@@ -11273,7 +11308,9 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.10...HEAD
+[0.4.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.9...v0.4.10
+[0.4.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.5...v0.4.6
