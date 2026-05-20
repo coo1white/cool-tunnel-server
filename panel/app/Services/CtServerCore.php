@@ -117,5 +117,4 @@ final class CtServerCore implements CtServerCoreInterface
     {
         return $this->run(['caddyfile', 'render']);
     }
-
 }

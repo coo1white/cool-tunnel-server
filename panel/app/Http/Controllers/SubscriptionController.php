@@ -107,7 +107,6 @@ class SubscriptionController extends Controller
      */
     private const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 7;
 
-
     public function show(Request $request, string $token): Response
     {
         // Single anti-enumeration choke point: ANY failure mode —
