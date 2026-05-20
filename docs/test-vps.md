@@ -11,8 +11,7 @@ production. Catches the things `cargo test`, `bun test`, and
 - Let's Encrypt ACME succeeds on the real DNS + public IP.
 - A real macOS client can import the subscription URL and proxy
   traffic through it.
-- `ct fix --auto` is self-healing on at least the common failure
-  modes.
+- `ct doctor` reports a clean PASS / WARN / FAIL dashboard.
 
 If you only need the local CI gates (Rust + PHP + operator
 typecheck + drift detectors), use `make ci` instead — it's faster
@@ -60,13 +59,13 @@ make install
 
 Expect ~10-15 min on the install step on a 1 vCPU VPS.
 
-### 3. Strict readiness gate
+### 3. Health gate
 
 ```sh
-make readiness
+make doctor
 ```
 
-The strict gate is the canonical "ready to publicly launch" pass.
+The health gate is the canonical "ready to inspect" pass.
 It fails fast on structural / operational / functional defects
 that an operator wouldn't otherwise see until a client tried to
 connect.
@@ -120,14 +119,13 @@ health gates stay green). It exercises every step in `operator/update.ts`
 against real Docker + the real panel entrypoint, which is the part
 that can't be tested locally.
 
-### 7. (Optional) Exercise `ct fix --auto`
+### 7. (Optional) Re-run diagnostics
 
 ```sh
-./ct fix --auto
+./ct doctor
 ```
 
-Should walk every diagnose-and-repair recipe and report
-`no issues detected`. If it surfaces something, that's a real
+Should report no FAIL rows. If it surfaces something, that's a real
 finding worth filing.
 
 ### 8. Teardown

@@ -166,14 +166,8 @@ When to run:
 What it does NOT do:
   - Modify state of any kind. Read-only. Safe to run mid-
     deploy, during an outage, or on a healthy box.
-  - Assert ship-readiness. Use 'make readiness' for that.
-
-Difference from 'make readiness':
-  doctor    -> 'show me everything I should look at'
-                Permissive: WARN is informational, exit 0
-  readiness -> 'is the system ready to publicly launch?'
-                Strict: needs >=9/10 checks PASS, structural
-                fails cap the score at 8, exit 1 if not ready
+  - Repair issues automatically. It prints the likely next command
+    for each WARN / FAIL row instead.
 
 Output anatomy:
   - Table at top: rows like '  [PASS] Disk   repo 47G, ...'
@@ -184,196 +178,6 @@ Output anatomy:
 Exit codes:
   0   - all-PASS or WARN-only (FAIL count is 0)
   1   - one or more FAIL rows
-
-Next topic:  ./ct help readiness
-`,
-    },
-    "auto-diag": {
-        title: "auto-diag — support diagnostic bundle",
-        body: `What it does:
-  Runs the read-only checks operators usually paste manually:
-
-    - ct version
-    - git status + recent commits
-    - host resource snapshot
-    - docker compose ps --all
-    - ct doctor
-    - ct ballast
-    - ct version-bridge
-    - ct drift
-    - docker compose logs tail
-
-  It continues after failures and writes one redacted report:
-
-    diagnostics/ct-auto-diag-<UTC-timestamp>.txt
-
-When to run:
-  - Right after an update looks stuck
-  - Before asking for support
-  - After a VPS reboot when you want one complete status packet
-
-Options:
-  --tail N     log lines per service (default 120)
-  --no-logs    skip docker compose logs
-  --json       print the structured summary
-
-What it does NOT do:
-  - Repair anything. Use ct fix for interactive repair.
-  - Upload the report anywhere. You choose what to share.
-
-Exit codes:
-  0   every section exited 0
-  1   one or more diagnostic sections failed
-  2   usage error
-
-Next topic:  ./ct help fix
-`,
-    },
-    "auto-sync": {
-        title: "auto-sync — credential-lock audit + auto-correct agent",
-        body: `What it does:
-  Runs the panel credential-lock guard
-  (php artisan credential-lock:check). The guard asserts the
-  four-way invariant:
-
-    db == rendered == manifest == mac-config
-
-  If any of them drift (DB row updated but sing-box config still
-  has the old credentials; sing-box volume mounted to a stale
-  path; etc.), the guard fails NG.
-
-  On NG, auto-sync attempts corrective action:
-    1. Re-render sing-box config from current DB state
-       (ct-server-core --json singbox render).
-    2. Restart the sing-box container so the new config takes
-       effect.
-    3. Re-run the guard to confirm drift is resolved.
-
-  Logs every action loudly so an operator tailing the output
-  sees exactly what happened.
-
-When to run:
-  - Manually (make auto-sync) any time something feels off
-    -- e.g. you just rotated a proxy account's password in the
-    Filament UI and want to confirm the change propagated all
-    the way through sing-box, the manifest, and the Mac config
-    surfaces before the next user hits the proxy.
-  - Periodically via cron if you want a self-healing alarm
-    surface beyond what the existing scheduler already does.
-
-Companion to make doctor:
-  doctor    -> 'show me everything I should look at' (read-only)
-  auto-sync -> 'check the credential-lock invariant and fix any
-                drift' (does write -- re-renders + restarts
-                sing-box on drift)
-
-What it does NOT do:
-  - Touch the database. Strictly server-config-side correction.
-  - Replace operator judgement on harder failure modes
-    (decryption failures, mount path issues). On a re-verify
-    that still reports drift, the script exits 1 with the
-    most-likely causes listed.
-
-Already covered without explicit auto-sync runs:
-  - Laravel's scheduler runs 'singbox:render --if-changed'
-    every 5 minutes (see panel/routes/console.php).
-    That handles the routine case of 'DB updated, sing-box
-    not yet re-rendered' within 5 min, silently. auto-sync is
-    the explicit-and-loud version of that, plus the
-    credential-lock guard adds the manifest + mac-config
-    surfaces to the check.
-
-Exit codes:
-  0   no drift detected, OR drift was detected + corrected
-  1   drift detected, correction failed -- manual investigation
-
-Next topic:  ./ct help fix
-`,
-    },
-    "fix": {
-        title: "fix — the 'I'm stuck' command",
-        body: `What it does:
-  Walks through every install / runtime issue we've seen on real
-  deployments, in order, and offers to fix each one interactively.
-  Each issue is explained in plain English -- you do NOT need to
-  understand Docker, sing-box, Caddy, or IPv6 to use it.
-
-  For each detected issue you can:
-    [a]pply    -- run the fix (shows what it will do first)
-    [s]kip     -- no action; default if you just press Enter
-    [e]xplain  -- show the recipe details
-    [q]uit     -- stop the agent
-
-When to run:
-  - 'ct install' got partway through and failed
-  - 'ct update' got partway through and failed
-  - Cool Tunnel (Mac client) connects briefly then drops
-  - Browsers behind the proxy can't load websites
-  - 'make doctor' shows FAIL rows you don't understand
-  - You just SSH'd into a deployment you didn't set up and
-    something feels off
-
-What it does NOT do:
-  - Auto-apply anything destructive. Every fix asks first.
-  - Touch the database directly (credential issues go through
-    the existing render path).
-  - Surface secrets to the terminal.
-
-Recipes ship in install-order priority (issues that block earlier
-boot stages come first):
-
-   1. docker_daemon_down         the Docker daemon itself is down
-                                 (must run BEFORE any compose-based
-                                  recipe -- none of them work without
-                                  a live daemon)
-   2. compose_service_down       a service in compose.yml is supposed
-                                 to be running but isn't. Fix:
-                                 compose up -d.
-   3. zombie_docker_proxy        port :80/:443 held by an orphan
-                                 docker-proxy from a failed earlier
-                                 \`compose up\` attempt
-   4. foreign_container_ports    non-cool-tunnel container on :80/:443
-   5. broken_container_dns       containers can't resolve hostnames
-   6. ipv6_dns_unreachable       Caddy ACME hits IPv6 dead-end
-                                 (common on Vultr -- they advertise
-                                  IPv6 but don't actually route it)
-   7. missing_tls_cert           sing-box waiting on Caddy certs
-   8. singbox_domain_resolver    sing-box 1.13+ DoH config regression
-   9. singbox_outbound_ipv4_only host can't reach the open internet
-                                 over IPv6 -> proxy traffic drops
-                                 (this and #6 are the two halves of
-                                  the v6-on-Vultr trap)
-  10. panel_restart_loop         panel container "Restarting" instead
-                                 of "Up" -- the v0.0.94-class
-                                 composer / Octane / image-stale set
-  11. pending_migrations         DB schema older than running code
-                                 (restored an old backup; panel boot
-                                  migration failed mid-way)
-  12. messenger_queue_stuck      Symfony Messenger Redis stream depth
-                                 >100 (worker died, supervisord didn't
-                                  catch SIGCHLD)
-  13. credential_drift           panel / sing-box / Mac out of sync
-                                 (delegates to 'ct auto-sync')
-  14. no_proxy_account           no enabled accounts in the DB
-                                 (skip-fix: prints how-to, doesn't
-                                  echo a password)
-  15. legacy_env_shape           .env file from pre-v0.0.68
-  16. stale_deployment           deployed version is
-                                 older than the latest release tag
-                                 on origin/main. Fix: pulls + runs
-                                 ct update. Interactive companion
-                                 to \`ct auto-update\` (the unattended
-                                  cron-fired version).
-
-When asking for help, paste the SUMMARY at the end of 'ct fix'
-output (number detected / fixed / skipped / failed). That + the
-recipe slug of any FAILED entry is enough to triage almost
-anything.
-
-Exit codes:
-  0   no issues, OR all detected issues were fixed/skipped cleanly
-  1   one or more fix attempts failed -- recipe slug surfaced
-      in the summary block
 
 Next topic:  ./ct help auto-update
 `,
@@ -441,8 +245,8 @@ Safety properties:
 What it does NOT do:
   - Roll back on failure. If the new release breaks the stack,
     the agent exits non-zero with a clear "left at partial state"
-    message. Recovery is via \`ct fix\` (which detects most
-    upgrade-induced gotchas as recipes).
+    message. Recovery starts with \`ct doctor\`, then the remediation
+    hints printed for any FAIL rows.
   - Skip prereleases. Currently any tag on origin/main triggers
     an upgrade. (We don't ship rcs; if we ever do, we'll add an
     \`--stable-only\` flag and make it the default.)
@@ -453,58 +257,6 @@ Exit codes:
   0    up to date, OR upgraded successfully
   1    upgrade attempted and failed (operator should investigate)
   2    refused (stack unhealthy / no network / not a git checkout)
-
-Companion recipe in \`ct fix\`: \`stale_deployment\` — interactive
-catch-up that runs the same logic with an [a]pply/[s]kip prompt.
-
-Next topic:  ./ct help readiness
-`,
-    },
-    "readiness": {
-        title: "readiness — ship-readiness gate",
-        body: `What it does:
-  Runs exactly 10 checks against the live stack and applies a
-  strict scoring rule:
-
-    Structural (caps score at 8 if any FAIL):
-      1. DNS resolves to host IP
-      2. Ports 80/443 listening
-      3. ACME cert from Let's Encrypt
-      4. UFW active with 443/tcp allowed
-
-    Operational:
-      5. Kernel tuned (BBR, rmem_max >= 7.5 MB)
-      6. Clock synchronised (NTP)
-      7. Reality clock window safe (UTC skew inside
-         max_time_difference, default 1m)
-      8. Direct-dial config sane
-      9. Redis revocation bridge alive (publishes a test
-         resync + waits for daemon ack)
-
-    Functional:
-      10. Cover-site invariant holds (anti-fingerprint)
-
-  Score >= 9 / 10 -> PASS, ready to publicly launch.
-  Any structural fail caps the score at 8 regardless.
-
-When to run:
-  - Pre-launch gate (one-time)
-  - Post-major-incident verification (have we recovered?)
-  - In a cron once a day if you want continuous attestation
-    of ship-readiness
-
-What it does NOT do:
-  - Day-to-day health monitoring. Use 'make doctor' for that.
-  - Auto-recover anything. Read-only.
-
-The Redis bridge check (step 9) DOES publish a test message
-to cool_tunnel:revocations. This is intentional and harmless
-(the Rust daemon logs an ack and moves on), but it is the one
-non-read-only operation in the script.
-
-Exit codes:
-  0   - PASS (score >= 9)
-  1   - FAIL (score < 9 OR any structural fail)
 
 Next topic:  ./ct help backup
 `,
@@ -556,7 +308,7 @@ Next topic:  ./ct help restore
     - Restores the caddy_data volume (ACME certs)
     - Restores .env, manifests, and Caddyfile template
     - Restarts the stack
-    - Readiness check
+    - Health check
 
 When to run:
   - Migrating to a new VPS (clone the repo, copy the backup
@@ -622,7 +374,7 @@ Next topic:  ./ct help troubleshooting
    - 'docker compose ps panel' -- is it running?
    - 'docker compose logs --tail=80 panel' -- did Octane crash?
 
-6. Doctor or readiness shows FAIL
+6. Doctor shows FAIL
    - Rerun and read the Remediation block.
    - Check the service-specific log command printed there.
 
@@ -647,51 +399,6 @@ When asking for help, paste:
 That's enough for almost any diagnosis.
 
 Topics:  ./ct help   (list all)
-`,
-    },
-    "drift": {
-        title: "drift — three-way cleartext drift check",
-        body: `What it does:
-  Audits whether the cleartext password an account has is byte-
-  equal across three layers:
-
-      DB              ProxyAccount::password_cleartext_encrypted,
-                      decrypted via Laravel Crypt.
-      sing-box        users[].uuid in /data/config/singbox.json,
-                      what sing-box VLESS-in actually authenticates
-                      incoming connections against.
-      subscription    The credential field clients import from
-                      https://<panel>/api/v1/subscription/<token>.
-
-  Drift between any pair means clients fail authentication when
-  they try to connect — the exact symptom that looks like 'tunnel
-  doesn't work' with no actionable error in the macOS client.
-
-When to run:
-  - After any credential rotation (operator-driven or auto-sync)
-  - After a restore (the DB cleartext might not match the rendered
-    sing-box config)
-  - When a client reports auth-fail despite a fresh subscription
-    import (today's incident class)
-  - On a schedule (cron-friendly; exit 0 = clean, 1 = drift)
-
-What it does NOT do:
-  - Decrypt or print cleartext to the terminal. The table column
-    is 'same' / 'DIFF' / 'absent' only.
-
-Output:
-  - Human: table with one row per (account_id, username) tuple.
-  - JSON:  pass --json (or ct --json drift) for a machine-readable
-           DriftReport. Cleartext is OMITTED from the JSON view
-           — only equality/inequality.
-
-Repair recipes (per finding):
-  db↔singbox drift          ./ct render singbox
-  db↔subscription drift     re-fetch from panel (clients) OR
-                            check APP_KEY rotation
-  sing-box absent           ./ct render singbox
-  phantom singbox user      Filament UI -> delete or
-                            ./ct render singbox
 `,
     },
 };

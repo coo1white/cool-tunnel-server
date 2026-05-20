@@ -66,7 +66,7 @@ const whichCache = new Map<string, boolean>();
 // Bun.$ (which execs directly without a shell) couldn't find it, and
 // every which() call returned false. The live VPS run at v0.1.4 lit up
 // every "<tool> not on PATH" warn as a false positive — fixing this
-// single primitive flips most ballast checks back to their real state.
+// single primitive flips most doctor checks back to their real state.
 export async function which(bin: string): Promise<boolean> {
     const cached = whichCache.get(bin);
     if (cached !== undefined) return cached;

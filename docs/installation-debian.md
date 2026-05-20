@@ -652,7 +652,7 @@ Documented disaster-recovery procedure (works on a fresh VPS):
    A records to the new VPS IP. Wait for propagation
    (`dig +short ${DOMAIN}` matches the new IP).
 5. `./ct restore backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz`
-6. Verify: `./ct doctor` has no FAIL rows, `make readiness` passes,
+6. Verify: `./ct doctor` has no FAIL rows,
    and `curl -ksI https://${PANEL_DOMAIN}/admin` returns 200/302.
 
 The restored `.env` brings APP_KEY + DB + Redis + clash secrets
@@ -727,8 +727,8 @@ docker compose restart caddy
 - **Two boxes are better than one.** Run a second instance on a
   different cloud / different region as a hot-spare. The macOS
   client supports profile switching.
-- **Run the health gates** every release. `./ct doctor`,
-  `make readiness`, and `php artisan credential-lock:check` catch
+- **Run the health gates** every release. `./ct doctor` and
+  `php artisan credential-lock:check` catch
   most deployment drift before users do.
 - **Use `./ct backup`** — it captures `caddy_data` (ACME
   certs + private keys; ACME moved from sing-box to Caddy in

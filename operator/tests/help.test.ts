@@ -5,25 +5,16 @@
 import { test, expect } from "bun:test";
 import { TOPICS, TOPIC_SLUGS, renderTopic, renderTopicList } from "../help";
 
-test("TOPIC_SLUGS covers the legacy 11 ct help topics plus the binary-only drift topic", () => {
+test("TOPIC_SLUGS covers the currently implemented ct help topics", () => {
     expect(TOPIC_SLUGS).toEqual([
         "getting-started",
         "install",
         "update",
         "doctor",
-        "auto-diag",
-        "auto-sync",
-        "fix",
         "auto-update",
-        "readiness",
         "backup",
         "restore",
         "troubleshooting",
-        // Bun-native operator verb (no ct help counterpart;
-        // wraps operator/src/tasks/drift.ts). The wire-probe topic
-        // was retired in v0.4.0 alongside the `ct wire-probe`
-        // command — see operator/help.ts head comment.
-        "drift",
     ]);
 });
 
@@ -43,10 +34,10 @@ test("renderTopic on a known slug includes the title", () => {
 });
 
 test("renderTopic on a known slug includes the body", () => {
-    const r = renderTopic("fix");
+    const r = renderTopic("doctor");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.output).toContain("interactively");
+    expect(r.output).toContain("PASS / WARN / FAIL");
 });
 
 test("renderTopic on an unknown slug reports the error", () => {

@@ -107,10 +107,10 @@ the panel and `singbox-core`.
 
 ## Verify
 
-Run the local readiness gate:
+Run the local health gate:
 
 ```sh
-make readiness
+make doctor
 ```
 
 Useful quick checks:

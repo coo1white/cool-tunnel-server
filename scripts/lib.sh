@@ -74,11 +74,10 @@ warn() {
 # Prints a clear failure block with the optional remediation hint and
 # exits 1. Hint is what new operators most often need.
 #
-# Additionally, every die() now appends a universal "stuck? Run: ct fix"
+# Additionally, every die() now appends a universal "stuck? Run: ct doctor"
 # pointer so a new operator who hits a failure they don't understand
-# always has a one-command escape hatch. The pointer is suppressed by
-# CT_NO_FIX_HINT=1 (set by fix.sh itself so its own diagnostics don't
-# recursively recommend their own agent).
+# always has a first diagnostic step. The pointer is suppressed by
+# CT_NO_FIX_HINT=1 for callers that provide their own recovery path.
 die() {
     local msg="$1"
     shift || true
@@ -88,7 +87,7 @@ die() {
         printf "  %s↳ try:%s %s\n" "${CT_BOLD}" "${CT_RESET}" "$hint" >&2
     fi
     if [[ -z "${CT_NO_FIX_HINT:-}" ]]; then
-        printf "  %s↳ stuck?%s Run:  %sct fix%s   (interactive diagnose-and-repair)\n" \
+        printf "  %s↳ stuck?%s Run:  %sct doctor%s   (PASS/WARN/FAIL diagnostics)\n" \
             "${CT_BOLD}" "${CT_RESET}" "${CT_BOLD}${CT_GREEN}" "${CT_RESET}" >&2
     fi
     exit 1
@@ -397,7 +396,7 @@ acquire_op_lock() {
 #
 # Compatibility wrapper for older shell entrypoints. The Rust
 # component-check CLI was retired with the v0.4 control-plane split;
-# the supported deploy gate is now the operator readiness check.
+# the supported deploy gate is now the operator doctor check.
 component_check_strict() {
-    ./ct readiness
+    ./ct doctor
 }

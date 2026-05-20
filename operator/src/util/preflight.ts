@@ -273,19 +273,17 @@ export function classifyIpv6Preflight(input: {
     }
     return {
         action: "warn",
-        detail: `IPv6 auto-fix failed (${input.fixResult.detail ?? "unknown"}); Rust build may fail. Retry with: ./ct fix --auto`,
+        detail: `IPv6 auto-fix failed (${input.fixResult.detail ?? "unknown"}); Rust build may fail. Disable broken IPv6 manually or rerun ./ct update after fixing host routing.`,
     };
 }
 
 // Pre-flight equivalent of scripts/lib.sh::disable_ipv6_if_broken,
-// invoked by `./ct update`. The matching `ipv6_broken_routing` fix
-// recipe (used by `./ct fix`) covers the same case post-incident;
-// this helper is the BEFORE-the-rust-build version that prevents
-// the failure that ate ~30 minutes on a Vultr deploy 2026-05-15.
+// invoked by `./ct update`. This helper is the BEFORE-the-rust-build
+// version that prevents the failure that ate ~30 minutes on a Vultr
+// deploy 2026-05-15.
 //
-// Detection mirrors the recipe (no global IPv6 + no sysctl override
-// already in place). The fix path delegates to the recipe so the
-// two stay in sync.
+// Detection looks for the risky state: no global IPv6 route and no
+// sysctl override already in place.
 export async function checkIpv6Routing(): Promise<Ipv6PreflightResult> {
     const skipEnv = process.env["CT_SKIP_IPV6_AUTO_DISABLE"] === "1";
     if (skipEnv) {

@@ -49,15 +49,15 @@ cd /opt/cool-tunnel-server && nano .env
 make install
 
 # 5. Verify
-make readiness
+make doctor
 ```
 
 For the step-by-step walkthrough with expected output, DNS sanity
 checks, and recovery hints:
 **[GETTING_STARTED.md](./GETTING_STARTED.md)**.
 
-If something breaks during install, run `./ct fix --auto` — it walks
-every known failure mode, applies the fix, and reports what changed.
+If something breaks during install, run `./ct doctor` and follow the
+PASS / WARN / FAIL remediation hints.
 
 After install, daily operator life is mostly three commands:
 
@@ -165,7 +165,7 @@ A live deployment has five containers:
 | `redis` | Cache + queue + revocation bus |
 
 The control plane is split between PHP (Laravel + Filament for the UI)
-and Rust (`ct-server-core` for config rendering, probes, drift checks,
+and Rust (`ct-server-core` for config rendering, probes,
 and a deterministic daemon FSM). For diagrams and rationale, see
 [`docs/architecture.md`](./docs/architecture.md).
 

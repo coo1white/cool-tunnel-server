@@ -42,16 +42,9 @@ exactly what to run next.
 Exit code 0 means everything is green or only warnings (no FAILs).
 Cron-suitable.
 
-For a stricter "is the system ready to publicly launch?" gate (≥9/10
-checks PASS, structural fails cap the score at 8), use:
-
-```sh
-ct readiness
-```
-
-The two answer different questions. `doctor` shows you everything an
-operator should glance at; `readiness` is the formal launch / post-
-incident gate.
+Use `ct doctor` after launch, after updates, and after incidents. It
+shows everything an operator should glance at and exits non-zero when a
+FAIL row needs attention.
 
 ---
 
@@ -370,8 +363,6 @@ The most-used `make` targets:
 | Command | What it does |
 |---------|--------------|
 | `make doctor` | Health dashboard (PASS / WARN / FAIL + remediation hints) |
-| `make auto-diag` | Read-only diagnostic bundle saved under `diagnostics/` |
-| `make readiness` | Strict ≥9/10 readiness gate (cron/CI suitable) |
 | `make status` | Quick "are containers up?" check |
 | `make components` | Compatibility alias for `./ct doctor` |
 | `make update` | Pull, rebuild, migrate, render, verify, reload |

@@ -559,7 +559,7 @@ async function checkRam(_c: CheckCtx): Promise<CheckLine> {
 
 async function infoReleaseVersion(_c: CheckCtx): Promise<CheckLine> {
     const r = await capture(
-        $`bash -c "docker compose exec -T panel ct-server-core --json server version 2>/dev/null | jq -r '.version // \"?\"'"`,
+        $`bash -c "docker compose exec -T panel ct-server-core --json version 2>/dev/null | jq -r '.version // \"?\"'"`,
     );
     const v = r.ok && r.stdout.trim() ? r.stdout.trim() : "?";
     return { group: G_INFO, label: "Release", severity: "info", detail: `v${v}` };

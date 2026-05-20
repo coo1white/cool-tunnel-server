@@ -5,7 +5,7 @@
 // code semantics. The standalone script is the canonical
 // implementation — this just plumbs it into the runner so
 // `./ct backup` can dispatch through the operator binary the
-// same way fix / doctor / readiness / auto-sync do.
+// same way doctor / render / restore / update do.
 
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";

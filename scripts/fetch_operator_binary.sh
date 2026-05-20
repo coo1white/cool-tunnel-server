@@ -5,8 +5,8 @@
 #
 # Called by scripts/update.sh as a post-deploy step (non-fatal: a
 # failed fetch leaves the existing binary or the .sh fallbacks in
-# place, both of which keep `ct fix` / `ct doctor` / `ct readiness`
-# working). Can also be invoked directly: `make operator-fetch`.
+# place for implemented operator commands such as `ct doctor`).
+# Can also be invoked directly: `make operator-fetch`.
 #
 # Idempotent. Opt out by exporting CT_SKIP_OPERATOR_FETCH=1.
 

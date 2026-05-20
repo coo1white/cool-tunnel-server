@@ -44,7 +44,7 @@ most reliable. If you want independent, **Quad9** sometimes routes
 through Hong Kong and works fine. Test both before you commit.
 
 After changing the resolver, click **Save** and confirm `./ct doctor`
-and `make readiness` pass from the VPS.
+passes from the VPS.
 
 ### 2. Verify VPS region is reachable / fast from China
 
@@ -63,7 +63,6 @@ cd ~/cool-tunnel-server
 git pull --ff-only
 make update
 ./ct doctor                # no FAIL rows?
-make readiness             # strict launch gate passes?
 make verify-sot-vps        # all 5 fixtures pass?
 ```
 
@@ -169,10 +168,10 @@ quick fix — you need to either:
 
 ## Ongoing health checks
 
-Run the readiness gate from the VPS when connectivity looks strange:
+Run the health gate from the VPS when connectivity looks strange:
 
 ```sh
-make readiness
+make doctor
 ```
 
 For deeper service state:

@@ -19,14 +19,12 @@ Use the current operator gates instead of old per-component CLI checks:
 
 ```sh
 ./ct doctor
-./ct readiness
 docker compose exec -T panel php artisan credential-lock:check
 ```
 
-`doctor` is the broad PASS/WARN/FAIL dashboard. `readiness` is the
-strict launch gate. `credential-lock:check` verifies that the DB,
-rendered sing-box config, and subscription output agree on active
-credentials.
+`doctor` is the broad PASS/WARN/FAIL dashboard. `credential-lock:check`
+verifies that the DB, rendered sing-box config, and subscription output
+agree on active credentials.
 
 ## Updating Pins
 
@@ -43,5 +41,4 @@ Then deploy normally:
 ```sh
 ./ct update
 ./ct doctor
-./ct readiness
 ```
