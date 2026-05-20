@@ -13,7 +13,6 @@ export interface RunContext {
     readonly env: Record<string, string>;
     readonly logger: Logger;
     readonly json: boolean;      // emit structured JSON to stdout
-    readonly noBridge: boolean;  // suppress the AI incident-bridge prompt on failure
     readonly interactive: boolean;
 }
 

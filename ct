@@ -269,7 +269,7 @@ operator_bootstrap_if_skewed() {
 # For operator-owned subcommands, prefer the compiled ct-operator binary
 # in operator/bin/ when it exists; otherwise fall back to the legacy
 # shell script. Either path is behaviourally equivalent on the operator
-# surface — the binary adds the structured AI-bridge output on failure.
+# command surface.
 dispatch_via_operator() {
     local subcmd="$1"; shift
     local fallback="$1"; shift

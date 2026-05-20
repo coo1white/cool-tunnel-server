@@ -27,14 +27,13 @@ test("parseAutoUpdateArgs: short form -q + -n combine", () => {
     expect(r.dryRun).toBe(true);
 });
 
-test("parseAutoUpdateArgs: ignores operator-global --json / --no-bridge", () => {
+test("parseAutoUpdateArgs: ignores operator-global --json", () => {
     const r = parseAutoUpdateArgs([
         "bun",
         "operator",
         "auto-update",
         "--json",
         "--dry-run",
-        "--no-bridge",
     ]);
     if (typeof r !== "object") throw new Error("expected object");
     expect(r.dryRun).toBe(true);

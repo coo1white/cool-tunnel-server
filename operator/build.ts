@@ -7,10 +7,7 @@
 //   bun run build.ts linux-arm64
 //   bun run build.ts all             # build every target in the matrix
 //
-// Bakes BUILD_VERSION (from package.json) and BUILD_PUBKEY (from
-// CT_OPERATOR_PUBKEY env var) into the compiled binary via --define.
-// The pubkey is embedded so release signatures can be verified by
-// operator release tooling.
+// Bakes BUILD_VERSION (from package.json) into the compiled binary.
 
 import { $ } from "bun";
 
@@ -41,13 +38,6 @@ if (!arg) {
 
 const pkg = (await Bun.file("./package.json").json()) as { version: string };
 const version = pkg.version;
-const pubkey = process.env["CT_OPERATOR_PUBKEY"] ?? "";
-
-if (!pubkey) {
-    console.error(
-        "warn: CT_OPERATOR_PUBKEY not set — release signature verification metadata will be empty",
-    );
-}
 
 for (const t of selected) {
     const outName = `bin/ct-operator-${t}`;
@@ -57,8 +47,6 @@ for (const t of selected) {
         --target=${TARGETS[t]} \
         --outfile=${outName} \
         --define BUILD_VERSION=${JSON.stringify(version)} \
-        --define BUILD_PUBKEY=${JSON.stringify(pubkey)} \
-        --define BUILD_TARGET=${JSON.stringify(t)} \
         --minify`;
     console.error(`built ${outName}`);
 }

@@ -31,9 +31,7 @@ const { step, ok, warn } = makeTerm();
 // tarball). Skip operator-global flags. Exported for tests.
 export function parseRestoreArgs(argv: readonly string[]): { path: string } | string {
     const cmdIdx = argv.indexOf("restore");
-    const rest = (cmdIdx >= 0 ? argv.slice(cmdIdx + 1) : argv.slice(2)).filter(
-        (a) => a !== "--json" && a !== "--no-bridge",
-    );
+    const rest = (cmdIdx >= 0 ? argv.slice(cmdIdx + 1) : argv.slice(2)).filter((a) => a !== "--json");
     if (rest.length === 0) {
         return "restore: usage: restore <backup.tar.gz>";
     }

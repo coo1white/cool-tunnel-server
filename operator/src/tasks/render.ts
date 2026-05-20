@@ -30,7 +30,7 @@ function isTarget(s: string): s is Target {
 export function parseArgs(argv: readonly string[]): { target: Target; passthrough: string[] } | string {
     const cmdIdx = argv.indexOf("render");
     if (cmdIdx < 0) return "render: command missing from argv";
-    const rest = argv.slice(cmdIdx + 1).filter((a) => a !== "--json" && a !== "--no-bridge");
+    const rest = argv.slice(cmdIdx + 1).filter((a) => a !== "--json");
     if (rest.length === 0) {
         return `render: target required (one of: ${TARGETS.join(", ")})`;
     }
@@ -51,13 +51,13 @@ export class RenderTask implements Task {
         const parsed = parseArgs(process.argv);
         if (typeof parsed === "string") {
             ctx.logger.error(parsed);
-            return { ok: false, code: 2, summary: "bad args", skipBridge: true };
+            return { ok: false, code: 2, summary: "bad args" };
         }
         const { target, passthrough } = parsed;
 
         if (!(await which("docker"))) {
             ctx.logger.error("docker not on PATH");
-            return { ok: false, code: 2, summary: "no docker", skipBridge: true };
+            return { ok: false, code: 2, summary: "no docker" };
         }
 
         ctx.logger.info(`rendering ${target} config`);

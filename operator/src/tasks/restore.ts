@@ -16,16 +16,16 @@ export class RestoreTask implements Task {
         if (typeof parsed === "string") {
             process.stderr.write(parsed + "\n");
             process.stderr.write("ls backups/\n");
-            return { ok: false, code: 2, summary: "bad args", skipBridge: true };
+            return { ok: false, code: 2, summary: "bad args" };
         }
         try {
             const code = await runRestore(parsed.path);
             return code === 0
                 ? { ok: true, code: 0, summary: "restored" }
-                : { ok: false, code, summary: `restore exited ${code}`, skipBridge: true };
+                : { ok: false, code, summary: `restore exited ${code}` };
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { ok: false, code: 1, summary: msg, skipBridge: true };
+            return { ok: false, code: 1, summary: msg };
         }
     }
 }

@@ -49,7 +49,7 @@ export function parseAutoUpdateArgs(argv: readonly string[]): AutoUpdateOptions 
     for (const a of rest) {
         if (a === "--quiet" || a === "-q") quiet = true;
         else if (a === "--dry-run" || a === "-n") dryRun = true;
-        else if (a === "--json" || a === "--no-bridge") continue;
+        else if (a === "--json") continue;
         else return `auto-update: unknown flag: ${a}`;
     }
     return { quiet, dryRun };

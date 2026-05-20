@@ -63,7 +63,6 @@ the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
 Flags:
 
 - `--json`     — emit structured JSON to stdout instead of human output.
-- `--no-bridge` — suppress the AI incident-bridge prompt on failure.
 
 Environment:
 
@@ -81,41 +80,12 @@ cd /opt/cool-tunnel-server
 A green run has no FAIL rows. Investigate any FAIL before treating the
 deployment as healthy.
 
-## Release trust model
+## Release artifacts
 
-Releases publish three files:
+Releases publish:
 
 - `ct-operator-<os>-<arch>` — the binary for each supported target.
 - `SHA256SUMS`              — `sha256sum` of each binary.
-- `SHA256SUMS.sig`          — detached ed25519 signature over `SHA256SUMS`.
-
-### Keygen + CI wiring
-
-```bash
-make operator-keygen
-```
-
-writes `operator/signing.key` (PEM, ed25519 private key, chmod 600,
-gitignored) and prints the base64-encoded raw public key.
-
-- **Private key** → store as the `CT_OPERATOR_SIGNING_KEY` secret in
-  the GitHub repo. The `.github/workflows/operator-release.yml`
-  workflow uses it to sign `SHA256SUMS`.
-- **Public key** is derived from the private key inside the workflow
-  (no separate config). Each compiled binary embeds it via
-  `--define BUILD_PUBKEY=<b64>`.
-
-### Rotation
-
-Generate a new keypair, update the GitHub secret, and cut a release.
-Operators receive the new signed manifest in the next GitHub release.
-The NEXT release after rotation should still be signed by the OLD key,
-with the new pubkey baked into the binary. After one release cycle, you
-can sign with the new key.
-
-This is the same trust-chain handover problem every signed-update
-system has. Telemetry through `ct doctor` will tell you when the
-fleet has migrated.
 
 ## Testing
 
@@ -124,8 +94,3 @@ cd operator
 bun test
 bun run typecheck          # tsc --noEmit
 ```
-
-## OPSEC
-
-- `operator/signing.key` is gitignored; do not commit. If you suspect
-  compromise, generate a new keypair and rotate (see above).

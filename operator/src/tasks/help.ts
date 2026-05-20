@@ -14,9 +14,7 @@ export class HelpTask implements Task {
 
     async run(_ctx: RunContext): Promise<TaskResult> {
         const cmdIdx = process.argv.indexOf("help");
-        const rest = (cmdIdx >= 0 ? process.argv.slice(cmdIdx + 1) : []).filter(
-            (a) => a !== "--json" && a !== "--no-bridge",
-        );
+        const rest = (cmdIdx >= 0 ? process.argv.slice(cmdIdx + 1) : []).filter((a) => a !== "--json");
         if (
             rest.length === 0 ||
             rest[0] === "list" ||
@@ -31,7 +29,7 @@ export class HelpTask implements Task {
         if (!r.ok) {
             process.stderr.write(`✗ ${r.error}\n\n`);
             process.stderr.write(renderTopicList());
-            return { ok: false, code: 1, summary: r.error, skipBridge: true };
+            return { ok: false, code: 1, summary: r.error };
         }
         process.stdout.write(r.output);
         return { ok: true, code: 0, summary: rest[0]! };

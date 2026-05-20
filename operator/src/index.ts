@@ -29,22 +29,18 @@ Commands:
 
 Options:
   --json         Emit structured JSON to stdout instead of human output
-  --no-bridge    Suppress the AI incident-bridge prompt on failure
-
 Environment:
   CT_OPERATOR_DEBUG=1   Enable debug-level logging on stderr
 `;
 
 interface Flags {
     json: boolean;
-    noBridge: boolean;
 }
 
 function parseFlags(args: readonly string[]): Flags {
-    const flags: Flags = { json: false, noBridge: false };
+    const flags: Flags = { json: false };
     for (const a of args) {
         if (a === "--json") flags.json = true;
-        else if (a === "--no-bridge") flags.noBridge = true;
     }
     return flags;
 }
@@ -118,7 +114,6 @@ async function main(): Promise<number> {
         env,
         logger: createConsoleLogger(),
         json: flags.json,
-        noBridge: flags.noBridge,
         interactive: process.stdin.isTTY === true,
     };
 

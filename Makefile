@@ -313,23 +313,6 @@ singbox-test: ## run singbox-core unit tests (bun test)
 operator-fetch: ## fetch the ct-operator binary matching the deployed release into operator/bin/ (idempotent; honors CT_SKIP_OPERATOR_FETCH=1)
 	./scripts/fetch_operator_binary.sh
 
-.PHONY: operator-keygen
-operator-keygen: ## generate ed25519 signing keypair for SHA256SUMS (writes operator/signing.key; prints pubkey)
-	@if [ -f operator/signing.key ]; then \
-		echo "operator/signing.key already exists; refusing to overwrite."; \
-		echo "If you really mean to rotate, move the old one aside first."; \
-		exit 1; \
-	fi
-	openssl genpkey -algorithm ed25519 -out operator/signing.key
-	@chmod 600 operator/signing.key
-	@echo ""
-	@echo "private key: operator/signing.key  (chmod 600, KEEP SECRET)"
-	@echo "  -> store as GitHub Actions secret CT_OPERATOR_SIGNING_KEY"
-	@echo "  -> operator/.gitignore already excludes this file"
-	@echo ""
-	@echo "public key (set as CT_OPERATOR_PUBKEY env var at build time):"
-	@openssl pkey -in operator/signing.key -pubout -outform DER | tail -c 32 | base64
-
 .PHONY: help-topics
 help-topics: ## list operator mini-manual topics (then run `make help-<topic>`)
 	@cd operator && bun run help.ts
@@ -430,9 +413,7 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 		panel/config/cool-tunnel.php
 	@# operator/package.json::version — read at build time by build.ts
 	@# and baked into the binary via --define BUILD_VERSION=. Without
-	@# bumping this, the compiled binary's `--version` and the
-	@# incident-bridge JSON's `operator_version` field stay at the
-	@# scaffold's 0.0.1 forever, regardless of release tag. (v0.1.8.)
+	@# bumping this, the compiled binary's `--version` stays stale.
 	@sed -i.bak -E 's/"version": "[0-9]+\.[0-9]+\.[0-9]+"/"version": "$(V)"/' \
 		operator/package.json
 	@find . -name '*.bak' -delete
