@@ -24,10 +24,12 @@ VLESS + Reality. Chosen because:
 ## Subcommand surface
 
 ```
-singbox-core render --config-out <path>            # write /data/config/singbox.json
-singbox-core supervise --config <path>             # spawn + watch + respawn
-singbox-core install --target-dir <path>           # fetch+verify the singbox binary from singbox.upstream.json
-singbox-core version                               # print CLI + pinned singbox version
+singbox-core render-server --input <path> --output <path>  # write server config.json
+singbox-core render-client --input <path> --output <path>  # write client config.json
+singbox-core supervise --config <path>                     # spawn + watch + respawn
+singbox-core install --target-dir <path>                   # fetch+verify pinned sing-box
+singbox-core reality-keygen                                # generate Reality X25519 keys
+singbox-core version                                       # print CLI + pinned sing-box version
 ```
 
 ## Pinned version

@@ -392,10 +392,6 @@ build-detached: ## run a long build in tmux so SSH drops don't kill it
 	@echo "Check status from any session: make status"
 	@echo "When done: /tmp/ct-build.done will exist."
 
-.PHONY: components
-components: ## compatibility alias for the current health dashboard
-	./ct doctor
-
 # ---------- Release plumbing -------------------------------------
 
 .PHONY: set-version

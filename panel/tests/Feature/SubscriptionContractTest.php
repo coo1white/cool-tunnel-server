@@ -9,7 +9,9 @@ namespace Tests\Feature;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
+use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -22,6 +24,8 @@ use Tests\TestCase;
 //     server: <domain>,
 //     profiles: [{
 //       host, port, username, uuid, label,
+//       client_defaults: { local_port },
+//       protocols: [{ key, type, name, role, transport, status, usable, ... }],
 //       reality: { public_key, dest_host, short_id }
 //     }],
 //     capabilities: { anti_tracking, http3, ?fake_site_slug },
@@ -60,7 +64,7 @@ class SubscriptionContractTest extends TestCase
         // sing-box outbound directly.
         $this->seedActiveCover();
 
-        $account = ProxyAccount::factory()->create();
+        $account = ProxyAccount::factory()->create(['client_default_local_port' => 2080]);
         $uuid = $account->uuid;
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
@@ -85,6 +89,78 @@ class SubscriptionContractTest extends TestCase
         $this->assertSame('TEST-PUBLIC-KEY-base64url-32-byteish', $profile['reality']['public_key']);
         $this->assertSame('www.microsoft.com', $profile['reality']['dest_host']);
         $this->assertSame('', $profile['reality']['short_id']);
+        $this->assertSame(
+            ['local_port' => 2080],
+            $profile['client_defaults'],
+            'profile.client_defaults.local_port lets new clients fill every startable option from one URL',
+        );
+        $this->assertSame('vless_reality', $profile['protocols'][0]['key']);
+        $this->assertSame('rendered', $profile['protocols'][0]['status']);
+        $this->assertTrue($profile['protocols'][0]['usable']);
+    }
+
+    #[Test]
+    public function manifest_carries_selected_protocol_entries(): void
+    {
+        $this->seedActiveCover();
+
+        $account = ProxyAccount::factory()->create([
+            'enabled_protocols' => ['vless_reality', 'shadowsocks', 'tor'],
+        ]);
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $decoded = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+        $profile = $decoded['profiles'][0];
+        $this->assertSame(
+            ['vless_reality', 'shadowsocks', 'tor'],
+            array_column($profile['protocols'], 'key'),
+        );
+        $this->assertSame('rendered', $profile['protocols'][0]['status']);
+        $this->assertSame('catalog', $profile['protocols'][1]['status']);
+        $this->assertFalse($profile['protocols'][1]['usable']);
+        $this->assertSame('client_outbound', $profile['protocols'][2]['role']);
+    }
+
+    #[Test]
+    public function manifest_without_rendered_protocol_falls_through_to_cover_site(): void
+    {
+        $this->seedActiveCover();
+
+        $account = ProxyAccount::factory()->create([
+            'enabled_protocols' => ['shadowsocks', 'tor'],
+        ]);
+
+        $cover = $this->coverSiteBaseline();
+        $sub = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+
+        $this->assertSame($cover->status(), $sub->status());
+        $this->assertSame($cover->headers->get('Content-Type'), $sub->headers->get('Content-Type'));
+        $this->assertSame($cover->getContent(), $sub->getContent());
+    }
+
+    #[Test]
+    public function manifest_can_emit_server_singbox_pin_when_available(): void
+    {
+        $this->seedActiveCover();
+        Cache::put('singbox_pin:current', ['upstream_tag' => 'v1.13.12'], 60);
+
+        $account = ProxyAccount::factory()->create();
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $decoded = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(['upstream_tag' => 'v1.13.12'], $decoded['server_singbox_pin']);
+
+        $sig = $decoded['signature'];
+        unset($decoded['signature']);
+        $canonical = json_encode(
+            $decoded,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+        $this->assertSame(hash_hmac('sha256', $canonical, (string) config('app.key')), $sig);
     }
 
     #[Test]

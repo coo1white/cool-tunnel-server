@@ -9,6 +9,9 @@ namespace App\Http\Controllers;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
+use App\Support\RealityDestinations;
+use App\Support\SingBoxPin;
+use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
@@ -22,7 +25,7 @@ use Illuminate\Support\Facades\RateLimiter;
 // sing-box VLESS+Reality fields. Each profile carries:
 //
 //   { host, port, username, uuid, label, reality: { public_key,
-//     dest_host, short_id } }
+//     dest_host, short_id }, protocols: [...] }
 //
 // Reality params live PER PROFILE (rather than at manifest top) so a
 // future multi-server / multi-region deployment can hand the client
@@ -228,6 +231,22 @@ class SubscriptionController extends Controller
 
             return (new FakeSiteController)->show($request);
         }
+        $realityDestHost = RealityDestinations::normaliseHost((string) ($cfg->reality_dest_host ?? ''));
+        if (! RealityDestinations::isValidHost($realityDestHost)) {
+            Log::critical('subscription.fallthrough.reality_dest_host_invalid', [
+                'account_id' => $account->id,
+            ]);
+
+            return (new FakeSiteController)->show($request);
+        }
+        $protocols = $account->enabledProtocolKeys();
+        if (! SingBoxProtocolCatalog::hasRenderedProtocol($protocols)) {
+            Log::critical('subscription.fallthrough.no_rendered_protocol', [
+                'account_id' => $account->id,
+            ]);
+
+            return (new FakeSiteController)->show($request);
+        }
 
         // Build the body in declaration order so the wire bytes a
         // future Rust client deserialises round-trip byte-for-byte
@@ -250,6 +269,7 @@ class SubscriptionController extends Controller
         if (($slug = optional(FakeWebsite::active())->slug) !== null) {
             $optionalCaps['fake_site_slug'] = $slug;
         }
+        $serverSingBoxPin = SingBoxPin::current();
 
         // Reality short_id: the first short_id from the configured
         // list, or "" when none configured (the server-side renderer
@@ -283,9 +303,18 @@ class SubscriptionController extends Controller
                 'username' => $account->username,
                 'uuid' => $uuid,
                 'label' => "{$cfg->domain} ({$account->username})",
+                'client_defaults' => [
+                    'local_port' => (int) ($account->client_default_local_port ?: 1080),
+                ],
+                'protocols' => SingBoxProtocolCatalog::manifestFor(
+                    $protocols,
+                    $cfg,
+                    $realityDestHost,
+                    measureLatency: true,
+                ),
                 'reality' => [
                     'public_key' => $realityPublicKey,
-                    'dest_host' => (string) $cfg->reality_dest_host,
+                    'dest_host' => $realityDestHost,
                     'short_id' => $shortId,
                 ],
             ]],
@@ -308,6 +337,9 @@ class SubscriptionController extends Controller
             // null and non-empty (NEVER `"note":null` — that breaks
             // canonical round-trip).
         ];
+        if ($serverSingBoxPin !== null) {
+            $body['server_singbox_pin'] = $serverSingBoxPin;
+        }
 
         // HMAC over the body WITHOUT a `signature` field at all.
         // Clients verify by deserialising, setting `signature` to

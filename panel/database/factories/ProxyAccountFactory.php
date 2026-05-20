@@ -7,6 +7,7 @@ declare(strict_types=1);
 namespace Database\Factories;
 
 use App\Models\ProxyAccount;
+use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
 
@@ -30,6 +31,8 @@ class ProxyAccountFactory extends Factory
             'username' => 'tu'.Str::random(8),
             'label' => fake()->word(),
             'enabled' => true,
+            'client_default_local_port' => 1080,
+            'enabled_protocols' => SingBoxProtocolCatalog::defaultKeys(),
             'quota_bytes' => null,
             'used_bytes' => 0,
             'expires_at' => null,

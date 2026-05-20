@@ -18,13 +18,8 @@ namespace App\Messages;
  * feeds in cert mtime — order matters for one-pass
  * reconciliation).
  *
- * Mirrors the contract of the legacy
- * `App\Jobs\ReloadServerConfigJob`, which now bridges its
- * `handle()` method into a single
- * `$bus->dispatch(new ReloadServerConfig(reason: 'legacy-job-bridge'))`
- * call. Phase 3 will retire the Job class entirely.
- *
- * Introduced in v0.0.93 as Phase 2 of the Symfony-infusion arc.
+ * Dispatched directly from model events and panel actions after
+ * the surrounding DB transaction commits.
  */
 final readonly class ReloadServerConfig
 {

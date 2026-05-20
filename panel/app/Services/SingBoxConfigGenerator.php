@@ -9,6 +9,7 @@ namespace App\Services;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
+use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Process\Process;
 
@@ -183,6 +184,9 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
         $accounts = [];
         foreach (ProxyAccount::query()->orderBy('id')->get() as $account) {
             if (! $account->isActive()) {
+                continue;
+            }
+            if (! in_array(SingBoxProtocolCatalog::VLESS_REALITY, $account->enabledProtocolKeys(), true)) {
                 continue;
             }
             $uuid = (string) ($account->uuid ?? '');

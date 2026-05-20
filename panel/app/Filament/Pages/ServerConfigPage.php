@@ -115,8 +115,8 @@ class ServerConfigPage extends Page implements HasForms
         $config->fill($this->form->getState())->save();
 
         // v0.0.84 robustness-review fix (item 7): the model's
-        // `updated` hook dispatches `ReloadServerConfigJob`
-        // (queued) instead of running renders inline. The notification body
+        // `updated` hook dispatches a queued ReloadServerConfig
+        // message instead of running renders inline. The notification body
         // reflects the new contract — the row is committed, the
         // Redis fast-path is in flight, and the panel-side
         // render backstop is queued. Pre-fix this said

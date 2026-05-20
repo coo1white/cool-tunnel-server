@@ -12,9 +12,10 @@
 
 import { mkdtempSync, mkdirSync, renameSync, statSync, chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { SINGBOX_UPSTREAM, SINGBOX_UPSTREAM_TAG, currentAssetKey } from "../version.ts";
+import { flagValue } from "../util/argv.ts";
 import { sha256Hex } from "../util/sha256.ts";
 
 interface ParsedArgs {
@@ -25,14 +26,16 @@ interface ParsedArgs {
 
 const DEFAULT_TARGET_DIR = "/usr/local/bin";
 
-function parseArgs(argv: readonly string[]): ParsedArgs {
+export function parseArgs(argv: readonly string[]): ParsedArgs {
     let targetDir = DEFAULT_TARGET_DIR;
     let verify = true;
     let help = false;
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i]!;
-        if (a === "--target-dir") targetDir = argv[++i] ?? targetDir;
-        else if (a === "--no-verify") verify = false;
+        if (a === "--target-dir") {
+            targetDir = flagValue(argv, i, a);
+            i++;
+        } else if (a === "--no-verify") verify = false;
         else if (a === "--help" || a === "-h") help = true;
         else throw new Error(`unknown flag: ${a}`);
     }
@@ -142,8 +145,3 @@ function log(level: "info" | "warn" | "error", msg: string, extra: Record<string
         JSON.stringify({ ts: new Date().toISOString(), level, msg, ...extra }) + "\n",
     );
 }
-
-// Silence unused-import warning when the linter complains; dirname is
-// reserved for future relative-path features.
-const _dirname = dirname;
-void _dirname;

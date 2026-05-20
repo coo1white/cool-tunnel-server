@@ -24,14 +24,9 @@ use Tests\TestCase;
 // same transaction left behind a Redis ghost flag for a row that
 // never persisted, plus a queued reload for a phantom change.
 //
-// v0.0.94 moved the dispatch surface from Laravel's
-// `ReloadSingBoxJob::dispatch()` to Symfony Messenger's
+// The dispatch surface is Symfony Messenger:
 // `MessageBusInterface::dispatch(new ReloadSingBox(...))`. The
-// `DB::afterCommit` contract is identical; only the assertion
-// shape changed — from `Queue::assertPushed(...)` against
-// Laravel's fake queue to a direct read of the bus's
-// InMemoryTransport (configured by MessengerServiceProvider in
-// the `testing` env).
+// assertion reads the bus's InMemoryTransport directly.
 //
 // This fixture verifies the three semantic cases the
 // `DB::afterCommit` shape MUST guarantee:

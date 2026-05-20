@@ -25,6 +25,7 @@ import { spawn, type Subprocess } from "bun";
 import { existsSync, statSync, watch } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { basename, dirname } from "node:path";
+import { flagValue, integerFlagValue } from "../util/argv.ts";
 
 interface ParsedArgs {
     readonly config: string;
@@ -53,7 +54,7 @@ const DEFAULTS: Readonly<{
     graceMs: 5_000,
 };
 
-function parseArgs(argv: readonly string[]): ParsedArgs {
+export function parseArgs(argv: readonly string[]): ParsedArgs {
     let config = DEFAULTS.config;
     let singboxBin = DEFAULTS.singboxBin;
     let healthzHost = DEFAULTS.healthzHost;
@@ -62,12 +63,22 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     let help = false;
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i]!;
-        if (a === "--config" || a === "-c") config = argv[++i] ?? config;
-        else if (a === "--singbox-bin") singboxBin = argv[++i] ?? singboxBin;
-        else if (a === "--healthz-host") healthzHost = argv[++i] ?? healthzHost;
-        else if (a === "--healthz-port") healthzPort = Number(argv[++i] ?? healthzPort);
-        else if (a === "--boot-timeout-ms") bootTimeoutMs = Number(argv[++i] ?? bootTimeoutMs);
-        else if (a === "--help" || a === "-h") help = true;
+        if (a === "--config" || a === "-c") {
+            config = flagValue(argv, i, a);
+            i++;
+        } else if (a === "--singbox-bin") {
+            singboxBin = flagValue(argv, i, a);
+            i++;
+        } else if (a === "--healthz-host") {
+            healthzHost = flagValue(argv, i, a);
+            i++;
+        } else if (a === "--healthz-port") {
+            healthzPort = integerFlagValue(argv, i, a, { min: 1, max: 65_535 });
+            i++;
+        } else if (a === "--boot-timeout-ms") {
+            bootTimeoutMs = integerFlagValue(argv, i, a, { min: 1 });
+            i++;
+        } else if (a === "--help" || a === "-h") help = true;
         else throw new Error(`unknown flag: ${a}`);
     }
     return { config, singboxBin, healthzHost, healthzPort, bootTimeoutMs, help };

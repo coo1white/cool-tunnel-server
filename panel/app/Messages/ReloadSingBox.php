@@ -17,13 +17,8 @@ namespace App\Messages;
  * `SingBoxConfigGeneratorInterface::renderToFile()` on the hash
  * compare.
  *
- * Mirrors the contract of the legacy `App\Jobs\ReloadSingBoxJob`,
- * which now bridges its `handle()` method into a single
- * `$bus->dispatch(new ReloadSingBox(reason: 'legacy-job-bridge'))`
- * call. Phase 3 will retire the Job class entirely and update
- * call sites to dispatch this message directly.
- *
- * Introduced in v0.0.93 as Phase 2 of the Symfony-infusion arc.
+ * Dispatched directly from model events and panel actions after
+ * the surrounding DB transaction commits.
  */
 final readonly class ReloadSingBox
 {

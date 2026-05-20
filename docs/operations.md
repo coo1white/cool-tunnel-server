@@ -364,7 +364,6 @@ The most-used `make` targets:
 |---------|--------------|
 | `make doctor` | Health dashboard (PASS / WARN / FAIL + remediation hints) |
 | `make status` | Quick "are containers up?" check |
-| `make components` | Compatibility alias for `./ct doctor` |
 | `make update` | Pull, rebuild, migrate, render, verify, reload |
 | `make backup` | Snapshot DB + .env + ACME state |
 | `make install` | First-time bootstrap (idempotent on re-run) |
