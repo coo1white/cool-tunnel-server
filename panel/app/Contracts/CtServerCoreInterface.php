@@ -40,5 +40,4 @@ interface CtServerCoreInterface
 
     /** @return array<mixed> */
     public function renderCaddyfile(): array;
-
-    }
+}
