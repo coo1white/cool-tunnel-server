@@ -8,12 +8,15 @@ namespace App\Models;
 
 use App\Messages\ReloadSingBox;
 use App\Services\RedisRevocationBus;
+use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Throwable;
 
 // One row per proxy user.
 //
@@ -54,6 +57,8 @@ use Symfony\Component\Messenger\MessageBusInterface;
  * @property string $uuid
  * @property string|null $label
  * @property bool $enabled
+ * @property int $client_default_local_port
+ * @property array<int,string>|null $enabled_protocols
  * @property int|null $quota_bytes
  * @property int $used_bytes
  * @property Carbon|null $expires_at
@@ -78,6 +83,8 @@ class ProxyAccount extends Model
      */
     protected $fillable = [
         'username', 'label', 'enabled',
+        'client_default_local_port',
+        'enabled_protocols',
         'quota_bytes', 'used_bytes', 'expires_at', 'last_seen_at',
         'metadata',
     ];
@@ -98,6 +105,8 @@ class ProxyAccount extends Model
     {
         return [
             'enabled' => 'boolean',
+            'client_default_local_port' => 'integer',
+            'enabled_protocols' => 'array',
             'quota_bytes' => 'integer',
             'used_bytes' => 'integer',
             'expires_at' => 'datetime',
@@ -186,6 +195,12 @@ class ProxyAccount extends Model
         return $uuid;
     }
 
+    /** @return list<string> */
+    public function enabledProtocolKeys(): array
+    {
+        return SingBoxProtocolCatalog::normaliseSelected($this->enabled_protocols);
+    }
+
     protected static function booted(): void
     {
         // Auto-seed the UUID at the creating event so callers that
@@ -200,6 +215,15 @@ class ProxyAccount extends Model
             if ($current === '') {
                 $account->regenerateUuid();
             }
+            $account->enabled_protocols = SingBoxProtocolCatalog::normaliseSelected(
+                $account->enabled_protocols,
+            );
+        });
+
+        static::saving(function (self $account): void {
+            $account->enabled_protocols = SingBoxProtocolCatalog::normaliseSelected(
+                $account->enabled_protocols,
+            );
         });
 
         // Both paths defer to DB::afterCommit so the announce + reload
@@ -208,7 +232,7 @@ class ProxyAccount extends Model
         // model event, which fires AFTER the row's INSERT/UPDATE but
         // BEFORE the transaction commits — a rollback later in the
         // same transaction would still leave a Redis "revoked" flag
-        // and a queued ReloadSingBoxJob for a row that never landed.
+        // and a reload message for a row that never landed.
         //
         // We snapshot $username and $status at saved-time so the
         // callback closure doesn't dereference a stale or
@@ -226,9 +250,19 @@ class ProxyAccount extends Model
                 $bus->setAccountStatus($username, $status);
                 $bus->announceAccountChanged($username, "saved:{$status}");
 
-                app(MessageBusInterface::class)->dispatch(
-                    new ReloadSingBox(reason: "proxy_account.saved:{$status}"),
-                );
+                try {
+                    app(MessageBusInterface::class)->dispatch(
+                        new ReloadSingBox(reason: "proxy_account.saved:{$status}"),
+                    );
+                } catch (Throwable $e) {
+                    Log::warning('proxy_account.reload.dispatch_failed', [
+                        'reason' => "proxy_account.saved:{$status}",
+                        'err' => $e->getMessage(),
+                        'type' => $e::class,
+                        'note' => 'ProxyAccount row committed, but slow-path sing-box render was not queued. '
+                            .'Redis fast-path (if Redis is up) is unaffected; the scheduled render reconciles.',
+                    ]);
+                }
             });
         });
 
@@ -240,9 +274,19 @@ class ProxyAccount extends Model
                 $bus->clearAccountStatus($username);
                 $bus->announceAccountChanged($username, 'deleted');
 
-                app(MessageBusInterface::class)->dispatch(
-                    new ReloadSingBox(reason: 'proxy_account.deleted'),
-                );
+                try {
+                    app(MessageBusInterface::class)->dispatch(
+                        new ReloadSingBox(reason: 'proxy_account.deleted'),
+                    );
+                } catch (Throwable $e) {
+                    Log::warning('proxy_account.reload.dispatch_failed', [
+                        'reason' => 'proxy_account.deleted',
+                        'err' => $e->getMessage(),
+                        'type' => $e::class,
+                        'note' => 'ProxyAccount row committed, but slow-path sing-box render was not queued. '
+                            .'Redis fast-path (if Redis is up) is unaffected; the scheduled render reconciles.',
+                    ]);
+                }
             });
         });
     }

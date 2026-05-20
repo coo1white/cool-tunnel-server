@@ -166,6 +166,21 @@ class SubscriptionObservabilityTest extends TestCase
     }
 
     #[Test]
+    public function malformed_reality_dest_host_logs_critical_with_account_id(): void
+    {
+        ServerConfig::factory()->create(['reality_dest_host' => 'https://']);
+        FakeWebsite::factory()->active()->create();
+        $account = ProxyAccount::factory()->create();
+
+        $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+
+        $hits = $this->loggedMatching('subscription.fallthrough.reality_dest_host_invalid');
+        $this->assertCount(1, $hits, 'invalid reality_dest_host must log exactly once per request');
+        $this->assertSame('critical', $hits[0]['level']);
+        $this->assertSame($account->id, $hits[0]['context']['account_id']);
+    }
+
+    #[Test]
     public function happy_path_emits_no_fall_through_logs(): void
     {
         // Sanity: a successful manifest serve must NOT emit any

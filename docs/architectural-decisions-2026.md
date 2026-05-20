@@ -168,7 +168,7 @@ credential silently re-activating after an unclean reboot.
 > phantom reload job.
 
 Implementation: `panel/app/Models/ProxyAccount.php` defers the
-Redis announce + `ReloadSingBoxJob::dispatch()` to
+Redis announce + `ReloadSingBox` Messenger dispatch to
 `DB::afterCommit(...)`. Snapshots `$username` + `$status` at
 saved-time so the deferred closure sees the intended state, not
 the post-rollback Eloquent instance.

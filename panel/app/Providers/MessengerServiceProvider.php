@@ -26,16 +26,9 @@ use Symfony\Component\Messenger\Transport\TransportInterface;
 /**
  * Symfony Messenger wiring: bus + Redis transport + handlers.
  *
- * The bus is dispatched to in two places initially:
- *
- *   1. The legacy `App\Jobs\ReloadSingBoxJob::handle()` and
- *      `App\Jobs\ReloadServerConfigJob::handle()` shims — they
- *      run inside Laravel's queue worker and forward to this
- *      bus. Preserves backward compatibility during the v0.0.93
- *      → v0.0.94 transition window.
- *   2. (Phase 3) Direct dispatches from `ProxyAccount::booted`,
- *      `ServerConfig::booted`, and Filament actions. The legacy
- *      Job shims are then removed.
+ * The panel dispatches reload messages directly from model events,
+ * Filament actions, and operator-facing commands. The bus routes
+ * those messages to Redis Streams for the Messenger worker.
  *
  * Routing: both messages map to the `async` transport, which is
  * a Redis Streams consumer-group on the `cool_tunnel:messenger`
@@ -78,10 +71,7 @@ class MessengerServiceProvider extends ServiceProvider
             // `ext-redis` installed. The real Redis transport
             // still ships in production; we just don't exercise
             // its constructor path during unit/feature tests.
-            // Test code can still assert `Queue::fake()` /
-            // `Bus::fake()` behaviour against the legacy Job
-            // shims because the shims dispatch synchronously
-            // via this in-memory transport.
+            // Tests can inspect the sent envelopes directly.
             if ($this->app->environment('testing')) {
                 return new InMemoryTransport;
             }

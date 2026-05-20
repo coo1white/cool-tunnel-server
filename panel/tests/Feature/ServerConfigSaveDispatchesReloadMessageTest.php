@@ -16,17 +16,13 @@ use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Messenger\Transport\TransportInterface;
 use Tests\TestCase;
 
-// v0.0.84 + v0.0.94 cutover. `ServerConfig::booted::updated` now
-// dispatches `ReloadServerConfig` via the Symfony Messenger bus
-// inside `DB::afterCommit` (rather than `ReloadServerConfigJob`
-// via Laravel's queue dispatcher). The dispatch contract is the
-// same three semantic cases — rolled-back / committed /
-// no-transaction — but the assertion shape moved from
-// `Queue::assertPushed(...)` to direct introspection of the
-// Messenger bus's InMemoryTransport (configured by
-// MessengerServiceProvider in the `testing` env).
+// `ServerConfig::booted::updated` dispatches `ReloadServerConfig`
+// through Symfony Messenger inside `DB::afterCommit`. The contract
+// is the same three semantic cases — rolled-back / committed /
+// no-transaction — and the assertion reads the Messenger bus's
+// InMemoryTransport directly.
 
-class ServerConfigSaveDispatchesReloadJobTest extends TestCase
+class ServerConfigSaveDispatchesReloadMessageTest extends TestCase
 {
     use RefreshDatabase;
 

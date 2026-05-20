@@ -24,7 +24,7 @@ test("base64urlEncode round-trips arbitrary byte sequences", () => {
 test("base64urlDecode is lenient about input padding", () => {
     // base64url SHOULD be unpadded, but some encoders emit "=" — we
     // accept either form for forward-compat.
-    const padded = "AAEC";
-    const unpadded = "AAEC";
+    const padded = "AAE=";
+    const unpadded = "AAE";
     expect(base64urlDecode(padded)).toEqual(base64urlDecode(unpadded));
 });

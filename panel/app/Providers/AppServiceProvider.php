@@ -34,9 +34,7 @@ class AppServiceProvider extends ServiceProvider
      *         private SingBoxConfigGeneratorInterface $gen,
      *     ) {}
      *
-     * Phase 2 (Symfony Messenger handlers) will type-hint the
-     * interface; Phase 3 (test rewrites) will bind fakes against
-     * the interface in `$this->app->bind(...)`.
+     * Messenger handlers and tests bind against these interfaces.
      */
     private const SERVICE_BINDINGS = [
         // v0.4.0+ — SingBoxConfigGenerator shells directly to

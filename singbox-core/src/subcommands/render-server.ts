@@ -21,6 +21,7 @@
 import { readFileSync } from "node:fs";
 import { renderServerConfig, type ServerRenderInput } from "../config/render.ts";
 import { atomicWrite } from "../util/atomic-write.ts";
+import { flagValue } from "../util/argv.ts";
 
 interface ParsedArgs {
     readonly input?: string;
@@ -29,7 +30,7 @@ interface ParsedArgs {
     readonly help: boolean;
 }
 
-function parseArgs(argv: readonly string[]): ParsedArgs {
+export function parseArgs(argv: readonly string[]): ParsedArgs {
     let input: string | undefined;
     let output: string | undefined;
     let json = false;
@@ -37,9 +38,11 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i]!;
         if (a === "--input" || a === "-i") {
-            input = argv[++i];
+            input = flagValue(argv, i, a);
+            i++;
         } else if (a === "--output" || a === "-o") {
-            output = argv[++i];
+            output = flagValue(argv, i, a);
+            i++;
         } else if (a === "--json") {
             json = true;
         } else if (a === "--help" || a === "-h") {
@@ -47,6 +50,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         } else {
             throw new Error(`unknown flag: ${a}`);
         }
+    }
+    if (!help && json && !output) {
+        throw new Error("--json requires --output <path>");
     }
     return { input, output, json, help };
 }

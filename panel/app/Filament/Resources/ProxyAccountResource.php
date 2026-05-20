@@ -8,8 +8,12 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\ProxyAccountResource\Pages;
 use App\Models\ProxyAccount;
+use App\Models\ServerConfig;
+use App\Support\RealityDestinations;
+use App\Support\SingBoxProtocolCatalog;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Notifications\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
@@ -81,6 +85,59 @@ class ProxyAccountResource extends Resource
                         ->helperText('Leave blank to never expire. Past dates immediately disable the account.')
                         ->seconds(false),
                 ])->columns(2),
+
+            Forms\Components\Section::make('Client defaults')
+                ->description('Values imported by new client profiles from this account subscription URL.')
+                ->schema([
+                    Forms\Components\TextInput::make('client_default_local_port')
+                        ->label('Local SOCKS port')
+                        ->integer()
+                        ->default(1080)
+                        ->minValue(1024)
+                        ->maxValue(65535)
+                        ->required()
+                        ->helperText('The macOS app binds sing-box on 127.0.0.1 at this port for newly imported profiles. Existing client-local edits are preserved by older app builds.'),
+                ]),
+
+            Forms\Components\Section::make('Protocols')
+                ->description('Select the sing-box protocol set signed into this account subscription.')
+                ->schema([
+                    Forms\Components\CheckboxList::make('enabled_protocols')
+                        ->label('sing-box protocol choices')
+                        ->options(fn (Get $get): array => SingBoxProtocolCatalog::options(
+                            ServerConfig::current(),
+                            (string) ($get('reality_dest_host') ?? ''),
+                            measureLatency: true,
+                        ))
+                        ->default(SingBoxProtocolCatalog::defaultKeys())
+                        ->required()
+                        ->columns(2)
+                        ->bulkToggleable()
+                        ->dehydrateStateUsing(
+                            fn ($state): array => SingBoxProtocolCatalog::normaliseSelected($state)
+                        )
+                        ->helperText('VLESS + Reality is rendered today and keeps the generated URL directly usable. Other sing-box protocols are saved into the subscription as a staged catalog so server and client can expand together without drift.'),
+                ]),
+
+            Forms\Components\Section::make('Reality destination')
+                ->description('Server-wide cover website VLESS+Reality mimics; changing it affects every subscription manifest and the rendered sing-box config.')
+                ->schema([
+                    Forms\Components\Select::make('reality_dest_host')
+                        ->label('Website')
+                        ->options(fn (): array => RealityDestinations::options(
+                            (string) (ServerConfig::current()->reality_dest_host ?? ''),
+                            measureLatency: true,
+                        ))
+                        ->default(fn (): string => RealityDestinations::selectDefault(
+                            (string) (ServerConfig::current()->reality_dest_host ?? ''),
+                        ))
+                        ->required()
+                        ->live()
+                        ->searchable()
+                        ->native(false)
+                        ->helperText('The selected value is signed into the generated subscription manifest. Use this only when you intend to rotate the server-wide Reality destination.'),
+                ])
+                ->visibleOn('create'),
 
             Forms\Components\Placeholder::make('uuid_note')
                 ->label('UUID')

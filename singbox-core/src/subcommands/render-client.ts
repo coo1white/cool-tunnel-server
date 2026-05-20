@@ -22,6 +22,7 @@
 import { readFileSync } from "node:fs";
 import { renderClientConfig, type ClientRenderInput } from "../config/render.ts";
 import { atomicWrite } from "../util/atomic-write.ts";
+import { flagValue } from "../util/argv.ts";
 import { sha256Hex } from "../util/sha256.ts";
 
 interface ParsedArgs {
@@ -31,18 +32,25 @@ interface ParsedArgs {
     readonly help: boolean;
 }
 
-function parseArgs(argv: readonly string[]): ParsedArgs {
+export function parseArgs(argv: readonly string[]): ParsedArgs {
     let input: string | undefined;
     let output: string | undefined;
     let json = false;
     let help = false;
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i]!;
-        if (a === "--input" || a === "-i") input = argv[++i];
-        else if (a === "--output" || a === "-o") output = argv[++i];
-        else if (a === "--json") json = true;
+        if (a === "--input" || a === "-i") {
+            input = flagValue(argv, i, a);
+            i++;
+        } else if (a === "--output" || a === "-o") {
+            output = flagValue(argv, i, a);
+            i++;
+        } else if (a === "--json") json = true;
         else if (a === "--help" || a === "-h") help = true;
         else throw new Error(`unknown flag: ${a}`);
+    }
+    if (!help && json && !output) {
+        throw new Error("--json requires --output <path>");
     }
     return { input, output, json, help };
 }
@@ -53,7 +61,8 @@ function usage(): string {
         "",
         "  --input/-i   Read ClientRenderInput JSON (default: stdin)",
         "  --output/-o  Write rendered sing-box config.json atomically (default: stdout)",
-        "  --json       Emit render-outcome JSON line (path, bytes, sha256, changed)",
+        "  --json       Emit render-outcome JSON line (path, bytes, sha256, changed).",
+        "               Requires --output.",
     ].join("\n");
 }
 
