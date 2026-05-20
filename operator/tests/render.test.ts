@@ -40,7 +40,7 @@ test("parseArgs preserves passthrough args after singbox", () => {
 });
 
 test("parseArgs filters operator-global flags from passthrough", () => {
-    const r = parseArgs(["bun", "operator", "render", "caddyfile", "--json", "--no-bridge"]);
+    const r = parseArgs(["bun", "operator", "render", "caddyfile", "--json"]);
     expect(typeof r).toBe("object");
     if (typeof r !== "object") return;
     expect(r.passthrough).toEqual([]);

@@ -13,7 +13,6 @@ back to the `.sh` versions otherwise. No flag day.
 ```
 src/runner/         TaskRunner + Command pattern
 src/util/sh.ts      Bun.$ wrapper with structured results
-src/diag/           Incident-context capture + AI bridge formatter
 src/tasks/          One file per subcommand
 build.ts            bun build --compile wrapper
 tests/              bun test
@@ -40,13 +39,6 @@ and the host still needs `glibc` (Linux targets) or macOS userland.
 bun run src/index.ts doctor
 bun run src/index.ts --help
 ```
-
-## Release trust model
-
-Releases publish `SHA256SUMS` + `SHA256SUMS.sig`. The binary verifies the
-signature against an ed25519 pubkey baked in at build time via the
-`CT_OPERATOR_PUBKEY` env var. See `docs/operator.md` for keygen + CI
-wiring.
 
 ## Status
 

@@ -20,7 +20,6 @@ test("parseRestoreArgs filters operator-global flags from the args", () => {
         "restore",
         "--json",
         "backups/x.tar.gz",
-        "--no-bridge",
     ]);
     expect(typeof r).toBe("object");
     if (typeof r !== "object") return;

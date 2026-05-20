@@ -19,10 +19,10 @@ export class BackupTask implements Task {
             const code = await runBackup();
             return code === 0
                 ? { ok: true, code: 0, summary: "backup written" }
-                : { ok: false, code, summary: `backup exited ${code}`, skipBridge: true };
+                : { ok: false, code, summary: `backup exited ${code}` };
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { ok: false, code: 1, summary: msg, skipBridge: true };
+            return { ok: false, code: 1, summary: msg };
         }
     }
 }

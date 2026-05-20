@@ -443,9 +443,7 @@ async function main(): Promise<number> {
     // operator-global flags so `ct-operator help <topic> --json`
     // doesn't trip the unknown-topic branch.
     const cmdIdx = argv.indexOf("help");
-    const rest = (cmdIdx >= 0 ? argv.slice(cmdIdx + 1) : argv.slice(2)).filter(
-        (a) => a !== "--json" && a !== "--no-bridge",
-    );
+    const rest = (cmdIdx >= 0 ? argv.slice(cmdIdx + 1) : argv.slice(2)).filter((a) => a !== "--json");
 
     if (rest.length === 0 || rest[0] === "list" || rest[0] === "topics" || rest[0] === "-h" || rest[0] === "--help") {
         process.stdout.write(renderTopicList());
