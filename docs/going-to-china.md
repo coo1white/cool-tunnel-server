@@ -6,10 +6,9 @@ China (GFW). It covers what to verify before you leave, what to
 verify on first connection, and what to do when something stops
 working.
 
-The protocol stack (NaiveProxy + sing-box + uTLS Chrome fingerprint)
-is one of the most defensible proxy protocols available — the GFW
-cannot block it without breaking ordinary Chrome traffic. **The
-practical failure modes are operational**, not protocol-level:
+The proxy path uses sing-box VLESS+Reality behind Caddy's SNI
+splitter. **The practical failure modes are operational**, not
+protocol-level:
 
 1. The VPS IP gets blocked.
 2. DNS / DoH resolution path breaks inside the GFW.
@@ -44,8 +43,8 @@ If you trust the trip more than the audit trail, **AliDNS** is the
 most reliable. If you want independent, **Quad9** sometimes routes
 through Hong Kong and works fine. Test both before you commit.
 
-After changing the resolver, click **Save** and confirm
-`make components` reports `doh-resolver` as OK from the VPS.
+After changing the resolver, click **Save** and confirm `./ct doctor`
+and `make readiness` pass from the VPS.
 
 ### 2. Verify VPS region is reachable / fast from China
 
@@ -57,13 +56,14 @@ If your current VPS is far from China, consider a fresh deploy in
 HK or Tokyo before you go. The `git pull && ./scripts/install.sh`
 flow makes this a 30-minute task on a clean VPS.
 
-### 3. Run a clean component check + SoT verification
+### 3. Run clean health gates + SoT verification
 
 ```sh
 cd ~/cool-tunnel-server
 git pull --ff-only
 make update
-make components            # all OK?
+./ct doctor                # no FAIL rows?
+make readiness             # strict launch gate passes?
 make verify-sot-vps        # all 5 fixtures pass?
 ```
 
@@ -73,16 +73,12 @@ proxy you're trying to debug).
 
 ### 4. Build a backup-access plan for the panel
 
-The Filament admin panel binds to `127.0.0.1:9000` (loopback only) —
-reachable from outside ONLY through an SSH tunnel:
+The Filament admin panel is served at `https://<PANEL_DOMAIN>/admin`.
+Keep an out-of-band management path anyway; if your VPS provider's IP
+range gets put on a Chinese block list, you may lose normal SSH access
+too.
 
-```sh
-ssh -L 9000:127.0.0.1:9000 root@your-vps-ip
-# then open http://127.0.0.1:9000/admin in your laptop browser
-```
-
-**If your VPS provider's IP range gets put on a Chinese block list,
-you lose SSH access too.** Two practical mitigations:
+Two practical mitigations:
 
 - **Second VPS as bastion** — a small box in a different region you
   can always SSH to. From there, SSH-hop to your main VPS via its
@@ -97,23 +93,17 @@ travel.
 
 ### 5. Pre-stage the subscription URL on every device you'll use
 
-Once inside China, fetching a new subscription URL means hitting
-the panel via SSH tunnel — possible, but painful. Generate the URL
-now for every laptop/phone/tablet you'll travel with, paste into
-each client app's subscription input, and verify the connection
-profile imports cleanly. You can use the same URL on multiple
-devices.
+Once inside China, fetching a new subscription URL means reaching
+the panel while the same network may be hostile. Generate the URL now
+for every laptop/phone/tablet you'll travel with, paste into each
+client app's subscription input, and verify the connection profile
+imports cleanly. You can use the same URL on multiple devices.
 
 ### 6. Pick a mobile client
 
-Cool Tunnel's official iOS/Android clients are still v0.1 roadmap.
-For phone-side use right now, both of these speak the
-`naive+https://` URL the panel emits:
-
-- **NekoBox (Android)** — https://github.com/MatsuriDayo/NekoBoxForAndroid (open source)
-- **Shadowrocket (iOS)** — `App Store ID 932747118` (paid, well-maintained)
-
-Both accept the panel's subscription URL directly. Test on your
+Cool Tunnel's official iOS/Android clients are still roadmap work.
+For phone-side use right now, pick a maintained sing-box-compatible
+client that can import the panel's subscription output. Test on your
 home network before you fly.
 
 ---
@@ -132,12 +122,12 @@ curl -s https://www.google.com/generate_204 -o /dev/null -w "%{http_code}\n"
 curl -s https://claude.ai/ -o /dev/null -w "%{http_code}\n"
 # Expect: 200 or 302
 
-# (3) SSH to VPS via tunnel, then from inside the VPS:
-make components | grep doh-
-# Expect: doh-resolver OK
+# (3) SSH to VPS, then from inside the VPS:
+./ct doctor
+# Expect: no FAIL rows
 
 # (4) Confirm sing-box has no recent fatals:
-docker compose logs --tail=50 sing-box | grep -iE 'error|fatal' | tail -5
+docker compose logs --tail=50 singbox | grep -iE 'error|fatal' | tail -5
 # Expect: empty (or only warn-level retries)
 ```
 
@@ -154,13 +144,13 @@ Read symptoms left-to-right. First match wins.
 
 | Symptom | Likely cause | First action |
 |---|---|---|
-| Connection times out from every client | VPS IP blocked OR cert expired | `ssh root@vps` from a non-China network → if SSH works, check `make components` |
+| Connection times out from every client | VPS IP blocked OR cert expired | `ssh root@vps` from a non-China network -> if SSH works, run `./ct doctor` |
 | Connection works from one network, not another | Carrier-level domain block | Try a different network (mobile data vs WiFi). If carrier-only, no fix on server side. |
-| Connection hangs after TLS handshake | Active-probing in progress, sing-box slow to respond | `docker compose logs sing-box \| grep "active-probe"` (v0.0.57+ probe detector). Restart sing-box: `docker compose restart sing-box`. |
+| Connection hangs after TLS handshake | Active-probing in progress, sing-box slow to respond | `docker compose logs singbox \| grep "active-probe"` if probe logging is enabled. Restart sing-box: `docker compose restart singbox`. |
 | Some sites work, others don't | DNS resolution failing | Switch DoH resolver in panel. AliDNS most reliable. |
 | All sites resolve but pages don't load | Latency / packet loss between China and VPS | Likely VPS region too far. Consider HK / Tokyo VPS. |
 | Cert errors in client | Let's Encrypt renewal failed | SSH in, `docker compose logs caddy \| grep -i acme \| tail -20`. If ACME failed, swap ACME directory to ZeroSSL: `ACME_DIRECTORY=https://acme.zerossl.com/v2/DV90` in `.env`, then `make update`. |
-| Panel `/admin` shows cover site (Minimal Blog) | Loopback-bind restored after deploy | This is correct. Use SSH tunnel: `ssh -L 9000:127.0.0.1:9000 root@vps` then `http://127.0.0.1:9000/admin`. |
+| Panel `/admin` shows cover site | Caddy SNI route or `PANEL_DOMAIN` mismatch | Check `.env`, DNS for `PANEL_DOMAIN`, and `docker compose logs caddy`. |
 
 If the entire VPS is unreachable from China but reachable from
 elsewhere, the IP is likely on a Chinese block list. There's no
@@ -177,70 +167,32 @@ quick fix — you need to either:
 
 ---
 
-## Self-probe canary (v0.0.57+)
+## Ongoing health checks
 
-The daemon runs a self-probe every 5 minutes via Laravel's
-scheduler (`canary:probe` artisan command, defined in
-`panel/routes/console.php`). Each probe:
-
-1. DoH-resolves the apex domain through the operator's chosen
-   `ServerConfig.doh_resolver`. Fails the probe if the resolver
-   is unreachable or returns 0 answers.
-2. TCP-connects to docker-internal `haproxy:443` (the SNI
-   router's listening port). Fails the probe if haproxy crashed
-   or is unreachable.
-
-Each probe result is appended to `ServerConfig.self_probe_history`
-(JSON column, trimmed to last 10 entries).
-
-**To inspect from the operator side (CLI):**
+Run the readiness gate from the VPS when connectivity looks strange:
 
 ```sh
-docker compose exec panel ct-server-core canary status
+make readiness
 ```
 
-That prints one JSON entry per line, oldest first. Example output
-when things are healthy:
+For deeper service state:
 
-```json
-{"ts":"2026-05-07T02:30:01+00:00","status":"ok"}
-{"ts":"2026-05-07T02:35:02+00:00","status":"ok"}
+```sh
+./ct doctor
+docker compose ps
+docker compose logs --tail=120 caddy
+docker compose logs --tail=120 singbox
+docker compose logs --tail=120 panel
 ```
 
-When a probe fails, the `reason` field names the failure class.
-The canary distinguishes RCODE-level upstream errors from actual
-censorship signals so the operator gets an accurate diagnostic
-instead of "everything looks like censorship":
+Map the common failures this way:
 
-```json
-{"ts":"2026-05-07T03:00:01+00:00","status":"fail","reason":"DoH lookup failed: DoH request failed (connection error)"}
-{"ts":"2026-05-07T03:05:01+00:00","status":"fail","reason":"DoH lookup failed: DoH SERVFAIL for proxy.example.com (upstream auth-server failure — usually transient; not a censorship signal)"}
-{"ts":"2026-05-07T03:10:01+00:00","status":"fail","reason":"DoH lookup failed: DoH NXDOMAIN for proxy.example.com (resolver claims this name does not exist — DNS hijacking if the name should resolve)"}
-{"ts":"2026-05-07T03:15:01+00:00","status":"fail","reason":"DoH lookup failed: DoH returned NOERROR with 0 answer records for proxy.example.com (likely captive portal / DNS poisoner — try a different resolver via the panel)"}
-{"ts":"2026-05-07T03:20:01+00:00","status":"fail","reason":"TCP connect to haproxy:443 failed: ..."}
-```
-
-Map each `reason` class to the right action:
-
-| Reason starts with | Likely cause | First action |
+| Signal | Likely cause | First action |
 |---|---|---|
-| `DoH request failed (timeout)` / `(connection error)` | DoH endpoint unreachable from VPS | Switch DoH resolver in panel — AliDNS most reliable |
-| `DoH SERVFAIL` | Upstream authoritative-server hiccup | Usually transient — wait one cycle, switch resolver if it persists |
-| `DoH NXDOMAIN` | Resolver claims your apex doesn't exist | DNS hijacking — switch resolver immediately |
-| `DoH REFUSED` | Resolver policy rejected the query | Switch DoH endpoint |
-| `DoH returned NOERROR with 0 answer records` | Captive portal / DNS poisoner returning empty success | Classic GFW-style intercept — switch resolver |
-| `TCP connect to haproxy:443` | haproxy container crashed | `docker compose restart haproxy` |
-
-If the last 3 entries are all `"status":"fail"`, treat that as
-"external reachability degraded" — the canary's intended early-
-warning signal. You typically have ~15 minutes' head start over
-user complaints.
-
-A panel banner widget that surfaces this state in the dashboard UI
-without polling the CLI is a v0.0.58 follow-up. Until then, wire
-the CLI output into whatever you prefer (a `watch -n 60 'docker
-compose exec panel ct-server-core canary status | tail -3'` in a
-tmux pane works for an at-a-glance check).
+| DoH resolver check fails | DoH endpoint unreachable from VPS | Switch DoH resolver in panel |
+| `singbox` restarting | Rendered config or upstream binary issue | `docker compose logs --tail=120 singbox` |
+| Caddy ACME errors | DNS, port 80, or ACME provider issue | Check DNS, firewall, and `docker compose logs caddy` |
+| Panel health fails | Laravel/FrankenPHP, DB, or Redis issue | `docker compose logs --tail=120 panel db redis` |
 
 ---
 

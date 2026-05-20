@@ -23,7 +23,7 @@
 //  13.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
 //  14.  Verify singbox
 //  15.  Create the first Filament admin user (interactive ct:make-admin)
-//  16.  Strict component check
+//  16.  Strict health gates
 //  17.  Print success banner
 
 import { spawnSync } from "node:child_process";

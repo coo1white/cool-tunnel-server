@@ -3,9 +3,8 @@
 // operator/update.ts — `ct update` implementation.
 //
 // Pulls a new release, rebuilds images, runs migrations + Caddy
-// reload, then component-checks the result. On NG the OLD images
-// are still running on their volumes (compose hasn't swapped
-// traffic).
+// reload, then runs health gates. On failure the OLD images are
+// still running on their volumes (compose hasn't swapped traffic).
 //
 // Stages:
 //   1. acquireOpLock (per-project flock)
@@ -21,7 +20,7 @@
 //  10. php artisan migrate --force
 //  11. ct-server-core caddyfile render
 //  12. caddy reload from the host-side operator
-//  13. component_check_strict /srv/manifests
+//  13. health gates
 //  14. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";

@@ -150,8 +150,8 @@ The bundle includes:
 
 - `host`        — kernel, uptime.
 - `ballast`     — the 10 invariant checks above.
-- `journal`     — last 100 lines per service (`panel`, `sing-box`,
-  `caddy`, `haproxy`, `redis`), via `journalctl` or `docker compose logs`.
+- `journal`     — last 100 lines per service (`panel`, `singbox`,
+  `caddy`, `db`, `redis`), via `journalctl` or `docker compose logs`.
 - `metrics`     — CPU load, memory, disk usage.
 - `proctree`    — `ps axf` filtered to our services.
 - `compose`     — `docker compose ps --all --format json` parsed

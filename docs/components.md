@@ -1,35 +1,36 @@
 # Components
 
-Every swappable part of the stack has one manifest under
-`manifests/*.upstream.json`. The manifest pins the expected version
-and, when needed, a verifier command. `ct-server-core component check`
-turns those manifests into an OK/NG table for the CLI and panel.
+Replaceable runtime parts are pinned in manifests and deployment
+sources:
 
-## Current Components
+| Component | Source of truth |
+| --- | --- |
+| Caddy | `docker/caddy/Dockerfile` |
+| sing-box | `singbox-core/singbox.upstream.json`, `docker/singbox/Dockerfile` |
+| Rust core | `core/Cargo.toml`, `core/rust-toolchain.toml`, `docker/core/Dockerfile` |
+| Panel | `panel/composer.json`, `docker/panel/Dockerfile` |
+| MariaDB | `docker-compose.yml` |
+| Redis | `docker-compose.yml`, `docker/panel/Dockerfile` |
+| Credential lock | `manifests/credential-lock.upstream.json`, `panel/app/Console/Commands/CredentialLockCheck.php` |
 
-| Slug | Kind | Role | Check |
-| --- | --- | --- | --- |
-| `caddy` | container-image | Public Caddy with `mholt/caddy-l4`; ACME, SNI split, panel TLS | `caddy version` |
-| `ct-protocol` | rust-crate | Shared server/client contract | lockfile |
-| `ct-server-core` | binary | Rust control-plane binary | `ct-server-core version` |
-| `doh-resolver` | doh-endpoint | Operator-selected DoH reachability | live RFC 8484 query |
-| `mariadb` | container-image | Database | authenticated `SELECT VERSION()` |
-| `panel` | container-image | Laravel + Filament admin | `php artisan ct:version` |
-| `redis` | container-image | Cache, queue, revocation bus | authenticated `redis-cli INFO Server` |
-| `credential-lock` | binary | DB/rendered/subscription credential invariant | guard check |
+## Health Gates
 
-## Run The Check
+Use the current operator gates instead of old per-component CLI checks:
 
 ```sh
-docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
+./ct doctor
+./ct readiness
+docker compose exec -T panel php artisan credential-lock:check
 ```
 
-The same rows appear in the panel Components page. Any `NG` row blocks
-a clean update and should be fixed before trusting the release.
+`doctor` is the broad PASS/WARN/FAIL dashboard. `readiness` is the
+strict launch gate. `credential-lock:check` verifies that the DB,
+rendered sing-box config, and subscription output agree on active
+credentials.
 
-## Update A Component
+## Updating Pins
 
-For container/service pins, bump the manifest and the matching
+For container or service pins, update the manifest and matching
 Dockerfile or `docker-compose.yml` image tag together. For in-tree
 versions, use:
 
@@ -41,7 +42,6 @@ Then deploy normally:
 
 ```sh
 ./ct update
+./ct doctor
+./ct readiness
 ```
-
-`ct update` rebuilds, restarts the changed services, and runs the
-component check against the post-update runtime.

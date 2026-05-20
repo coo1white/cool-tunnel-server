@@ -263,7 +263,7 @@ reinstall: ## rerun install safely; prompts before any data wipe
 	./ct reinstall
 
 .PHONY: update
-update: ## pull, rebuild, run component check, swap traffic
+update: ## pull, rebuild, run health gates, swap traffic
 	./ct update
 
 .PHONY: deploy
@@ -426,8 +426,8 @@ build-detached: ## run a long build in tmux so SSH drops don't kill it
 	@echo "When done: /tmp/ct-build.done will exist."
 
 .PHONY: components
-components: ## ct-server-core component check (OK/NG)
-	docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
+components: ## compatibility alias for the current health dashboard
+	./ct doctor
 
 # ---------- Release plumbing -------------------------------------
 
@@ -440,10 +440,8 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 		manifests/ct-protocol.upstream.json \
 		manifests/panel.upstream.json
 	@# panel/config/cool-tunnel.php::version is the runtime source of
-	@# truth for the `ct:version` artisan command (Cycle 2 panel
-	@# probe, v0.0.39). It MUST equal manifests/panel.upstream.json's
-	@# version, otherwise the matcher's soft version check trips
-	@# VersionMismatch on every component check after the bump.
+	@# truth for the `ct:version` artisan command. Keep it aligned
+	@# with manifests/panel.upstream.json.
 	@sed -i.bak -E "s/'version' => '[0-9]+\.[0-9]+\.[0-9]+'/'version' => '$(V)'/" \
 		panel/config/cool-tunnel.php
 	@# operator/package.json::version — read at build time by build.ts
@@ -489,11 +487,9 @@ set-component-version: ## bump component version across compose + Dockerfile + m
 	@# v0.0.45 extended it: a single invocation now drives the
 	@# compose `image:` tag, the Dockerfile `FROM` / `ARG` /
 	@# `COPY --from=` lines, AND the manifest version in lockstep.
-	@# The v0.0.43 drift probes assert these stay aligned — drift
-	@# between any two layers trips VersionMismatch on the panel
-	@# Components page. This macro is now the SINGLE source of
-	@# truth for "bump component <X> to <Y>"; partial bumps are
-	@# structurally impossible.
+	@# The v0.0.43 drift probes assert these stay aligned. This macro
+	@# is now the SINGLE source of truth for "bump component <X> to
+	@# <Y>"; partial bumps are structurally impossible.
 	@if [ -z "$(COMPONENT)" ] || [ -z "$(V)" ]; then \
 	    echo 'usage: make set-component-version COMPONENT=redis V=7.4.9'; \
 	    echo ''; \

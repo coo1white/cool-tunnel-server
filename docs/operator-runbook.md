@@ -18,7 +18,8 @@ Verify:
 ```bash
 docker compose ps
 docker compose exec -T panel php artisan ct:version
-docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
+docker compose exec -T panel php artisan credential-lock:check
+./ct doctor
 make readiness
 ```
 
@@ -33,14 +34,15 @@ make update
 
 `make update` owns the release path: rebuild changed images, run
 migrations, render Caddy and sing-box config, restart affected
-services, verify credential lock, and run the component check.
+services, verify credential lock, and run the health gates.
 
 Verify after update:
 
 ```bash
 docker compose exec -T panel php artisan ct:version
-docker compose exec -T panel ct-server-core guard credential-lock
-docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
+docker compose exec -T panel php artisan credential-lock:check
+./ct doctor
+make readiness
 ```
 
 ## Fix
@@ -50,7 +52,7 @@ Start with state:
 ```bash
 git status -sb
 docker compose ps
-make components
+./ct doctor
 ```
 
 If a local edit blocks `git pull`, inspect only that path before
@@ -65,10 +67,10 @@ git pull --ff-only origin main
 If credentials or rendered config look stale:
 
 ```bash
-docker compose exec -T panel ct-server-core guard credential-lock
+docker compose exec -T panel php artisan credential-lock:check
 docker compose exec -T panel php artisan singbox:render --no-interaction
 docker compose restart singbox
-docker compose exec -T panel ct-server-core component check --manifests /srv/manifests
+./ct doctor
 ```
 
 Useful logs:

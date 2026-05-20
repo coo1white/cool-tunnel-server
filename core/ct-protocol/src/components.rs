@@ -280,15 +280,8 @@ mod tests {
         assert_eq!(m, m2);
     }
 
-    // Round-17 chassis-cockpit boundary: the PHP panel reads the
-    // status array from `ct-server-core component check` and only
-    // reaches into `$row['state']`
-    // (`panel/app/Services/ComponentChecker.php:62`). Pin the
-    // field-name AND the snake_case enum representation — a
-    // PascalCase variant rename ("Ok" → "ok") snuck in during the
-    // serde-rename refactor would silently turn every "OK" row
-    // into "0 OK / 0 NG" on the panel's Components page (the
-    // panel's `state === 'ok'` comparison would match neither).
+    // Pin the field-name AND the snake_case enum representation so
+    // future status consumers keep seeing the same JSON contract.
     #[test]
     fn component_status_json_pins_php_visible_keys() {
         let s = ComponentStatusV1 {

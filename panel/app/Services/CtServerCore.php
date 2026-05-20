@@ -12,9 +12,9 @@ use Symfony\Component\Process\Process;
 
 // Thin wrapper around the ct-server-core Rust binary.
 //
-// Every PHP service that still routes through ct-server-core (Caddyfile
-// rendering, component manifest checks, canary probes, the PanelDomain
-// SoT helper) calls into this one helper.
+// Every PHP service that still routes through ct-server-core
+// (Caddyfile rendering and the PanelDomain SoT helper) calls into
+// this one helper.
 //
 // v0.4.0 — sing-box rendering moved out of this path. The panel-side
 // SingBoxConfigGenerator now shells directly to

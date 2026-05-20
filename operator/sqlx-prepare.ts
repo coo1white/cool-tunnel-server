@@ -80,7 +80,7 @@ async function runHostPrepare(env: Record<string, string>): Promise<void> {
 async function runContainerPrepare(): Promise<void> {
     // Build the project's own sqlx-prepare image (a stage of
     // docker/core/Dockerfile). BuildKit reuses the cached
-    // rust:1.86-alpine + alpine layers from previous core-builder
+    // rust:1.88-alpine + alpine layers from previous core-builder
     // builds, so no fresh Docker Hub pull is needed (rate-limit-
     // safe). First run takes ~3-5 min on a 1-vCPU VPS to compile
     // sqlx-cli; subsequent runs land in seconds (layer cached).

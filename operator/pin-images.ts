@@ -4,8 +4,8 @@
 //
 // Resolve docker base-image tags to digests and rewrite the FROM
 // lines in docker/*/Dockerfile in place. LTSC reproducibility — the
-// tag `caddy:2.8.4-alpine` can drift if Docker Hub republishes the
-// tag, but `caddy:2.8.4-alpine@sha256:...` cannot.
+// tag `caddy:2.11.3-alpine` can drift if Docker Hub republishes the
+// tag, but `caddy:2.11.3-alpine@sha256:...` cannot.
 //
 // Run on a host where docker can pull. Idempotent — safe to commit
 // the result.
@@ -27,10 +27,13 @@ const { step, ok, warn } = makeTerm();
 // that silently no-op'd against renamed FROM lines. The fail-loud
 // guard in pin() catches that now.
 const MAPPINGS: ReadonlyArray<{ readonly file: string; readonly image: string }> = [
-    { file: "docker/caddy/Dockerfile", image: "caddy:2.8.4-alpine" },
-    { file: "docker/singbox/Dockerfile", image: "alpine:3.20" },
+    { file: "docker/caddy/Dockerfile", image: "caddy:2.11.3-builder" },
+    { file: "docker/caddy/Dockerfile", image: "caddy:2.11.3-alpine" },
+    { file: "docker/singbox/Dockerfile", image: "oven/bun:1.1-alpine" },
+    { file: "docker/singbox/Dockerfile", image: "alpine:3.21" },
     { file: "docker/core/Dockerfile", image: "rust:1.88-alpine" },
     { file: "docker/core/Dockerfile", image: "alpine:3.20" },
+    { file: "docker/panel/Dockerfile", image: "oven/bun:1.1-alpine" },
     { file: "docker/panel/Dockerfile", image: "dunglas/frankenphp:1-php8.4-alpine" },
 ];
 
