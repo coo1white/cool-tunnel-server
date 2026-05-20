@@ -6,8 +6,8 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\ProxyAccountResource\Pages;
 
-use App\Filament\Resources\ProxyAccountResource;
 use App\Contracts\SingBoxConfigGeneratorInterface;
+use App\Filament\Resources\ProxyAccountResource;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use App\Support\RealityDestinations;

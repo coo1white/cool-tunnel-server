@@ -206,7 +206,7 @@ final class SingBoxProtocolCatalog
     }
 
     /**
-     * @param list<string> $selected
+     * @param  list<string>  $selected
      * @return list<array<string,mixed>>
      */
     public static function manifestFor(
@@ -239,10 +239,8 @@ final class SingBoxProtocolCatalog
             'transport' => $definition['transport'],
             'status' => $definition['status'],
             'usable' => $definition['status'] === 'rendered',
+            'requires' => $definition['requires'],
         ];
-        if ($definition['requires'] !== []) {
-            $entry['requires'] = $definition['requires'];
-        }
 
         $target = self::latencyTarget($key, $config, $realityDestHost);
         if ($target !== null) {
