@@ -309,18 +309,19 @@ export async function checkIpv6Routing(): Promise<Ipv6PreflightResult> {
         });
     }
 
-    // Detect via the recipe (single source of truth).
-    const { recipe } = await import("../tasks/recipes/ipv6_broken_routing");
-    const minimalCtx = {
-        cwd: process.cwd(),
-        env: process.env as Record<string, string>,
-        logger: { info() {}, warn() {}, error() {}, debug() {} },
-        json: false,
-        noBridge: true,
-        interactive: false,
-    };
-    const broken = await recipe.detect(minimalCtx);
-    if (!broken) {
+    const ip = await capture($`command -v ip`);
+    if (!ip.ok) {
+        return classifyIpv6Preflight({
+            skipEnv: false,
+            sysctlPresent: false,
+            hasGlobalIpv6: false,
+            canDetect: false,
+            fixResult: null,
+        });
+    }
+
+    const route = await capture($`ip -6 route get 2606:4700:4700::1111`);
+    if (route.ok) {
         return classifyIpv6Preflight({
             skipEnv: false,
             sysctlPresent: false,
@@ -330,12 +331,11 @@ export async function checkIpv6Routing(): Promise<Ipv6PreflightResult> {
         });
     }
 
-    const fixResult = await recipe.fix(minimalCtx);
     return classifyIpv6Preflight({
         skipEnv: false,
         sysctlPresent: false,
         hasGlobalIpv6: false,
         canDetect: true,
-        fixResult,
+        fixResult: null,
     });
 }

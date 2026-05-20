@@ -138,11 +138,7 @@ impl WireRequestDispatcher for DaemonDispatcher<'_> {
     }
 }
 
-pub async fn serve(
-    socket_path: &str,
-    pool: MySqlPool,
-    permits: Arc<Semaphore>,
-) -> Result<()> {
+pub async fn serve(socket_path: &str, pool: MySqlPool, permits: Arc<Semaphore>) -> Result<()> {
     // Ensure parent dir exists; remove any stale socket file.
     if let Some(dir) = Path::new(socket_path).parent() {
         tokio::fs::create_dir_all(dir).await.map_err(|source| {
@@ -289,10 +285,7 @@ async fn shutdown_signal() {
     }
 }
 
-async fn handle_client(
-    stream: UnixStream,
-    pool: &MySqlPool,
-) -> Result<()> {
+async fn handle_client(stream: UnixStream, pool: &MySqlPool) -> Result<()> {
     let (mut rd, mut wr) = stream.into_split();
     let fsm = ConnectionFsm::new();
     advance_or_reset(&fsm, ConnectionEvent::StartReading)?;
@@ -496,10 +489,7 @@ async fn handle_client(
     Ok(())
 }
 
-fn advance_or_reset(
-    fsm: &ConnectionFsm,
-    event: ConnectionEvent,
-) -> Result<()> {
+fn advance_or_reset(fsm: &ConnectionFsm, event: ConnectionEvent) -> Result<()> {
     match fsm.apply(event) {
         TransitionOutcome::Advanced => Ok(()),
         TransitionOutcome::HardReset {
@@ -529,10 +519,7 @@ fn advance_or_reset(
     }
 }
 
-fn fsm_hard_reset(
-    fsm: &ConnectionFsm,
-    reason: &'static str,
-) {
+fn fsm_hard_reset(fsm: &ConnectionFsm, reason: &'static str) {
     fsm.hard_reset(reason);
     tracing::warn!(reason, state = fsm.state().name(), "daemon FSM hard reset");
 }

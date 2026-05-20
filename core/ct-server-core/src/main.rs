@@ -226,10 +226,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         },
         Cmd::Daemon { socket } => {
             let pool = db::connect(&cli.database_url).await?;
-            tracing::info!(
-                max_connections = 4,
-                "ct-server-core: shared DB pool ready"
-            );
+            tracing::info!(max_connections = 4, "ct-server-core: shared DB pool ready");
             let permits =
                 std::sync::Arc::new(tokio::sync::Semaphore::new(daemon::MAX_CONCURRENT_HANDLERS));
             daemon::serve(&socket, pool, permits).await

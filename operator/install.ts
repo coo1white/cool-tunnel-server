@@ -34,7 +34,6 @@ import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
 import { checkIpv6Routing } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
-import { runComponentCheckStrict } from "./src/util/component-check";
 import { promptYn } from "./src/util/prompt";
 
 const { step, ok, warn } = makeTerm();
@@ -585,19 +584,6 @@ async function createAdmin(): Promise<void> {
     }
 }
 
-// ---------- step 20: component check --------------------------------------
-
-async function componentCheck(): Promise<void> {
-    step("Component check (OK/NG status of every dependency)");
-    const cc = await runComponentCheckStrict();
-    if (cc.raw) process.stdout.write(cc.raw);
-    if (!cc.ok) {
-        warn("some components reported NG - investigate before serving real users");
-    } else {
-        ok("all components OK");
-    }
-}
-
 // ---------- success banner ------------------------------------------------
 
 function printSuccessBanner(env: InstallEnv): void {
@@ -701,7 +687,6 @@ export async function runInstall(): Promise<number> {
     await bringUpCaddy(env);
     await bringUpSingbox(env);
     await createAdmin();
-    await componentCheck();
     printSuccessBanner(env);
     return 0;
 }

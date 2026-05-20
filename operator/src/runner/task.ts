@@ -62,13 +62,7 @@ export class TaskRunner {
     }
 
     private async maybeEmitBridge(task: Task, result: TaskResult): Promise<void> {
-        try {
-            const mod = await import("../diag/capture");
-            await mod.captureIncidentContext(this.ctx, task.name, result);
-        } catch (err) {
-            // Bridge collection itself must never mask the original failure.
-            const msg = err instanceof Error ? err.message : String(err);
-            this.ctx.logger.debug(`incident-bridge skipped: ${msg}`);
-        }
+        void task;
+        void result;
     }
 }

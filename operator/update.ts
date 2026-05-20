@@ -32,7 +32,6 @@ import { waitFor } from "./src/util/wait";
 import { checkNetwork, checkDiskSpace, checkStackUp, checkIpv6Routing } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
-import { runComponentCheckStrict } from "./src/util/component-check";
 import { promptChoice, promptYn } from "./src/util/prompt";
 
 const { step, ok, warn } = makeTerm();
@@ -430,12 +429,6 @@ export async function runUpdate(): Promise<number> {
     // (SingBoxConfigGenerator → singbox-core render-server) when
     // bringNewImagesUp completes, so no explicit operator-side
     // re-render step is needed here.
-
-    step("Component check (post-swap)");
-    const cc = await runComponentCheckStrict();
-    if (cc.raw) process.stdout.write(cc.raw);
-    if (!cc.ok) dieOnFailure(cc.failure);
-    ok("all components OK");
 
     // Non-fatal operator-binary fetch (signed release from GitHub).
     await fetchOperatorBinary();
