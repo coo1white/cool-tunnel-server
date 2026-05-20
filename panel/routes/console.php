@@ -49,4 +49,3 @@ $logFailure = static function (string $cmd) {
 Sched::command('singbox:render --if-changed')->everyFiveMinutes()
     ->withoutOverlapping()
     ->onFailure($logFailure('singbox:render'));
-

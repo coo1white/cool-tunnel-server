@@ -58,9 +58,8 @@ RUN cd singbox-core \
 # image. PHP 8.4 over the prior 8.3-fpm-alpine: laravel/octane v2.17
 # (the version this swap pins) transitively depends on
 # symfony/psr-http-message-bridge v8.0.8 which requires PHP ≥ 8.4.
-# panel/composer.json's "php": "^8.2" constraint allows 8.4; bumping
-# the runtime is the cleanest path versus version-pinning the
-# transitive dep down.
+# panel/composer.json's "php": "^8.4" constraint matches this runtime
+# and the GitHub Actions PHP job.
 FROM dunglas/frankenphp:1-php8.4-alpine
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8

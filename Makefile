@@ -34,10 +34,10 @@ help: ## list available targets
 		printf "  \033[1m%-20s\033[0m %s\n", a[1], $$2 \
 	}' $(MAKEFILE_LIST) | sort
 
-# ---------- CI gate (exactly what GitHub Actions runs) ------------
+# ---------- CI gate ------------------------------------------------
 
 .PHONY: ci
-ci: utf8-check compose-utf8-runtime rust-fmt-check rust-clippy rust-test php-syntax php-utf8-runtime composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord secrets-argv ## full local CI gate
+ci: utf8-check compose-utf8-runtime rust-fmt-check rust-clippy rust-test php-syntax php-utf8-runtime php-composer-validate php-test composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord secrets-argv operator-typecheck operator-test singbox-typecheck singbox-test ## full local CI gate
 
 .PHONY: utf8-check
 utf8-check: ## verify every tracked Rust/Bun/PHP/Shell/Docker/config/doc text file is valid UTF-8
@@ -189,6 +189,10 @@ php-test: ## phpunit on the panel test suite (requires composer install in panel
 	fi
 	cd panel && vendor/bin/phpunit
 
+.PHONY: php-composer-validate
+php-composer-validate: ## composer validate on the panel package
+	cd panel && composer validate composer.json --strict --no-check-publish
+
 .PHONY: php-syntax
 php-syntax: ## php -l on every panel/**/*.php
 	@cd panel && set -e ; \
@@ -312,6 +316,14 @@ operator-test: ## run ct-operator unit tests (bun test)
 .PHONY: operator-typecheck
 operator-typecheck: ## tsc --noEmit on operator/
 	cd operator && bun run typecheck
+
+.PHONY: singbox-typecheck
+singbox-typecheck: ## tsc --noEmit on singbox-core/
+	cd singbox-core && bun install --frozen-lockfile && bun run typecheck
+
+.PHONY: singbox-test
+singbox-test: ## run singbox-core unit tests (bun test)
+	cd singbox-core && bun install --frozen-lockfile && bun test
 
 .PHONY: operator-fetch
 operator-fetch: ## fetch the ct-operator binary matching the deployed release into operator/bin/ (idempotent; honors CT_SKIP_OPERATOR_FETCH=1)

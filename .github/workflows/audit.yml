@@ -77,7 +77,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.86
+          toolchain: 1.88
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: Audit
@@ -107,22 +107,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.86
+          toolchain: 1.88
       - name: Install cargo-deny
-        # Pin to exactly the last cargo-deny that supports rustc 1.86 (the
-        # toolchain this job installs above). `^0.18` is too loose: cargo
-        # picks the latest in the 0.18.x line (0.18.9), which already
-        # requires rustc 1.88+. Bump in lock-step with the toolchain field.
-        run: cargo install --locked cargo-deny --version "=0.18.3"
+        # Pin within the 0.18 line instead of floating: audit output
+        # should move only when this workflow intentionally changes.
+        run: cargo install --locked cargo-deny --version "=0.18.9"
       - name: Check
         # deny.toml lives at core/deny.toml.
         # Run only the bans/licenses/sources subchecks. The `advisories`
         # subcheck is covered by the separate `cargo audit` job (above).
-        # cargo-deny 0.18.3 — the latest that supports our pinned rustc
-        # 1.86 — predates CVSS 4.0 in the RustSec advisory DB and errors
-        # parsing entries like RUSTSEC-2026-0073 (libcrux-poly1305). The
-        # next cargo-deny that handles CVSS 4.0 requires rustc 1.88+, so
-        # the upgrade is gated on a toolchain bump (separate concern).
         run: cargo deny check bans licenses sources
 
   # ---------- Cycle 33: composer audit (Packagist advisories) -----
@@ -456,7 +449,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.86
+          toolchain: 1.88
       - name: Verify .sqlx/ matches the workspace's query!() calls
         env:
           SQLX_OFFLINE: "true"
