@@ -10,7 +10,6 @@ use App\Messages\ReloadSingBox;
 use App\Services\RedisRevocationBus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -105,11 +104,6 @@ class ProxyAccount extends Model
             'last_seen_at' => 'datetime',
             'metadata' => 'array',
         ];
-    }
-
-    public function trafficLogs(): HasMany
-    {
-        return $this->hasMany(TrafficLog::class);
     }
 
     /**

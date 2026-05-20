@@ -7,7 +7,7 @@ license.workspace      = true
 repository.workspace   = true
 authors.workspace      = true
 publish.workspace      = true
-description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering, component checks, self-probe canary, internal metrics, and Redis revocation bridge. AGPL-3.0-only; see ../../LICENSE. Copyright (C) 2026 coolwhite LLC."
+description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering. AGPL-3.0-only; see ../../LICENSE. Copyright (C) 2026 coolwhite LLC."
 readme      = "README.md"
 
 [[bin]]
@@ -26,15 +26,8 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "macros",
 # Pre-2026-05-05 this block also pinned `hyper`, `hyper-util`,
 # `hyperlocal`, `http-body-util`, `bytes`, and `hmac`. The HTTP stack
 # remains intentionally absent after the low-mem-server pass; `bytes`
-# is now reintroduced as a small direct dependency for bounded
-# `BytesMut` network-frame buffers in daemon / metrics request
-# handling without pulling hyper back in.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-
-# Redis revocation bridge — long-lived pub/sub from the daemon.
-# Listens on cool_tunnel:revocations; on any message, re-renders
-# Caddyfile and reloads via admin socket.
-redis = { version = "0.25", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
+# bytes is now reintroduced as a small direct dependency for bounded
+# `BytesMut` network-frame buffers in daemon request handling.
 futures-core = "0.3"
 
 # Laravel-compatible AES-256-GCM decryption for the
@@ -45,7 +38,6 @@ base64  = "0.22"
 chrono     = { version = "0.4", features = ["serde"] }
 tracing    = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-metrics_crate = { package = "metrics", version = "0.24" }
 sha2       = "0.10"
 hex        = "0.4"
 

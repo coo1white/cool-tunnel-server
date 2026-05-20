@@ -52,10 +52,6 @@ pub enum Error {
     Json(serde_json::Error),
     /// MariaDB / SQLx failure.
     Sql(sqlx::Error),
-    /// HTTP client failure.
-    Http(reqwest::Error),
-    /// Redis client/subscriber failure.
-    Redis(redis::RedisError),
     /// Template syntax or binding failure.
     Template(crate::template::RenderError),
     // v0.4.0 — `Crypt` variant removed alongside the laravel_crypt
@@ -197,8 +193,6 @@ impl Error {
             | Self::TemplateRender { .. }
             | Self::MissingParent { .. } => "configuration_error",
             Self::Sql(_) => "database_error",
-            Self::Http(_) => "upstream_http_error",
-            Self::Redis(_) => "redis_error",
             Self::ProcessSpawn { .. }
             | Self::ProcessExitedEarly { .. }
             | Self::ProcessStartTimeout { .. } => "process_error",
@@ -224,8 +218,6 @@ impl fmt::Display for Error {
             Self::ParseInt(e) => write!(f, "integer parse failed: {e}"),
             Self::Json(e) => write!(f, "JSON error: {e}"),
             Self::Sql(e) => write!(f, "database error: {e}"),
-            Self::Http(e) => write!(f, "HTTP client error: {e}"),
-            Self::Redis(e) => write!(f, "Redis error: {e}"),
             Self::Template(e) => write!(f, "template error: {e}"),
             Self::Config { message } | Self::Probe { message } => f.write_str(message),
             Self::Validation { component, message } => {
@@ -292,8 +284,6 @@ impl std::error::Error for Error {
             Self::ParseInt(e) => Some(e),
             Self::Json(e) => Some(e),
             Self::Sql(e) => Some(e),
-            Self::Http(e) => Some(e),
-            Self::Redis(e) => Some(e),
             Self::Template(e) | Self::TemplateRender { source: e, .. } => Some(e),
             Self::TaskJoin { source, .. } => Some(source),
             Self::AtomicWrite { source, .. } => Some(source),
@@ -352,18 +342,6 @@ impl From<serde_json::Error> for Error {
 impl From<sqlx::Error> for Error {
     fn from(e: sqlx::Error) -> Self {
         Self::Sql(e)
-    }
-}
-
-impl From<reqwest::Error> for Error {
-    fn from(e: reqwest::Error) -> Self {
-        Self::Http(e)
-    }
-}
-
-impl From<redis::RedisError> for Error {
-    fn from(e: redis::RedisError) -> Self {
-        Self::Redis(e)
     }
 }
 

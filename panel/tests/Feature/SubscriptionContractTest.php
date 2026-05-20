@@ -6,7 +6,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use App\Contracts\SingboxPinReaderInterface;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
@@ -52,26 +51,6 @@ class SubscriptionContractTest extends TestCase
         return $this->get('/cover-baseline-'.bin2hex(random_bytes(4)));
     }
 
-    /**
-     * Stub SingboxPinReader so the controller emits a deterministic
-     * server_singbox_pin block without shelling to the bundled binary
-     * (the test environment doesn't have /usr/local/bin/singbox-core).
-     * Returning null collapses to the field-omitted-on-the-wire branch.
-     */
-    private function stubSingboxPin(?string $upstreamTag): void
-    {
-        $stub = new class($upstreamTag) implements SingboxPinReaderInterface
-        {
-            public function __construct(private readonly ?string $tag) {}
-
-            public function upstreamTag(): ?string
-            {
-                return $this->tag;
-            }
-        };
-        $this->app->instance(SingboxPinReaderInterface::class, $stub);
-    }
-
     #[Test]
     public function manifest_profile_carries_uuid_and_reality_block(): void
     {
@@ -80,7 +59,6 @@ class SubscriptionContractTest extends TestCase
         // dest_host + short_id). The client plugs these into its
         // sing-box outbound directly.
         $this->seedActiveCover();
-        $this->stubSingboxPin(null);
 
         $account = ProxyAccount::factory()->create();
         $uuid = $account->uuid;
@@ -123,7 +101,6 @@ class SubscriptionContractTest extends TestCase
         // the body a CLIENT would canonicalise after deserialising
         // and clearing signature.
         $this->seedActiveCover();
-        $this->stubSingboxPin(null);
 
         $account = ProxyAccount::factory()->create();
 
@@ -175,7 +152,6 @@ class SubscriptionContractTest extends TestCase
         // emitted as null — same divergence trap as the top-level
         // `note` field.
         ServerConfig::factory()->create();
-        $this->stubSingboxPin(null);
         // intentionally NOT creating an active FakeWebsite
 
         $account = ProxyAccount::factory()->create();
@@ -224,7 +200,6 @@ class SubscriptionContractTest extends TestCase
         // moves to the label field (which embeds the domain).
         ServerConfig::factory()->create(['domain' => 'プロキシ.中文.example']);
         FakeWebsite::factory()->active()->create();
-        $this->stubSingboxPin(null);
 
         $account = ProxyAccount::factory()->create();
 
@@ -269,7 +244,6 @@ class SubscriptionContractTest extends TestCase
         // canonical_expires_at constructor pinned 7 days as the
         // authoritative value; the PHP controller now matches.
         $this->seedActiveCover();
-        $this->stubSingboxPin(null);
 
         $account = ProxyAccount::factory()->create();
 
@@ -298,84 +272,6 @@ class SubscriptionContractTest extends TestCase
     }
 
     #[Test]
-    public function manifest_carries_server_singbox_pin_when_reader_returns_a_tag(): void
-    {
-        // v0.4.0 cross-end binary-identity confirmation: when the
-        // bundled singbox-core binary reports its upstream pin, the
-        // controller splices it into the manifest BEFORE signing.
-        // The signature must verify after the field is included —
-        // i.e. the splice happened on the canonical side.
-        $this->seedActiveCover();
-        $this->stubSingboxPin('v1.13.12');
-
-        $account = ProxyAccount::factory()->create();
-
-        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
-        $this->assertSame(200, $response->status());
-
-        $served = $response->getContent();
-        $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
-
-        $this->assertArrayHasKey('server_singbox_pin', $decoded);
-        $this->assertSame('v1.13.12', $decoded['server_singbox_pin']['upstream_tag']);
-
-        // Wire order: server_singbox_pin appears AFTER expires_at
-        // and BEFORE signature.
-        $posExpires = strpos($served, '"expires_at"');
-        $posPin = strpos($served, '"server_singbox_pin"');
-        $posSig = strpos($served, '"signature"');
-        $this->assertNotFalse($posPin, 'served body must contain server_singbox_pin');
-        $this->assertNotFalse($posExpires);
-        $this->assertNotFalse($posSig);
-        $this->assertLessThan($posPin, $posExpires);
-        $this->assertLessThan($posSig, $posPin);
-
-        // HMAC still verifies — server_singbox_pin is INSIDE the
-        // signed body.
-        $sig = $decoded['signature'];
-        unset($decoded['signature']);
-        $canonical = json_encode(
-            $decoded,
-            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
-        );
-        $expected = hash_hmac('sha256', $canonical, (string) config('app.key'));
-        $this->assertSame($expected, $sig);
-    }
-
-    #[Test]
-    public function manifest_omits_server_singbox_pin_when_reader_returns_null(): void
-    {
-        // Half-truthy reads (binary missing, JSON non-conformant,
-        // exec failure) → reader returns null → controller omits the
-        // field entirely. Older clients (pre-v0.4.0 pin awareness)
-        // see exactly what they used to see.
-        $this->seedActiveCover();
-        $this->stubSingboxPin(null);
-
-        $account = ProxyAccount::factory()->create();
-
-        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
-        $this->assertSame(200, $response->status());
-
-        $served = $response->getContent();
-        $this->assertStringNotContainsString('"server_singbox_pin"', $served);
-        $this->assertStringNotContainsString('server_singbox_pin', $served);
-
-        // Signature still verifies in the absent-field branch.
-        $decoded = json_decode($served, true, flags: JSON_THROW_ON_ERROR);
-        $sig = $decoded['signature'];
-        unset($decoded['signature']);
-        $canonical = json_encode(
-            $decoded,
-            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
-        );
-        $this->assertSame(
-            hash_hmac('sha256', $canonical, (string) config('app.key')),
-            $sig,
-        );
-    }
-
-    #[Test]
     public function manifest_with_empty_uuid_falls_through_to_cover_site(): void
     {
         // A row whose uuid column is empty (corrupt DB row, or a
@@ -386,7 +282,6 @@ class SubscriptionContractTest extends TestCase
         // can't distinguish "valid token, no credential" from "bogus
         // token" from "/random-path".
         $this->seedActiveCover();
-        $this->stubSingboxPin(null);
 
         $account = ProxyAccount::factory()->create();
         // Bypass the creating-hook by zeroing the column directly.
@@ -419,7 +314,6 @@ class SubscriptionContractTest extends TestCase
         // same posture as the uuid-missing branch.
         ServerConfig::factory()->create(['reality_public_key' => '']);
         FakeWebsite::factory()->active()->create();
-        $this->stubSingboxPin(null);
 
         $account = ProxyAccount::factory()->create();
 

@@ -9,8 +9,6 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod caddy;
-mod canary;
-mod components;
 mod contracts;
 mod daemon;
 mod daemon_fsm;
@@ -18,9 +16,7 @@ mod db;
 mod domain;
 mod err;
 mod frame;
-mod internal_metrics;
 mod observability;
-mod redis_bridge;
 mod template;
 mod util;
 
@@ -75,9 +71,7 @@ enum Cmd {
         #[command(subcommand)]
         op: CaddyfileOp,
     },
-    /// Long-running JSON-over-unix-socket daemon. Also subscribes
-    /// to the Redis revocation channel for ≤100 ms Filament-to-
-    /// sing-box reload propagation.
+    /// Long-running JSON-over-unix-socket daemon.
     Daemon {
         #[arg(
             long,
@@ -85,56 +79,14 @@ enum Cmd {
             default_value = "/run/cool-tunnel/core.sock"
         )]
         socket: String,
-        /// Redis URL for the revocation bridge subscription. Empty
-        /// (default) skips the subscriber — single-host dev only.
-        #[arg(long, env = "REDIS_URL", default_value = "")]
-        redis_url: String,
-        /// Bind address for the operator-internal-health
-        /// `/metrics` endpoint (Prometheus text-format). Empty
-        /// (default) → endpoint disabled. Recommended single-
-        /// container value: `127.0.0.1:9292` (ct-server-core
-        /// runs inside the panel container alongside FrankenPHP;
-        /// `docker compose exec ct-panel curl
-        /// http://127.0.0.1:9292/metrics` reaches it). Per
-        /// LTSC.md § Internal-health observability vs user
-        /// analytics, this surface is operator-internal-health
-        /// only — never per-user data, never a public port.
-        /// (v0.0.67.)
-        #[arg(long, env = "CT_METRICS_BIND", default_value = "")]
-        metrics_bind: String,
-    },
-    /// Component-as-machine-part: list / check installed components.
-    Component {
-        #[command(subcommand)]
-        op: ComponentOp,
     },
     /// Operator-facing administration helpers.
     Admin {
         #[command(subcommand)]
         op: AdminOp,
     },
-    /// Self-probe canary — early-warning surface for "this VPS is
-    /// becoming unreachable from its own network position." See
-    /// `docs/going-to-china.md` for the operator-facing context.
-    Canary {
-        #[command(subcommand)]
-        op: CanaryOp,
-    },
     /// Print the build manifest.
     Version,
-}
-
-#[derive(Subcommand, Debug)]
-enum CanaryOp {
-    /// Run one self-probe (DoH-resolve apex + TCP-connect to
-    /// caddy:443) and append the result to ServerConfig.
-    /// `self_probe_history`. Wired into the Laravel scheduler
-    /// (every 5 min) by panel/routes/console.php.
-    Probe,
-    /// Print the recorded self-probe history (one JSON entry per
-    /// line, oldest first). Operator surface for "what's the
-    /// canary saying right now" without going through the panel.
-    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -148,20 +100,6 @@ enum AdminOp {
     /// fail-fast. Whitespace in either is trimmed; both empty
     /// errors loudly rather than producing `panel.` with no base.
     PanelDomain,
-}
-
-#[derive(Subcommand, Debug)]
-enum ComponentOp {
-    /// List components from the manifests directory.
-    List {
-        #[arg(long, env = "CT_MANIFESTS_DIR", default_value = "/srv/manifests")]
-        manifests: String,
-    },
-    /// Run OK/NG check against every component manifest.
-    Check {
-        #[arg(long, env = "CT_MANIFESTS_DIR", default_value = "/srv/manifests")]
-        manifests: String,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -286,101 +224,21 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 caddy::render(&pool, &panel_domain, &template, &output, dry_run, cli.json).await
             }
         },
-        Cmd::Daemon {
-            socket,
-            redis_url,
-            metrics_bind,
-        } => {
-            // Build the shared pool ONCE here. Both the wire-handler
-            // serve loop and the redis_bridge subscriber share it,
-            // so neither path pays per-request connection setup.
-            // sqlx's MySqlPool is internally Arc-wrapped — clones
-            // bump a refcount, not a connection count.
+        Cmd::Daemon { socket } => {
             let pool = db::connect(&cli.database_url).await?;
             tracing::info!(
                 max_connections = 4,
-                "ct-server-core: shared DB pool ready (lifted from per-request)"
+                "ct-server-core: shared DB pool ready"
             );
-
-            // T-1 semaphore lifted from `daemon::serve` to here
-            // (v0.0.67) so the optional internal_metrics registry can
-            // read `available_permits()` for the
-            // `ct_daemon_handler_permits_used` gauge without a
-            // duplicate construction site.
             let permits =
                 std::sync::Arc::new(tokio::sync::Semaphore::new(daemon::MAX_CONCURRENT_HANDLERS));
-
-            // Optional internal-metrics endpoint. Off by default;
-            // operator opts in via --metrics-bind / CT_METRICS_BIND.
-            // Per LTSC.md, operator-internal-health only — never
-            // per-user data.
-            let metrics_registry = if metrics_bind.trim().is_empty() {
-                None
-            } else {
-                let r = internal_metrics::MetricsRegistry::new(
-                    permits.clone(),
-                    daemon::MAX_CONCURRENT_HANDLERS,
-                    pool.clone(),
-                );
-                internal_metrics::spawn(metrics_bind.clone(), r.clone());
-                Some(r)
-            };
-
-            // v0.0.88: the daemon prefers discrete REDIS_HOST/PORT/
-            // PASSWORD/DATABASE env vars over REDIS_URL (the URL
-            // form rejects passwords with `/+=` from
-            // `openssl rand -base64`). Either path is sufficient
-            // to start the subscriber; only if BOTH are missing
-            // do we run without revocations.
-            let has_discrete_redis = std::env::var("REDIS_HOST")
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-            if !redis_url.is_empty() || has_discrete_redis {
-                redis_bridge::spawn(redis_url, metrics_registry.clone());
-            } else {
-                tracing::warn!(
-                    "neither REDIS_HOST nor REDIS_URL set — running without revocation subscriber"
-                );
-            }
-            daemon::serve(&socket, pool, permits, metrics_registry).await
+            daemon::serve(&socket, pool, permits).await
         }
-        Cmd::Component { op } => match op {
-            ComponentOp::List { manifests } => {
-                let list = components::list(&manifests).await?;
-                if cli.json {
-                    println!("{}", serde_json::to_string_pretty(&list)?);
-                } else {
-                    for m in &list {
-                        println!(
-                            "{:<24}  kind={:<14}  version={}",
-                            m.name,
-                            format!("{:?}", m.kind).to_lowercase(),
-                            m.version,
-                        );
-                    }
-                }
-                Ok(())
-            }
-            ComponentOp::Check { manifests } => {
-                let pool = db::connect(&cli.database_url).await?;
-                components::print_check(&manifests, &pool, cli.json).await
-            }
-        },
         Cmd::Admin { op } => match op {
             AdminOp::PanelDomain => {
                 let pd = util::domain::panel_domain()?;
                 println!("{pd}");
                 Ok(())
-            }
-        },
-        Cmd::Canary { op } => match op {
-            CanaryOp::Probe => {
-                let pool = db::connect(&cli.database_url).await?;
-                canary::probe(&pool).await
-            }
-            CanaryOp::Status => {
-                let pool = db::connect(&cli.database_url).await?;
-                canary::status(&pool).await
             }
         },
         Cmd::Version => {

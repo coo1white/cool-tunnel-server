@@ -41,12 +41,4 @@ interface CtServerCoreInterface
     /** @return array<mixed> */
     public function renderCaddyfile(): array;
 
-    /** @return array<mixed> */
-    public function componentList(string $manifestsDir = '/srv/manifests'): array;
-
-    /** @return array<mixed> */
-    public function componentCheck(string $manifestsDir = '/srv/manifests'): array;
-
-    /** @return array<mixed> */
-    public function canaryProbe(): array;
-}
+    }

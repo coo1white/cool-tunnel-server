@@ -6,7 +6,6 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Contracts\SingboxPinReaderInterface;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
@@ -108,9 +107,6 @@ class SubscriptionController extends Controller
      */
     private const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 7;
 
-    public function __construct(
-        private SingboxPinReaderInterface $singboxPin,
-    ) {}
 
     public function show(Request $request, string $token): Response
     {
@@ -313,26 +309,6 @@ class SubscriptionController extends Controller
             // null and non-empty (NEVER `"note":null` — that breaks
             // canonical round-trip).
         ];
-
-        // server_singbox_pin: cross-end binary-identity confirmation.
-        // The v3.0.0+ client embeds its own singbox.upstream.json at
-        // build time and compares `upstream_tag` here against its
-        // own copy. Mismatch → soft-warn ("server is running an
-        // unexpected sing-box version — wire compatibility may be
-        // broken"); match → silent ok.
-        //
-        // SingboxPinReader returns null when the bundled singbox-core
-        // binary is missing / broken (degraded deploy). We omit the
-        // key entirely in that case rather than emitting an empty
-        // object — the client treats absence as "unknown, soft-warn"
-        // rather than as a hard failure (an old server build won't
-        // emit this field at all).
-        $pin = $this->singboxPin->upstreamTag();
-        if ($pin !== null) {
-            $body['server_singbox_pin'] = [
-                'upstream_tag' => $pin,
-            ];
-        }
 
         // HMAC over the body WITHOUT a `signature` field at all.
         // Clients verify by deserialising, setting `signature` to

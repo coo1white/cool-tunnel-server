@@ -22,11 +22,6 @@ use crate::contracts::{
 };
 use crate::daemon_fsm::{ConnectionEvent, ConnectionFsm, HengProfile, TransitionOutcome};
 use crate::frame::{read_delimited, FramePolicy, FrameRead, StaticDelimitedFramePolicy};
-use crate::internal_metrics::MetricsRegistry;
-use crate::observability::{
-    crosses_80pct_threshold, duration_crosses_80pct_threshold, duration_ms_u64, otel_key,
-    packet_header_dump, DAEMON_TURN_LATENCY_BUDGET,
-};
 use crate::{Error, Result};
 use bytes::{BufMut, BytesMut};
 use ct_protocol::{WireRequestV1, WireResponseV1};
@@ -147,7 +142,6 @@ pub async fn serve(
     socket_path: &str,
     pool: MySqlPool,
     permits: Arc<Semaphore>,
-    metrics: Option<Arc<MetricsRegistry>>,
 ) -> Result<()> {
     // Ensure parent dir exists; remove any stale socket file.
     if let Some(dir) = Path::new(socket_path).parent() {
@@ -215,17 +209,6 @@ pub async fn serve(
                 })?
             }
         };
-        if let Some(m) = &metrics {
-            let used = MAX_CONCURRENT_HANDLERS.saturating_sub(permits.available_permits());
-            m.note_daemon_permit_utilization(used, MAX_CONCURRENT_HANDLERS);
-            if crosses_80pct_threshold(used, MAX_CONCURRENT_HANDLERS) {
-                tracing::warn!(
-                    used,
-                    total = MAX_CONCURRENT_HANDLERS,
-                    "daemon handler permits crossed 80% bottleneck threshold"
-                );
-            }
-        }
         tokio::select! {
             () = &mut shutdown => {
                 tracing::info!(path = socket_path, "ct-server-core daemon shutting down");
@@ -245,7 +228,6 @@ pub async fn serve(
                 // refcount and shares the underlying connection set.
                 // No new TCP connections are opened on clone.
                 let pool = pool.clone();
-                let metrics = metrics.clone();
                 spawn_observed("daemon client handler", async move {
                     // Permit is held by the spawned task; dropped
                     // when this closure returns (handler exit or
@@ -253,7 +235,7 @@ pub async fn serve(
                     // for the next accept.
                     let _permit = permit;
                     if let Err(e) =
-                        handle_client(stream, &pool, metrics.as_ref()).await
+                        handle_client(stream, &pool).await
                     {
                         tracing::warn!(error = %e, "client handler errored");
                     }
@@ -310,11 +292,10 @@ async fn shutdown_signal() {
 async fn handle_client(
     stream: UnixStream,
     pool: &MySqlPool,
-    metrics: Option<&Arc<MetricsRegistry>>,
 ) -> Result<()> {
     let (mut rd, mut wr) = stream.into_split();
     let fsm = ConnectionFsm::new();
-    advance_or_reset(&fsm, metrics, ConnectionEvent::StartReading)?;
+    advance_or_reset(&fsm, ConnectionEvent::StartReading)?;
     // One reusable request buffer per connection. `read_delimited`
     // splits complete frames out of this buffer and leaves any bytes
     // already read for the next frame, avoiding a new Vec allocation
@@ -338,14 +319,14 @@ async fn handle_client(
             DAEMON_FRAME_POLICY.with_max_read_chunk_len(heng_profile.read_chunk_bytes);
         let span = tracing::info_span!(
             "otel.network.turn",
-            { otel_key::NETWORK_TRANSPORT } = "unix",
-            { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-            { otel_key::RPC_SYSTEM } = "ct-daemon",
-            { otel_key::RPC_METHOD } = tracing::field::Empty,
-            { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
-            { otel_key::CT_BUFFER_BYTES } = tracing::field::Empty,
-            { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_LINE_BYTES,
-            { otel_key::CT_STATUS_CODE } = tracing::field::Empty,
+            "network.transport" = "unix",
+            "network.protocol.name" = "json-line",
+            "rpc.system" = "ct-daemon",
+            "rpc.method" = tracing::field::Empty,
+            "ct.frame_policy" = turn_frame_policy.policy_name(),
+            "ct.buffer_bytes" = tracing::field::Empty,
+            "ct.buffer_limit_bytes" = MAX_REQUEST_LINE_BYTES,
+            "ct.status_code" = tracing::field::Empty,
             fsm_state = fsm.state().name(),
             heng_read_chunk_bytes = heng_profile.read_chunk_bytes,
             heng_pressure_basis_points = heng_profile.pressure_basis_points,
@@ -353,22 +334,21 @@ async fn handle_client(
         let _span_guard = span.enter();
         let frame = match read_delimited(&mut rd, &mut read_buf, &turn_frame_policy).await {
             Ok(FrameRead::Complete(frame)) => {
-                advance_or_reset(&fsm, metrics, ConnectionEvent::FrameComplete)?;
+                advance_or_reset(&fsm, ConnectionEvent::FrameComplete)?;
                 frame
             }
             Ok(FrameRead::Eof) => {
-                advance_or_reset(&fsm, metrics, ConnectionEvent::PeerClosed)?;
+                advance_or_reset(&fsm, ConnectionEvent::PeerClosed)?;
                 break;
             }
             Err(Error::ReadTimeout { .. }) => {
-                fsm_hard_reset(&fsm, metrics, "read_timeout");
-                span.record(otel_key::CT_STATUS_CODE, "read_timeout");
-                note_daemon_turn(metrics, turn_started.elapsed(), "read_timeout");
+                fsm_hard_reset(&fsm, "read_timeout");
+                span.record("ct.status_code", "read_timeout");
                 tracing::warn!(
-                    { otel_key::NETWORK_TRANSPORT } = "unix",
-                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-                    { otel_key::RPC_SYSTEM } = "ct-daemon",
-                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
+                    "network.transport" = "unix",
+                    "network.protocol.name" = "json-line",
+                    "rpc.system" = "ct-daemon",
+                    "ct.frame_policy" = turn_frame_policy.policy_name(),
                     timeout_s = READ_TIMEOUT.as_secs(),
                     "client read timeout - closing connection"
                 );
@@ -383,116 +363,92 @@ async fn handle_client(
                 return Ok(());
             }
             Err(Error::FrameTooLarge { limit }) => {
-                fsm_hard_reset(&fsm, metrics, "frame_too_large");
-                span.record(otel_key::CT_STATUS_CODE, "request_too_large");
-                note_daemon_turn(metrics, turn_started.elapsed(), "request_too_large");
+                fsm_hard_reset(&fsm, "frame_too_large");
+                span.record("ct.status_code", "request_too_large");
                 let resp = WireResponseV1::Error {
                     code: "request_too_large".into(),
                     message: format!("request line exceeds {limit} bytes; closing connection"),
                 };
                 tracing::warn!(
-                    { otel_key::NETWORK_TRANSPORT } = "unix",
-                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-                    { otel_key::RPC_SYSTEM } = "ct-daemon",
-                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
-                    { otel_key::CT_BUFFER_LIMIT_BYTES } = limit,
-                    buffer_hex = %packet_header_dump(&read_buf),
+                    "network.transport" = "unix",
+                    "network.protocol.name" = "json-line",
+                    "rpc.system" = "ct-daemon",
+                    "ct.frame_policy" = turn_frame_policy.policy_name(),
+                    "ct.buffer_limit_bytes" = limit,
                     "daemon frame exceeded hard byte limit"
                 );
                 send(&mut wr, &mut write_buf, &resp).await?;
                 return Err(Error::FrameTooLarge { limit });
             }
             Err(Error::FrameIncomplete) => {
-                fsm_hard_reset(&fsm, metrics, "frame_incomplete");
-                span.record(otel_key::CT_STATUS_CODE, "incomplete_request");
-                note_daemon_turn(metrics, turn_started.elapsed(), "incomplete_request");
+                fsm_hard_reset(&fsm, "frame_incomplete");
+                span.record("ct.status_code", "incomplete_request");
                 let resp = WireResponseV1::Error {
                     code: "incomplete_request".into(),
                     message: "connection closed before newline-delimited request completed".into(),
                 };
                 tracing::warn!(
-                    { otel_key::NETWORK_TRANSPORT } = "unix",
-                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-                    { otel_key::RPC_SYSTEM } = "ct-daemon",
-                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
-                    buffer_hex = %packet_header_dump(&read_buf),
+                    "network.transport" = "unix",
+                    "network.protocol.name" = "json-line",
+                    "rpc.system" = "ct-daemon",
+                    "ct.frame_policy" = turn_frame_policy.policy_name(),
                     "daemon frame incomplete at peer close"
                 );
                 let _ = send(&mut wr, &mut write_buf, &resp).await;
                 return Ok(());
             }
             Err(e) => {
-                fsm_hard_reset(&fsm, metrics, "frame_read_error");
-                span.record(otel_key::CT_STATUS_CODE, e.wire_code());
-                note_daemon_turn(metrics, turn_started.elapsed(), e.wire_code());
+                fsm_hard_reset(&fsm, "frame_read_error");
+                span.record("ct.status_code", e.wire_code());
                 return Err(e);
             }
         };
-        span.record(otel_key::CT_BUFFER_BYTES, frame.len());
+        span.record("ct.buffer_bytes", frame.len());
 
         let line = match std::str::from_utf8(&frame) {
             Ok(s) => s,
             Err(e) => {
-                fsm_hard_reset(&fsm, metrics, "invalid_utf8");
-                span.record(otel_key::CT_STATUS_CODE, "bad_request");
-                note_daemon_turn(metrics, turn_started.elapsed(), "bad_request");
+                fsm_hard_reset(&fsm, "invalid_utf8");
+                span.record("ct.status_code", "bad_request");
                 let resp = WireResponseV1::Error {
                     code: "bad_request".into(),
                     message: format!("non-utf8 input: {e}"),
                 };
                 tracing::warn!(
-                    { otel_key::NETWORK_TRANSPORT } = "unix",
-                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-                    { otel_key::RPC_SYSTEM } = "ct-daemon",
-                    { otel_key::ERROR_TYPE } = "utf8",
-                    frame_hex = %crate::observability::HexDump::new(&frame, 96),
+                    "network.transport" = "unix",
+                    "network.protocol.name" = "json-line",
+                    "rpc.system" = "ct-daemon",
+                    "error.type" = "utf8",
                     "daemon received non-utf8 frame"
                 );
                 send(&mut wr, &mut write_buf, &resp).await?;
                 return Ok(());
             }
         };
-        if let Some(m) = metrics {
-            m.note_daemon_buffer_utilization(frame.len(), MAX_REQUEST_LINE_BYTES);
-            if crosses_80pct_threshold(frame.len(), MAX_REQUEST_LINE_BYTES) {
-                tracing::warn!(
-                    { otel_key::NETWORK_TRANSPORT } = "unix",
-                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-                    { otel_key::RPC_SYSTEM } = "ct-daemon",
-                    { otel_key::CT_FRAME_POLICY } = turn_frame_policy.policy_name(),
-                    { otel_key::CT_BUFFER_BYTES } = frame.len(),
-                    { otel_key::CT_BUFFER_LIMIT_BYTES } = MAX_REQUEST_LINE_BYTES,
-                    frame_hex = %crate::observability::HexDump::new(&frame, 96),
-                    "daemon frame crossed 80% buffer threshold"
-                );
-            }
-        }
-        advance_or_reset(&fsm, metrics, ConnectionEvent::Utf8Decoded)?;
+        advance_or_reset(&fsm, ConnectionEvent::Utf8Decoded)?;
         let req: WireRequestV1 = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
-                fsm_hard_reset(&fsm, metrics, "invalid_json");
-                span.record(otel_key::CT_STATUS_CODE, "bad_request");
-                note_daemon_turn(metrics, turn_started.elapsed(), "bad_request");
+                fsm_hard_reset(&fsm, "invalid_json");
+                span.record("ct.status_code", "bad_request");
                 let resp = WireResponseV1::Error {
                     code: "bad_request".into(),
                     message: e.to_string(),
                 };
                 tracing::warn!(
-                    { otel_key::NETWORK_TRANSPORT } = "unix",
-                    { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-                    { otel_key::RPC_SYSTEM } = "ct-daemon",
-                    { otel_key::ERROR_TYPE } = "json",
-                    frame_hex = %crate::observability::HexDump::new(&frame, 96),
+                    "network.transport" = "unix",
+                    "network.protocol.name" = "json-line",
+                    "rpc.system" = "ct-daemon",
+                    "error.type" = "json",
                     "daemon received malformed json frame"
                 );
                 send(&mut wr, &mut write_buf, &resp).await?;
                 return Ok(());
             }
         };
-        advance_or_reset(&fsm, metrics, ConnectionEvent::JsonDecoded)?;
+        advance_or_reset(&fsm, ConnectionEvent::JsonDecoded)?;
         let method = wire_method_name(&req);
-        span.record(otel_key::RPC_METHOD, method);
+        span.record("rpc.method", method);
         let dispatcher = DaemonDispatcher { pool };
         tracing::trace!(
             contract = dispatcher.contract().id(),
@@ -511,18 +467,17 @@ async fn handle_client(
                 )
             }
         };
-        span.record(otel_key::CT_STATUS_CODE, status_code);
-        advance_or_reset(&fsm, metrics, ConnectionEvent::Dispatched)?;
-        note_daemon_turn(metrics, turn_started.elapsed(), status_code);
+        span.record("ct.status_code", status_code);
+        advance_or_reset(&fsm, ConnectionEvent::Dispatched)?;
         tracing::trace!(
-            latency_ms = duration_ms_u64(turn_started.elapsed()),
+            latency_ms = turn_started.elapsed().as_millis() as u64,
             "daemon network turn completed"
         );
         if let Err(e) = send(&mut wr, &mut write_buf, &resp).await {
-            fsm_hard_reset(&fsm, metrics, "write_response_failed");
+            fsm_hard_reset(&fsm, "write_response_failed");
             return Err(e);
         }
-        advance_or_reset(&fsm, metrics, ConnectionEvent::ResponseWritten)?;
+        advance_or_reset(&fsm, ConnectionEvent::ResponseWritten)?;
         heng_profile = fsm.probe_constancy(
             turn_started.elapsed(),
             frame.len(),
@@ -536,14 +491,13 @@ async fn handle_client(
                 "daemon Heng constancy probe crossed 80% pressure threshold"
             );
         }
-        advance_or_reset(&fsm, metrics, ConnectionEvent::ConstancyProbed)?;
+        advance_or_reset(&fsm, ConnectionEvent::ConstancyProbed)?;
     }
     Ok(())
 }
 
 fn advance_or_reset(
     fsm: &ConnectionFsm,
-    metrics: Option<&Arc<MetricsRegistry>>,
     event: ConnectionEvent,
 ) -> Result<()> {
     match fsm.apply(event) {
@@ -554,9 +508,6 @@ fn advance_or_reset(
             observed,
             requested,
         } => {
-            if let Some(m) = metrics {
-                m.note_daemon_fsm_hard_reset();
-            }
             tracing::warn!(
                 event = event.name(),
                 expected_state = expected.name(),
@@ -580,35 +531,10 @@ fn advance_or_reset(
 
 fn fsm_hard_reset(
     fsm: &ConnectionFsm,
-    metrics: Option<&Arc<MetricsRegistry>>,
     reason: &'static str,
 ) {
     fsm.hard_reset(reason);
-    if let Some(m) = metrics {
-        m.note_daemon_fsm_hard_reset();
-    }
     tracing::warn!(reason, state = fsm.state().name(), "daemon FSM hard reset");
-}
-
-fn note_daemon_turn(
-    metrics: Option<&Arc<MetricsRegistry>>,
-    latency: Duration,
-    status_code: &'static str,
-) {
-    if let Some(m) = metrics {
-        m.note_daemon_network_turn(latency, status_code);
-    }
-    if duration_crosses_80pct_threshold(latency, DAEMON_TURN_LATENCY_BUDGET) {
-        tracing::warn!(
-            { otel_key::NETWORK_TRANSPORT } = "unix",
-            { otel_key::NETWORK_PROTOCOL_NAME } = "json-line",
-            { otel_key::RPC_SYSTEM } = "ct-daemon",
-            { otel_key::CT_STATUS_CODE } = status_code,
-            latency_ms = duration_ms_u64(latency),
-            budget_ms = duration_ms_u64(DAEMON_TURN_LATENCY_BUDGET),
-            "daemon network turn crossed 80% latency threshold"
-        );
-    }
 }
 
 fn wire_method_name(req: &WireRequestV1) -> &'static str {

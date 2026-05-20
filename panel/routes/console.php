@@ -50,17 +50,3 @@ Sched::command('singbox:render --if-changed')->everyFiveMinutes()
     ->withoutOverlapping()
     ->onFailure($logFailure('singbox:render'));
 
-// Self-probe canary — DoH-resolve apex + TCP-connect to
-// caddy:443; result writes to ServerConfig.self_probe_history
-// for the panel to surface as a "last N failed" banner (operator-
-// facing context: docs/going-to-china.md).
-//
-// withoutOverlapping is mandatory: a stalled DoH lookup in tick
-// N must not stack with tick N+1's probe (would skew the
-// consecutive-failure heuristic). Failure here logs but does NOT
-// alert — the banner itself is the operator-visible signal;
-// logging at critical would mean every China-side DoH outage
-// produces a noise spike in the panel container's stderr.
-Sched::command('canary:probe')->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->onFailure($logFailure('canary:probe'));

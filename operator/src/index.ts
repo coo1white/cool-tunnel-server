@@ -20,21 +20,12 @@ Usage:
 Commands:
   install        First-time bootstrap on a fresh Debian VPS
   doctor         Run health checks on the running deployment
-  auto-diag      Run read-only diagnostics and write diagnostics/*.txt
-  fix            Detect and interactively repair common issues
-  readiness      Strict >=9/10 readiness gate; cron/CI suitable
-  ballast        Critical-invariant check only (no narration; cron-friendly)
   render         Re-render caddyfile/singbox config from the DB
-  auto-sync      Credential-lock audit + auto-correct agent
   backup         Snapshot db + .env + caddy ACME state into backups/
   restore <p>    Restore a deployment from a backup tarball
-  auto-update    Unattended release-pulling agent (cron-safe)
   update         Pull a new release, rebuild, hot-swap
   help [topic]   Operator mini-manual; no args lists topics
-  self-update    Pull a new signed binary from GitHub Releases
   version        Print version and exit
-  version-bridge Check that PHP / Rust / Bun layers agree on version
-  drift          Three-way cleartext drift check (DB ⇄ sing-box ⇄ subscription)
 
 Options:
   --json         Emit structured JSON to stdout instead of human output
@@ -68,29 +59,9 @@ async function loadTask(cmd: string): Promise<Task | null> {
             const { DoctorTask } = await import("./tasks/doctor");
             return new DoctorTask();
         }
-        case "auto-diag": {
-            const { AutoDiagTask } = await import("./tasks/auto-diag");
-            return new AutoDiagTask();
-        }
-        case "fix": {
-            const { FixTask } = await import("./tasks/fix");
-            return new FixTask();
-        }
-        case "readiness": {
-            const { ReadinessTask } = await import("./tasks/readiness");
-            return new ReadinessTask();
-        }
-        case "ballast": {
-            const { BallastTask } = await import("./tasks/ballast");
-            return new BallastTask();
-        }
         case "render": {
             const { RenderTask } = await import("./tasks/render");
             return new RenderTask();
-        }
-        case "auto-sync": {
-            const { AutoSyncTask } = await import("./tasks/auto-sync");
-            return new AutoSyncTask();
         }
         case "backup": {
             const { BackupTask } = await import("./tasks/backup");
@@ -100,10 +71,6 @@ async function loadTask(cmd: string): Promise<Task | null> {
             const { RestoreTask } = await import("./tasks/restore");
             return new RestoreTask();
         }
-        case "auto-update": {
-            const { AutoUpdateTask } = await import("./tasks/auto-update");
-            return new AutoUpdateTask();
-        }
         case "update": {
             const { UpdateTask } = await import("./tasks/update");
             return new UpdateTask();
@@ -111,18 +78,6 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "help": {
             const { HelpTask } = await import("./tasks/help");
             return new HelpTask();
-        }
-        case "self-update": {
-            const { SelfUpdateTask } = await import("./tasks/self-update");
-            return new SelfUpdateTask();
-        }
-        case "version-bridge": {
-            const { VersionBridgeTask } = await import("./tasks/version-bridge");
-            return new VersionBridgeTask(VERSION);
-        }
-        case "drift": {
-            const { DriftTask } = await import("./tasks/drift");
-            return new DriftTask();
         }
         default:
             return null;

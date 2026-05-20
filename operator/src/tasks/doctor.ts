@@ -10,8 +10,6 @@ import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
-import { collectBallast } from "../diag/collectors/ballast";
-import { probeRealityClock } from "../util/reality-clock";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -30,7 +28,6 @@ const G_COMPOSE = "Compose stack";
 const G_RES = "Resources";
 const G_LATENCY = "Latency diagnostics";
 const G_INFO = "Info (no PASS/FAIL contribution)";
-const G_BALLAST = "Ballast Stones (critical invariants)";
 const G_ERR = "Errors";
 
 const isTty = process.stdout.isTTY === true;
@@ -99,17 +96,6 @@ async function checkEnvFile(c: CheckCtx): Promise<CheckLine> {
             hint: "cp .env.example .env && $EDITOR .env",
         };
     }
-}
-
-async function checkRealityClock(_c: CheckCtx): Promise<CheckLine> {
-    const r = await probeRealityClock();
-    return {
-        group: G_PREREQ,
-        label: "Reality clock",
-        severity: r.status,
-        detail: r.detail,
-        hint: r.hint,
-    };
 }
 
 async function checkDns(c: CheckCtx): Promise<CheckLine> {
@@ -246,34 +232,6 @@ async function checkUpEndpoint(_c: CheckCtx): Promise<CheckLine> {
         detail: `HTTP ${code} (expected 200)`,
         hint: "docker compose logs --tail=60 panel",
     };
-}
-
-async function checkComponents(_c: CheckCtx): Promise<CheckLine> {
-    const r = await capture(
-        $`bash -c "docker compose exec -T panel ct-server-core component check --manifests /srv/manifests 2>/dev/null || true"`,
-    );
-    if (!r.stdout.trim()) {
-        return {
-            group: G_APP,
-            label: "Components",
-            severity: "warn",
-            detail: "could not run component check",
-            hint: "docker compose exec panel ct-server-core component check",
-        };
-    }
-    if (/^\s*NG\s/m.test(r.stdout)) {
-        const ngLines = r.stdout.split("\n").filter((l) => /^\s*NG\s/.test(l));
-        const ng = [...new Set(ngLines.map((l) => l.trim().split(/\s+/)[1] ?? ""))].join(",");
-        return {
-            group: G_APP,
-            label: "Components",
-            severity: "fail",
-            detail: `NG: ${ng}`,
-            hint: "docker compose exec panel ct-server-core component check",
-        };
-    }
-    const ok = r.stdout.split("\n").filter((l) => /^\s*OK\s/.test(l)).length;
-    return { group: G_APP, label: "Components", severity: "pass", detail: `${ok}/${ok} OK` };
 }
 
 type CurlTiming = {
@@ -654,12 +612,10 @@ async function infoMessengerDepth(c: CheckCtx): Promise<CheckLine> {
 const CHECKS: CheckFn[] = [
     checkComposeAvailable,
     checkEnvFile,
-    checkRealityClock,
     checkDns,
     checkPorts,
     checkAcmeCert,
     checkUpEndpoint,
-    checkComponents,
     checkSingboxDirectStrategy,
     checkVpsEgressLatency,
     checkPanelPublicLatency,
@@ -709,30 +665,7 @@ export class DoctorTask implements Task {
             }
         }
 
-        // Ballast stones — same collector used by the incident bridge,
-        // surfaced here so a clean doctor pass also asserts the
-        // critical-invariant set. Listed as its own group so operators
-        // can see at a glance whether the must-pass items are green.
-        try {
-            const ballast = await collectBallast({ ...ctx, env });
-            for (const b of ballast.checks) {
-                const detail = `${b.title}${b.detail ? ` — ${b.detail}` : ""}`;
-                const line: CheckLine = { group: G_BALLAST, label: b.slug, severity: b.status, detail };
-                if (!grouped.has(line.group)) grouped.set(line.group, []);
-                grouped.get(line.group)!.push(line);
-                if (b.status === "pass") pass++;
-                else if (b.status === "warn") warn++;
-                else fail++;
-            }
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            const line: CheckLine = { group: G_ERR, label: "ballast", severity: "fail", detail: `collector threw: ${msg}` };
-            if (!grouped.has(line.group)) grouped.set(line.group, []);
-            grouped.get(line.group)!.push(line);
-            fail++;
-        }
-
-        for (const g of [G_PREREQ, G_STRUCT, G_APP, G_COMPOSE, G_RES, G_LATENCY, G_BALLAST, G_INFO, G_ERR]) {
+        for (const g of [G_PREREQ, G_STRUCT, G_APP, G_COMPOSE, G_RES, G_LATENCY, G_INFO, G_ERR]) {
             const lines = grouped.get(g);
             if (!lines || lines.length === 0) continue;
             process.stdout.write(`\n${BOLD}${g}${RESET}\n`);
