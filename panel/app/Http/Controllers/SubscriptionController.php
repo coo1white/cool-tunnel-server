@@ -9,7 +9,7 @@ namespace App\Http\Controllers;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
-use App\Support\RealityDestinations;
+use App\Support\RealityDestinationCatalog;
 use App\Support\SingBoxPin;
 use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Http\Request;
@@ -129,7 +129,7 @@ class SubscriptionController extends Controller
         //     30th request triggers the alarm — it counts itself
         //     before the threshold check.
         //
-        // Don't "normalise" them. A future PR that aligns the two
+        // Don't "normalize" them. A future PR that aligns the two
         // patterns will silently shift one off-by-one in the wrong
         // direction. The boundary is pinned by
         // SubscriptionRateLimiterBoundaryTest.
@@ -230,8 +230,8 @@ class SubscriptionController extends Controller
 
             return (new FakeSiteController)->show($request);
         }
-        $realityDestHost = RealityDestinations::normaliseHost((string) ($cfg->reality_dest_host ?? ''));
-        if (! RealityDestinations::isValidHost($realityDestHost)) {
+        $realityDestHost = RealityDestinationCatalog::normalizeHost((string) ($cfg->reality_dest_host ?? ''));
+        if (! RealityDestinationCatalog::isValidHost($realityDestHost)) {
             Log::critical('subscription.fallthrough.reality_dest_host_invalid', [
                 'account_id' => $account->id,
             ]);

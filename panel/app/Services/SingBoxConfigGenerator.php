@@ -9,6 +9,7 @@ namespace App\Services;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
+use App\Support\RealityDestinationCatalog;
 use App\Support\RenderResult;
 use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Support\Facades\Log;
@@ -162,9 +163,9 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
             );
         }
 
-        $destHost = (string) $cfg->reality_dest_host;
-        if ($destHost === '') {
-            throw new \RuntimeException('reality_dest_host is empty');
+        $destHost = RealityDestinationCatalog::normalizeHost((string) $cfg->reality_dest_host);
+        if (! RealityDestinationCatalog::isValidHost($destHost)) {
+            throw new \RuntimeException('reality_dest_host is invalid');
         }
 
         // PHPStan can't see through the eloquent-cast type for
@@ -176,7 +177,7 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
             : [];
         // The renderer always wants at least one short_id; the empty
         // string is the conventional "no short_id challenge" entry.
-        $normalisedShortIds = $shortIds === []
+        $normalizedShortIds = $shortIds === []
             ? ['']
             : array_map('strval', $shortIds);
 
@@ -217,7 +218,7 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
             'domain' => $cfg->domain,
             'listen_port' => 443,
             'reality_private_key' => $privateKey,
-            'reality_short_ids' => $normalisedShortIds,
+            'reality_short_ids' => $normalizedShortIds,
             'reality_dest_host' => $destHost,
             'reality_dest_port' => 443,
             'accounts' => $accounts,

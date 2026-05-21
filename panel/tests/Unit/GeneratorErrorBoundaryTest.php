@@ -84,6 +84,35 @@ final class GeneratorErrorBoundaryTest extends TestCase
     }
 
     #[Test]
+    public function singbox_throws_when_reality_dest_host_is_malformed(): void
+    {
+        ServerConfig::factory()->create(['reality_dest_host' => 'https://']);
+        ProxyAccount::factory()->create();
+
+        $gen = $this->app->make(SingBoxConfigGenerator::class);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/reality_dest_host/i');
+        $gen->renderToFile();
+    }
+
+    #[Test]
+    public function singbox_render_input_normalizes_reality_dest_host(): void
+    {
+        ServerConfig::factory()->create(['reality_dest_host' => 'HTTPS://Ya.Ru/some/path']);
+        ProxyAccount::factory()->create();
+
+        $gen = $this->app->make(SingBoxConfigGenerator::class);
+        $method = new \ReflectionMethod($gen, 'buildRenderInput');
+        $method->setAccessible(true);
+
+        /** @var array<string,mixed> $input */
+        $input = $method->invoke($gen);
+
+        $this->assertSame('ya.ru', $input['reality_dest_host']);
+    }
+
+    #[Test]
     public function singbox_render_input_carries_direct_outbound_dial_policy(): void
     {
         ServerConfig::factory()->create();

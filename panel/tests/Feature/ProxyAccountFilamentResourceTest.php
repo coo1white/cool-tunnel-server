@@ -31,7 +31,7 @@ final class ProxyAccountFilamentResourceTest extends TestCase
     {
         $admin = User::factory()->create();
         $account = ProxyAccount::factory()->create([
-            'username' => 'test2',
+            'username' => 'home-laptop',
             'label' => 'Home laptop',
         ]);
 
@@ -95,11 +95,13 @@ final class ProxyAccountFilamentResourceTest extends TestCase
         Livewire::actingAs($admin)
             ->test(CreateProxyAccount::class)
             ->assertFormComponentExists('protocol_mode')
+            ->assertFormComponentExists('reality_dest_host_current')
             ->assertFormComponentDoesNotExist('enabled_protocols')
             ->assertFormComponentDoesNotExist('reality_dest_host')
             ->assertSeeText('VLESS + Reality active')
+            ->assertSeeText('Yandex (ya.ru)')
             ->fillForm([
-                'username' => 'test2',
+                'username' => 'home-laptop',
                 'label' => 'Home laptop',
                 'enabled' => true,
                 'client_default_local_port' => 2080,
@@ -108,7 +110,7 @@ final class ProxyAccountFilamentResourceTest extends TestCase
             ->assertHasNoFormErrors()
             ->assertRedirect();
 
-        $account = ProxyAccount::query()->where('username', 'test2')->sole();
+        $account = ProxyAccount::query()->where('username', 'home-laptop')->sole();
         $this->assertSame('Home laptop', $account->label);
         $this->assertSame(2080, $account->client_default_local_port);
         $this->assertSame(['vless_reality'], $account->enabled_protocols);
@@ -122,6 +124,7 @@ final class ProxyAccountFilamentResourceTest extends TestCase
     public function edit_save_preserves_existing_protocol_mode(): void
     {
         $admin = User::factory()->create();
+        ServerConfig::factory()->create(['reality_dest_host' => 'www.apple.com']);
         $account = ProxyAccount::factory()->create([
             'enabled_protocols' => ['vless_reality', 'hysteria2'],
         ]);
@@ -130,8 +133,11 @@ final class ProxyAccountFilamentResourceTest extends TestCase
 
         Livewire::actingAs($admin)
             ->test(EditProxyAccount::class, ['record' => $account->getKey()])
+            ->assertFormComponentExists('reality_dest_host_current')
+            ->assertFormComponentDoesNotExist('reality_dest_host')
+            ->assertSeeText('Apple (www.apple.com)')
             ->fillForm([
-                'label' => 'cleaned',
+                'label' => 'Updated laptop',
             ])
             ->call('save', false, true)
             ->assertHasNoFormErrors();
@@ -140,6 +146,7 @@ final class ProxyAccountFilamentResourceTest extends TestCase
             ['vless_reality'],
             $account->refresh()->enabled_protocols,
         );
+        $this->assertSame('www.apple.com', ServerConfig::current()->reality_dest_host);
         $this->assertSame(1, $generator->renderCalls);
         Notification::assertNotified('Proxy account saved — config current');
     }
@@ -155,7 +162,7 @@ final class ProxyAccountFilamentResourceTest extends TestCase
         Livewire::actingAs($admin)
             ->test(EditProxyAccount::class, ['record' => $account->getKey()])
             ->fillForm([
-                'label' => 'queued',
+                'label' => 'Pending render',
             ])
             ->call('save', false, true)
             ->assertHasNoFormErrors();

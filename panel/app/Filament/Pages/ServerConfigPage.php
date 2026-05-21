@@ -7,7 +7,7 @@ declare(strict_types=1);
 namespace App\Filament\Pages;
 
 use App\Models\ServerConfig;
-use App\Support\RealityDestinations;
+use App\Support\RealityDestinationCatalog;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
@@ -17,6 +17,7 @@ use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Redis;
@@ -93,17 +94,22 @@ class ServerConfigPage extends Page implements HasForms
                     ->schema([
                         Select::make('reality_dest_host')
                             ->label('Website')
-                            ->options(fn (): array => RealityDestinations::options(
-                                (string) (ServerConfig::current()->reality_dest_host ?? ''),
-                                measureLatency: false,
+                            ->options(fn (Get $get): array => RealityDestinationCatalog::selectOptions(
+                                currentHost: (string) ($get('reality_dest_host') ?: (ServerConfig::current()->reality_dest_host ?? '')),
+                                includeCachedLatency: true,
                             ))
-                            ->default(fn (): string => RealityDestinations::selectDefault(
+                            ->default(fn (): string => RealityDestinationCatalog::selectDefault(
                                 (string) (ServerConfig::current()->reality_dest_host ?? ''),
                             ))
                             ->required()
                             ->searchable()
                             ->native(false)
-                            ->helperText('Cover website used by VLESS + Reality subscriptions.'),
+                            ->helperText('Global cover website used by every VLESS + Reality subscription. Account creation reads this value; it never mutates it.'),
+                        Placeholder::make('reality_dest_latency')
+                            ->label('Latency')
+                            ->content(fn (Get $get): string => RealityDestinationCatalog::latencyStatusText(
+                                (string) $get('reality_dest_host'),
+                            )),
                     ]),
 
                 Section::make('Anti-tracking')
@@ -132,8 +138,8 @@ class ServerConfigPage extends Page implements HasForms
     {
         $config = ServerConfig::current();
         $data = $this->form->getState();
-        $destHost = RealityDestinations::normaliseHost((string) ($data['reality_dest_host'] ?? ''));
-        if (! RealityDestinations::isSelectableHost($destHost, (string) ($config->reality_dest_host ?? ''))) {
+        $destHost = RealityDestinationCatalog::normalizeHost((string) ($data['reality_dest_host'] ?? ''));
+        if (! RealityDestinationCatalog::isSelectableHost($destHost, (string) ($config->reality_dest_host ?? ''))) {
             $this->addError('data.reality_dest_host', 'Choose one of the curated Reality destination websites.');
 
             return;
@@ -171,6 +177,23 @@ class ServerConfigPage extends Page implements HasForms
         }
     }
 
+    public function refreshRealityLatency(): void
+    {
+        $selected = RealityDestinationCatalog::normalizeHost((string) (
+            $this->data['reality_dest_host']
+            ?? ServerConfig::current()->reality_dest_host
+            ?? ''
+        ));
+
+        RealityDestinationCatalog::refreshCatalogLatencies($selected);
+
+        Notification::make()
+            ->title('Reality destination latency refreshed')
+            ->body(RealityDestinationCatalog::latencyStatusText($selected))
+            ->success()
+            ->send();
+    }
+
     /**
      * Cheap synchronous probe — is Redis reachable right now?
      *
@@ -201,6 +224,11 @@ class ServerConfigPage extends Page implements HasForms
     {
         return [
             Action::make('save')->submit('save')->label('Save config'),
+            Action::make('refreshRealityLatency')
+                ->label('Check latency')
+                ->icon('heroicon-o-signal')
+                ->color('gray')
+                ->action('refreshRealityLatency'),
         ];
     }
 }

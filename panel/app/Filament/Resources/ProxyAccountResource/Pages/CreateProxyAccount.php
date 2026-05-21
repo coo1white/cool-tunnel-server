@@ -9,7 +9,7 @@ namespace App\Filament\Resources\ProxyAccountResource\Pages;
 use App\Filament\Resources\ProxyAccountResource;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
-use App\Support\RealityDestinations;
+use App\Support\RealityDestinationCatalog;
 use App\Support\SingBoxProtocolCatalog;
 use App\Support\SingBoxRenderConfirmation;
 use Filament\Notifications\Actions\Action;
@@ -62,8 +62,8 @@ class CreateProxyAccount extends CreateRecord
         /** @var ProxyAccount $record */
         $record = DB::transaction(function () use ($data): ProxyAccount {
             $config = ServerConfig::current();
-            $destHost = RealityDestinations::normaliseHost((string) ($config->reality_dest_host ?? ''));
-            if (! RealityDestinations::isValidHost($destHost)) {
+            $destHost = RealityDestinationCatalog::normalizeHost((string) ($config->reality_dest_host ?? ''));
+            if (! RealityDestinationCatalog::isValidHost($destHost)) {
                 throw ValidationException::withMessages([
                     'client_default_local_port' => 'Set a valid Reality destination in Server config before creating accounts.',
                 ]);
@@ -99,8 +99,8 @@ class CreateProxyAccount extends CreateRecord
 
         $subUrl = $record->subscriptionUrl();
         $destHost = $this->selectedRealityDestHost
-            ?? RealityDestinations::normaliseHost((string) (ServerConfig::current()->reality_dest_host ?? ''));
-        $destLabel = RealityDestinations::label($destHost, includeLatency: false);
+            ?? RealityDestinationCatalog::normalizeHost((string) (ServerConfig::current()->reality_dest_host ?? ''));
+        $destLabel = RealityDestinationCatalog::displayLabel($destHost, includeLatency: false);
         $port = (int) $record->client_default_local_port;
         $body = "Username: {$record->username}\nUUID: {$this->generatedUuid}\nLocal SOCKS port: {$port}\nReality dest_host: {$destLabel}";
         $body .= "\nProtocol: ".SingBoxProtocolCatalog::modeSummary($this->selectedProtocols ?: $record->enabledProtocolKeys());

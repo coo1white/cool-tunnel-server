@@ -13,11 +13,11 @@ use Tests\TestCase;
 final class SingBoxProtocolCatalogTest extends TestCase
 {
     #[Test]
-    public function normalise_selected_accepts_filament_boolean_maps(): void
+    public function normalize_selected_accepts_filament_boolean_maps(): void
     {
         $this->assertSame(
             ['vless_reality'],
-            SingBoxProtocolCatalog::normaliseSelected([
+            SingBoxProtocolCatalog::normalizeSelected([
                 'vless_reality' => true,
                 'shadowsocks' => false,
                 'tor' => true,
@@ -25,13 +25,13 @@ final class SingBoxProtocolCatalogTest extends TestCase
         );
         $this->assertSame(
             [],
-            SingBoxProtocolCatalog::normaliseSelected(['tor' => true]),
+            SingBoxProtocolCatalog::normalizeSelected(['tor' => true]),
             'Rows that only contain retired modes must not silently gain VLESS access.',
         );
     }
 
     #[Test]
-    public function unknown_keys_are_reported_before_normalisation_drops_them(): void
+    public function unknown_keys_are_reported_before_normalization_drops_them(): void
     {
         $this->assertSame(
             ['shadowsocks', 'definitely-not-singbox'],
@@ -42,7 +42,7 @@ final class SingBoxProtocolCatalogTest extends TestCase
     #[Test]
     public function empty_submitted_form_state_can_skip_the_legacy_default(): void
     {
-        $this->assertSame([], SingBoxProtocolCatalog::normaliseSelected([], defaultWhenEmpty: false));
+        $this->assertSame([], SingBoxProtocolCatalog::normalizeSelected([], defaultWhenEmpty: false));
     }
 
     #[Test]

@@ -178,7 +178,7 @@ class ProxyAccount extends Model
     /** @return list<string> */
     public function enabledProtocolKeys(): array
     {
-        return SingBoxProtocolCatalog::normaliseSelected(
+        return SingBoxProtocolCatalog::normalizeSelected(
             $this->enabled_protocols,
             defaultWhenEmpty: false,
         );
@@ -204,7 +204,7 @@ class ProxyAccount extends Model
             $defaultWhenEmpty = ! $account->exists
                 && SingBoxProtocolCatalog::invalidKeys($account->enabled_protocols) === [];
 
-            $account->enabled_protocols = SingBoxProtocolCatalog::normaliseSelected(
+            $account->enabled_protocols = SingBoxProtocolCatalog::normalizeSelected(
                 $account->enabled_protocols,
                 defaultWhenEmpty: $defaultWhenEmpty,
             );

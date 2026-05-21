@@ -8,6 +8,8 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\ProxyAccountResource\Pages;
 use App\Models\ProxyAccount;
+use App\Models\ServerConfig;
+use App\Support\RealityDestinationCatalog;
 use App\Support\SingBoxProtocolCatalog;
 use App\Support\SingBoxRenderConfirmation;
 use Filament\Forms;
@@ -100,11 +102,33 @@ class ProxyAccountResource extends Resource
                         )),
                 ]),
 
+            Forms\Components\Section::make('Reality destination')
+                ->schema([
+                    Forms\Components\Placeholder::make('reality_dest_host_current')
+                        ->key('reality_dest_host_current')
+                        ->label('Website')
+                        ->content(fn (): string => self::realityDestinationSummary()),
+                ]),
+
             Forms\Components\Placeholder::make('uuid_note')
                 ->label('UUID')
                 ->content('A fresh UUID is generated on create and shown once.')
                 ->visibleOn('create'),
         ]);
+    }
+
+    private static function realityDestinationSummary(): string
+    {
+        $host = RealityDestinationCatalog::normalizeHost(
+            (string) (ServerConfig::current()->reality_dest_host ?? ''),
+        );
+        $snapshot = RealityDestinationCatalog::cachedLatency($host);
+
+        return RealityDestinationCatalog::displayLabel(
+            $host,
+            is_int($snapshot['latency_ms']) ? $snapshot['latency_ms'] : null,
+            checkedAt: is_int($snapshot['checked_at']) ? $snapshot['checked_at'] : null,
+        );
     }
 
     public static function table(Table $table): Table
