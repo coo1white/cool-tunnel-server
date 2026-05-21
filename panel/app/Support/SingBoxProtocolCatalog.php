@@ -41,7 +41,7 @@ final class SingBoxProtocolCatalog
     }
 
     /** @return list<string> */
-    public static function normaliseSelected(mixed $value, bool $defaultWhenEmpty = true): array
+    public static function normalizeSelected(mixed $value, bool $defaultWhenEmpty = true): array
     {
         $rawKeys = self::rawKeys($value);
         $keys = [];
@@ -77,7 +77,7 @@ final class SingBoxProtocolCatalog
     {
         $rendered = [];
 
-        foreach (self::normaliseSelected($value, $defaultWhenEmpty) as $key) {
+        foreach (self::normalizeSelected($value, $defaultWhenEmpty) as $key) {
             $definition = self::DEFINITIONS[$key] ?? null;
             if ($definition === null) {
                 continue;
@@ -103,7 +103,7 @@ final class SingBoxProtocolCatalog
         ?string $realityDestHost = null,
     ): array {
         $entries = [];
-        foreach (self::normaliseSelected($selected) as $key) {
+        foreach (self::normalizeSelected($selected) as $key) {
             $entries[] = self::manifestEntry($key, $config, $realityDestHost);
         }
 
@@ -143,8 +143,8 @@ final class SingBoxProtocolCatalog
         ?string $realityDestHost,
     ): ?array {
         if ($key === self::VLESS_REALITY) {
-            $host = RealityDestinations::normaliseHost(
-                (string) ($realityDestHost ?: ($config->reality_dest_host ?? RealityDestinations::DEFAULT_HOST)),
+            $host = RealityDestinationCatalog::normalizeHost(
+                (string) ($realityDestHost ?: ($config->reality_dest_host ?? RealityDestinationCatalog::DEFAULT_HOST)),
             );
 
             return $host === '' ? null : ['host' => $host, 'port' => 443];
