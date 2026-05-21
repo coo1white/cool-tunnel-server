@@ -35,7 +35,7 @@ class Version extends Command
             return self::FAILURE;
         }
 
-        $this->line("Cool Tunnel Panel {$version}");
+        $this->line("cool-tunnel-server panel {$version}");
 
         return self::SUCCESS;
     }

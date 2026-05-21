@@ -105,7 +105,7 @@ class CreateProxyAccount extends CreateRecord
         $body = "Username: {$record->username}\nUUID: {$this->generatedUuid}\nLocal SOCKS port: {$port}\nReality dest_host: {$destLabel}";
         $body .= "\nProtocol: ".SingBoxProtocolCatalog::modeSummary($this->selectedProtocols ?: $record->enabledProtocolKeys());
         if ($subUrl !== null) {
-            $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
+            $body .= "\n\nSubscription URL is ready. Use Copy URL, then import it in the app.";
         }
         $body .= $this->renderConfirmed
             ? "\n\nsing-box config rendered now; the URL is ready to import."
@@ -114,12 +114,13 @@ class CreateProxyAccount extends CreateRecord
         $actions = [];
         if ($subUrl !== null) {
             $jsUrl = json_encode($subUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $copyHandler = "if (navigator.clipboard?.writeText) { navigator.clipboard.writeText({$jsUrl}).catch(() => window.prompt('Copy subscription URL', {$jsUrl})); } else { window.prompt('Copy subscription URL', {$jsUrl}); }";
             $actions[] = Action::make('copy_subscription_url')
                 ->label('Copy URL')
                 ->icon('heroicon-o-clipboard')
                 ->color('gray')
                 ->extraAttributes([
-                    'x-on:click' => "navigator.clipboard?.writeText({$jsUrl})",
+                    'x-on:click' => $copyHandler,
                 ]);
         }
 

@@ -1,4 +1,4 @@
-# Cool Tunnel Server — operator + developer Makefile.
+# cool-tunnel-server — operator + developer Makefile.
 #
 # `make help` prints every target with a short description. Each
 # target is short and assumes you've read the corresponding script
@@ -243,11 +243,33 @@ manifests-jq: ## jq parse every manifests/*.json
 	@for f in manifests/*.json; do jq . "$$f" >/dev/null || { echo "bad json: $$f"; exit 1; }; done
 	@echo "    manifests-jq: clean"
 
+.PHONY: client-runtime-manifest
+client-runtime-manifest: ## verify portable client runtime catalog stays server-owned
+	@scripts/verify-client-runtime-manifest.sh
+
 .PHONY: manifest-lockstep
-manifest-lockstep: ## verify manifest pins match local deployment sources
+manifest-lockstep: client-runtime-manifest ## verify manifest pins match local deployment sources
 	@credential_pin=$$(jq -r '.version' manifests/credential-lock.upstream.json); \
 	if [ "$$credential_pin" != "db=rendered=manifest=mac-config" ]; then \
 	    echo "credential-lock manifest drift: $$credential_pin" >&2; \
+	    exit 1; \
+	fi
+	@core_v=$$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' core/Cargo.toml | head -1); \
+	operator_v=$$(jq -r '.version' operator/package.json); \
+	panel_v=$$(sed -n "s/.*'version'[[:space:]]*=>[[:space:]]*'\([^']*\)'.*/\1/p" panel/config/cool-tunnel.php | head -1); \
+	for f in manifests/ct-protocol.upstream.json manifests/ct-server-core.upstream.json manifests/panel.upstream.json; do \
+	    v=$$(jq -r '.version' "$$f"); \
+	    if [ "$$v" != "$$core_v" ]; then \
+	        echo "$$f version drift: $$v != $$core_v" >&2; \
+	        exit 1; \
+	    fi; \
+	done; \
+	if [ "$$operator_v" != "$$core_v" ]; then \
+	    echo "operator/package.json version drift: $$operator_v != $$core_v" >&2; \
+	    exit 1; \
+	fi; \
+	if [ "$$panel_v" != "$$core_v" ]; then \
+	    echo "panel/config/cool-tunnel.php version drift: $$panel_v != $$core_v" >&2; \
 	    exit 1; \
 	fi
 	@echo "    manifest-lockstep: clean"

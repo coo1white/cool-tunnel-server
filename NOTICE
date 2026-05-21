@@ -1,4 +1,4 @@
-Cool Tunnel Server
+cool-tunnel-server
 Copyright (C) 2026 coolwhite LLC. All Rights Reserved.
 
 The original code in this repository — the Filament/Laravel panel
@@ -8,7 +8,7 @@ the operator-facing scripts under scripts/, and the documentation
 under docs/ — is licensed under the GNU Affero General Public
 License v3.0 only (AGPL-3.0-only). See LICENSE.
 
-Cool Tunnel Server is operated and maintained by coolwhite LLC.
+cool-tunnel-server is operated and maintained by coolwhite LLC.
 This project belongs to the community: coolwhite LLC chooses
 transparency over profit, and freedom over control.
 
@@ -96,12 +96,12 @@ under the same licence terms. Pinning the upstream version in
 manifests/sing-box.upstream.json + linking to the upstream tag in
 this NOTICE is sufficient because we ship sing-box unmodified; if
 you ever modify sing-box's source you must distribute your modified
-source under GPL-3.0. AGPL-3.0-only (Cool Tunnel Server's own
+source under GPL-3.0. AGPL-3.0-only (cool-tunnel-server's own
 license) is GPL-3-compatible — running sing-box as a separate
 process from ct-server-core remains the cleanest model.
 
-AGPL-3.0-only § 13 — Network-source-disclosure (Cool Tunnel
-Server itself): if you operate a modified version of Cool Tunnel
+AGPL-3.0-only § 13 — Network-source-disclosure (cool-tunnel-server
+itself): if you operate a modified version of cool-tunnel-server
 Server as a network service (e.g. a paid proxy hosted for users),
 you must make the modified source code available to those users.
 Pin the upstream tag and offer the source URL. Running the stock

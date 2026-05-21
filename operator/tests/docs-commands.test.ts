@@ -23,7 +23,7 @@ test("bootstrap script advertises and explains the Homebrew-style flow", async (
     const text = await Bun.file("../scripts/bootstrap.sh").text();
     expect(text).toContain(LATEST_RELEASE_LINE);
     expect(text).toContain(BREW_STYLE_BOOTSTRAP);
-    expect(text).toContain("Cool Tunnel Server bootstrap will:");
+    expect(text).toContain("cool-tunnel-server bootstrap will:");
     expect(text).toContain("Press RETURN/ENTER to continue");
 });
 

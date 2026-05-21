@@ -53,6 +53,14 @@ interface CheckCtx {
 
 type CheckFn = (c: CheckCtx) => Promise<CheckLine>;
 type ComposePsRow = Record<string, string>;
+type DirectDialCheck = {
+    readonly ok: boolean;
+    readonly detail: string;
+};
+type SupervisordCheck = {
+    readonly severity: Severity;
+    readonly detail: string;
+};
 
 export function indexComposeRowsByService(output: string): Map<string, ComposePsRow> {
     const rowsByService = new Map<string, ComposePsRow>();
@@ -71,6 +79,48 @@ export function indexComposeRowsByService(output: string): Map<string, ComposePs
     }
 
     return rowsByService;
+}
+
+function stringFromPath(record: Record<string, unknown>, path: readonly string[]): string {
+    let value: unknown = record;
+    for (const key of path) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return "";
+        value = (value as Record<string, unknown>)[key];
+    }
+    return typeof value === "string" ? value : "";
+}
+
+export function checkDirectDialOutbound(direct: Record<string, unknown>): DirectDialCheck {
+    const legacyStrategy = stringFromPath(direct, ["domain_strategy"]);
+    const resolverStrategy = stringFromPath(direct, ["domain_resolver", "strategy"]);
+    const strategy = resolverStrategy || legacyStrategy;
+    const strategyField = resolverStrategy ? "domain_resolver.strategy" : "domain_strategy";
+    const connect = String(direct["connect_timeout"] ?? "");
+    const fallback = String(direct["fallback_delay"] ?? "");
+    const timing = `connect_timeout=${connect || "-"} fallback_delay=${fallback || "-"}`;
+
+    if (strategy) {
+        return {
+            ok: strategy === "prefer_ipv4" || strategy === "ipv4_only",
+            detail: `${strategyField}=${strategy} ${timing}`,
+        };
+    }
+
+    return { ok: false, detail: `no direct dial domain strategy (${timing})` };
+}
+
+export function checkSupervisordStatusOutput(output: string): SupervisordCheck {
+    const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+    const total = lines.length;
+    const running = lines.filter((l) => l.split(/\s+/)[1] === "RUNNING").length;
+
+    if (total > 0 && running === total) {
+        return { severity: "pass", detail: `${running}/${total} programs running` };
+    }
+    if (running > 0) {
+        return { severity: "warn", detail: `${running}/${total} programs running` };
+    }
+    return { severity: "fail", detail: `0/${total} programs running` };
 }
 
 // ---------- individual checks (port of doctor.sh) -------------------------
@@ -382,20 +432,15 @@ async function checkSingboxDirectStrategy(_c: CheckCtx): Promise<CheckLine> {
     }
     try {
         const direct = JSON.parse(r.stdout.trim().split("\n")[0]!) as Record<string, unknown>;
-        const strategy = String(direct["domain_strategy"] ?? "");
-        const connect = String(direct["connect_timeout"] ?? "");
-        const fallback = String(direct["fallback_delay"] ?? "");
-        const detail = strategy
-            ? `domain_strategy=${strategy} connect_timeout=${connect || "-"} fallback_delay=${fallback || "-"}`
-            : "no domain_strategy in rendered direct outbound";
-        if (strategy === "prefer_ipv4" || strategy === "ipv4_only") {
-            return { group: G_LATENCY, label: "Direct dial", severity: "pass", detail };
+        const checked = checkDirectDialOutbound(direct);
+        if (checked.ok) {
+            return { group: G_LATENCY, label: "Direct dial", severity: "pass", detail: checked.detail };
         }
         return {
             group: G_LATENCY,
             label: "Direct dial",
             severity: "warn",
-            detail,
+            detail: checked.detail,
             hint: "Set SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4 or ipv4_only, then ./ct render singbox",
         };
     } catch {
@@ -465,36 +510,34 @@ async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function checkSupervisord(_c: CheckCtx): Promise<CheckLine> {
-    const r = await capture($`docker compose exec -T panel supervisorctl status`);
+    const r = await capture($`docker compose exec -T panel supervisorctl -c /etc/supervisord.conf status`);
     if (!r.ok) {
         return {
             group: G_COMPOSE,
             label: "Supervisord",
             severity: "warn",
             detail: "could not query supervisorctl in panel",
-            hint: "docker compose ps panel; docker compose exec panel supervisorctl status",
+            hint: "docker compose ps panel; docker compose exec panel supervisorctl -c /etc/supervisord.conf status",
         };
     }
-    const lines = r.stdout.split("\n").filter((l) => l.trim());
-    const total = lines.length;
-    const running = lines.filter((l) => l.split(/\s+/)[1] === "RUNNING").length;
-    if (running === 5 && total === 5) {
-        return { group: G_COMPOSE, label: "Supervisord", severity: "pass", detail: "5/5 programs running" };
+    const checked = checkSupervisordStatusOutput(r.stdout);
+    if (checked.severity === "pass") {
+        return { group: G_COMPOSE, label: "Supervisord", severity: "pass", detail: checked.detail };
     }
-    if (running > 0) {
+    if (checked.severity === "warn") {
         return {
             group: G_COMPOSE,
             label: "Supervisord",
             severity: "warn",
-            detail: `${running}/${total} programs running`,
-            hint: "docker compose exec panel supervisorctl status",
+            detail: checked.detail,
+            hint: "docker compose exec panel supervisorctl -c /etc/supervisord.conf status",
         };
     }
     return {
         group: G_COMPOSE,
         label: "Supervisord",
         severity: "fail",
-        detail: `0/${total} programs running`,
+        detail: checked.detail,
         hint: "docker compose logs --tail=80 panel",
     };
 }
@@ -654,7 +697,7 @@ export class DoctorTask implements Task {
         const c: CheckCtx = { run: ctx, env };
 
         const ts = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-        process.stdout.write(`${BOLD}Cool Tunnel Server — Doctor${RESET}\n`);
+        process.stdout.write(`${BOLD}cool-tunnel-server — Doctor${RESET}\n`);
         process.stdout.write(`${BOLD} (date ${ts}, host ${hostname()})${RESET}\n`);
 
         const grouped = new Map<string, CheckLine[]>();

@@ -32,7 +32,6 @@ use Tests\TestCase;
 //     issued_at, expires_at,
 //     ?note,
 //     ?server_singbox_pin: { upstream_tag },
-//     ?client_runtime: { plugins: { sing-box, cool-tunnel-core } },
 //     signature: <hex>
 //   }
 //
@@ -181,6 +180,17 @@ class SubscriptionContractTest extends TestCase
         $runtime = $decoded['client_runtime'];
 
         $this->assertSame('client-runtime', $runtime['name']);
+        $this->assertSame('portable-runtime', $runtime['kind']);
+        $this->assertSame(1, $runtime['schema_version']);
+        $this->assertSame(
+            [
+                'repo' => 'https://github.com/coo1white/cool-tunnel-server',
+                'release_tag' => 'v'.$runtime['version'],
+                'checksum_asset' => 'SHA256SUMS',
+            ],
+            $runtime['authority'],
+            'runtime catalog must describe the server release that owns all plugin bytes',
+        );
         $this->assertSame(
             ['cool-tunnel-core', 'sing-box'],
             collect(array_keys($runtime['plugins']))->sort()->values()->all(),
@@ -200,6 +210,10 @@ class SubscriptionContractTest extends TestCase
             );
 
             $asset = $runtime['plugins'][$plugin]['assets']['darwin-universal'];
+            $this->assertSame('darwin-universal', $asset['platform']);
+            $this->assertSame('darwin', $asset['os']);
+            $this->assertSame('universal', $asset['arch']);
+            $this->assertSame(basename(parse_url($asset['url'], PHP_URL_PATH)), $asset['filename']);
             $this->assertStringStartsWith(
                 'https://github.com/coo1white/cool-tunnel-server/releases/download/',
                 $asset['url'],
@@ -215,6 +229,17 @@ class SubscriptionContractTest extends TestCase
             $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $asset['sha256']);
             $this->assertGreaterThan(1024 * 1024, $asset['size_bytes']);
         }
+
+        $this->assertSame(
+            'https://github.com/SagerNet/sing-box',
+            $runtime['plugins']['sing-box']['source']['repo'],
+        );
+        $this->assertSame('v1.13.12', $runtime['plugins']['sing-box']['source']['ref']);
+        $this->assertSame(
+            'https://github.com/coo1white/cool-tunnel',
+            $runtime['plugins']['cool-tunnel-core']['source']['repo'],
+        );
+        $this->assertSame('v3.0.6', $runtime['plugins']['cool-tunnel-core']['source']['ref']);
 
         $sig = $decoded['signature'];
         unset($decoded['signature']);

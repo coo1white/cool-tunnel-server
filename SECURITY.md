@@ -1,6 +1,6 @@
 # Security policy
 
-Cool Tunnel Server is a self-hosted proxy stack. By design it
+cool-tunnel-server is a self-hosted proxy stack. By design it
 processes traffic on behalf of users and holds the credential store
 that authorises that traffic. Vulnerabilities in this codebase
 matter and we treat reports seriously.
@@ -62,7 +62,7 @@ high, **90 days** for medium / low.
 | **Supply-chain integrity** | A pinned manifest's verifier passing on a tampered binary |
 | **Denial-of-service** | An unauthed CONNECT or panel request that takes down sing-box / panel / db |
 | **Information leak via probe** | An unauthed probe that fingerprints us as a proxy despite probe-resistance settings |
-| **Cover-site invariant violation** | Any wire-level shape that distinguishes a Cool Tunnel Server from a static-website host of the same hosting class — distinct status, response time, body length, headers (`Server`, `X-Powered-By`), missing/present validators (`ETag`, `Last-Modified`) on `/api/v1/subscription/<garbage>` vs `/random-path`, 429 vs 200 on rate-limit hit, or exception traces under any failure mode. (v0.0.14 lifted this to a hard release-blocking property.) |
+| **Cover-site invariant violation** | Any wire-level shape that distinguishes cool-tunnel-server from a static-website host of the same hosting class — distinct status, response time, body length, headers (`Server`, `X-Powered-By`), missing/present validators (`ETag`, `Last-Modified`) on `/api/v1/subscription/<garbage>` vs `/random-path`, 429 vs 200 on rate-limit hit, or exception traces under any failure mode. (v0.0.14 lifted this to a hard release-blocking property.) |
 
 ## What's out of scope
 

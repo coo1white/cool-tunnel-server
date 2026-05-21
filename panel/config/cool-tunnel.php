@@ -11,7 +11,7 @@ declare(strict_types=1);
 // `version` is the panel's own release-of-record. Read by the
 // `ct:version` artisan command (Cycle 2 drift-detection probe in
 // manifests/panel.upstream.json::verify) and surfaced to the
-// component-check matcher as `Cool Tunnel Panel <version>`. Must
+// component-check matcher as `cool-tunnel-server panel <version>`. Must
 // match `manifests/panel.upstream.json::version` — `make
 // set-version V=X.Y.Z` updates both atomically. NOT operator-
 // editable; not env-driven; bumped only at release cut time.
@@ -64,7 +64,7 @@ return [
         'ACME_DIRECTORY',
         'https://acme-v02.api.letsencrypt.org/directory'
     ),
-    'version' => '0.4.14',
+    'version' => '0.4.15',
     'singbox_direct_domain_strategy' => env('SINGBOX_DIRECT_DOMAIN_STRATEGY', 'prefer_ipv4'),
     'singbox_direct_connect_timeout' => env('SINGBOX_DIRECT_CONNECT_TIMEOUT', '2s'),
     'singbox_direct_fallback_delay' => env('SINGBOX_DIRECT_FALLBACK_DELAY', '100ms'),

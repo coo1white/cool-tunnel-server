@@ -27,6 +27,7 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/runtime"
           CORE_REF="${CORE_REF:-$(jq -r '.plugins["cool-tunnel-core"].source.ref' manifests/client-runtime.upstream.json)}"
+          SERVER_TAG="${GITHUB_REF_NAME}"
           git clone --depth 1 --branch "$CORE_REF" https://github.com/coo1white/cool-tunnel.git /tmp/cool-tunnel-client
           cd /tmp/cool-tunnel-client/core
           cargo build --locked --release --target aarch64-apple-darwin --bin cool-tunnel-core
@@ -34,8 +35,8 @@ jobs:
           lipo -create \
             target/aarch64-apple-darwin/release/cool-tunnel-core \
             target/x86_64-apple-darwin/release/cool-tunnel-core \
-            -output "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.6-universal"
-          codesign --force --sign - --timestamp=none "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.6-universal"
+            -output "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-${SERVER_TAG}"
+          codesign --force --sign - --timestamp=none "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-${SERVER_TAG}"
 
       - name: Build server-published sing-box universal plugin
         run: |
@@ -52,13 +53,13 @@ jobs:
           codesign --force --sign - --timestamp=none "runtime/sing-box-${TAG}-darwin-universal"
           rm -rf runtime/arm64 runtime/x64 runtime/sing-box-arm64.tar.gz runtime/sing-box-x64.tar.gz
 
-      - name: Stage runtime artifacts
+      - name: Stage runtime checksums
         run: |
-          shasum -a 256 \
-            runtime/sing-box-*-darwin-universal \
-            runtime/cool-tunnel-core-*-universal \
-            > runtime/SHA256SUMS.client-runtime
-          cat runtime/SHA256SUMS.client-runtime
+          (cd runtime && shasum -a 256 \
+            sing-box-*-darwin-universal \
+            cool-tunnel-core-v*) \
+            > runtime/SHA256SUMS.runtime
+          cat runtime/SHA256SUMS.runtime
 
       - name: Upload runtime plugins to server release
         uses: softprops/action-gh-release@v2
@@ -66,5 +67,21 @@ jobs:
           tag_name: ${{ github.ref_name }}
           files: |
             runtime/sing-box-*-darwin-universal
-            runtime/cool-tunnel-core-*-universal
-            runtime/SHA256SUMS.client-runtime
+            runtime/cool-tunnel-core-v*
+
+      - name: Merge runtime checksums into single release SHA256SUMS
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern SHA256SUMS \
+            --dir runtime/checksums \
+            --clobber
+          cat runtime/checksums/SHA256SUMS runtime/SHA256SUMS.runtime \
+            | awk 'NF && !seen[$2]++' \
+            > runtime/SHA256SUMS
+          gh release upload "${GITHUB_REF_NAME}" runtime/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber

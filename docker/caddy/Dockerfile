@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Cool Tunnel Server — Caddy front door (v0.4.0+).
+# cool-tunnel-server — Caddy front door (v0.4.0+).
 #
 # Architecture evolution:
 #

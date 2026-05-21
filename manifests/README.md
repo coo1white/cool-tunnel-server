@@ -18,11 +18,11 @@ desktop client.
 | `ct-server-core.upstream.json` | The Rust engine binary | Versioned alongside the panel |
 | `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform contract |
 | `panel.upstream.json` | The Filament + Laravel container | Boot-check via artisan |
+| `client-runtime.upstream.json` | Portable client runtime catalog | Server-owned `sing-box` + `cool-tunnel-core` package for macOS today and future Android / Windows / iOS / Linux clients |
 | `mariadb.upstream.json` | The DB container | Major-version drift is a flag |
 | `redis.upstream.json` | Cache, sessions, and Messenger queues | Same |
 | `credential-lock.upstream.json` | Credential-lock guard | Deployment invariant |
 | `doh-resolver.upstream.json` | DoH resolver reachability | Captive-portal / poisoner catch |
-| `client-runtime.upstream.json` | Client `sing-box` + `cool-tunnel-core` plugins | Server-authoritative runtime pair consumed by clients |
 
 ## OK / NG check
 
@@ -61,3 +61,14 @@ back the image and surfaces the diagnostic.
 
 Because the same files are read by Rust (server + every client) and
 PHP (Filament panel widget). JSON is the lowest common denominator.
+
+## Portable Runtime Catalog
+
+`client-runtime.upstream.json` is the public runtime package contract.
+The server owns the bytes for `sing-box` and `cool-tunnel-core`; clients
+only consume release assets from `coo1white/cool-tunnel-server`, verify
+them against the same `SHA256SUMS`, and install the platform asset they
+understand. macOS currently consumes `darwin-universal`; future Android,
+Windows, iOS, and Linux clients should add new platform keys without
+changing the two plugin names or moving authority back into a client
+release.

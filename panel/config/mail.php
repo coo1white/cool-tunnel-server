@@ -30,7 +30,7 @@ return [
     ],
     'from' => [
         'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
-        'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Cool Tunnel Server')),
+        'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'cool-tunnel-server')),
     ],
     'markdown' => [
         'theme' => env('MAIL_MARKDOWN_THEME', 'default'),

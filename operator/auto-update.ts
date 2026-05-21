@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/auto-update.ts — unattended release-pulling agent (cron-safe).
 //
-// Unattended Cool Tunnel release-pulling agent. Fetches the latest
+// Unattended cool-tunnel-server release-pulling agent. Fetches the latest
 // release tag, compares it to the deployed version, and if the
 // stack is healthy + behind runs `./ct update` to bring it
 // forward. Designed to be cron-safe.

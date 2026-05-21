@@ -1,7 +1,7 @@
 # Third-Party Licences
 
 This file lists the licences of every third-party component the
-Cool Tunnel Server stack builds, runs, or links against. The
+cool-tunnel-server stack builds, runs, or links against. The
 original code in this repository is **AGPL-3.0-only**, Copyright
 (C) 2026 coolwhite LLC (see [LICENSE](./LICENSE)); the components
 below are under their own upstream terms, and those terms must
@@ -22,7 +22,7 @@ directories that come pre-populated by Debian / Alpine.
 > in `manifests/sing-box.upstream.json`).
 >
 > **Network-source-disclosure (AGPL § 13).** If you operate a
-> modified version of Cool Tunnel Server as a network service
+> modified version of cool-tunnel-server as a network service
 > (e.g. a paid proxy hosted for users), AGPL § 13 requires you
 > to make the modified source code available to those users.
 > Pin the upstream tag and offer the source URL. Running the
