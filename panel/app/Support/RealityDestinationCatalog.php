@@ -121,7 +121,9 @@ final class RealityDestinationCatalog
             return "{$meta['name']} ({$host}) - {$meta['region']}";
         }
 
-        $latency = $latencyMs === null ? 'latency not checked' : "{$latencyMs} ms";
+        $latency = $latencyMs === null
+            ? ($checkedAt === null ? 'latency not checked' : 'latency check failed')
+            : "{$latencyMs} ms";
         if ($checkedAt !== null) {
             $latency .= ' checked '.date('H:i', $checkedAt);
         }
@@ -208,6 +210,18 @@ final class RealityDestinationCatalog
         }
 
         return $results;
+    }
+
+    public static function warmCatalogLatenciesIfMissing(?string $currentHost = null): void
+    {
+        $hosts = self::refreshHostnames($currentHost);
+        foreach ($hosts as $host) {
+            if (self::cachedLatency($host)['checked_at'] === null) {
+                self::refreshCatalogLatencies($currentHost);
+
+                return;
+            }
+        }
     }
 
     public static function latencyStatusText(?string $host): string

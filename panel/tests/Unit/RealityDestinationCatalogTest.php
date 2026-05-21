@@ -101,6 +101,10 @@ final class RealityDestinationCatalogTest extends TestCase
         RealityDestinationCatalog::useLatencyProbeForTests(fn (): ?int => null);
         RealityDestinationCatalog::refreshHostLatency('www.github.com');
         $this->assertStringContainsString('Last latency check failed at ', RealityDestinationCatalog::latencyStatusText('www.github.com'));
+        $this->assertStringContainsString(
+            'latency check failed checked',
+            RealityDestinationCatalog::selectOptions('www.github.com', includeCachedLatency: true)['www.github.com'],
+        );
     }
 
     #[Test]
@@ -118,5 +122,21 @@ final class RealityDestinationCatalogTest extends TestCase
         $this->assertCount(count(RealityDestinationCatalog::hostnames()) + 1, $results);
         $this->assertSame($probed, array_keys($results));
         $this->assertSame(77, RealityDestinationCatalog::cachedLatency('cover.example.com')['latency_ms']);
+    }
+
+    #[Test]
+    public function warmup_refreshes_catalog_only_when_latency_cache_is_empty(): void
+    {
+        RealityDestinationCatalog::useLatencyProbeForTests(fn (string $host): int => $host === 'www.apple.com' ? 29 : 13);
+
+        RealityDestinationCatalog::warmCatalogLatenciesIfMissing('www.apple.com');
+
+        $this->assertSame(29, RealityDestinationCatalog::cachedLatency('www.apple.com')['latency_ms']);
+        $this->assertSame(13, RealityDestinationCatalog::cachedLatency('www.microsoft.com')['latency_ms']);
+
+        RealityDestinationCatalog::useLatencyProbeForTests(fn (): int => 999);
+        RealityDestinationCatalog::warmCatalogLatenciesIfMissing('www.apple.com');
+
+        $this->assertSame(29, RealityDestinationCatalog::cachedLatency('www.apple.com')['latency_ms']);
     }
 }

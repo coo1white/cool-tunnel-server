@@ -41,10 +41,11 @@ test("renderServerConfig produces a valid-shape VLESS+Reality inbound", () => {
 
 test("renderServerConfig defaults direct outbound to IPv4-preferred dial", () => {
     const cfg = renderServerConfig(SERVER_INPUT);
+    expect(cfg.dns?.servers).toEqual([{ type: "local", tag: "local-dns" }]);
     const direct = cfg.outbounds.find((o) => o.type === "direct");
     expect(direct).toBeDefined();
     if (direct?.type !== "direct") throw new Error("unreachable");
-    expect(direct.domain_strategy).toBe("prefer_ipv4");
+    expect(direct.domain_resolver).toEqual({ server: "local-dns", strategy: "prefer_ipv4" });
     expect(direct.connect_timeout).toBe("2s");
     expect(direct.fallback_delay).toBe("100ms");
 });
@@ -58,7 +59,7 @@ test("renderServerConfig accepts explicit direct outbound dial strategy", () => 
     });
     const direct = cfg.outbounds.find((o) => o.type === "direct");
     if (direct?.type !== "direct") throw new Error("unreachable");
-    expect(direct.domain_strategy).toBe("ipv4_only");
+    expect(direct.domain_resolver).toEqual({ server: "local-dns", strategy: "ipv4_only" });
     expect(direct.connect_timeout).toBe("1500ms");
     expect(direct.fallback_delay).toBe("50ms");
 });

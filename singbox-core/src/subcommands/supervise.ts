@@ -22,7 +22,7 @@
 // and the new TLS handshake state is fresh, which we want anyway.
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, statSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { basename, dirname } from "node:path";
 import { flagValue, integerFlagValue } from "../util/argv.ts";
@@ -100,9 +100,10 @@ type State = {
     child: Subprocess | null;
     configMtime: number;
     lastSpawnAt: number;
+    activeConfig: string | null;
 };
 
-const state: State = { child: null, configMtime: 0, lastSpawnAt: 0 };
+const state: State = { child: null, configMtime: 0, lastSpawnAt: 0, activeConfig: null };
 
 function log(level: "info" | "warn" | "error", msg: string, extra: Record<string, unknown> = {}) {
     console.log(JSON.stringify({ ts: new Date().toISOString(), level, msg, ...extra }));
@@ -116,19 +117,93 @@ function safeMtime(path: string): number {
     }
 }
 
-function validateConfig(singboxBin: string, configPath: string): boolean {
+type PreparedConfig = {
+    path: string;
+    migratedLegacyDomainStrategy: boolean;
+};
+
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stableRuntimeConfigPath(configPath: string): string {
+    return `/tmp/singbox-core-supervise/${basename(configPath)}`;
+}
+
+export function migrateLegacyDomainStrategyConfig(config: unknown): boolean {
+    if (!isRecord(config) || !Array.isArray(config["outbounds"])) return false;
+
+    let changed = false;
+    const outbounds = config["outbounds"];
+    for (const outbound of outbounds) {
+        if (!isRecord(outbound) || !("domain_strategy" in outbound)) continue;
+        const strategy = outbound["domain_strategy"];
+        if (!isRecord(outbound["domain_resolver"])) {
+            outbound["domain_resolver"] = {
+                server: "local-dns",
+                ...(typeof strategy === "string" && strategy !== "" ? { strategy } : {}),
+            };
+        }
+        delete outbound["domain_strategy"];
+        changed = true;
+    }
+
+    if (!changed) return false;
+
+    const dns = isRecord(config["dns"]) ? config["dns"] : {};
+    const servers = Array.isArray(dns["servers"]) ? dns["servers"] : [];
+    if (!servers.some((server) => isRecord(server) && server["tag"] === "local-dns")) {
+        servers.push({ type: "local", tag: "local-dns" });
+    }
+    dns["servers"] = servers;
+    config["dns"] = dns;
+    return true;
+}
+
+function prepareConfig(configPath: string): PreparedConfig | null {
+    try {
+        const raw = readFileSync(configPath, "utf8");
+        const parsed = JSON.parse(raw) as unknown;
+        if (!migrateLegacyDomainStrategyConfig(parsed)) {
+            return { path: configPath, migratedLegacyDomainStrategy: false };
+        }
+
+        const runtimePath = stableRuntimeConfigPath(configPath);
+        mkdirSync(dirname(runtimePath), { recursive: true });
+        writeFileSync(runtimePath, JSON.stringify(parsed, null, 2) + "\n", { mode: 0o644 });
+        log("warn", "legacy_domain_strategy_migrated", {
+            source_config: configPath,
+            runtime_config: runtimePath,
+        });
+        return { path: runtimePath, migratedLegacyDomainStrategy: true };
+    } catch (err) {
+        log("error", "config_prepare_failed", {
+            config: configPath,
+            error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+    }
+}
+
+function prepareAndValidateConfig(singboxBin: string, configPath: string): PreparedConfig | null {
+    const prepared = prepareConfig(configPath);
+    if (!prepared) return null;
+
     // `sing-box check -c <path>` exits 0 on a parseable + semantically
     // valid config. Pre-flight before respawn so a typo in the
     // panel-written config can't crashloop the supervisor.
-    const r = spawnSync(singboxBin, ["check", "-c", configPath], { encoding: "utf8" });
+    const r = spawnSync(singboxBin, ["check", "-c", prepared.path], { encoding: "utf8" });
     if (r.status !== 0) {
         log("error", "config_validate_failed", {
+            config: prepared.path,
             exit_code: r.status,
             stderr: (r.stderr || "").slice(0, 400),
         });
-        return false;
+        return null;
     }
-    return true;
+    return prepared;
 }
 
 async function killChild(child: Subprocess, reason: string): Promise<void> {
@@ -145,9 +220,9 @@ async function killChild(child: Subprocess, reason: string): Promise<void> {
     }
 }
 
-function spawnSingbox(args: ParsedArgs): void {
+function spawnSingbox(args: ParsedArgs, prepared: PreparedConfig): void {
     const child = spawn({
-        cmd: [args.singboxBin, "run", "-c", args.config],
+        cmd: [args.singboxBin, "run", "-c", prepared.path],
         stdout: "inherit",
         stderr: "inherit",
         onExit(_p, exitCode, signal) {
@@ -159,8 +234,14 @@ function spawnSingbox(args: ParsedArgs): void {
     });
     state.child = child;
     state.configMtime = safeMtime(args.config);
+    state.activeConfig = prepared.path;
     state.lastSpawnAt = Date.now();
-    log("info", "spawned_singbox", { pid: child.pid, config: args.config });
+    log("info", "spawned_singbox", {
+        pid: child.pid,
+        config: prepared.path,
+        source_config: args.config,
+        migrated_legacy_domain_strategy: prepared.migratedLegacyDomainStrategy,
+    });
 }
 
 let restartPending: ReturnType<typeof setTimeout> | null = null;
@@ -169,7 +250,8 @@ function scheduleRestart(args: ParsedArgs, reason: string): void {
     if (restartPending) clearTimeout(restartPending);
     restartPending = setTimeout(async () => {
         restartPending = null;
-        if (!validateConfig(args.singboxBin, args.config)) {
+        const prepared = prepareAndValidateConfig(args.singboxBin, args.config);
+        if (!prepared) {
             log("warn", "restart_skipped_invalid_config", { reason });
             return;
         }
@@ -177,7 +259,7 @@ function scheduleRestart(args: ParsedArgs, reason: string): void {
             await killChild(state.child, reason);
             state.child = null;
         }
-        spawnSingbox(args);
+        spawnSingbox(args, prepared);
     }, DEFAULTS.debounceMs);
 }
 
@@ -201,6 +283,7 @@ function startHealthz(args: ParsedArgs): void {
                 {
                     status: alive ? "ok" : "starting",
                     singbox_pid: state.child?.pid ?? null,
+                    active_config: state.activeConfig,
                     config_mtime: state.configMtime,
                     last_spawn_at: state.lastSpawnAt,
                 },
@@ -227,8 +310,11 @@ export async function runSupervise(argv: readonly string[]): Promise<number> {
     // time the container starts. Poll until it exists OR timeout.
     const deadline = Date.now() + args.bootTimeoutMs;
     while (Date.now() < deadline) {
-        if (existsSync(args.config) && validateConfig(args.singboxBin, args.config)) {
-            spawnSingbox(args);
+        const prepared = existsSync(args.config)
+            ? prepareAndValidateConfig(args.singboxBin, args.config)
+            : null;
+        if (prepared) {
+            spawnSingbox(args, prepared);
             // Watch the containing directory, not the config file's inode.
             // render-server writes via temp-file + rename, so watching the
             // file path can become blind after the first atomic replacement.
