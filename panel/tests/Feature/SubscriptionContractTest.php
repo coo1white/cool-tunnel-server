@@ -32,6 +32,7 @@ use Tests\TestCase;
 //     issued_at, expires_at,
 //     ?note,
 //     ?server_singbox_pin: { upstream_tag },
+//     ?client_runtime: { plugins: { sing-box, cool-tunnel-core } },
 //     signature: <hex>
 //   }
 //
@@ -157,6 +158,42 @@ class SubscriptionContractTest extends TestCase
 
         $decoded = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
         $this->assertSame(['upstream_tag' => 'v1.13.12'], $decoded['server_singbox_pin']);
+
+        $sig = $decoded['signature'];
+        unset($decoded['signature']);
+        $canonical = json_encode(
+            $decoded,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+        );
+        $this->assertSame(hash_hmac('sha256', $canonical, (string) config('app.key')), $sig);
+    }
+
+    #[Test]
+    public function manifest_emits_server_authoritative_client_runtime_catalog(): void
+    {
+        $this->seedActiveCover();
+        $account = ProxyAccount::factory()->create();
+
+        $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
+        $this->assertSame(200, $response->status());
+
+        $decoded = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+        $runtime = $decoded['client_runtime'];
+
+        $this->assertSame('client-runtime', $runtime['name']);
+        $this->assertArrayHasKey('sing-box', $runtime['plugins']);
+        $this->assertArrayHasKey('cool-tunnel-core', $runtime['plugins']);
+
+        foreach (['sing-box', 'cool-tunnel-core'] as $plugin) {
+            $asset = $runtime['plugins'][$plugin]['assets']['darwin-universal'];
+            $this->assertStringStartsWith(
+                'https://github.com/coo1white/cool-tunnel-server/releases/download/',
+                $asset['url'],
+                "{$plugin} must be fetched from server GitHub releases",
+            );
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $asset['sha256']);
+            $this->assertGreaterThan(0, $asset['size_bytes']);
+        }
 
         $sig = $decoded['signature'];
         unset($decoded['signature']);

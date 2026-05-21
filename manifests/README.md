@@ -22,6 +22,7 @@ desktop client.
 | `redis.upstream.json` | Cache, sessions, and Messenger queues | Same |
 | `credential-lock.upstream.json` | Credential-lock guard | Deployment invariant |
 | `doh-resolver.upstream.json` | DoH resolver reachability | Captive-portal / poisoner catch |
+| `client-runtime.upstream.json` | Client `sing-box` + `cool-tunnel-core` plugins | Server-authoritative runtime pair consumed by clients |
 
 ## OK / NG check
 

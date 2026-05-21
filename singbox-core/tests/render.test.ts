@@ -116,8 +116,10 @@ test("renderClientConfig produces a SOCKS inbound + VLESS outbound + utls finger
     expect(vlessOut.tls.utls?.fingerprint).toBe("chrome");
     expect(vlessOut.tls.reality.public_key).toBe(CLIENT_INPUT.reality_public_key);
 
+    expect(cfg.outbounds.map((o) => o.type)).toEqual(["vless", "direct", "block"]);
     // Route final must be the VLESS outbound so non-DNS traffic gets proxied.
     expect(cfg.route?.final).toBe("vless-out");
+    expect(cfg.route?.rules).toBeUndefined();
 });
 
 test("renderClientConfig rejects missing public_key or uuid", () => {

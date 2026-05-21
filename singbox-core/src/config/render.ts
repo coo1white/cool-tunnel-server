@@ -17,7 +17,6 @@ import type {
     SocksInbound,
     DirectOutbound,
     BlockOutbound,
-    DnsOutbound,
     RouteBlock,
     DirectDomainStrategy,
 } from "./types.ts";
@@ -188,10 +187,8 @@ export function renderClientConfig(input: ClientRenderInput): SingboxConfig {
 
     const directOut: DirectOutbound = { type: "direct", tag: "direct" };
     const blockOut: BlockOutbound = { type: "block", tag: "block" };
-    const dnsOut: DnsOutbound = { type: "dns", tag: "dns-out" };
 
     const route: RouteBlock = {
-        rules: [{ protocol: "dns", outbound: "dns-out" }],
         final: "vless-out",
         auto_detect_interface: true,
     };
@@ -199,7 +196,7 @@ export function renderClientConfig(input: ClientRenderInput): SingboxConfig {
     return {
         log: { level: input.log_level ?? "info", timestamp: true },
         inbounds: [socksIn],
-        outbounds: [vlessOut, directOut, blockOut, dnsOut],
+        outbounds: [vlessOut, directOut, blockOut],
         route,
     };
 }

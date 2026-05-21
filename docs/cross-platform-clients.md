@@ -109,6 +109,13 @@ For every release tagged here:
 
 - The exact `ct-protocol` version is published as a Cargo crate
   with a Semver-compatible bump only when the wire is unchanged.
+- The exact client runtime pair is published by this server repo:
+  `sing-box` and `cool-tunnel-core` are listed in
+  `manifests/client-runtime.upstream.json`, included in the signed
+  subscription manifest as `client_runtime`, and downloaded by
+  clients from `coo1white/cool-tunnel-server` release assets. Clients
+  must not independently update either runtime from SagerNet or from
+  the client repo.
 - The schema files in `manifests/*.upstream.json` are loadable by
   any release of `ct-protocol >= 0.0.1`.
 - The `/api/v1/subscription/<token>` endpoint always emits a body
