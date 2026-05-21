@@ -24,6 +24,16 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.14] — 2026-05-22 — Runtime asset digest sync
+
+### Fixed
+
+- Updated the server-authoritative client runtime catalog to the
+  workflow-produced `v0.4.14` runtime asset hashes and sizes, so
+  clients verify the exact bytes GitHub serves from the server release.
+
+---
+
 ## [0.4.13] — 2026-05-22 — Server-authoritative client runtime
 
 ### Added
