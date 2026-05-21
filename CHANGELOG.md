@@ -53,6 +53,9 @@ before relying on a version bump as a compatibility signal.
 - Published the server-owned `sing-box` and `cool-tunnel-core` runtime
   binaries alongside operator binaries, with one combined `SHA256SUMS`
   manifest for every uploaded binary.
+- Updated the server-authoritative client runtime catalog to the
+  workflow-produced `v0.4.14` runtime asset hashes and sizes, so
+  clients verify the exact bytes GitHub serves from the server release.
 
 ---
 
