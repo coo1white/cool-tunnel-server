@@ -2,22 +2,25 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # scripts/bootstrap.sh — one-line bootstrap for Cool Tunnel Server.
 #
-# Designed to be the curl|bash target referenced in README.md. Walks
-# a fresh Debian 11/12/13 VPS from "just SSH'd in" → "ready to edit
-# .env and run install.sh" in a single network round-trip.
+# Designed to be the release-pinned curl|bash target referenced in
+# README.md. Walks a fresh Debian 11/12/13 VPS from "just SSH'd in"
+# → "ready to edit .env and run install.sh" in a single network
+# round-trip.
 #
 # Idempotent: re-running is a no-op if Docker is already installed,
 # the repo is already cloned, or .env already exists.
 #
 # Usage on a fresh VPS as root:
-#   curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
+#   LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
+#   curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh" | BRANCH="${LATEST}" bash
 #
 # Unattended mode (CI / Terraform / Ansible):
+#   LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
 #   DOMAIN=proxy.example.com \
 #   PANEL_DOMAIN=panel.proxy.example.com \
 #   ACME_EMAIL=ops@example.com \
 #   AUTO_INSTALL=1 \
-#   curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
+#   curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh" | BRANCH="${LATEST}" bash
 #
 # Override knobs (any can be set in the env before running):
 #   INSTALL_DIR (default /opt/cool-tunnel-server)

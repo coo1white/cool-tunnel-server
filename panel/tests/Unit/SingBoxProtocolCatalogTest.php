@@ -46,6 +46,20 @@ final class SingBoxProtocolCatalogTest extends TestCase
     }
 
     #[Test]
+    public function normalize_selected_deduplicates_while_preserving_order(): void
+    {
+        $this->assertSame(
+            ['vless_reality'],
+            SingBoxProtocolCatalog::normalizeSelected([
+                'vless_reality',
+                'VLESS_REALITY',
+                'shadowsocks',
+                'vless_reality',
+            ]),
+        );
+    }
+
+    #[Test]
     public function mode_summary_reports_only_core_protocol_state(): void
     {
         $this->assertSame(

@@ -45,10 +45,14 @@ final class SingBoxProtocolCatalog
     {
         $rawKeys = self::rawKeys($value);
         $keys = [];
+        $seen = [];
         foreach ($rawKeys as $key) {
-            if (array_key_exists($key, self::DEFINITIONS) && ! in_array($key, $keys, true)) {
-                $keys[] = $key;
+            if (! array_key_exists($key, self::DEFINITIONS) || isset($seen[$key])) {
+                continue;
             }
+
+            $seen[$key] = true;
+            $keys[] = $key;
         }
 
         if ($keys === [] && $rawKeys === [] && $defaultWhenEmpty) {

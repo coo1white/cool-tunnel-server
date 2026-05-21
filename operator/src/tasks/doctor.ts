@@ -52,6 +52,26 @@ interface CheckCtx {
 }
 
 type CheckFn = (c: CheckCtx) => Promise<CheckLine>;
+type ComposePsRow = Record<string, string>;
+
+export function indexComposeRowsByService(output: string): Map<string, ComposePsRow> {
+    const rowsByService = new Map<string, ComposePsRow>();
+    for (const line of output.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+            const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+            const service = parsed["Service"];
+            if (typeof service === "string" && service !== "" && !rowsByService.has(service)) {
+                rowsByService.set(service, parsed as ComposePsRow);
+            }
+        } catch {
+            // Ignore malformed compose rows; the health check reports missing services below.
+        }
+    }
+
+    return rowsByService;
+}
 
 // ---------- individual checks (port of doctor.sh) -------------------------
 
@@ -403,17 +423,12 @@ async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
             hint: "From the repo root: docker compose ps",
         };
     }
-    const rows: Array<Record<string, string>> = [];
-    for (const l of ps.stdout.split("\n")) {
-        const t = l.trim();
-        if (!t) continue;
-        try { rows.push(JSON.parse(t)); } catch { /* skip */ }
-    }
+    const rowsByService = indexComposeRowsByService(ps.stdout);
     let healthy = 0;
     const missing: string[] = [];
     const unhealthy: string[] = [];
     for (const svc of services) {
-        const row = rows.find((r) => r["Service"] === svc);
+        const row = rowsByService.get(svc);
         if (!row) { missing.push(svc); continue; }
         const state = row["State"] ?? "unknown";
         const health = row["Health"] ?? "";

@@ -24,6 +24,56 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.11] — 2026-05-21 — Subscription security and render performance
+
+This release hardens subscription URL revocation, privacy-safe public
+logging, operator binary provenance, and the hot account-render path.
+
+### Added
+
+- **Per-account subscription secrets.** New proxy accounts now get a
+  row-level subscription secret, allowing a single account URL to be
+  revoked without rotating the whole panel `APP_KEY`.
+- **Operator binary provenance checks.** Release-built operator binaries
+  are attested by GitHub Actions, and `fetch_operator_binary.sh` verifies
+  that attestation when `gh` is installed on the VPS.
+
+### Changed
+
+- **Active-account render paths now filter in SQL.** Sing-box rendering
+  and credential-lock checks use the shared active-account scope and
+  cursor-based iteration instead of hydrating every account before
+  filtering.
+- **Reality latency refresh uses socket-id lookup.** Concurrent latency
+  probes now resolve ready sockets in constant time, avoiding a nested
+  scan as the destination catalog grows.
+- **Protocol normalization deduplicates with a set.** Protocol choices
+  still preserve order while avoiding repeated linear scans.
+- **Fresh VPS bootstrap pins to the latest release.** Quickstart commands
+  resolve the latest GitHub release without requiring `jq` before the
+  bootstrap has installed system packages.
+
+### Fixed
+
+- **UUID regeneration now revokes old subscription URLs.** Rotating a
+  user's UUID also rotates the row subscription secret, so an old leaked
+  URL cannot fetch the newly generated credential.
+- **Legacy subscription URLs keep working after upgrade.** Existing rows
+  with no `subscription_secret` continue to verify with the old token
+  shape until the operator rotates that account.
+- **Public exception logging no longer amplifies scanner 404s.** Unknown
+  public API paths still return cover-site bytes and feed probe detection,
+  but they no longer emit one critical log per random URL.
+
+### Security
+
+- **Probe and public-route logs no longer store raw probe data.** Probe
+  alarms and public exception logs now store keyed fingerprints plus
+  lengths instead of raw source IPs, paths, user agents, or exception
+  messages.
+
+---
+
 ## [0.4.10] — 2026-05-20 — Protocol catalog combo
 
 This release pairs with `cool-tunnel` v3.0.5 and makes the web panel
@@ -11308,7 +11358,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.10...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.11...HEAD
+[0.4.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.7...v0.4.8

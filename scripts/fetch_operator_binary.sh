@@ -98,6 +98,19 @@ if [[ "$ACTUAL" != "$EXPECTED" ]]; then
     rm -f "$NEW"
     exit 1
 fi
+if command -v gh >/dev/null 2>&1; then
+    if ! gh attestation verify "$NEW" \
+        --repo coo1white/cool-tunnel-server \
+        --signer-workflow .github/workflows/operator-release.yml \
+        >/dev/null; then
+        echo "fetch_operator_binary: GitHub artifact attestation verification failed" >&2
+        rm -f "$NEW"
+        exit 1
+    fi
+    echo "fetch_operator_binary: verified GitHub artifact attestation."
+else
+    echo "fetch_operator_binary: gh not installed; verified SHA256 only (install gh for provenance checks)." >&2
+fi
 chmod +x "$NEW"
 mv -f "$NEW" "${BIN_DIR}/${TARGET}"
 echo "fetch_operator_binary: installed ${TARGET}."

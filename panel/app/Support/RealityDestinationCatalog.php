@@ -58,7 +58,7 @@ final class RealityDestinationCatalog
         $includeLatency = $measureLatency || $includeCachedLatency;
         $hosts = self::hostnames();
         $current = self::normalizeHost((string) $currentHost);
-        if ($current !== '' && ! in_array($current, $hosts, true) && self::isValidHostname($current)) {
+        if ($current !== '' && ! array_key_exists($current, self::CANDIDATES) && self::isValidHostname($current)) {
             $hosts[] = $current;
         }
 
@@ -271,7 +271,7 @@ final class RealityDestinationCatalog
     {
         $hosts = self::hostnames();
         $current = self::normalizeHost((string) $currentHost);
-        if ($current !== '' && ! in_array($current, $hosts, true) && self::isValidHostname($current)) {
+        if ($current !== '' && ! array_key_exists($current, self::CANDIDATES) && self::isValidHostname($current)) {
             $hosts[] = $current;
         }
 
@@ -286,6 +286,7 @@ final class RealityDestinationCatalog
     {
         $results = array_fill_keys($hosts, null);
         $pending = [];
+        $hostBySocketId = [];
         foreach ($hosts as $host) {
             $errno = 0;
             $errstr = '';
@@ -301,6 +302,7 @@ final class RealityDestinationCatalog
             }
 
             stream_set_blocking($socket, false);
+            $hostBySocketId[get_resource_id($socket)] = $host;
             $pending[$host] = [
                 'socket' => $socket,
                 'started_at' => hrtime(true),
@@ -323,18 +325,18 @@ final class RealityDestinationCatalog
             }
 
             foreach ($write as $socket) {
-                foreach ($pending as $host => $probe) {
-                    if ($probe['socket'] !== $socket) {
-                        continue;
-                    }
-
-                    if (self::asyncConnectSucceeded($socket)) {
-                        $results[$host] = max(1, (int) round((hrtime(true) - $probe['started_at']) / 1_000_000));
-                    }
-                    fclose($socket);
-                    unset($pending[$host]);
-                    break;
+                $socketId = get_resource_id($socket);
+                $host = $hostBySocketId[$socketId] ?? null;
+                if ($host === null || ! isset($pending[$host])) {
+                    continue;
                 }
+
+                $probe = $pending[$host];
+                if (self::asyncConnectSucceeded($socket)) {
+                    $results[$host] = max(1, (int) round((hrtime(true) - $probe['started_at']) / 1_000_000));
+                }
+                fclose($socket);
+                unset($pending[$host], $hostBySocketId[$socketId]);
             }
         }
 

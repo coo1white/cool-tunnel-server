@@ -10,6 +10,8 @@ use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -36,6 +38,18 @@ use Tests\TestCase;
 class CoverSiteInvariantTest extends TestCase
 {
     use RefreshDatabase;
+
+    /** @var array<int, array{level:string, message:string, context:array}> */
+    private array $logged = [];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->logged = [];
+        Event::listen(MessageLogged::class, function (MessageLogged $e): void {
+            $this->logged[] = ['level' => $e->level, 'message' => $e->message, 'context' => $e->context];
+        });
+    }
 
     private function seedActiveCover(): void
     {
@@ -125,12 +139,12 @@ class CoverSiteInvariantTest extends TestCase
 
         // Force a non-/admin route to throw. Easiest path: stub a
         // route that always raises, register it dynamically.
-        Route::get('/forced-failure-test', function () {
+        Route::get('/api/forced-failure-test', function () {
             throw new \RuntimeException('forced for test');
         });
 
         $cover = $this->coverSite();
-        $thrown = $this->get('/forced-failure-test');
+        $thrown = $this->get('/api/forced-failure-test');
 
         $thrown->assertStatus(200);
         $this->assertSame(
@@ -138,6 +152,16 @@ class CoverSiteInvariantTest extends TestCase
             $thrown->headers->get('Content-Type'),
         );
         $this->assertSame($cover->getContent(), $thrown->getContent());
+
+        $hits = array_values(array_filter(
+            $this->logged,
+            fn ($r) => str_contains($r['message'], 'public.route.exception'),
+        ));
+        $this->assertCount(1, $hits);
+        $this->assertArrayHasKey('path_hash', $hits[0]['context']);
+        $this->assertArrayHasKey('path_length', $hits[0]['context']);
+        $this->assertArrayNotHasKey('path', $hits[0]['context']);
+        $this->assertArrayNotHasKey('err', $hits[0]['context']);
     }
 
     /**
@@ -148,7 +172,11 @@ class CoverSiteInvariantTest extends TestCase
     private function mintTokenFor(int $accountId): string
     {
         $key = (string) config('app.key');
-        $hmac = hash_hmac('sha256', (string) $accountId, $key);
+        /** @var ProxyAccount $account */
+        $account = ProxyAccount::findOrFail($accountId);
+        $secret = (string) ($account->subscription_secret ?? '');
+        $signed = $secret === '' ? (string) $accountId : $accountId.'.'.$secret;
+        $hmac = hash_hmac('sha256', $signed, $key);
         $payload = $accountId.'.'.$hmac;
         $b64 = base64_encode($payload);
 

@@ -137,6 +137,51 @@ final class GeneratorErrorBoundaryTest extends TestCase
     }
 
     #[Test]
+    public function singbox_render_input_only_includes_active_accounts(): void
+    {
+        ServerConfig::factory()->create();
+        $active = ProxyAccount::factory()->create(['username' => 'active-user']);
+        ProxyAccount::factory()->disabled()->create(['username' => 'disabled-user']);
+        ProxyAccount::factory()->expired()->create(['username' => 'expired-user']);
+
+        $gen = $this->app->make(SingBoxConfigGenerator::class);
+        $method = new \ReflectionMethod($gen, 'buildRenderInput');
+        $method->setAccessible(true);
+
+        /** @var array<string,mixed> $input */
+        $input = $method->invoke($gen);
+
+        $this->assertSame([
+            [
+                'username' => 'active-user',
+                'uuid' => $active->uuid,
+            ],
+        ], $input['accounts']);
+    }
+
+    #[Test]
+    public function singbox_render_input_uses_placeholder_when_no_accounts_are_active(): void
+    {
+        ServerConfig::factory()->create();
+        ProxyAccount::factory()->disabled()->create(['username' => 'disabled-user']);
+        ProxyAccount::factory()->expired()->create(['username' => 'expired-user']);
+
+        $gen = $this->app->make(SingBoxConfigGenerator::class);
+        $method = new \ReflectionMethod($gen, 'buildRenderInput');
+        $method->setAccessible(true);
+
+        /** @var array<string,mixed> $input */
+        $input = $method->invoke($gen);
+
+        $this->assertSame([
+            [
+                'username' => '__no_active_accounts__',
+                'uuid' => '00000000-0000-0000-0000-000000000000',
+            ],
+        ], $input['accounts']);
+    }
+
+    #[Test]
     public function caddyfile_soft_fails_on_runtime_exception(): void
     {
         $core = $this->createMock(CtServerCoreInterface::class);

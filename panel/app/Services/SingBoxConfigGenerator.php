@@ -184,12 +184,14 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
         // Only enabled, non-expired accounts with the core
         // VLESS+Reality mode get rendered into singbox.json. sing-box
         // trusts its config; the panel decides which accounts are in.
-        // ProxyAccount::isActive() carries the canonical live rule.
+        // ProxyAccount::active() pushes the live rule into SQL, and
+        // cursor() avoids hydrating the full table before rendering.
         $accounts = [];
-        foreach (ProxyAccount::query()->orderBy('id')->get() as $account) {
-            if (! $account->isActive()) {
-                continue;
-            }
+        foreach (ProxyAccount::query()
+            ->select(['id', 'username', 'uuid', 'enabled_protocols'])
+            ->active()
+            ->orderBy('id')
+            ->cursor() as $account) {
             if (! in_array(SingBoxProtocolCatalog::VLESS_REALITY, $account->enabledProtocolKeys(), true)) {
                 continue;
             }

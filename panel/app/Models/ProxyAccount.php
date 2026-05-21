@@ -8,6 +8,7 @@ namespace App\Models;
 
 use App\Messages\ReloadSingBox;
 use App\Support\SingBoxProtocolCatalog;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -42,6 +43,7 @@ use Throwable;
  * @property int $id
  * @property string $username
  * @property string $uuid
+ * @property string|null $subscription_secret
  * @property string|null $label
  * @property bool $enabled
  * @property int $client_default_local_port
@@ -84,6 +86,7 @@ class ProxyAccount extends Model
      */
     protected $hidden = [
         'uuid',
+        'subscription_secret',
     ];
 
     protected function casts(): array
@@ -101,7 +104,7 @@ class ProxyAccount extends Model
     /**
      * Generate a subscription token for this account.
      *
-     * Token format: base64url("<account_id>.<hmac_sha256(account_id, APP_KEY)>")
+     * Token format: base64url("<account_id>.<hmac_sha256(account_id[.subscription_secret], APP_KEY)>")
      * Mirrors the verification in SubscriptionController::resolve() in reverse.
      * Returns empty string when APP_KEY is unset.
      */
@@ -112,7 +115,9 @@ class ProxyAccount extends Model
             return '';
         }
         $idStr = (string) $this->getKey();
-        $sig = hash_hmac('sha256', $idStr, $key);
+        $secret = (string) ($this->subscription_secret ?? '');
+        $signed = $secret === '' ? $idStr : "{$idStr}.{$secret}";
+        $sig = hash_hmac('sha256', $signed, $key);
 
         return rtrim(strtr(base64_encode($idStr.'.'.$sig), '+/', '-_'), '=');
     }
@@ -159,6 +164,23 @@ class ProxyAccount extends Model
     }
 
     /**
+     * Limit queries to accounts that can currently authenticate.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query
+            ->where('enabled', true)
+            ->where(function (Builder $query): void {
+                $query
+                    ->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            });
+    }
+
+    /**
      * Generate a fresh v4 UUID and assign it to this account. Returns
      * the new UUID string for one-shot display in the Filament
      * regenerate notification.
@@ -171,8 +193,17 @@ class ProxyAccount extends Model
     {
         $uuid = (string) Str::uuid();
         $this->uuid = $uuid;
+        $this->rotateSubscriptionSecret();
 
         return $uuid;
+    }
+
+    public function rotateSubscriptionSecret(): string
+    {
+        $secret = hash('sha256', (string) Str::uuid().random_bytes(32));
+        $this->subscription_secret = $secret;
+
+        return $secret;
     }
 
     /** @return list<string> */
@@ -197,6 +228,9 @@ class ProxyAccount extends Model
             $current = (string) ($account->uuid ?? '');
             if ($current === '') {
                 $account->regenerateUuid();
+            }
+            if ((string) ($account->subscription_secret ?? '') === '') {
+                $account->rotateSubscriptionSecret();
             }
         });
 
