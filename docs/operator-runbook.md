@@ -5,12 +5,11 @@ Short path for day-to-day VPS operations.
 ## Install
 
 ```bash
-cd /opt
-git clone https://github.com/coo1white/cool-tunnel-server.git
-cd cool-tunnel-server
-cp .env.example .env
+LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
+BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
+cd /opt/cool-tunnel-server
 $EDITOR .env
-make install
+ct install
 ```
 
 Verify:
@@ -28,10 +27,10 @@ docker compose exec -T panel php artisan credential-lock:check
 cd /opt/cool-tunnel-server
 git fetch origin --tags
 git pull --ff-only origin main
-make update
+ct update
 ```
 
-`make update` owns the release path: rebuild changed images, run
+`ct update` owns the release path: rebuild changed images, run
 migrations, render Caddy and sing-box config, restart affected
 services, verify credential lock, and run the health gates.
 

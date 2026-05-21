@@ -8,7 +8,7 @@
 //
 // Stages:
 //   1. acquireOpLock (per-project flock)
-//   2. preflight: network, disk space, stack-up, clean tree
+//   2. preflight: network, disk space, low-space cleanup, stack-up, clean tree
 //      (TTY: interactive stash/discard/abort; non-TTY: dies)
 //   3. git pull --ff-only
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
@@ -28,10 +28,11 @@ import { die, makeTerm, ANSI } from "./src/util/term";
 import { dieWithDiag, type DiagFailure } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
-import { checkNetwork, checkDiskSpace, checkStackUp, checkIpv6Routing } from "./src/util/preflight";
+import { checkNetwork, checkStackUp, checkIpv6Routing } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
 import { promptChoice, promptYn } from "./src/util/prompt";
+import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
 
 const { step, ok, warn } = makeTerm();
 
@@ -391,9 +392,12 @@ export async function runUpdate(): Promise<number> {
     if (!net.ok) dieOnFailure(net.failure);
     else ok(net.summary ?? "network ok");
 
-    const disk = await checkDiskSpace();
-    if (!disk.ok) dieOnFailure(disk.failure);
-    else ok(disk.summary ?? "disk ok");
+    const cleanup = await runAutoTempClean();
+    for (const s of cleanup.steps) {
+        if (s.action === "failed") warn(`${s.label}: ${s.detail}`);
+    }
+    if (!cleanup.disk.ok) dieOnFailure(cleanup.disk.failure);
+    else ok(formatAutoTempCleanSummary(cleanup));
 
     // v0.4.0: the live services are caddy + singbox + panel + db
     // + redis. Preflight only checks the public-facing pair

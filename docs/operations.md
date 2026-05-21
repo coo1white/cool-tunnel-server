@@ -14,13 +14,10 @@ proxy is live. This page is what to do next:
 - [What `ct update` actually does](#what-ct-update-actually-does)
 - [Command reference](#command-reference)
 
-The examples below assume you added the `ct` shell shortcut from the
-end of GETTING_STARTED.md. If you haven't, just `cd /opt/cool-tunnel-server`
-first and use `make ...` in place of `ct ...`.
+The examples below assume you are in `/opt/cool-tunnel-server` or have
+added `ct` to your shell path.
 
-> Every script in `scripts/` also has a plain-English mini-manual:
-> `make help-update`, `make help-doctor`, `make help-troubleshooting`,
-> etc. Run `make help-topics` to see the list.
+Run `ct help` for the built-in operator mini-manuals.
 
 ---
 
@@ -62,7 +59,8 @@ ct doctor     # confirm everything still works
 What `ct update` does, in plain terms:
 
 1. **Pre-flight**: checks network reachability (github.com + Docker
-   registry), disk headroom, stack is up, working tree is clean.
+   registry), runs a safe temp/build-cache cleanup, checks disk
+   headroom, stack is up, working tree is clean.
    If your tree has uncommitted edits (e.g. a hand-patched Dockerfile),
    it offers to stash / discard / abort.
 2. **Locks** so no one else can run an update at the same time.
@@ -89,11 +87,23 @@ classes:
 |--------------|-----|-----------|
 | `uncommitted changes block git pull` | Working tree has local edits | Interactive prompt offers `[s]tash / [d]iscard / [a]bort`; pick stash if unsure |
 | `network: cannot reach ...` | Outbound HTTPS broken from the VPS | Check the diagnostic block's command ladder (ping / dig / curl) |
-| `low disk under repo path: NG free` | Build cache filled the disk | `docker system prune -af` typically reclaims 1-5 GB |
+| `low disk under repo path: NG free` | The VPS is still too full after auto-clean | Follow the diagnostic block; usually `docker system prune -af` + checking large host directories |
 | `post-swap check NG: <component>` | A specific service didn't come up clean | The diagnostic block lists which component + the targeted `docker compose logs ...` to run |
 
+Before install/update builds images, `ct install` and `ct update`
+check disk headroom. If the check is already healthy, they skip
+cleanup to keep cached builds fast. If free space is below the safety
+threshold, they automatically run conservative cleanup:
+
+- removes stale `core/target` only when repo-path free space is below
+  the safety threshold
+- runs `docker builder prune -f` and `docker system prune -f`
+- never removes Docker volumes, backups, `.env`, database data, or
+  live containers
+
 If a build dies mid-way (panel image's `apk add` step is the most
-expensive), it's usually disk pressure on the docker root, NOT OOM:
+expensive), and auto-clean still cannot recover enough room, it's
+usually disk pressure on the docker root, NOT OOM:
 
 ```sh
 docker system prune -af && docker builder prune -af
@@ -151,7 +161,7 @@ have active users, and any time you're about to do something risky
 If your VPS dies and you need to bring up a new one:
 
 1. **Provision a fresh VPS** the same way you did the first time.
-2. **Run `make install`** to bring up an empty stack (Steps 1-4 of
+2. **Run `ct install`** to bring up an empty stack (Steps 1-4 of
    GETTING_STARTED.md). This gets Docker + base images + an empty
    database.
 3. **Copy your backup tarball** back to the new VPS:
@@ -323,10 +333,10 @@ a one-command fix:
 
 For deeper troubleshooting: [docs/operator-runbook.md](./operator-runbook.md).
 
-For the operator-side mini-manual on each script:
+For the operator-side troubleshooting mini-manual:
 
 ```sh
-make help-troubleshooting   # top 8 issues, ranked by frequency
+ct help troubleshooting   # top 8 issues, ranked by frequency
 ```
 
 ---
@@ -358,19 +368,18 @@ exit and the whole script is idempotent — just re-run `ct update`.
 
 ## Command reference
 
-The most-used `make` targets:
+The most-used `ct` commands:
 
 | Command | What it does |
 |---------|--------------|
-| `make doctor` | Health dashboard (PASS / WARN / FAIL + remediation hints) |
-| `make status` | Quick "are containers up?" check |
-| `make update` | Pull, rebuild, migrate, render, verify, reload |
-| `make backup` | Snapshot DB + .env + ACME state |
-| `make install` | First-time bootstrap (idempotent on re-run) |
-| `make logs` | Tail all container logs |
-| `make help` | List all targets |
-| `make help-topics` | List operator mini-manual topics |
-| `make help-<topic>` | Print the mini-manual for one topic |
+| `ct doctor` | Health dashboard (PASS / WARN / FAIL + remediation hints) |
+| `ct status` | Quick "are containers up?" check |
+| `ct update` | Pull, rebuild, migrate, render, verify, reload |
+| `ct backup` | Snapshot DB + .env + ACME state |
+| `ct install` | First-time bootstrap (idempotent on re-run) |
+| `ct logs` | Tail all container logs |
+| `ct help` | List operator mini-manual topics |
+| `ct help <topic>` | Print the mini-manual for one topic |
 
 Developer gates:
 

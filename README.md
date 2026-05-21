@@ -35,22 +35,26 @@ root SSH access to a Linux VPS and a domain you control.
 
 ## 60-second quickstart
 
+The bootstrap follows the same copy/paste installer shape as
+[Homebrew](https://brew.sh/): it explains what it will do, then pauses
+before making changes.
+
 ```sh
 # 1. SSH to your VPS as root
 ssh root@your.vps.public.ip
 
 # 2. Run the latest release bootstrap (downloads project, installs Docker, scaffolds .env)
 LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
-curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh" | BRANCH="${LATEST}" bash
+BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 
 # 3. Edit .env to set DOMAIN, PANEL_DOMAIN, ACME_EMAIL
 cd /opt/cool-tunnel-server && nano .env
 
 # 4. Install (takes ~10-15 min on a 1 vCPU VPS)
-make install
+ct install
 
 # 5. Verify
-make doctor
+ct doctor
 ```
 
 For the step-by-step walkthrough with expected output, DNS sanity
@@ -189,8 +193,8 @@ FSM). For diagrams and rationale, see
 | Contribute | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 | Report a security issue | [SECURITY.md](./SECURITY.md) |
 
-Once installed, every operator script has a built-in mini-manual:
-`make help-topics` lists them all.
+Once installed, the operator CLI has built-in mini-manuals:
+`ct help` lists them all.
 
 ## License + posture
 

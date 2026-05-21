@@ -6,6 +6,7 @@ import { test, expect } from "bun:test";
 import {
     parseDfAvailableKb,
     kbToGb,
+    classifyDiskSpace,
     classifyStackUp,
     checkNetwork,
     classifyIpv6Preflight,
@@ -55,6 +56,43 @@ test("kbToGb floors to whole GB (1 GB = 1024 MB = 1024*1024 KB)", () => {
     expect(kbToGb(2 * 1024 * 1024 - 1)).toBe(1); // just under 2 GB
     expect(kbToGb(2 * 1024 * 1024)).toBe(2);
     expect(kbToGb(50_000_000)).toBe(47); // 50e6 KB ≈ 47.68 GB → floor 47
+});
+
+// ---------- classifyDiskSpace ----------
+
+test("classifyDiskSpace accepts repo + docker headroom at the thresholds", () => {
+    const r = classifyDiskSpace(
+        { repoGb: 2, dockerGb: 4, dockerRoot: "/var/lib/docker" },
+        { minRepoGb: 2, minDockerGb: 4 },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.summary).toContain("repo: 2G, docker: 4G");
+});
+
+test("classifyDiskSpace reports repo pressure after auto-clean already ran", () => {
+    const r = classifyDiskSpace(
+        { repoGb: 1, dockerGb: 8, dockerRoot: "/var/lib/docker" },
+        { minRepoGb: 2, minDockerGb: 4 },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+        expect(r.failure.summary).toContain("low disk under repo path");
+        expect(r.failure.diag).toContain("auto-clean step already attempted");
+        expect(r.failure.diag).toContain("never touches Docker volumes");
+    }
+});
+
+test("classifyDiskSpace reports docker root pressure with the detected root path", () => {
+    const r = classifyDiskSpace(
+        { repoGb: 10, dockerGb: 3, dockerRoot: "/srv/docker" },
+        { minRepoGb: 2, minDockerGb: 4 },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+        expect(r.failure.summary).toContain("/srv/docker");
+        expect(r.failure.diag).toContain("/srv/docker/overlay2");
+        expect(r.failure.diag).not.toContain("docker volume rm");
+    }
 });
 
 // ---------- classifyStackUp ----------

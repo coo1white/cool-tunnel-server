@@ -73,6 +73,12 @@ export interface DiskSpaceThresholds {
     readonly minDockerGb: number;
 }
 
+export interface DiskSpaceMeasurement {
+    readonly repoGb: number;
+    readonly dockerGb: number;
+    readonly dockerRoot: string;
+}
+
 export const DEFAULT_DISK_THRESHOLDS: DiskSpaceThresholds = {
     minRepoGb: 2,
     minDockerGb: 4,
@@ -107,30 +113,14 @@ export function kbToGb(kb: number): number {
     return Math.floor(kb / 1024 / 1024);
 }
 
-export async function checkDiskSpace(
-    thresholds: DiskSpaceThresholds = DEFAULT_DISK_THRESHOLDS,
-): Promise<PreflightResult> {
+export function formatDiskSpaceSummary(m: DiskSpaceMeasurement): string {
+    return `disk space OK (repo: ${m.repoGb}G, docker: ${m.dockerGb}G)`;
+}
+
+export async function measureDiskSpace(): Promise<DiskSpaceMeasurement> {
     const repoDf = await capture($`df -k .`);
     const repoKb = repoDf.ok ? parseDfAvailableKb(repoDf.stdout) ?? 0 : 0;
     const repoGb = kbToGb(repoKb);
-    if (repoGb < thresholds.minRepoGb) {
-        return {
-            ok: false,
-            failure: {
-                summary: `low disk under repo path: ${repoGb}G free, need >= ${thresholds.minRepoGb}G`,
-                diag: `Compose build, git pull, and composer install all need scratch
-space; running out mid-update corrupts the build cache.
-
-What to free (priority order, most-impact first):
-  docker system prune -af        # stopped containers + dangling images
-  docker builder prune -af       # buildkit cache (1-3 GB typical)
-  rm -rf core/target             # Rust build cache (2-5 GB)
-  du -h --max-depth=1 / | sort -rh | head    # find the actual offender
-
-Re-run ./ct update after freeing space.`,
-            },
-        };
-    }
 
     const dockerInfo = await capture($`docker info --format ${"{{.DockerRootDir}}"}`);
     const dockerRoot = dockerInfo.ok && dockerInfo.stdout.trim()
@@ -139,26 +129,67 @@ Re-run ./ct update after freeing space.`,
     const dockerDf = await capture($`df -k ${dockerRoot}`);
     const dockerKb = dockerDf.ok ? parseDfAvailableKb(dockerDf.stdout) ?? 0 : 0;
     const dockerGb = kbToGb(dockerKb);
-    if (dockerGb < thresholds.minDockerGb) {
+
+    return { repoGb, dockerGb, dockerRoot };
+}
+
+export function classifyDiskSpace(
+    m: DiskSpaceMeasurement,
+    thresholds: DiskSpaceThresholds = DEFAULT_DISK_THRESHOLDS,
+): PreflightResult {
+    if (m.repoGb < thresholds.minRepoGb) {
         return {
             ok: false,
             failure: {
-                summary: `low disk under docker root (${dockerRoot}): ${dockerGb}G free, need >= ${thresholds.minDockerGb}G`,
-                diag: `Compose pull + build will store image layers under ${dockerRoot}.
-Out-of-space mid-build typically surfaces as 'no space left on
-device' partway through, leaving a half-built panel image and a
-confused stack.
+                summary: `low disk under repo path: ${m.repoGb}G free, need >= ${thresholds.minRepoGb}G`,
+                diag: `Compose build, git pull, and composer install all need scratch
+space; running out mid-update corrupts the build cache.
 
-What to free (priority order):
-  docker system prune -af
-  docker builder prune -af
-  docker volume ls -qf dangling=true | xargs -r docker volume rm
-  du -sh ${dockerRoot}/overlay2/*  | sort -rh | head`,
+The install/update auto-clean step already attempted safe temp/build
+cache cleanup first and never touches Docker volumes, backups, .env,
+or database data. This means the VPS is still too full for a reliable
+deploy.
+
+What to free (priority order, most-impact first):
+  docker system prune -af        # unused images + containers
+  docker builder prune -af       # all buildkit cache (1-3 GB typical)
+  du -h --max-depth=1 / | sort -rh | head    # find the actual offender
+
+Re-run ./ct install or ./ct update after freeing space.`,
             },
         };
     }
 
-    return { ok: true, summary: `disk space OK (repo: ${repoGb}G, docker: ${dockerGb}G)` };
+    if (m.dockerGb < thresholds.minDockerGb) {
+        return {
+            ok: false,
+            failure: {
+                summary: `low disk under docker root (${m.dockerRoot}): ${m.dockerGb}G free, need >= ${thresholds.minDockerGb}G`,
+                diag: `Compose pull + build will store image layers under ${m.dockerRoot}.
+Out-of-space mid-build typically surfaces as 'no space left on
+device' partway through, leaving a half-built panel image and a
+confused stack.
+
+The install/update auto-clean step already attempted conservative
+Docker cleanup first (no volumes, no backups). This means the VPS
+still needs manual space recovery before a reliable deploy.
+
+What to free (priority order):
+  docker system prune -af
+  docker builder prune -af
+  du -sh ${m.dockerRoot}/* | sort -rh | head
+  du -sh ${m.dockerRoot}/overlay2/*  | sort -rh | head`,
+            },
+        };
+    }
+
+    return { ok: true, summary: formatDiskSpaceSummary(m) };
+}
+
+export async function checkDiskSpace(
+    thresholds: DiskSpaceThresholds = DEFAULT_DISK_THRESHOLDS,
+): Promise<PreflightResult> {
+    return classifyDiskSpace(await measureDiskSpace(), thresholds);
 }
 
 // ---------- preflight_stack_up ----------

@@ -53,15 +53,15 @@ Singapore (~80 ms)**. Workable: US-West (~150 ms), Europe
 (~200-300 ms). Avoid: US-East (~250-400 ms with frequent stalls).
 
 If your current VPS is far from China, consider a fresh deploy in
-HK or Tokyo before you go. The `git pull && ./scripts/install.sh`
-flow makes this a 30-minute task on a clean VPS.
+HK or Tokyo before you go. The Homebrew-style bootstrap command plus
+`ct install` makes this a 30-minute task on a clean VPS.
 
 ### 3. Run clean health gates + SoT verification
 
 ```sh
 cd ~/cool-tunnel-server
 git pull --ff-only
-make update
+ct update
 ./ct doctor                # no FAIL rows?
 make verify-sot-vps        # all 5 fixtures pass?
 ```
@@ -148,7 +148,7 @@ Read symptoms left-to-right. First match wins.
 | Connection hangs after TLS handshake | Active-probing in progress, sing-box slow to respond | `docker compose logs singbox \| grep "active-probe"` if probe logging is enabled. Restart sing-box: `docker compose restart singbox`. |
 | Some sites work, others don't | DNS resolution failing | Switch DoH resolver in panel. AliDNS most reliable. |
 | All sites resolve but pages don't load | Latency / packet loss between China and VPS | Likely VPS region too far. Consider HK / Tokyo VPS. |
-| Cert errors in client | Let's Encrypt renewal failed | SSH in, `docker compose logs caddy \| grep -i acme \| tail -20`. If ACME failed, swap ACME directory to ZeroSSL: `ACME_DIRECTORY=https://acme.zerossl.com/v2/DV90` in `.env`, then `make update`. |
+| Cert errors in client | Let's Encrypt renewal failed | SSH in, `docker compose logs caddy \| grep -i acme \| tail -20`. If ACME failed, swap ACME directory to ZeroSSL: `ACME_DIRECTORY=https://acme.zerossl.com/v2/DV90` in `.env`, then `ct update`. |
 | Panel `/admin` shows cover site | Caddy SNI route or `PANEL_DOMAIN` mismatch | Check `.env`, DNS for `PANEL_DOMAIN`, and `docker compose logs caddy`. |
 
 If the entire VPS is unreachable from China but reachable from
@@ -171,7 +171,7 @@ quick fix — you need to either:
 Run the health gate from the VPS when connectivity looks strange:
 
 ```sh
-make doctor
+ct doctor
 ```
 
 For deeper service state:
@@ -264,7 +264,7 @@ it:
    needed — DNS resolution failure doesn't affect IP-based SSH).
 3. Once in, edit `panel/config/cool-tunnel.php` or use
    `docker compose exec panel php artisan tinker` to flip settings,
-   then `make update`.
+   then `ct update`.
 
 Without a bastion / Tailscale, your only recourse is to find a
 working proxy elsewhere (a friend's, a commercial VPN that still
