@@ -162,11 +162,17 @@ class FakeSiteController extends Controller
         RateLimiter::hit($sentinel, self::PROBE_DECAY_SEC);
 
         Log::warning('probe.detected', [
-            'source_ip' => $ip,
+            'source_ip_hash' => $this->logFingerprint($ip),
             'rate_per_min' => RateLimiter::attempts($key),
-            'path' => $request->path(),
-            'user_agent' => substr((string) $request->userAgent(), 0, 200),
+            'path_hash' => $this->logFingerprint($request->path()),
+            'path_length' => strlen($request->path()),
+            'user_agent_hash' => $this->logFingerprint((string) $request->userAgent()),
             'note' => 'cover-site fall-through rate crossed threshold; possible active probing',
         ]);
+    }
+
+    private function logFingerprint(string $value): string
+    {
+        return hash_hmac('sha256', $value, (string) config('app.key'));
     }
 }

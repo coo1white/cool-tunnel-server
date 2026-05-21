@@ -124,6 +124,12 @@ class RateLimiterBoundaryTest extends TestCase
             .'a flip to CHECK-THEN-HIT would push the alarm to the 31st',
         );
         $this->assertSame('warning', $hits[0]['level']);
+        $this->assertArrayHasKey('source_ip_hash', $hits[0]['context']);
+        $this->assertArrayHasKey('path_hash', $hits[0]['context']);
+        $this->assertArrayHasKey('user_agent_hash', $hits[0]['context']);
+        $this->assertArrayNotHasKey('source_ip', $hits[0]['context']);
+        $this->assertArrayNotHasKey('path', $hits[0]['context']);
+        $this->assertArrayNotHasKey('user_agent', $hits[0]['context']);
     }
 
     #[Test]

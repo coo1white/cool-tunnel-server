@@ -73,11 +73,11 @@ class CredentialLockCheck extends Command
     {
         $out = [];
 
-        foreach (ProxyAccount::query()->orderBy('username')->get() as $account) {
-            if (! $account->isActive()) {
-                continue;
-            }
-
+        foreach (ProxyAccount::query()
+            ->select(['id', 'username', 'uuid'])
+            ->active()
+            ->orderBy('username')
+            ->cursor() as $account) {
             $username = (string) $account->username;
             $uuid = (string) ($account->uuid ?? '');
 
@@ -207,7 +207,12 @@ class CredentialLockCheck extends Command
         $out = [];
         $i = 1;
 
-        foreach (ProxyAccount::query()->orderBy('username')->get() as $account) {
+        foreach (ProxyAccount::query()
+            ->select(['id', 'username'])
+            ->active()
+            ->whereIn('username', array_keys($db))
+            ->orderBy('username')
+            ->cursor() as $account) {
             $username = (string) $account->username;
             if (! array_key_exists($username, $db)) {
                 continue;

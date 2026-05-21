@@ -359,7 +359,9 @@ class SubscriptionController extends Controller
     private function resolve(string $token): ?ProxyAccount
     {
         // Token format: base64url("<account_id>.<hmac>"). The hmac is
-        // hash_hmac over the account_id with the panel signing key.
+        // hash_hmac over account_id plus the per-row subscription_secret
+        // when one exists. Legacy rows without a secret keep their old
+        // account_id-only token until the operator rotates UUID/URL.
         $decoded = base64_decode(strtr($token, '-_', '+/'), true);
         if ($decoded === false || ! str_contains($decoded, '.')) {
             return null;
@@ -368,12 +370,19 @@ class SubscriptionController extends Controller
         if (! ctype_digit($idStr)) {
             return null;
         }
-        $expected = hash_hmac('sha256', $idStr, $this->signingKey());
+        $account = ProxyAccount::find((int) $idStr);
+        if (! $account) {
+            return null;
+        }
+
+        $secret = (string) ($account->subscription_secret ?? '');
+        $signed = $secret === '' ? $idStr : "{$idStr}.{$secret}";
+        $expected = hash_hmac('sha256', $signed, $this->signingKey());
         if (! hash_equals($expected, $sig)) {
             return null;
         }
 
-        return ProxyAccount::find((int) $idStr);
+        return $account;
     }
 
     private function signingKey(): string

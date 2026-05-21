@@ -28,7 +28,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  attestations: write
   contents: write
+  id-token: write
 
 jobs:
   build-and-release:
@@ -52,6 +54,11 @@ jobs:
         run: |
           sha256sum ct-operator-* > SHA256SUMS
           cat SHA256SUMS
+
+      - name: Attest operator binaries
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: operator/bin/ct-operator-*
 
       - name: Upload artifacts to release (tag ref)
         if: startsWith(github.ref, 'refs/tags/')

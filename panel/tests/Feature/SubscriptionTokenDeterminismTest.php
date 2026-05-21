@@ -11,13 +11,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
-// Round-15 idempotency / replay-safety: the subscription token
-// the operator hands a user MUST be a pure function of (account_id,
-// APP_KEY). If a future change accidentally mixed in a nonce, a
-// timestamp, or a per-process random, every regenerate-token URL
-// would silently change on every refresh of the panel — clients
-// holding bookmarked URLs would all break at once with no panel-
-// side error.
+// Round-15 idempotency / replay-safety, upgraded for revocation:
+// the subscription token the operator hands a user MUST be stable
+// across reads, but it must also be revocable without rotating the
+// entire panel APP_KEY. The token is therefore a pure function of
+// (account_id, subscription_secret, APP_KEY).
 //
 // The token is documented as deterministic in
 // SubscriptionController::resolve()'s comment block; this test
@@ -28,7 +26,7 @@ class SubscriptionTokenDeterminismTest extends TestCase
     use RefreshDatabase;
 
     #[Test]
-    public function subscription_token_is_pure_in_account_id_and_app_key(): void
+    public function subscription_token_is_stable_for_the_same_row_secret_and_app_key(): void
     {
         $account = ProxyAccount::factory()->create();
         $first = $account->subscriptionToken();
@@ -48,8 +46,54 @@ class SubscriptionTokenDeterminismTest extends TestCase
             $third,
             'a fresh model load from DB must produce the same token — '
             .'a difference means the token depends on in-memory model '
-            .'state that is not part of the (id, APP_KEY) input set',
+            .'state that is not persisted on the row',
         );
+    }
+
+    #[Test]
+    public function subscription_token_changes_when_row_secret_rotates(): void
+    {
+        $account = ProxyAccount::factory()->create();
+        $beforeRotation = $account->subscriptionToken();
+
+        $account->rotateSubscriptionSecret();
+        $account->save();
+
+        $this->assertNotSame(
+            $beforeRotation,
+            $account->subscriptionToken(),
+            'rotating the per-row subscription secret must revoke old URLs',
+        );
+    }
+
+    #[Test]
+    public function regenerating_uuid_also_revokes_subscription_url(): void
+    {
+        $account = ProxyAccount::factory()->create();
+        $beforeRotation = $account->subscriptionToken();
+
+        $account->regenerateUuid();
+        $account->save();
+
+        $this->assertNotSame(
+            $beforeRotation,
+            $account->subscriptionToken(),
+            'a new UUID must not remain fetchable through a leaked old subscription URL',
+        );
+    }
+
+    #[Test]
+    public function legacy_rows_without_subscription_secret_keep_existing_token_shape(): void
+    {
+        $account = ProxyAccount::factory()->create();
+        $account->subscription_secret = null;
+        $account->saveQuietly();
+
+        $key = (string) config('app.key');
+        $legacySig = hash_hmac('sha256', (string) $account->id, $key);
+        $legacyToken = rtrim(strtr(base64_encode($account->id.'.'.$legacySig), '+/', '-_'), '=');
+
+        $this->assertSame($legacyToken, $account->subscriptionToken());
     }
 
     #[Test]

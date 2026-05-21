@@ -39,8 +39,9 @@ root SSH access to a Linux VPS and a domain you control.
 # 1. SSH to your VPS as root
 ssh root@your.vps.public.ip
 
-# 2. Run the bootstrap (downloads project, installs Docker, scaffolds .env)
-curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
+# 2. Run the latest release bootstrap (downloads project, installs Docker, scaffolds .env)
+LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
+curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh" | BRANCH="${LATEST}" bash
 
 # 3. Edit .env to set DOMAIN, PANEL_DOMAIN, ACME_EMAIL
 cd /opt/cool-tunnel-server && nano .env

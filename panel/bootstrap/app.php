@@ -9,6 +9,11 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+
+$logFingerprint = static function (string $value): string {
+    return hash_hmac('sha256', $value, (string) config('app.key'));
+};
 
 $app = new Application(dirname(__DIR__));
 $app->dontMergeFrameworkConfiguration();
@@ -42,7 +47,7 @@ return (new ApplicationBuilder($app))
             | Request::HEADER_X_FORWARDED_AWS_ELB,
         );
     })
-    ->withExceptions(function (Exceptions $exceptions) {
+    ->withExceptions(function (Exceptions $exceptions) use ($logFingerprint) {
         // Anti-censorship cover-site preservation (v0.0.14).
         //
         // Default Laravel rendering for an uncaught Throwable is a
@@ -66,7 +71,7 @@ return (new ApplicationBuilder($app))
         // loopback-bound (127.0.0.1:9000:9000 in compose) and an
         // operator SSH-tunnelled into the panel needs the actual
         // 5xx + stack trace to debug.
-        $exceptions->render(function (Throwable $e, Request $request) {
+        $exceptions->render(function (Throwable $e, Request $request) use ($logFingerprint) {
             // Exact-or-prefix-with-trailing-slash match. A naive
             // `str_starts_with($path, 'admin')` would also match
             // future routes like `administrator/`, `admins/list`,
@@ -81,11 +86,17 @@ return (new ApplicationBuilder($app))
                 return null; // delegate to the default renderer
             }
 
-            Log::critical('public.route.exception', [
-                'path' => $path,
-                'err' => $e->getMessage(),
-                'type' => get_class($e),
-            ]);
+            // Unknown public API paths are scanner-class traffic, not an
+            // operator-actionable crash. FakeSiteController still counts
+            // them for the probe alarm below, so avoid one critical log
+            // per random URL while preserving cover-site bytes.
+            if (! $e instanceof NotFoundHttpException) {
+                Log::critical('public.route.exception', [
+                    'path_hash' => $logFingerprint($path),
+                    'path_length' => strlen($path),
+                    'type' => get_class($e),
+                ]);
+            }
 
             try {
                 return (new FakeSiteController)->show($request);
