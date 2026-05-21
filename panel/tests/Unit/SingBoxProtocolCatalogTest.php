@@ -39,4 +39,13 @@ final class SingBoxProtocolCatalogTest extends TestCase
     {
         $this->assertSame([], SingBoxProtocolCatalog::normaliseSelected([], defaultWhenEmpty: false));
     }
+
+    #[Test]
+    public function mode_summary_separates_active_and_staged_protocols(): void
+    {
+        $this->assertSame(
+            'VLESS + Reality active; Hysteria2, Tor staged',
+            SingBoxProtocolCatalog::modeSummary(['vless_reality', 'hysteria2', 'tor']),
+        );
+    }
 }

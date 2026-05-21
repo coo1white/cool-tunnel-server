@@ -44,25 +44,8 @@ class CreateProxyAccount extends CreateRecord
      */
     protected function handleRecordCreation(array $data): Model
     {
-        $destHost = RealityDestinations::normaliseHost(
-            (string) ($data['reality_dest_host'] ?? RealityDestinations::DEFAULT_HOST),
-        );
         unset($data['reality_dest_host']);
-        $protocols = SingBoxProtocolCatalog::normaliseSelected(
-            $data['enabled_protocols'] ?? null,
-            defaultWhenEmpty: false,
-        );
-        $invalidProtocols = SingBoxProtocolCatalog::invalidKeys($data['enabled_protocols'] ?? null);
-        if ($invalidProtocols !== []) {
-            throw ValidationException::withMessages([
-                'enabled_protocols' => 'Unknown sing-box protocol selection: '.implode(', ', $invalidProtocols),
-            ]);
-        }
-        if (! SingBoxProtocolCatalog::hasRenderedProtocol($protocols)) {
-            throw ValidationException::withMessages([
-                'enabled_protocols' => 'Choose at least one protocol that is rendered today. VLESS + Reality keeps the generated URL directly usable.',
-            ]);
-        }
+        $protocols = SingBoxProtocolCatalog::defaultKeys();
         $data['enabled_protocols'] = $protocols;
 
         $rawLocalPort = $data['client_default_local_port'] ?? 1080;
@@ -80,18 +63,16 @@ class CreateProxyAccount extends CreateRecord
         $data['client_default_local_port'] = $localPort;
 
         /** @var ProxyAccount $record */
-        $record = DB::transaction(function () use ($data, $destHost): ProxyAccount {
+        $record = DB::transaction(function () use ($data): ProxyAccount {
             $config = ServerConfig::current();
-            $currentDestHost = (string) ($config->reality_dest_host ?? '');
-            if (! RealityDestinations::isSelectableHost($destHost, $currentDestHost)) {
+            $destHost = RealityDestinations::normaliseHost((string) ($config->reality_dest_host ?? ''));
+            if (! RealityDestinations::isValidHost($destHost)) {
                 throw ValidationException::withMessages([
-                    'reality_dest_host' => 'Choose one of the curated Reality destination websites.',
+                    'client_default_local_port' => 'Set a valid Reality destination in Server config before creating accounts.',
                 ]);
             }
 
-            if (RealityDestinations::normaliseHost($currentDestHost) !== $destHost) {
-                $config->forceFill(['reality_dest_host' => $destHost])->save();
-            }
+            $this->selectedRealityDestHost = $destHost;
 
             /** @var ProxyAccount $record */
             $record = new (static::getModel())($data);
@@ -101,7 +82,6 @@ class CreateProxyAccount extends CreateRecord
             return $record;
         });
 
-        $this->selectedRealityDestHost = $destHost;
         $this->selectedProtocols = $protocols;
         $this->renderConfirmed = $this->renderSingBoxNow();
 
@@ -139,7 +119,7 @@ class CreateProxyAccount extends CreateRecord
             $body .= "\nProtocols:\n- ".implode("\n- ", $protocolLabels);
         }
         if ($subUrl !== null) {
-            $body .= "\n\nSubscription URL (import in the app — shown once):\n{$subUrl}";
+            $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
         }
         $body .= $this->renderConfirmed
             ? "\n\nsing-box config rendered now; the URL is ready to import."

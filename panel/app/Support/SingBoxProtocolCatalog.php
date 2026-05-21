@@ -164,6 +164,41 @@ final class SingBoxProtocolCatalog
         return false;
     }
 
+    public static function modeSummary(mixed $value, bool $defaultWhenEmpty = true): string
+    {
+        $rendered = [];
+        $staged = [];
+
+        foreach (self::normaliseSelected($value, $defaultWhenEmpty) as $key) {
+            $definition = self::DEFINITIONS[$key] ?? null;
+            if ($definition === null) {
+                continue;
+            }
+
+            if ($definition['status'] === 'rendered') {
+                $rendered[] = $definition['name'];
+            } else {
+                $staged[] = $definition['name'];
+            }
+        }
+
+        if ($rendered === [] && $staged === []) {
+            return 'No protocol mode selected';
+        }
+
+        $parts = [];
+        if ($rendered === []) {
+            $parts[] = 'No active rendered mode';
+        } else {
+            $parts[] = implode(', ', $rendered).' active';
+        }
+        if ($staged !== []) {
+            $parts[] = implode(', ', $staged).' staged';
+        }
+
+        return implode('; ', $parts);
+    }
+
     /** @return array<string,string> */
     public static function options(
         ?ServerConfig $config = null,
