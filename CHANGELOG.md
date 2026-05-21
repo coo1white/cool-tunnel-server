@@ -24,6 +24,25 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.13] — 2026-05-22 — Server-authoritative client runtime
+
+### Added
+
+- Added a signed `client_runtime` catalog to subscription manifests so
+  clients fetch the paired `sing-box` and `cool-tunnel-core` runtime
+  plugins from `cool-tunnel-server` releases.
+- Added a release workflow that publishes the server-owned macOS
+  runtime plugin pair and checksum manifest.
+- Added contract tests that reject drift back to independent upstream
+  `sing-box` or client-repo Rust core release assets.
+
+### Changed
+
+- Aligned generated client sing-box configs with the Rust core shape by
+  removing the retired DNS outbound/rule path.
+
+---
+
 ## [0.4.12] — 2026-05-21 — Hot-fix: Docker IPv6 build preflight
 
 This release fixes the Vultr-class update failure where the host has

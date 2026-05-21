@@ -64,7 +64,7 @@ return [
         'ACME_DIRECTORY',
         'https://acme-v02.api.letsencrypt.org/directory'
     ),
-    'version' => '0.4.12',
+    'version' => '0.4.13',
     'singbox_direct_domain_strategy' => env('SINGBOX_DIRECT_DOMAIN_STRATEGY', 'prefer_ipv4'),
     'singbox_direct_connect_timeout' => env('SINGBOX_DIRECT_CONNECT_TIMEOUT', '2s'),
     'singbox_direct_fallback_delay' => env('SINGBOX_DIRECT_FALLBACK_DELAY', '100ms'),

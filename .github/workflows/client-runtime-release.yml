@@ -34,8 +34,8 @@ jobs:
           lipo -create \
             target/aarch64-apple-darwin/release/cool-tunnel-core \
             target/x86_64-apple-darwin/release/cool-tunnel-core \
-            -output "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.5-universal"
-          codesign --force --sign - --timestamp=none "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.5-universal"
+            -output "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.6-universal"
+          codesign --force --sign - --timestamp=none "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.6-universal"
 
       - name: Build server-published sing-box universal plugin
         run: |
