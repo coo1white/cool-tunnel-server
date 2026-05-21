@@ -7,9 +7,11 @@ declare(strict_types=1);
 namespace App\Filament\Pages;
 
 use App\Models\ServerConfig;
+use App\Support\RealityDestinations;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -87,6 +89,23 @@ class ServerConfigPage extends Page implements HasForms
                             ->helperText('Pick from the dropdown or paste a custom ACME URL. LE production issues real (rate-limited) certs; LE staging issues throwaway certs for testing.'),
                     ])->columns(3),
 
+                Section::make('Reality')
+                    ->schema([
+                        Select::make('reality_dest_host')
+                            ->label('Website')
+                            ->options(fn (): array => RealityDestinations::options(
+                                (string) (ServerConfig::current()->reality_dest_host ?? ''),
+                                measureLatency: true,
+                            ))
+                            ->default(fn (): string => RealityDestinations::selectDefault(
+                                (string) (ServerConfig::current()->reality_dest_host ?? ''),
+                            ))
+                            ->required()
+                            ->searchable()
+                            ->native(false)
+                            ->helperText('Cover website used by VLESS + Reality subscriptions.'),
+                    ]),
+
                 Section::make('Anti-tracking')
                     ->description('Saving regenerates the Caddyfile and sing-box config; ct-singbox picks up file changes automatically.')
                     ->schema([
@@ -112,7 +131,16 @@ class ServerConfigPage extends Page implements HasForms
     public function save(): void
     {
         $config = ServerConfig::current();
-        $config->fill($this->form->getState())->save();
+        $data = $this->form->getState();
+        $destHost = RealityDestinations::normaliseHost((string) ($data['reality_dest_host'] ?? ''));
+        if (! RealityDestinations::isSelectableHost($destHost, (string) ($config->reality_dest_host ?? ''))) {
+            $this->addError('data.reality_dest_host', 'Choose one of the curated Reality destination websites.');
+
+            return;
+        }
+        $data['reality_dest_host'] = $destHost;
+
+        $config->fill($data)->save();
 
         // v0.0.84 robustness-review fix (item 7): the model's
         // `updated` hook dispatches a queued ReloadServerConfig

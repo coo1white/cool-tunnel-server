@@ -8,12 +8,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\ProxyAccountResource\Pages;
 use App\Models\ProxyAccount;
-use App\Models\ServerConfig;
-use App\Support\RealityDestinations;
 use App\Support\SingBoxProtocolCatalog;
 use Filament\Forms;
 use Filament\Forms\Form;
-use Filament\Forms\Get;
 use Filament\Notifications\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
@@ -44,7 +41,6 @@ class ProxyAccountResource extends Resource
     {
         return $form->schema([
             Forms\Components\Section::make('Identity')
-                ->description('How the client authenticates to sing-box.')
                 ->schema([
                     Forms\Components\TextInput::make('username')
                         ->required()
@@ -52,26 +48,25 @@ class ProxyAccountResource extends Resource
                         ->maxLength(64)
                         ->unique(ignoreRecord: true)
                         ->autocomplete('off')
-                        ->helperText('ASCII letters, digits, dashes, underscores. Used as the VLESS user `name` for log readability; the per-account credential is the UUID assigned at create / regen.'),
+                        ->helperText('Letters, digits, dashes, and underscores.'),
 
                     Forms\Components\TextInput::make('label')
                         ->maxLength(255)
-                        ->helperText('Free-form note — who is this account for?'),
+                        ->helperText('Optional note.'),
 
                     Forms\Components\Toggle::make('enabled')
                         ->default(true)
-                        ->helperText('Disable to revoke access without deleting history. Push to sing-box happens within ~100 ms via the Redis revocation bus.'),
+                        ->helperText('Turn off to revoke access.'),
                 ])->columns(2),
 
             Forms\Components\Section::make('Limits')
-                ->description('Optional — leave blank for an unmetered, never-expiring account.')
                 ->schema([
                     Forms\Components\TextInput::make('quota_bytes')
                         ->label('Monthly quota')
                         ->numeric()
                         ->minValue(0)
                         ->suffix('bytes')
-                        ->helperText('Leave blank for unlimited. 1 GiB = 1073741824. Quota enforcement runs once per minute via the scheduler.'),
+                        ->helperText('Blank means unlimited.'),
 
                     // No `->minDate(now())` here — applying it on edit
                     // blocks the operator from saving an unmodified
@@ -82,12 +77,11 @@ class ProxyAccountResource extends Resource
                     // The helperText documents the past-date behaviour;
                     // operator intent stands.
                     Forms\Components\DateTimePicker::make('expires_at')
-                        ->helperText('Leave blank to never expire. Past dates immediately disable the account.')
+                        ->helperText('Blank means never expires.')
                         ->seconds(false),
                 ])->columns(2),
 
             Forms\Components\Section::make('Client defaults')
-                ->description('Values imported by new client profiles from this account subscription URL.')
                 ->schema([
                     Forms\Components\TextInput::make('client_default_local_port')
                         ->label('Local SOCKS port')
@@ -96,52 +90,22 @@ class ProxyAccountResource extends Resource
                         ->minValue(1024)
                         ->maxValue(65535)
                         ->required()
-                        ->helperText('The macOS app binds sing-box on 127.0.0.1 at this port for newly imported profiles. Existing client-local edits are preserved by older app builds.'),
+                        ->helperText('Imported by new client profiles.'),
                 ]),
 
-            Forms\Components\Section::make('Protocols')
-                ->description('Select the sing-box protocol set signed into this account subscription.')
+            Forms\Components\Section::make('Protocol')
                 ->schema([
-                    Forms\Components\CheckboxList::make('enabled_protocols')
-                        ->label('sing-box protocol choices')
-                        ->options(fn (Get $get): array => SingBoxProtocolCatalog::options(
-                            ServerConfig::current(),
-                            (string) ($get('reality_dest_host') ?? ''),
-                            measureLatency: true,
-                        ))
-                        ->default(SingBoxProtocolCatalog::defaultKeys())
-                        ->required()
-                        ->columns(2)
-                        ->bulkToggleable()
-                        ->dehydrateStateUsing(
-                            fn ($state): array => SingBoxProtocolCatalog::normaliseSelected($state)
-                        )
-                        ->helperText('VLESS + Reality is rendered today and keeps the generated URL directly usable. Other sing-box protocols are saved into the subscription as a staged catalog so server and client can expand together without drift.'),
+                    Forms\Components\Placeholder::make('protocol_mode')
+                        ->key('protocol_mode')
+                        ->label('Mode')
+                        ->content(fn (mixed $record): string => $record instanceof ProxyAccount
+                            ? SingBoxProtocolCatalog::modeSummary($record->enabledProtocolKeys())
+                            : SingBoxProtocolCatalog::modeSummary(SingBoxProtocolCatalog::defaultKeys())),
                 ]),
-
-            Forms\Components\Section::make('Reality destination')
-                ->description('Server-wide cover website VLESS+Reality mimics; changing it affects every subscription manifest and the rendered sing-box config.')
-                ->schema([
-                    Forms\Components\Select::make('reality_dest_host')
-                        ->label('Website')
-                        ->options(fn (): array => RealityDestinations::options(
-                            (string) (ServerConfig::current()->reality_dest_host ?? ''),
-                            measureLatency: true,
-                        ))
-                        ->default(fn (): string => RealityDestinations::selectDefault(
-                            (string) (ServerConfig::current()->reality_dest_host ?? ''),
-                        ))
-                        ->required()
-                        ->live()
-                        ->searchable()
-                        ->native(false)
-                        ->helperText('The selected value is signed into the generated subscription manifest. Use this only when you intend to rotate the server-wide Reality destination.'),
-                ])
-                ->visibleOn('create'),
 
             Forms\Components\Placeholder::make('uuid_note')
                 ->label('UUID')
-                ->content('A fresh VLESS UUID is generated when you create this account; it is shown once and not stored in any log. Use the "Regenerate UUID" action to rotate it later — the old UUID stops authenticating the moment sing-box reloads.')
+                ->content('A fresh UUID is generated on create and shown once.')
                 ->visibleOn('create'),
         ]);
     }
@@ -150,29 +114,22 @@ class ProxyAccountResource extends Resource
     {
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('username')->searchable()->sortable(),
-                Tables\Columns\TextColumn::make('label')->searchable()->limit(40)->toggleable(),
-                Tables\Columns\IconColumn::make('enabled')->boolean(),
-                Tables\Columns\TextColumn::make('used_bytes')
-                    ->label('Used')
-                    ->formatStateUsing(fn ($state) => self::humanBytes($state)),
-                Tables\Columns\TextColumn::make('quota_bytes')
-                    ->label('Quota')
-                    ->formatStateUsing(fn ($state) => $state ? self::humanBytes($state) : '—'),
-                Tables\Columns\TextColumn::make('expires_at')->dateTime()->placeholder('—')->sortable(),
-                // last_seen_at is written by metrics::collect, which is a
-                // no-op until sing-box exposes per-user Prometheus
-                // counters (see metrics.rs module docstring). Hidden
-                // by default to avoid showing a column that's always
-                // 'never' in current deployments — toggleable for
-                // operators inspecting historical rows or running on
-                // a future build with traffic plumbing wired.
-                Tables\Columns\TextColumn::make('last_seen_at')
-                    ->dateTime()
-                    ->since()
-                    ->placeholder('never')
+                Tables\Columns\TextColumn::make('username')
+                    ->searchable()
                     ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->description(fn (ProxyAccount $record): ?string => $record->label),
+                Tables\Columns\TextColumn::make('protocol_mode')
+                    ->label('Mode')
+                    ->getStateUsing(fn (ProxyAccount $record): string => SingBoxProtocolCatalog::modeSummary(
+                        $record->enabledProtocolKeys(),
+                    ))
+                    ->wrap(),
+                Tables\Columns\IconColumn::make('enabled')->boolean(),
+                Tables\Columns\TextColumn::make('expires_at')
+                    ->label('Expires')
+                    ->dateTime()
+                    ->placeholder('Never')
+                    ->sortable(),
             ])
             ->filters([
                 Tables\Filters\TernaryFilter::make('enabled'),
@@ -295,17 +252,5 @@ class ProxyAccountResource extends Resource
             'create' => Pages\CreateProxyAccount::route('/create'),
             'edit' => Pages\EditProxyAccount::route('/{record}/edit'),
         ];
-    }
-
-    private static function humanBytes(?int $bytes): string
-    {
-        if (! $bytes) {
-            return '0 B';
-        }
-        $units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-        $i = (int) floor(log($bytes, 1024));
-        $i = max(0, min($i, count($units) - 1));
-
-        return round($bytes / (1024 ** $i), 2).' '.$units[$i];
     }
 }

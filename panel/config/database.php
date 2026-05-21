@@ -3,10 +3,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 declare(strict_types=1);
+use PDO\Mysql;
+
+$mysqlSslCaAttribute = class_exists(Mysql::class)
+    ? Mysql::ATTR_SSL_CA
+    : PDO::MYSQL_ATTR_SSL_CA;
 
 return [
     'default' => env('DB_CONNECTION', 'mysql'),
     'connections' => [
+        'sqlite' => [
+            'driver' => 'sqlite',
+            'database' => env('DB_DATABASE', database_path('database.sqlite')),
+            'prefix' => '',
+            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
+        ],
         'mysql' => [
             'driver' => 'mysql',
             'host' => env('DB_HOST', '127.0.0.1'),
@@ -19,6 +30,9 @@ return [
             'prefix' => '',
             'strict' => true,
             'engine' => 'InnoDB',
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                $mysqlSslCaAttribute => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
         ],
     ],
     'migrations' => [
