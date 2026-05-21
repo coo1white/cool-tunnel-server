@@ -6,22 +6,22 @@ declare(strict_types=1);
 
 namespace App\Contracts;
 
+use App\Support\RenderResult;
+
 /**
  * Contract for rendering the canonical sing-box config from the
  * current DB state and writing it to disk atomically.
  *
  * Implementations MUST be idempotent at the SHA-256 layer:
- * `renderToFile()` called twice with unchanged DB state MUST
- * return the same hash AND MUST NOT rewrite the file. The hash
- * compare is the dedup key for the v0.0.84 dual-path defense
- * (Redis fast-path + queued backstop) so two concurrent renders
- * collapse to a single disk write.
+ * `renderToFile()` called twice with unchanged DB state MUST NOT
+ * rewrite the file. The hash compare is the dedup key for queued
+ * and scheduled renders, so two concurrent renders collapse to a
+ * single disk write.
  *
- * Failures MUST be swallowed to a `critical`-level log and
- * return `null` — never throw out of `renderToFile()`. Callers
- * (model observers, message handlers, scheduled commands) rely
- * on null-on-failure to decide whether to skip a downstream
- * reload.
+ * Transient process failures MUST be logged at `critical` and
+ * returned as RenderResult::failed(). Missing input prerequisites
+ * may still throw before a subprocess starts because they are
+ * operator-fixable configuration defects.
  *
  * Real implementation: `App\Services\SingBoxConfigGenerator`.
  *
@@ -32,8 +32,8 @@ interface SingBoxConfigGeneratorInterface
     /**
      * Render and atomically write the config.
      *
-     * @return string|null Hex-encoded SHA-256 of the rendered
-     *                     bytes on success; null on failure.
+     * @return RenderResult Explicit changed / unchanged / failed
+     *                      outcome.
      */
-    public function renderToFile(): ?string;
+    public function renderToFile(): RenderResult;
 }

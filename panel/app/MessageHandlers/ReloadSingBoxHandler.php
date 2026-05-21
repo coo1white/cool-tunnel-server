@@ -30,7 +30,9 @@ use Symfony\Component\Messenger\Attribute\AsMessageHandler;
  *             reload-side shell-out from PHP.
  *
  *   - Hash-idempotent at the renderer layer.
- *   - `null` from the generator means "nothing changed".
+ *   - RenderResult::unchanged() means "nothing changed".
+ *   - RenderResult::failed() means the subprocess failed after a
+ *     critical log; throw so Messenger can retry instead of acking.
  *   - Domain-level failures bubble out for Messenger's retry.
  */
 #[AsMessageHandler]
@@ -43,20 +45,24 @@ final class ReloadSingBoxHandler
 
     public function __invoke(ReloadSingBox $message): void
     {
-        $hash = $this->generator->renderToFile();
-        if ($hash !== null) {
+        $result = $this->generator->renderToFile();
+        if ($result->failed) {
+            throw new \RuntimeException('sing-box render failed; see singbox.render.* logs');
+        }
+
+        if ($result->changed && $result->hash !== null) {
             // File write is the reload primitive. ct-singbox's
             // supervisor will respawn sing-box on its next debounced
             // file-watch tick (~250 ms).
             $this->logger->info('singbox.reload.rendered', [
-                'hash' => $hash,
+                'hash' => $result->hash,
                 'reason' => $message->reason,
             ]);
 
             return;
         }
 
-        $this->logger->debug('singbox.reload.handler_no_op_on_render_null', [
+        $this->logger->debug('singbox.reload.handler_no_op_on_unchanged_render', [
             'reason' => $message->reason,
         ]);
     }

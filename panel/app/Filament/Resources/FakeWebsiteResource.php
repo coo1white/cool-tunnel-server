@@ -46,11 +46,6 @@ class FakeWebsiteResource extends Resource
             Forms\Components\TextInput::make('title'),
             Forms\Components\Textarea::make('tagline')->rows(2),
 
-            Forms\Components\KeyValue::make('payload')
-                ->keyLabel('Field')
-                ->valueLabel('Content (use JSON for nested data)')
-                ->reorderable(),
-
             Forms\Components\Toggle::make('is_active')
                 ->helperText('Only one fake website can be active at a time. Toggling another off-then-on will swap.'),
         ]);
@@ -84,7 +79,7 @@ class FakeWebsiteResource extends Resource
                     ->visible(fn (FakeWebsite $record): bool => ! $record->is_active)
                     ->requiresConfirmation()
                     ->modalHeading(fn (FakeWebsite $record): string => "Activate '{$record->name}'?")
-                    ->modalDescription('This deactivates the currently-active cover site (if any) and switches the apex domain to render this one. Render + reload happen via the saved-hook chain.')
+                    ->modalDescription('This deactivates the currently-active cover site, if any, and switches the apex domain to this cover.')
                     // Defense-in-depth: the Filament panel sits behind
                     // its own auth middleware so unauthenticated callers
                     // never reach this Livewire action under normal

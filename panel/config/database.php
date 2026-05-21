@@ -8,6 +8,15 @@ use PDO\Mysql;
 $mysqlSslCaAttribute = class_exists(Mysql::class)
     ? Mysql::ATTR_SSL_CA
     : PDO::MYSQL_ATTR_SSL_CA;
+$floatEnv = function (string $key, float $default): float {
+    $value = env($key, $default);
+
+    return is_numeric($value) ? (float) $value : $default;
+};
+$redisTimeout = $floatEnv('REDIS_TIMEOUT', 1.0);
+$redisReadTimeout = $floatEnv('REDIS_READ_TIMEOUT', $redisTimeout);
+$redisReadWriteTimeout = $floatEnv('REDIS_READ_WRITE_TIMEOUT', 1.0);
+$redisRetryIntervalMs = (int) $floatEnv('REDIS_RETRY_INTERVAL_MS', 100.0);
 
 return [
     'default' => env('DB_CONNECTION', 'mysql'),
@@ -41,18 +50,31 @@ return [
     ],
     'redis' => [
         'client' => 'predis',
-        'options' => ['cluster' => 'redis', 'prefix' => 'cooltunnel:'],
+        'options' => [
+            'cluster' => 'redis',
+            'prefix' => 'cooltunnel:',
+            'timeout' => $redisTimeout,
+            'read_write_timeout' => $redisReadWriteTimeout,
+        ],
         'default' => [
             'host' => env('REDIS_HOST', '127.0.0.1'),
             'port' => env('REDIS_PORT', '6379'),
             'password' => env('REDIS_PASSWORD'),
             'database' => 0,
+            'timeout' => $redisTimeout,
+            'read_timeout' => $redisReadTimeout,
+            'read_write_timeout' => $redisReadWriteTimeout,
+            'retry_interval' => $redisRetryIntervalMs,
         ],
         'cache' => [
             'host' => env('REDIS_HOST', '127.0.0.1'),
             'port' => env('REDIS_PORT', '6379'),
             'password' => env('REDIS_PASSWORD'),
             'database' => 1,
+            'timeout' => $redisTimeout,
+            'read_timeout' => $redisReadTimeout,
+            'read_write_timeout' => $redisReadWriteTimeout,
+            'retry_interval' => $redisRetryIntervalMs,
         ],
     ],
 ];

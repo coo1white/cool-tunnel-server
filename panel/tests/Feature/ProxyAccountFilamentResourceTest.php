@@ -13,8 +13,11 @@ use App\Filament\Resources\ProxyAccountResource\Pages\ListProxyAccounts;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use App\Models\User;
+use App\Support\RenderResult;
 use Filament\Notifications\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -40,6 +43,9 @@ final class ProxyAccountFilamentResourceTest extends TestCase
             ->assertTableColumnDoesNotExist('label')
             ->assertTableColumnDoesNotExist('used_bytes')
             ->assertTableColumnDoesNotExist('quota_bytes');
+
+        $this->assertFalse(Schema::hasColumn('proxy_accounts', 'used_bytes'));
+        $this->assertFalse(Schema::hasColumn('proxy_accounts', 'quota_bytes'));
     }
 
     #[Test]
@@ -49,12 +55,33 @@ final class ProxyAccountFilamentResourceTest extends TestCase
         $account = ProxyAccount::factory()->create([
             'enabled_protocols' => ['vless_reality', 'hysteria2'],
         ]);
+        DB::table('proxy_accounts')
+            ->where('id', $account->id)
+            ->update(['enabled_protocols' => json_encode(['vless_reality', 'hysteria2'])]);
 
         Livewire::actingAs($admin)
             ->test(EditProxyAccount::class, ['record' => $account->getKey()])
             ->assertFormComponentExists('protocol_mode')
             ->assertFormComponentDoesNotExist('enabled_protocols')
-            ->assertSeeText('VLESS + Reality active; Hysteria2 staged');
+            ->assertSeeText('VLESS + Reality active');
+    }
+
+    #[Test]
+    public function edit_form_does_not_silently_default_stale_only_protocol_rows(): void
+    {
+        $admin = User::factory()->create();
+        $account = ProxyAccount::factory()->create([
+            'enabled_protocols' => ['hysteria2'],
+        ]);
+        DB::table('proxy_accounts')
+            ->where('id', $account->id)
+            ->update(['enabled_protocols' => json_encode(['hysteria2'])]);
+
+        Livewire::actingAs($admin)
+            ->test(EditProxyAccount::class, ['record' => $account->getKey()])
+            ->assertFormComponentExists('protocol_mode')
+            ->assertFormComponentDoesNotExist('enabled_protocols')
+            ->assertSeeText('No active core mode');
     }
 
     #[Test]
@@ -62,7 +89,7 @@ final class ProxyAccountFilamentResourceTest extends TestCase
     {
         $admin = User::factory()->create();
         ServerConfig::factory()->create(['reality_dest_host' => 'ya.ru']);
-        $generator = new ProxyAccountResourceFakeSingBoxGenerator(str_repeat('a', 64));
+        $generator = new ProxyAccountResourceFakeSingBoxGenerator(RenderResult::changed(str_repeat('a', 64)));
         $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
 
         Livewire::actingAs($admin)
@@ -98,19 +125,79 @@ final class ProxyAccountFilamentResourceTest extends TestCase
         $account = ProxyAccount::factory()->create([
             'enabled_protocols' => ['vless_reality', 'hysteria2'],
         ]);
+        $generator = new ProxyAccountResourceFakeSingBoxGenerator(RenderResult::changed(str_repeat('b', 64)));
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
 
         Livewire::actingAs($admin)
             ->test(EditProxyAccount::class, ['record' => $account->getKey()])
             ->fillForm([
                 'label' => 'cleaned',
             ])
-            ->call('save', false, false)
+            ->call('save', false, true)
             ->assertHasNoFormErrors();
 
         $this->assertSame(
-            ['vless_reality', 'hysteria2'],
+            ['vless_reality'],
             $account->refresh()->enabled_protocols,
         );
+        $this->assertSame(1, $generator->renderCalls);
+        Notification::assertNotified('Proxy account saved — config current');
+    }
+
+    #[Test]
+    public function edit_save_warns_when_immediate_render_fails(): void
+    {
+        $admin = User::factory()->create();
+        $account = ProxyAccount::factory()->create();
+        $generator = new ProxyAccountResourceFakeSingBoxGenerator(RenderResult::failed());
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
+
+        Livewire::actingAs($admin)
+            ->test(EditProxyAccount::class, ['record' => $account->getKey()])
+            ->fillForm([
+                'label' => 'queued',
+            ])
+            ->call('save', false, true)
+            ->assertHasNoFormErrors();
+
+        $this->assertSame(1, $generator->renderCalls);
+        Notification::assertNotified('Proxy account saved — reload queued');
+    }
+
+    #[Test]
+    public function table_delete_confirms_immediate_render(): void
+    {
+        $admin = User::factory()->create();
+        $account = ProxyAccount::factory()->create();
+        $generator = new ProxyAccountResourceFakeSingBoxGenerator(RenderResult::changed(str_repeat('c', 64)));
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
+
+        Livewire::actingAs($admin)
+            ->test(ListProxyAccounts::class)
+            ->callTableAction('delete', $account)
+            ->assertHasNoTableActionErrors();
+
+        $this->assertModelMissing($account);
+        $this->assertSame(1, $generator->renderCalls);
+        Notification::assertNotified('Proxy account deleted — config current');
+    }
+
+    #[Test]
+    public function table_bulk_delete_confirms_immediate_render_once(): void
+    {
+        $admin = User::factory()->create();
+        $accounts = ProxyAccount::factory()->count(2)->create();
+        $generator = new ProxyAccountResourceFakeSingBoxGenerator(RenderResult::changed(str_repeat('d', 64)));
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
+
+        Livewire::actingAs($admin)
+            ->test(ListProxyAccounts::class)
+            ->callTableBulkAction('delete', $accounts)
+            ->assertHasNoTableBulkActionErrors();
+
+        $accounts->each(fn (ProxyAccount $account) => $this->assertModelMissing($account));
+        $this->assertSame(1, $generator->renderCalls);
+        Notification::assertNotified('Proxy accounts deleted — config current');
     }
 }
 
@@ -118,12 +205,12 @@ final class ProxyAccountResourceFakeSingBoxGenerator implements SingBoxConfigGen
 {
     public int $renderCalls = 0;
 
-    public function __construct(private readonly ?string $hash) {}
+    public function __construct(private readonly RenderResult $result) {}
 
-    public function renderToFile(): ?string
+    public function renderToFile(): RenderResult
     {
         $this->renderCalls++;
 
-        return $this->hash;
+        return $this->result;
     }
 }

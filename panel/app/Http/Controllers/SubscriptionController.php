@@ -67,11 +67,10 @@ use Illuminate\Support\Facades\RateLimiter;
 // Advertising true would lead clients to attempt QUIC, fail, fall
 // back — a fingerprintable network pattern.
 //
-// Why a panel-side endpoint? Historically the cleartext password
-// wasn't in the DB; the panel decrypted on-the-fly. v0.4.0 keeps the
-// panel-side endpoint for continuity (token-resolution path is
-// identical; the cover-site fall-through to FakeSiteController is
-// part of the anti-enumeration posture).
+// Why a panel-side endpoint? The panel already owns subscription
+// token resolution, VLESS UUID access, Reality config, and cover-site
+// fall-through. Keeping this path in Laravel avoids a second
+// cross-language source of truth for signed manifests.
 
 class SubscriptionController extends Controller
 {
@@ -310,7 +309,6 @@ class SubscriptionController extends Controller
                     $protocols,
                     $cfg,
                     $realityDestHost,
-                    measureLatency: true,
                 ),
                 'reality' => [
                     'public_key' => $realityPublicKey,

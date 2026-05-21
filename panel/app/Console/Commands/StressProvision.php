@@ -18,7 +18,7 @@ use Illuminate\Console\Command;
  *   - Find or create a ProxyAccount with the given username.
  *   - Generate a fresh VLESS UUID via ProxyAccount::regenerateUuid().
  *   - Save it. The booted() hooks fire as for any other model save —
- *     Redis announces + Messenger backstop dispatch.
+ *     a Messenger render dispatch after the DB commit.
  *   - Print one-line JSON: {"id": N, "uuid": "..."}.
  *
  * Why a dedicated command vs. just curling Filament: the stress

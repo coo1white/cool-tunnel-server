@@ -9,6 +9,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\ProxyAccountResource\Pages;
 use App\Models\ProxyAccount;
 use App\Support\SingBoxProtocolCatalog;
+use App\Support\SingBoxRenderConfirmation;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Notifications\Actions\Action;
@@ -59,27 +60,20 @@ class ProxyAccountResource extends Resource
                         ->helperText('Turn off to revoke access.'),
                 ])->columns(2),
 
-            Forms\Components\Section::make('Limits')
+            Forms\Components\Section::make('Access window')
                 ->schema([
-                    Forms\Components\TextInput::make('quota_bytes')
-                        ->label('Monthly quota')
-                        ->numeric()
-                        ->minValue(0)
-                        ->suffix('bytes')
-                        ->helperText('Blank means unlimited.'),
-
                     // No `->minDate(now())` here — applying it on edit
                     // blocks the operator from saving an unmodified
                     // expired account (the existing past timestamp
                     // fails the rule), which means they can't change
-                    // the label / quota of an already-expired account
+                    // the label of an already-expired account
                     // without also re-issuing a future expires_at.
                     // The helperText documents the past-date behaviour;
                     // operator intent stands.
                     Forms\Components\DateTimePicker::make('expires_at')
                         ->helperText('Blank means never expires.')
                         ->seconds(false),
-                ])->columns(2),
+                ]),
 
             Forms\Components\Section::make('Client defaults')
                 ->schema([
@@ -98,9 +92,12 @@ class ProxyAccountResource extends Resource
                     Forms\Components\Placeholder::make('protocol_mode')
                         ->key('protocol_mode')
                         ->label('Mode')
-                        ->content(fn (mixed $record): string => $record instanceof ProxyAccount
-                            ? SingBoxProtocolCatalog::modeSummary($record->enabledProtocolKeys())
-                            : SingBoxProtocolCatalog::modeSummary(SingBoxProtocolCatalog::defaultKeys())),
+                        ->content(fn (Forms\Get $get, string $operation): string => SingBoxProtocolCatalog::modeSummary(
+                            $operation === 'create'
+                                ? SingBoxProtocolCatalog::defaultKeys()
+                                : $get('enabled_protocols'),
+                            defaultWhenEmpty: $operation === 'create',
+                        )),
                 ]),
 
             Forms\Components\Placeholder::make('uuid_note')
@@ -122,6 +119,7 @@ class ProxyAccountResource extends Resource
                     ->label('Mode')
                     ->getStateUsing(fn (ProxyAccount $record): string => SingBoxProtocolCatalog::modeSummary(
                         $record->enabledProtocolKeys(),
+                        defaultWhenEmpty: false,
                     ))
                     ->wrap(),
                 Tables\Columns\IconColumn::make('enabled')->boolean(),
@@ -155,19 +153,28 @@ class ProxyAccountResource extends Resource
                     ->action(function (ProxyAccount $record) {
                         $uuid = $record->regenerateUuid();
                         $record->save();
+                        $renderConfirmed = SingBoxRenderConfirmation::renderNow('proxy_account.regenerate_uuid');
 
                         $subUrl = $record->subscriptionUrl();
                         $body = $uuid;
                         if ($subUrl !== null) {
                             $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
                         }
+                        $body .= $renderConfirmed
+                            ? "\n\nsing-box config rendered now; the URL is ready to import."
+                            : "\n\nReload queued, but immediate render was not confirmed. If import fails, wait a few seconds and retry, then check panel logs for singbox.render.*.";
 
-                        Notification::make()
-                            ->title('New UUID — copy now, shown once')
+                        $notification = Notification::make()
+                            ->title($renderConfirmed ? 'New UUID — URL ready' : 'New UUID — reload queued')
                             ->body($body)
-                            ->success()
-                            ->persistent()
-                            ->send();
+                            ->persistent();
+
+                        if ($renderConfirmed) {
+                            $notification->success();
+                        } else {
+                            $notification->warning();
+                        }
+                        $notification->send();
 
                         // Follow-up warning when APP_KEY is unset — the
                         // UUID rotated fine but the subscription URL
@@ -232,10 +239,14 @@ class ProxyAccountResource extends Resource
                             ])
                             ->send();
                     }),
-                Tables\Actions\DeleteAction::make(),
+                Tables\Actions\DeleteAction::make()
+                    ->successNotification(null)
+                    ->after(fn () => self::sendRenderNotification('Proxy account deleted', 'proxy_account.delete')),
             ])
             ->bulkActions([
-                Tables\Actions\DeleteBulkAction::make(),
+                Tables\Actions\DeleteBulkAction::make()
+                    ->successNotification(null)
+                    ->after(fn () => self::sendRenderNotification('Proxy accounts deleted', 'proxy_account.bulk_delete')),
             ])
             ->defaultSort('created_at', 'desc');
     }
@@ -252,5 +263,25 @@ class ProxyAccountResource extends Resource
             'create' => Pages\CreateProxyAccount::route('/create'),
             'edit' => Pages\EditProxyAccount::route('/{record}/edit'),
         ];
+    }
+
+    private static function sendRenderNotification(string $title, string $context): void
+    {
+        $renderConfirmed = SingBoxRenderConfirmation::renderNow($context);
+
+        $notification = Notification::make()
+            ->title($renderConfirmed ? "{$title} — config current" : "{$title} — reload queued")
+            ->body($renderConfirmed
+                ? 'sing-box config rendered now; client imports use the current account state.'
+                : 'The DB row was saved, but immediate render was not confirmed. The worker or every-5-min scheduler will reconcile sing-box; check panel logs for singbox.render.* if the client state still looks stale.')
+            ->persistent();
+
+        if ($renderConfirmed) {
+            $notification->success();
+        } else {
+            $notification->warning();
+        }
+
+        $notification->send();
     }
 }

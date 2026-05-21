@@ -2,8 +2,8 @@
 // Component-as-machine-part model.
 //
 // Every replaceable piece of the Cool Tunnel stack — Rust core,
-// ct-protocol crate, NaiveProxy engine, Caddy, forwardproxy plugin,
-// the panel — is described by a `ComponentManifestV1`. The manifest
+// ct-protocol crate, sing-box engine, Caddy, the panel — is described
+// by a `ComponentManifestV1`. The manifest
 // pins what we expect to find; a platform-specific verifier reports
 // whether what's installed matches.
 //
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ComponentManifestV1 {
-    /// Stable slug — `naive`, `caddy`, `forwardproxy`, `ct-server-core`,
+    /// Stable slug — `singbox`, `caddy`, `ct-server-core`,
     /// `ct-protocol`, `panel`, etc.
     pub name: String,
 
@@ -54,7 +54,7 @@ pub struct ComponentManifestV1 {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ComponentKindV1 {
-    /// Native binary on disk (`naive`, `caddy`, `ct-server-core`).
+    /// Native binary on disk (`sing-box`, `caddy`, `ct-server-core`).
     Binary,
     /// A Cargo crate inside our workspace.
     RustCrate,
@@ -148,18 +148,18 @@ mod tests {
     #[test]
     fn round_trip() {
         let m = ComponentManifestV1 {
-            name: "naive".into(),
+            name: "singbox".into(),
             kind: ComponentKindV1::Binary,
-            version: "v147.0.7727.49-1".into(),
-            upstream: Some("https://github.com/klzgrad/naiveproxy".into()),
+            version: "v1.13.12".into(),
+            upstream: Some("https://github.com/SagerNet/sing-box".into()),
             sha256: Some("e85403f4fc99153bb892186b87a867ba9141dcae029d80e303303a50d3701cb0".into()),
             verify: Some(VerifySpecV1 {
-                command: alloc::vec!["naive".into(), "--version".into()],
-                expect_stdout_contains: Some("naive".into()),
+                command: alloc::vec!["sing-box".into(), "version".into()],
+                expect_stdout_contains: Some("sing-box".into()),
                 expect_zero_exit: true,
                 expect_no_version_line: false,
             }),
-            note: Some("BSD-3".into()),
+            note: Some("GPL-3.0-or-later".into()),
         };
         let j = serde_json::to_string(&m).unwrap_or_default();
         let m2: ComponentManifestV1 = serde_json::from_str(&j)

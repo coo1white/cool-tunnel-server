@@ -259,9 +259,8 @@ mod tests {
 
     // PHP-side reader is panel/app/Services/CaddyfileGenerator.php:
     // reads `$out['changed']` + `$out['hash']` with `?? <default>`.
-    // active_users stays in the JSON for compat with the Filament
-    // components page, but is always 0 because Caddy has no
-    // per-account data.
+    // active_users stays in the JSON for PHP-side compatibility, but
+    // is always 0 because Caddy has no per-account data.
     #[test]
     fn render_outcome_json_pins_php_visible_keys() {
         let out = CaddyRenderOutcome {

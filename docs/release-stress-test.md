@@ -25,35 +25,31 @@ Cadence per release:
 
 ## Test taxonomy
 
-Each test is one file under `scripts/stress/<letter>_<name>.sh`,
-launched by `run-all.sh`. The orchestrator can run a subset:
-`./scripts/stress/run-all.sh c g`.
+Each live test is one file under `scripts/stress/<letter>_<name>.sh`,
+launched by `run-all.sh`. The orchestrator can run a subset by letter,
+for example `./scripts/stress/run-all.sh h` when a live `h_*.sh`
+exists.
 
 | Letter | Test | What it validates |
 | --- | --- | --- |
 | **A** | `a_connections.sh` | sing-box's TCP backlog + HTTP/2 multiplexing under 100/500/1000 concurrent CONNECT requests |
 | **B** | `b_throughput.sh` | RSS ceiling under sustained traffic (iperf3 over CONNECT for 60s) |
-| **C** | `c_revocation_latency.sh` | Redis bus + Coalescer claim ≤100 ms; live measurement against live bus |
-| **D** | `d_quota_race.sh` | `quota::enforce` SELECT FOR UPDATE under concurrent panel save (race that v0.0.10 fixed) |
 | **E** | `e_cert_renewal.sh` | cert-mtime → render-hash chain reloads sing-box on Caddy renewal |
 | **F** | `f_failure_recovery.sh` | Kill sing-box / Redis / MariaDB; what stays up, what auto-recovers |
-| **G** | `g_anti_tracking_probe.sh` | `hide_ip` / `hide_via` / `probe_resistance` actually work end-to-end |
 
-A and B exist as plans; **C** and **G** ship in v0.0.12. The rest
-land as we hit operational regressions worth codifying (LTSC
-audit pattern: hand-test once, codify forever).
+A, B, E, and F are plan slots. The old C and G scripts were retired
+with the pre-v0.4 revocation and Naive/basic-auth runtime. New live
+stress tests should land only when they match the current
+VLESS+Reality stack. LTSC audit pattern: hand-test once, codify
+forever.
 
 ## Reading results
 
 Every run drops artifacts in `results/stress/<utc-timestamp>/`:
 
 ```
-a_connections.log
-a_connections.json
-c_revocation_latency.log
-c_revocation_latency.json
-g_anti_tracking_probe.log
-g_anti_tracking_probe.json
+<letter>_<name>.log
+<letter>_<name>.json
 summary.json                  ← aggregate, machine-readable
 ```
 
@@ -61,11 +57,9 @@ The JSON files have a uniform shape:
 
 ```json
 {
-  "test": "c_revocation_latency",
+  "test": "h_example_runtime_gate",
   "pass": true,
-  "elapsed_ms": 42,
-  "threshold_ms": 200,
-  "reason": "dropped in 42ms (≤ 200ms target)"
+  "reason": "runtime invariant verified"
 }
 ```
 
@@ -94,7 +88,7 @@ The stress harness assumes:
 - `.env` is populated (DOMAIN, DB_*, REDIS_*).
 - A panel artisan command `stress:provision` exists that
   idempotently creates a `stress-runner` proxy account and
-  prints `{"id": …, "password": …}` JSON. (Ships in v0.0.12.)
+  prints `{"id": …, "uuid": …}` JSON.
 
 Tests that need workload generators (wrk, vegeta, iperf3) bring
 them up via ephemeral containers attached to the project's

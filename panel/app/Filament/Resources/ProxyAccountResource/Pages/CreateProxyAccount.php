@@ -6,21 +6,18 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\ProxyAccountResource\Pages;
 
-use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Filament\Resources\ProxyAccountResource;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use App\Support\RealityDestinations;
 use App\Support\SingBoxProtocolCatalog;
+use App\Support\SingBoxRenderConfirmation;
 use Filament\Notifications\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Throwable;
 
 class CreateProxyAccount extends CreateRecord
 {
@@ -103,21 +100,10 @@ class CreateProxyAccount extends CreateRecord
         $subUrl = $record->subscriptionUrl();
         $destHost = $this->selectedRealityDestHost
             ?? RealityDestinations::normaliseHost((string) (ServerConfig::current()->reality_dest_host ?? ''));
-        $destLabel = RealityDestinations::label($destHost, RealityDestinations::latencyMs($destHost));
-        $protocolLabels = array_map(
-            fn (string $key): string => SingBoxProtocolCatalog::label(
-                $key,
-                ServerConfig::current(),
-                $destHost,
-                measureLatency: true,
-            ),
-            $this->selectedProtocols ?: $record->enabledProtocolKeys(),
-        );
+        $destLabel = RealityDestinations::label($destHost, includeLatency: false);
         $port = (int) $record->client_default_local_port;
         $body = "Username: {$record->username}\nUUID: {$this->generatedUuid}\nLocal SOCKS port: {$port}\nReality dest_host: {$destLabel}";
-        if ($protocolLabels !== []) {
-            $body .= "\nProtocols:\n- ".implode("\n- ", $protocolLabels);
-        }
+        $body .= "\nProtocol: ".SingBoxProtocolCatalog::modeSummary($this->selectedProtocols ?: $record->enabledProtocolKeys());
         if ($subUrl !== null) {
             $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
         }
@@ -162,17 +148,6 @@ class CreateProxyAccount extends CreateRecord
 
     private function renderSingBoxNow(): bool
     {
-        try {
-            $hash = app(SingBoxConfigGeneratorInterface::class)->renderToFile();
-
-            return $hash !== null && Str::length($hash) === 64;
-        } catch (Throwable $e) {
-            Log::warning('proxy_account.create.immediate_render_failed', [
-                'err' => $e->getMessage(),
-                'type' => $e::class,
-            ]);
-
-            return false;
-        }
+        return SingBoxRenderConfirmation::renderNow('proxy_account.create');
     }
 }

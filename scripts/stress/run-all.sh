@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # run-all.sh — release-gate stress test orchestrator.
 #
-# Runs every stress test in scripts/stress/[a-h]_*.sh against the
+# Runs every stress test in scripts/stress/[a-z]_*.sh against the
 # live stack on this VPS. Each individual test:
 #   - prints its goal
 #   - runs in a bounded time budget
@@ -51,7 +51,7 @@ mkdir -p "$out_dir"
 selected=("$@")
 
 discover_tests() {
-    find scripts/stress -maxdepth 1 -name '[a-h]_*.sh' -type f | sort
+    find scripts/stress -maxdepth 1 -name '[a-z]_*.sh' -type f | sort
 }
 
 is_selected() {
@@ -67,8 +67,16 @@ passed=0
 failed=0
 skipped=0
 failed_tests=()
+tests=()
+while IFS= read -r tpath; do
+    tests+=("$tpath")
+done < <(discover_tests)
 
-for tpath in $(discover_tests); do
+if [[ ${#tests[@]} -eq 0 ]]; then
+    warn "no live stress tests are currently enabled; use ct doctor and CI gates for this release"
+fi
+
+for tpath in "${tests[@]}"; do
     fname=$(basename "$tpath" .sh)        # e.g. a_connections
     letter=${fname%%_*}                   # a
     label=${fname#*_}                     # connections

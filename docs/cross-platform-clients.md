@@ -14,7 +14,7 @@ The plan is to grow to a family:
 Every client in this family **shares the same Rust core layer** —
 specifically the `ct-protocol` crate from this repo, plus a per-
 platform thin core (`ct-client-core-*`) that handles platform glue
-(naive-binary management, system-proxy integration, keychain).
+(sing-box process management, system-proxy integration, keychain).
 
 ## How the layering works
 
@@ -30,16 +30,15 @@ layers:
    ┌────────────────────▼────────────────────────────┐
    │  ct-protocol           ct-client-core-<plat>     │
    │  (shared crate)        (per-platform glue)       │
-   │     ProfileV1            naive binary mgmt       │
-   │     SubscriptionV1       system-proxy plumbing   │
+   │     SubscriptionV2       sing-box lifecycle      │
+   │     Components           system-proxy plumbing   │
    │     WireV1               keychain / keystore     │
-   │     Components           lsof-style anomaly      │
    └────────────────────┬────────────────────────────┘
                         │ Process::spawn
                         ▼
    ┌─────────────────────────────────────────────────┐
-   │  naive (BSD-3 upstream binary, per-platform)     │
-   │  TLS handshake + HTTP CONNECT to your server     │
+   │  sing-box (per-platform upstream binary)         │
+   │  VLESS + Reality outbound to your server         │
    └─────────────────────────────────────────────────┘
 ```
 
@@ -54,11 +53,14 @@ so every new platform reuses them verbatim.
 Pure Rust, `no_std`-friendly, zero `unsafe`, zero I/O. Safe to embed
 on any target.
 
-- `ProfileV1::parse(&str)` — validates `naive+https://…` URLs.
-- `SubscriptionManifestV1` — JSON the server emits at
-  `GET /api/v1/subscription/<token>`. Carries one or more profiles,
-  the server's anti-tracking capabilities, and a `fake_site_slug`
-  the client can show in its UI.
+- `SubscriptionManifestV2` — JSON the server emits at
+  `GET /api/v1/subscription/<token>`. It carries VLESS+Reality
+  profiles, client defaults, rendered protocol metadata, the server's
+  anti-tracking capabilities, and an optional `fake_site_slug` the
+  client can show in its UI. Until the Rust V2 struct lands, the panel
+  tests pin the exact v2 shape and HMAC canonical form.
+- `ProfileV1` / `SubscriptionManifestV1` — compatibility structs for
+  pre-v0.4 clients.
 - `WireRequestV1` / `WireResponseV1` / `WireEventV1` — the JSON-per-
   line protocol the macOS client already uses to talk to its own
   Rust core. Reused as-is on any platform.
@@ -86,8 +88,9 @@ differ — there's no single Rust crate that can talk to both
 
 Any client that:
 
-1. Speaks NaiveProxy (HTTP/2 CONNECT over TLS) on the wire, **and**
-2. Uses `ct-protocol` for profile / subscription / component types
+1. Speaks sing-box VLESS+Reality on the wire, **and**
+2. Uses the panel-pinned SubscriptionManifestV2 shape for
+   subscription import
 
 … is interoperable with this server **today**. Even a non-Rust
 client (e.g. a Go re-implementation on a NAS) can interoperate by
@@ -109,8 +112,7 @@ For every release tagged here:
 - The schema files in `manifests/*.upstream.json` are loadable by
   any release of `ct-protocol >= 0.0.1`.
 - The `/api/v1/subscription/<token>` endpoint always emits a body
-  that round-trips through `SubscriptionManifestV1` of the same
-  major version the URL declares.
+  that matches the panel's SubscriptionManifestV2 contract tests.
 
 ## Anti-tracking notes for client implementers
 
@@ -156,11 +158,10 @@ not rely on any tell that contradicts this:
    re-canonicalise — every verification would fail. The
    `core/ct-protocol/src/subscription.rs` test
    `canonical_roundtrips_under_signature_strip` pins this contract.
-- **`capabilities.http3` is always `false`.** NaiveProxy is
-  HTTP/2-only at the protocol level — sing-box's `naive` inbound
-  does not serve QUIC. The server intentionally does NOT advertise
-  HTTP/3 support; clients that attempt QUIC against this server
-  will fail and fall back to TCP, producing a fingerprintable
+- **`capabilities.http3` is always `false`.** The current
+  VLESS+Reality stack is TCP-only. The server intentionally does NOT
+  advertise HTTP/3 support; clients that attempt QUIC against this
+  server will fail and fall back to TCP, producing a fingerprintable
   network signature. Don't try.
 - **Invalid subscription tokens get a 200 + cover-site HTML body**,
   byte-identical to the camouflage cover-site catch-all (same body,
@@ -168,29 +169,16 @@ not rely on any tell that contradicts this:
   same `ETag`). Don't probe a token you don't have — the server
   cannot tell you it's wrong without breaking that property. The
   same fall-through fires for: unknown token, expired/disabled
-  account, rate-limit hit, signing-key misconfigured, and (as of
-  v0.0.59) any account whose stored cleartext is empty or fails
-  to decrypt — all of these are operationally distinct but
-  on-the-wire identical. (Earlier revisions of this doc said "404 +
-  HTML"; that was wrong — a 404 would distinguish the subscription
-  endpoint from the rest of the cover-site catch-all by status code
-  alone.)
-- **`{{CLEARTEXT_PLACEHOLDER}}` is a server-internal marker.** The
-  Rust core's `core/ct-server-core/src/subscription.rs` emits the
-  literal string `{{CLEARTEXT_PLACEHOLDER}}` for the CLI-without-
-  panel path; the panel's HTTP path splices the actual cleartext
-  before signing and the HMAC covers the spliced body. If a client
-  ever sees that string in a manifest's `password` field, the
-  server is broken — DO NOT treat it as a literal password (it
-  won't authenticate). Report it to the operator and refuse the
-  profile.
-- **A signed manifest with `password: ""` should be refused.**
-  v0.0.58 and earlier could emit one when the panel's encrypted-
-  cleartext column was empty (legacy row pre-v0.0.5, or APP_KEY
-  rotation broke decryption). v0.0.59+ falls through to the cover
-  site instead of emitting it, but a defensive client should still
-  reject empty passwords on its own — that's a contract a future
-  server bug or a man-in-the-middle proxy could violate.
+  account, rate-limit hit, signing-key misconfigured, missing UUID,
+  missing Reality public key, or no rendered protocol — all of these
+  are operationally distinct but on-the-wire identical. (Earlier
+  revisions of this doc said "404 + HTML"; that was wrong — a 404
+  would distinguish the subscription endpoint from the rest of the
+  cover-site catch-all by status code alone.)
+- **A signed manifest with `uuid: ""` or missing `reality.public_key`
+  should be refused.** v0.4.0+ falls through to the cover site instead
+  of emitting those broken manifests, but a defensive client should
+  still reject them on its own.
 - **No `Server:` or `X-Powered-By:` headers** on the subscription
   response. If you're testing a client and see one, that's a bug
   on the server side; please report.

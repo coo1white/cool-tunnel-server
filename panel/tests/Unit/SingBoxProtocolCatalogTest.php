@@ -16,12 +16,17 @@ final class SingBoxProtocolCatalogTest extends TestCase
     public function normalise_selected_accepts_filament_boolean_maps(): void
     {
         $this->assertSame(
-            ['vless_reality', 'tor'],
+            ['vless_reality'],
             SingBoxProtocolCatalog::normaliseSelected([
                 'vless_reality' => true,
                 'shadowsocks' => false,
                 'tor' => true,
             ]),
+        );
+        $this->assertSame(
+            [],
+            SingBoxProtocolCatalog::normaliseSelected(['tor' => true]),
+            'Rows that only contain retired modes must not silently gain VLESS access.',
         );
     }
 
@@ -29,8 +34,8 @@ final class SingBoxProtocolCatalogTest extends TestCase
     public function unknown_keys_are_reported_before_normalisation_drops_them(): void
     {
         $this->assertSame(
-            ['definitely-not-singbox'],
-            SingBoxProtocolCatalog::invalidKeys(['vless_reality', 'definitely-not-singbox']),
+            ['shadowsocks', 'definitely-not-singbox'],
+            SingBoxProtocolCatalog::invalidKeys(['vless_reality', 'shadowsocks', 'definitely-not-singbox']),
         );
     }
 
@@ -41,11 +46,15 @@ final class SingBoxProtocolCatalogTest extends TestCase
     }
 
     #[Test]
-    public function mode_summary_separates_active_and_staged_protocols(): void
+    public function mode_summary_reports_only_core_protocol_state(): void
     {
         $this->assertSame(
-            'VLESS + Reality active; Hysteria2, Tor staged',
+            'VLESS + Reality active',
             SingBoxProtocolCatalog::modeSummary(['vless_reality', 'hysteria2', 'tor']),
+        );
+        $this->assertSame(
+            'No active core mode',
+            SingBoxProtocolCatalog::modeSummary(['hysteria2', 'tor']),
         );
     }
 }

@@ -13,9 +13,9 @@ namespace App\Messages;
  *
  * Representation-free: the handler always reads current DB
  * state. Two messages back-to-back coalesce naturally — the
- * first re-renders, the second short-circuits inside
- * `SingBoxConfigGeneratorInterface::renderToFile()` on the hash
- * compare.
+ * first re-renders, the second returns RenderResult::unchanged()
+ * from `SingBoxConfigGeneratorInterface::renderToFile()` after the
+ * hash compare.
  *
  * Dispatched directly from model events and panel actions after
  * the surrounding DB transaction commits.

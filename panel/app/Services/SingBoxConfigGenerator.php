@@ -9,6 +9,7 @@ namespace App\Services;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
+use App\Support\RenderResult;
 use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Process\Process;
@@ -34,10 +35,10 @@ use Symfony\Component\Process\Process;
 //   (via Laravel's `encrypted` cast at attribute-access time) and
 //   the render to a stdin-fed binary shrinks the trust surface.
 //
-// Public API preserved: `renderToFile(): ?string` returns the new
-// SHA-256 hex hash when the file content changed, or null when the
-// on-disk file already matches (the dedupe check is done by
-// singbox-core itself; PHP just unpacks the outcome JSON).
+// Public API: `renderToFile()` returns an explicit changed /
+// unchanged / failed result. Keeping those states separate prevents
+// a failed TypeScript renderer subprocess from being treated like a
+// cheap no-op by handlers and commands.
 
 class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
 {
@@ -62,11 +63,7 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
      */
     private const TIMEOUT_SEC = 15;
 
-    /**
-     * Render to disk. Returns the new file's SHA-256 if it changed,
-     * or null if the on-disk file already matches.
-     */
-    public function renderToFile(): ?string
+    public function renderToFile(): RenderResult
     {
         // Build-side failures are code defects (a missing column, a
         // corrupt cast, an unset Reality keypair). Re-throw so the
@@ -102,7 +99,7 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
                 'type' => $e::class,
             ]);
 
-            return null;
+            return RenderResult::failed();
         }
         if (! $proc->isSuccessful()) {
             Log::critical('singbox.render.nonzero_exit', [
@@ -110,14 +107,14 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
                 'stderr' => substr(trim($proc->getErrorOutput()), 0, 240),
             ]);
 
-            return null;
+            return RenderResult::failed();
         }
 
         $stdout = trim($proc->getOutput());
         if ($stdout === '') {
             Log::critical('singbox.render.empty_outcome', []);
 
-            return null;
+            return RenderResult::failed();
         }
         $outcome = json_decode($stdout, true);
         if (! is_array($outcome)) {
@@ -125,17 +122,24 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
                 'stdout' => substr($stdout, 0, 240),
             ]);
 
-            return null;
+            return RenderResult::failed();
         }
 
         $changed = (bool) ($outcome['changed'] ?? false);
         if (! $changed) {
-            return null;
+            return RenderResult::unchanged();
         }
 
         $hash = $outcome['sha256'] ?? null;
+        if (! is_string($hash) || ! preg_match('/^[0-9a-f]{64}$/i', $hash)) {
+            Log::critical('singbox.render.invalid_hash', [
+                'sha256' => is_scalar($hash) ? (string) $hash : gettype($hash),
+            ]);
 
-        return is_string($hash) && $hash !== '' ? $hash : null;
+            return RenderResult::failed();
+        }
+
+        return RenderResult::changed($hash);
     }
 
     /**
@@ -176,11 +180,10 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
             ? ['']
             : array_map('strval', $shortIds);
 
-        // Only enabled, non-expired, in-quota accounts get rendered
-        // into singbox.json. Filtering at the panel layer (vs. having
-        // ct-singbox enforce) keeps the responsibility line clean:
-        // sing-box trusts its config; the panel decides who's in.
-        // ProxyAccount::isActive() carries the canonical rule.
+        // Only enabled, non-expired accounts with the core
+        // VLESS+Reality mode get rendered into singbox.json. sing-box
+        // trusts its config; the panel decides which accounts are in.
+        // ProxyAccount::isActive() carries the canonical live rule.
         $accounts = [];
         foreach (ProxyAccount::query()->orderBy('id')->get() as $account) {
             if (! $account->isActive()) {

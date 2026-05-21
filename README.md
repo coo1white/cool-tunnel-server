@@ -12,8 +12,8 @@ A self-hosted proxy server you run on a cheap VPS. You get:
 
 - **A web admin panel** for creating user accounts, watching health, and
   changing settings.
-- **A private NaiveProxy / sing-box endpoint** your devices connect to
-  with a username + password.
+- **A private sing-box VLESS+Reality endpoint** your devices connect
+  to with a per-user UUID.
 - **A subscription URL** you can share with your phone / laptop client.
 
 Install it on a Linux server you rent for a few dollars a month, point
@@ -162,11 +162,12 @@ A live deployment has five containers:
 | `singbox` | The sing-box VLESS+Reality proxy users connect to; config rendered by `singbox-core render-server`, file-watched and respawned by `singbox-core supervise` |
 | `panel` | The Laravel + Filament admin UI + Rust control-plane binary; FrankenPHP worker mode |
 | `db` | MariaDB; stores accounts + settings |
-| `redis` | Cache + queue + revocation bus |
+| `redis` | Cache + Messenger queue |
 
-The control plane is split between PHP (Laravel + Filament for the UI)
-and Rust (`ct-server-core` for config rendering, probes,
-and a deterministic daemon FSM). For diagrams and rationale, see
+The control plane is split between PHP (Laravel + Filament for the UI),
+TypeScript (`singbox-core` for sing-box rendering), and Rust
+(`ct-server-core` for Caddyfile rendering plus the deterministic daemon
+FSM). For diagrams and rationale, see
 [`docs/architecture.md`](./docs/architecture.md).
 
 ## Documentation map

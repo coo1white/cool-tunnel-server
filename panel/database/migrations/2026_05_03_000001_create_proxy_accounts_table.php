@@ -8,9 +8,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-// One row per proxy user. Caddy's forward_proxy expects a bcrypt hash
-// per basic_auth line in the Caddyfile, so we only ever store the
-// hash — cleartext is shown to the admin once at creation.
+// One row per proxy user. Later migrations replace the original
+// basic-auth password shape with a VLESS UUID credential.
 
 return new class extends Migration
 {

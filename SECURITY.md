@@ -128,9 +128,9 @@ The server ships with:
   falling back to a deterministic default.
 - **`DB::afterCommit` semantics on every `ProxyAccount` save +
   delete** (v0.0.15). A rolled-back transaction never leaves a
-  Redis ghost-revocation flag or a phantom queued reload — the
-  announce + dispatch fire only after the outermost transaction
-  commits. Verified by `tests/Feature/ProxyAccountAfterCommitTest`.
+  phantom queued reload — the dispatch fires only after the outermost
+  transaction commits. Verified by
+  `tests/Feature/ProxyAccountAfterCommitTest`.
 - **Atomic config write fsyncs the parent directory after rename**
   (`core/ct-server-core/src/singbox/mod.rs`, v0.0.15). Power loss
   between rename and the next implicit sync no longer reverts
@@ -158,13 +158,11 @@ The server ships with:
   `Permissions-Policy` (deny camera/microphone/geolocation/
   payment/usb), `Cache-Control: no-store, must-revalidate`, and
   two-year HSTS on every panel response.
-- **Scheduled-task failure logging** (v0.0.18). Every entry in
-  `routes/console.php` (`traffic:rollup`, `quota:enforce`,
-  `singbox:render`) registers `->onFailure(...)` that emits
+- **Scheduled-task failure logging** (v0.0.18). Every active entry in
+  `routes/console.php` registers `->onFailure(...)` that emits
   `Log::critical('schedule.failed', …)`. Pre-fix, scheduler
-  failures were silently swallowed — a `quota:enforce` crash
-  would let over-quota users keep tunneling forever with no
-  operator signal.
+  failures were silently swallowed; now a `singbox:render` crash
+  produces an operator-visible log line instead of quiet drift.
 
 ## Test coverage
 

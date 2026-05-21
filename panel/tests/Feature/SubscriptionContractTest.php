@@ -11,6 +11,7 @@ use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -99,13 +100,16 @@ class SubscriptionContractTest extends TestCase
     }
 
     #[Test]
-    public function manifest_carries_selected_protocol_entries(): void
+    public function manifest_drops_stale_protocol_entries_and_emits_only_core_vless(): void
     {
         $this->seedActiveCover();
 
         $account = ProxyAccount::factory()->create([
             'enabled_protocols' => ['vless_reality', 'shadowsocks', 'tor'],
         ]);
+        DB::table('proxy_accounts')
+            ->where('id', $account->id)
+            ->update(['enabled_protocols' => json_encode(['vless_reality', 'shadowsocks', 'tor'])]);
 
         $response = $this->get('/api/v1/subscription/'.$account->subscriptionToken());
         $this->assertSame(200, $response->status());
@@ -113,13 +117,11 @@ class SubscriptionContractTest extends TestCase
         $decoded = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
         $profile = $decoded['profiles'][0];
         $this->assertSame(
-            ['vless_reality', 'shadowsocks', 'tor'],
+            ['vless_reality'],
             array_column($profile['protocols'], 'key'),
         );
         $this->assertSame('rendered', $profile['protocols'][0]['status']);
-        $this->assertSame('catalog', $profile['protocols'][1]['status']);
-        $this->assertFalse($profile['protocols'][1]['usable']);
-        $this->assertSame('client_outbound', $profile['protocols'][2]['role']);
+        $this->assertTrue($profile['protocols'][0]['usable']);
     }
 
     #[Test]
@@ -130,6 +132,9 @@ class SubscriptionContractTest extends TestCase
         $account = ProxyAccount::factory()->create([
             'enabled_protocols' => ['shadowsocks', 'tor'],
         ]);
+        DB::table('proxy_accounts')
+            ->where('id', $account->id)
+            ->update(['enabled_protocols' => json_encode(['shadowsocks', 'tor'])]);
 
         $cover = $this->coverSiteBaseline();
         $sub = $this->get('/api/v1/subscription/'.$account->subscriptionToken());

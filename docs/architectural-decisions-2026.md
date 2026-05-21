@@ -259,13 +259,12 @@ JSON manifest with the expected shape; if not, treat as auth
 failure regardless of HTTP code. The HTTP-code information is
 strictly less valuable than the cover-site invariant.
 
-### 5.2 — `DB::afterCommit` over inline announce
+### 5.2 — `DB::afterCommit` over inline reload
 
-We accepted a small added latency on the announce path (queued
-until commit, ~1ms in practice) for the safety of never
-broadcasting a phantom revocation. The Redis fast-path's pre-fix
-"sub-ms" guarantee becomes "sub-ms after commit" — operationally
-identical for the user, correct under rollback.
+We accepted a small added latency on the reload path for the safety
+of never queuing work for a transaction that rolls back. The current
+runtime queues the render after commit and lets the sing-box
+supervisor pick up changed config files.
 
 ### 5.3 — `release-small` cargo profile as a separate target, not a default
 

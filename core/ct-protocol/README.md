@@ -2,7 +2,8 @@
 
 Cool Tunnel wire format and shared types — the Rust crate that every
 client (and the server) depends on for a single source of truth on
-profile URLs, subscription manifests, and admin/control wire types.
+subscription manifests, component manifests, and admin/control wire
+types.
 
 ## Why this exists
 
@@ -15,8 +16,11 @@ verification — the rules are the same everywhere.
 
 `ct-protocol` is that shared rulebook. It's `no_std`-compatible,
 zero-`unsafe`, and carries no I/O — anything that touches the network
-or filesystem lives in the platform's own core crate. That makes it
-trivially embeddable in:
+or filesystem lives in the platform's own core crate. The current
+server line emits panel-pinned SubscriptionManifestV2 JSON for
+VLESS+Reality; the older ProfileV1 / SubscriptionManifestV1 structs
+remain in this crate as compatibility types until a Rust V2 mirror
+lands. That makes the crate trivially embeddable in:
 
 | Platform | Integration |
 | --- | --- |
@@ -32,12 +36,10 @@ ships in a server release first; clients pick it up via `cargo update`.
 
 ## Types in scope
 
-- `ProfileV1` — `naive+https://user:pass@host:port` URLs (parser +
-  serializer + validator).
-- `SubscriptionManifestV1` — JSON the panel emits at
-  `GET /api/v1/subscription/<token>`. One or more profiles plus
-  metadata (server-supported features, recommended fake site, ACME
-  status). Signed with an HMAC over a per-account secret.
+- `SubscriptionManifestV1` / `ProfileV1` — compatibility structs for
+  pre-v0.4 clients. Current VLESS+Reality subscriptions are v2 and
+  are pinned by the panel tests until `SubscriptionManifestV2` lands
+  here.
 - `WireRequestV1` / `WireResponseV1` / `WireEventV1` — JSON-over-
   unix-socket protocol the panel uses to talk to `ct-server-core`'s
   daemon mode.

@@ -158,7 +158,7 @@ RUN apk add --no-cache \
 #
 # Pin 6.3.0 (the latest stable as of 2025-11-06). Future bumps
 # are explicit, version-controlled events — same posture as the
-# composer / naiveproxy / redis-cli pins above. The matching
+# composer / sing-box / redis-cli pins above. The matching
 # platform override in `panel/composer.json` is bumped to
 # `6.3.0` in lockstep so composer's solver agrees with the
 # runtime, and the entrypoint now carries

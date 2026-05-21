@@ -13,10 +13,9 @@ use Illuminate\Support\Facades\Schedule as Sched;
 //
 // Pre-fix, a Throwable inside any of these schedules was swallowed
 // by Laravel's scheduler with no log line. The most insidious
-// case: `quota:enforce` throws (DB blip, ct-server-core IPC
-// failure) — every over-quota user keeps tunneling forever, and
-// the operator has no signal that enforcement stopped working
-// until they manually inspect proxy_accounts.
+// case: `singbox:render` throws (DB blip, renderer failure) — a
+// queued render can be missed until the next schedule tick, and the
+// operator has no signal unless it is logged loudly.
 //
 // `Log::critical` lands at WARN-level severity in stderr → docker
 // json-file (now rotated, v0.0.17), and is the loudest alert path
@@ -34,14 +33,9 @@ $logFailure = static function (string $cmd) {
     };
 };
 
-// v0.4.0 — `traffic:rollup` and `quota:enforce` scheduler entries
-// removed. Both shelled into `ct-server-core {traffic,quota} ...`
-// CLI subcommands that read from sing-box's clash admin API; v0.4.0
-// sing-box VLESS+Reality exposes no clash API at all, so per-user
-// traffic + quota enforcement moves out of the Rust core. Operator-
-// side instrumentation (out-of-stack metrics, manual quota review)
-// is the v0.4.0 interim posture until a sing-box-native equivalent
-// surface is wired (post-v0.4.0 roadmap).
+// v0.4.0 — old traffic/quota scheduler entries are retired. Both
+// depended on the old clash admin API, which the current
+// VLESS+Reality runtime does not expose.
 
 // Re-render sing-box config as a safety net in case a model event
 // missed (e.g. queue worker died mid-flight). ct-singbox's

@@ -211,9 +211,9 @@ Quick triage rules:
 ## Rotating passwords
 
 Recommended cadence: every 90 days for `DB_PASSWORD` + `REDIS_PASSWORD`.
-**Never rotate `APP_KEY`** — it encrypts every proxy account's stored
-cleartext password; rotating it makes them all unreadable and breaks
-every subscription URL.
+**Never rotate `APP_KEY`** — it signs every subscription URL and seals
+stored server secrets; rotating it invalidates existing subscription
+links and encrypted Reality private-key material.
 
 > ⚠️ **Read the whole section before running anything.** Done wrong,
 > the panel can't connect to its database and goes down. Done right,

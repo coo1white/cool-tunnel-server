@@ -8,7 +8,7 @@ Cool Tunnel Server is a five-service stack:
 | `singbox` | VLESS + Reality proxy engine. Reads `/data/config/singbox.json` and is supervised by `singbox-core`. |
 | `panel` | Laravel + Filament admin UI, subscription endpoint, scheduler, queue worker, and `ct-server-core` daemon. |
 | `db` | MariaDB state: config, accounts, admins, and app data. |
-| `redis` | Cache, sessions, queues, and revocation/reload pub/sub. |
+| `redis` | Cache, sessions, and Messenger queues. |
 
 ## Front Door
 
