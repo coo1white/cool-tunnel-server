@@ -17,6 +17,8 @@ final class RealityDestinationCatalog
 
     private const PROBE_TIMEOUT_SECONDS = 0.35;
 
+    private const PARALLEL_PROBE_SECONDS = 0.45;
+
     /** @var array<string,array{name:string, region:string}> */
     private const CANDIDATES = [
         'www.microsoft.com' => ['name' => 'Microsoft', 'region' => 'Global CDN'],
@@ -177,18 +179,7 @@ final class RealityDestinationCatalog
             return ['latency_ms' => null, 'checked_at' => time()];
         }
 
-        $snapshot = [
-            'latency_ms' => self::measureLatencyMs($host),
-            'checked_at' => time(),
-        ];
-
-        try {
-            Cache::put(self::cacheKey($host), $snapshot, self::CACHE_SECONDS);
-        } catch (Throwable) {
-            // Cache is an optimisation only; return the fresh probe.
-        }
-
-        return $snapshot;
+        return self::storeLatencySnapshot($host, self::measureLatencyMs($host), time());
     }
 
     /**
@@ -198,15 +189,22 @@ final class RealityDestinationCatalog
      */
     public static function refreshCatalogLatencies(?string $currentHost = null): array
     {
-        $hosts = self::hostnames();
-        $current = self::normalizeHost((string) $currentHost);
-        if ($current !== '' && ! in_array($current, $hosts, true) && self::isValidHostname($current)) {
-            $hosts[] = $current;
-        }
+        $hosts = self::refreshHostnames($currentHost);
 
         $results = [];
+        $measured = self::$latencyProbe === null
+            ? self::measureLatenciesConcurrently($hosts)
+            : [];
+        $checkedAt = time();
+
         foreach ($hosts as $host) {
-            $results[$host] = self::refreshHostLatency($host);
+            $results[$host] = self::storeLatencySnapshot(
+                $host,
+                self::$latencyProbe === null
+                    ? ($measured[$host] ?? null)
+                    : self::measureLatencyMs($host),
+                $checkedAt,
+            );
         }
 
         return $results;
@@ -266,6 +264,123 @@ final class RealityDestinationCatalog
         fclose($socket);
 
         return max(1, (int) round((hrtime(true) - $start) / 1_000_000));
+    }
+
+    /** @return list<string> */
+    private static function refreshHostnames(?string $currentHost): array
+    {
+        $hosts = self::hostnames();
+        $current = self::normalizeHost((string) $currentHost);
+        if ($current !== '' && ! in_array($current, $hosts, true) && self::isValidHostname($current)) {
+            $hosts[] = $current;
+        }
+
+        return $hosts;
+    }
+
+    /**
+     * @param  list<string>  $hosts
+     * @return array<string,int|null>
+     */
+    private static function measureLatenciesConcurrently(array $hosts): array
+    {
+        $results = array_fill_keys($hosts, null);
+        $pending = [];
+        foreach ($hosts as $host) {
+            $errno = 0;
+            $errstr = '';
+            $socket = @stream_socket_client(
+                "tcp://{$host}:443",
+                $errno,
+                $errstr,
+                0,
+                STREAM_CLIENT_CONNECT | STREAM_CLIENT_ASYNC_CONNECT,
+            );
+            if (! is_resource($socket)) {
+                continue;
+            }
+
+            stream_set_blocking($socket, false);
+            $pending[$host] = [
+                'socket' => $socket,
+                'started_at' => hrtime(true),
+            ];
+        }
+
+        $deadline = microtime(true) + self::PARALLEL_PROBE_SECONDS;
+        while ($pending !== [] && microtime(true) < $deadline) {
+            $write = [];
+            foreach ($pending as $probe) {
+                $write[] = $probe['socket'];
+            }
+
+            $read = [];
+            $except = [];
+            $remainingUs = max(1_000, (int) (($deadline - microtime(true)) * 1_000_000));
+            $ready = @stream_select($read, $write, $except, 0, min($remainingUs, 50_000));
+            if ($ready === false || $ready === 0) {
+                continue;
+            }
+
+            foreach ($write as $socket) {
+                foreach ($pending as $host => $probe) {
+                    if ($probe['socket'] !== $socket) {
+                        continue;
+                    }
+
+                    if (self::asyncConnectSucceeded($socket)) {
+                        $results[$host] = max(1, (int) round((hrtime(true) - $probe['started_at']) / 1_000_000));
+                    }
+                    fclose($socket);
+                    unset($pending[$host]);
+                    break;
+                }
+            }
+        }
+
+        foreach ($pending as $probe) {
+            fclose($probe['socket']);
+        }
+
+        return $results;
+    }
+
+    /**
+     * A non-blocking connect becomes write-ready for both success and
+     * failure. Prefer SO_ERROR when the sockets extension is present;
+     * otherwise fall back to PHP's connected-peer metadata.
+     *
+     * @param  resource  $socket
+     */
+    private static function asyncConnectSucceeded($socket): bool
+    {
+        if (function_exists('socket_import_stream')) {
+            $imported = @socket_import_stream($socket);
+            if ($imported instanceof \Socket) {
+                $error = @socket_get_option($imported, SOL_SOCKET, SO_ERROR);
+
+                return $error === 0;
+            }
+        }
+
+        return stream_socket_get_name($socket, true) !== false;
+    }
+
+    /** @return array{latency_ms:int|null, checked_at:int} */
+    private static function storeLatencySnapshot(string $host, ?int $latencyMs, int $checkedAt): array
+    {
+        $snapshot = [
+            'latency_ms' => $latencyMs,
+            'checked_at' => $checkedAt,
+        ];
+
+        try {
+            Cache::put(self::cacheKey($host), $snapshot, self::CACHE_SECONDS);
+        } catch (Throwable) {
+            // Cache is an optimisation only; return the fresh probe.
+        }
+
+        return $snapshot;
     }
 
     private static function cacheKey(string $host): string

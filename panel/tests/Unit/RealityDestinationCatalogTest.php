@@ -106,10 +106,17 @@ final class RealityDestinationCatalogTest extends TestCase
     #[Test]
     public function refresh_all_latencies_includes_the_current_custom_host(): void
     {
-        RealityDestinationCatalog::useLatencyProbeForTests(fn (string $host): int => $host === 'cover.example.com' ? 77 : 11);
+        $probed = [];
+        RealityDestinationCatalog::useLatencyProbeForTests(function (string $host) use (&$probed): int {
+            $probed[] = $host;
 
-        RealityDestinationCatalog::refreshCatalogLatencies('cover.example.com');
+            return $host === 'cover.example.com' ? 77 : 11;
+        });
 
+        $results = RealityDestinationCatalog::refreshCatalogLatencies('cover.example.com');
+
+        $this->assertCount(count(RealityDestinationCatalog::hostnames()) + 1, $results);
+        $this->assertSame($probed, array_keys($results));
         $this->assertSame(77, RealityDestinationCatalog::cachedLatency('cover.example.com')['latency_ms']);
     }
 }
