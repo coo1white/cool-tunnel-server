@@ -19,11 +19,10 @@ namespace App\Contracts;
  * override either layer.
  *
  * Every method returns a decoded JSON array. Subprocess
- * failures (non-zero exit, timeout, JSON parse error) throw —
- * unlike the generator/reloader/bus contracts, the CLI surface
- * is the place where the caller decides whether the error is
- * recoverable (it always knows enough context to make that
- * call).
+ * failures (non-zero exit, timeout, JSON parse error) throw. The
+ * CLI surface is the place where the caller decides whether the
+ * error is recoverable because it has the surrounding operation
+ * context.
  *
  * Real implementation: `App\Services\CtServerCore`.
  */

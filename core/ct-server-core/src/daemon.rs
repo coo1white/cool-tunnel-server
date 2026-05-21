@@ -584,12 +584,13 @@ async fn handle(req: WireRequestV1, pool: &MySqlPool) -> Result<WireResponseV1> 
         WireRequestV1::CollectTraffic => Err(Error::UnsupportedOperation {
             operation: "collect_traffic",
             message: "v0.4.0: sing-box VLESS+Reality exposes no clash admin API; per-user \
-                      traffic counters are operator-side via the panel's revocation bus.",
+                      traffic counters are not collected by the current runtime.",
         }),
         WireRequestV1::EnforceQuota => Err(Error::UnsupportedOperation {
             operation: "enforce_quota",
-            message: "v0.4.0: quota enforcement happens at the panel layer (ProxyAccount::\
-                      isActive) and propagates to ct-singbox via singbox.json regeneration.",
+            message: "v0.4.0: per-user quota enforcement is retired in the current \
+                      VLESS+Reality runtime; account enablement and expiry propagate via \
+                      singbox.json regeneration.",
         }),
         WireRequestV1::Health => {
             // SELECT 1 borrows a connection from the shared pool;

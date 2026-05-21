@@ -8,11 +8,9 @@ namespace App\Providers;
 
 use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\CtServerCoreInterface;
-use App\Contracts\RevocationBusInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Services\CaddyfileGenerator;
 use App\Services\CtServerCore;
-use App\Services\RedisRevocationBus;
 use App\Services\SingBoxConfigGenerator;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -46,7 +44,6 @@ class AppServiceProvider extends ServiceProvider
         // throughout consumers + tests.
         SingBoxConfigGeneratorInterface::class => SingBoxConfigGenerator::class,
         CaddyfileGeneratorInterface::class => CaddyfileGenerator::class,
-        RevocationBusInterface::class => RedisRevocationBus::class,
         CtServerCoreInterface::class => CtServerCore::class,
     ];
 
@@ -57,7 +54,6 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(CtServerCore::class);
         $this->app->singleton(SingBoxConfigGenerator::class);
         $this->app->singleton(CaddyfileGenerator::class);
-        $this->app->singleton(RedisRevocationBus::class);
 
         // Interface → concrete bindings. `$this->app->bind` (not
         // `singleton`) is enough here because the concrete is

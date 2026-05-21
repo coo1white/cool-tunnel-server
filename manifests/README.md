@@ -19,7 +19,7 @@ desktop client.
 | `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform contract |
 | `panel.upstream.json` | The Filament + Laravel container | Boot-check via artisan |
 | `mariadb.upstream.json` | The DB container | Major-version drift is a flag |
-| `redis.upstream.json` | The cache / queue / revocation bus | Same |
+| `redis.upstream.json` | Cache, sessions, and Messenger queues | Same |
 | `credential-lock.upstream.json` | Credential-lock guard | Deployment invariant |
 | `doh-resolver.upstream.json` | DoH resolver reachability | Captive-portal / poisoner catch |
 
@@ -40,8 +40,8 @@ Output is a one-line-per-component status table:
  OK  redis                   pinned=7-alpine             installed=redis-cli 7.2
 ```
 
-The same data shows up in the panel's **Components** page (Filament).
-Click **Re-check** to refresh.
+Use `ct doctor` or `ct-server-core component check` to refresh the
+same data from the deployed stack.
 
 ## Updating a component
 

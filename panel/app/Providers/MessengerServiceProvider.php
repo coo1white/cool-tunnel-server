@@ -33,9 +33,10 @@ use Symfony\Component\Messenger\Transport\TransportInterface;
  * Routing: both messages map to the `async` transport, which is
  * a Redis Streams consumer-group on the `cool_tunnel:messenger`
  * stream. Symfony Messenger's worker reads via `XREADGROUP`,
- * acks via `XACK`, and parks failed messages on a sibling
- * `cool_tunnel:messenger:failed` stream (configured via
- * `failure_transport` in a later phase).
+ * acks via `XACK`. Handler failures are retried by the Artisan
+ * worker's retry listener; after the retry budget is exhausted, the
+ * worker rejects the message and the scheduled render reconciles the
+ * config file.
  *
  * Password handling: REDIS_PASSWORD is passed via the `auth`
  * option, NEVER interpolated into the DSN string. Mirror of
@@ -51,8 +52,7 @@ class MessengerServiceProvider extends ServiceProvider
     /**
      * Redis Streams key used by the async transport. Distinct
      * namespace (`messenger:` prefix) so it doesn't collide with
-     * Laravel's existing `cool_tunnel:revocations` pub/sub
-     * channel or Laravel Queue's list-based `queues:default` key.
+     * Laravel Queue's list-based `queues:default` key.
      */
     private const STREAM = 'cool_tunnel:messenger';
 
@@ -79,6 +79,9 @@ class MessengerServiceProvider extends ServiceProvider
             $host = (string) config('database.redis.default.host', 'redis');
             $port = (int) config('database.redis.default.port', 6379);
             $password = (string) config('database.redis.default.password', '');
+            $timeout = (float) config('database.redis.default.timeout', 1.0);
+            $readTimeout = (float) config('database.redis.default.read_timeout', $timeout);
+            $retryInterval = (int) config('database.redis.default.retry_interval', 100);
 
             // DSN omits the password entirely. We pass it via the
             // `auth` option in $transportOptions below.
@@ -101,6 +104,12 @@ class MessengerServiceProvider extends ServiceProvider
                 // on means a fresh deploy doesn't need a separate
                 // bootstrap step.
                 'auto_setup' => true,
+                // Keep admin saves and workers from hanging on a
+                // wedged Redis socket. Retry listener + scheduler
+                // provide the durability backstop.
+                'timeout' => $timeout,
+                'read_timeout' => $readTimeout,
+                'retry_interval' => $retryInterval,
             ];
 
             if ($password !== '') {

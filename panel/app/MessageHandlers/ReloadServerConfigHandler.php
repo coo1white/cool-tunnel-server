@@ -43,8 +43,12 @@ final class ReloadServerConfigHandler
     {
         $this->caddy->renderToFile();
 
-        $singboxHash = $this->singbox->renderToFile();
-        if ($singboxHash === null) {
+        $singboxResult = $this->singbox->renderToFile();
+        if ($singboxResult->failed) {
+            throw new \RuntimeException('sing-box render failed; see singbox.render.* logs');
+        }
+
+        if (! $singboxResult->changed) {
             $this->logger->debug('serverconfig.reload.singbox_render_no_op', [
                 'reason' => $message->reason,
             ]);

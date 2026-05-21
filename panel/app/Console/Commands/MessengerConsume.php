@@ -7,11 +7,15 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcher;
+use Symfony\Component\Messenger\EventListener\SendFailedMessageForRetryListener;
 use Symfony\Component\Messenger\EventListener\StopWorkerOnMemoryLimitListener;
 use Symfony\Component\Messenger\EventListener\StopWorkerOnTimeLimitListener;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Retry\MultiplierRetryStrategy;
+use Symfony\Component\Messenger\Retry\RetryStrategyInterface;
 use Symfony\Component\Messenger\Transport\TransportInterface;
 use Symfony\Component\Messenger\Worker;
 
@@ -70,6 +74,12 @@ final class MessengerConsume extends Command
         $memoryLimit = (string) $this->option('memory-limit');
 
         $dispatcher = new EventDispatcher;
+        $dispatcher->addSubscriber(new SendFailedMessageForRetryListener(
+            $this->singleTransportContainer($transport),
+            $this->retryStrategyContainer(),
+            $logger,
+            $dispatcher,
+        ));
         $dispatcher->addSubscriber(new StopWorkerOnTimeLimitListener($timeLimit, $logger));
         $dispatcher->addSubscriber(new StopWorkerOnMemoryLimitListener(
             $this->parseMemoryLimit($memoryLimit),
@@ -114,6 +124,56 @@ final class MessengerConsume extends Command
             'M' => $value * 1024 * 1024,
             'K' => $value * 1024,
             default => $value,
+        };
+    }
+
+    private function singleTransportContainer(TransportInterface $transport): ContainerInterface
+    {
+        return new class($transport) implements ContainerInterface
+        {
+            public function __construct(private readonly TransportInterface $async) {}
+
+            public function get(string $id): TransportInterface
+            {
+                if ($id !== 'async') {
+                    throw new \RuntimeException(sprintf('Unknown Messenger transport "%s".', $id));
+                }
+
+                return $this->async;
+            }
+
+            public function has(string $id): bool
+            {
+                return $id === 'async';
+            }
+        };
+    }
+
+    private function retryStrategyContainer(): ContainerInterface
+    {
+        return new class implements ContainerInterface
+        {
+            private ?RetryStrategyInterface $async = null;
+
+            public function get(string $id): RetryStrategyInterface
+            {
+                if ($id !== 'async') {
+                    throw new \RuntimeException(sprintf('Unknown Messenger retry strategy "%s".', $id));
+                }
+
+                return $this->async ??= new MultiplierRetryStrategy(
+                    maxRetries: 3,
+                    delayMilliseconds: 1000,
+                    multiplier: 2.0,
+                    maxDelayMilliseconds: 30000,
+                    jitter: 0.1,
+                );
+            }
+
+            public function has(string $id): bool
+            {
+                return $id === 'async';
+            }
         };
     }
 }

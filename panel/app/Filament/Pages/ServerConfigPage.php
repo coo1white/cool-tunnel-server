@@ -95,7 +95,7 @@ class ServerConfigPage extends Page implements HasForms
                             ->label('Website')
                             ->options(fn (): array => RealityDestinations::options(
                                 (string) (ServerConfig::current()->reality_dest_host ?? ''),
-                                measureLatency: true,
+                                measureLatency: false,
                             ))
                             ->default(fn (): string => RealityDestinations::selectDefault(
                                 (string) (ServerConfig::current()->reality_dest_host ?? ''),
@@ -142,32 +142,19 @@ class ServerConfigPage extends Page implements HasForms
 
         $config->fill($data)->save();
 
-        // v0.0.84 robustness-review fix (item 7): the model's
-        // `updated` hook dispatches a queued ReloadServerConfig
-        // message instead of running renders inline. The notification body
-        // reflects the new contract — the row is committed, the
-        // Redis fast-path is in flight, and the panel-side
-        // render backstop is queued. Pre-fix this said
-        // "regenerated; hot-reloading" unconditionally, even when
-        // the inline shell-outs had silently failed and the
-        // on-disk config still reflected the previous state.
-        //
-        // Post-save Redis health probe (audit hardening): both the
-        // Redis fast-path AND the Messenger transport for the
-        // backstop job run against Redis. If Redis is unreachable
-        // at the moment of save, neither path will reach sing-box
-        // until the every-5-min scheduler reconciles. Surface that
-        // synchronously instead of showing an unconditional success
-        // banner. The DB row IS committed in either case; this is
-        // strictly an operator hint, not a save failure.
+        // The model's `updated` hook dispatches a queued
+        // ReloadServerConfig message after commit instead of running
+        // render subprocesses inline. Probe Redis once so the panel
+        // can distinguish "queued" from "saved but queue unavailable"
+        // without blocking on the render itself.
         $reloadOk = $this->probeReloadTransport();
 
         if ($reloadOk) {
             Notification::make()
                 ->title('Server config saved')
                 ->body(
-                    'Reload queued. The Redis fast-path is already in flight (≤100ms); the panel-side render backstop will land within seconds. '
-                    .'If the Components page reports drift after a minute, check `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
+                    'Render job queued. sing-box picks up changed config files automatically. Caddyfile changes are rendered here; the host-side operator update flow owns the live Caddy reload. '
+                    .'If a change is not visible after a minute, check `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
                 )
                 ->success()
                 ->send();
@@ -175,8 +162,8 @@ class ServerConfigPage extends Page implements HasForms
             Notification::make()
                 ->title('Server config saved (reload path degraded)')
                 ->body(
-                    'The DB row was committed, but Redis appears unreachable from the panel right now. The Redis fast-path and the Messenger backstop will both fail until Redis recovers. '
-                    .'The every-5-min `singbox:render --if-changed` scheduler will reconcile once Redis is back. Run `docker compose ps redis` and grep `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
+                    'The DB row was committed, but Redis appears unreachable from the panel right now. The Messenger render job will not run until Redis recovers. '
+                    .'The every-5-min `singbox:render --if-changed` scheduler will reconcile sing-box once Redis is back. Run `docker compose ps redis` and grep `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
                 )
                 ->warning()
                 ->persistent()
@@ -187,13 +174,12 @@ class ServerConfigPage extends Page implements HasForms
     /**
      * Cheap synchronous probe — is Redis reachable right now?
      *
-     * Both the fast-path (RedisRevocationBus pub/sub) and the slow-
-     * path backstop (Symfony Messenger over Redis transport) depend
-     * on Redis being up. The actual dispatch runs inside
-     * DB::afterCommit and can't surface failure synchronously to
-     * the operator — by the time it fires, save() has already
-     * returned and rendered a notification. A 1s PING is a good
-     * enough proxy for "the dispatch about to fire will work".
+     * The Symfony Messenger transport depends on Redis being up. The
+     * actual dispatch runs inside DB::afterCommit and can't surface
+     * failure synchronously to the operator — by the time it fires,
+     * save() has already returned and rendered a notification. A
+     * cheap, timeout-bounded PING is a good enough proxy for "the
+     * dispatch about to fire will work".
      *
      * False positives (Redis comes up between probe and dispatch)
      * just lose the operator a hint; harmless. False negatives
@@ -214,7 +200,7 @@ class ServerConfigPage extends Page implements HasForms
     protected function getFormActions(): array
     {
         return [
-            Action::make('save')->submit('save')->label('Save and reload'),
+            Action::make('save')->submit('save')->label('Save config'),
         ];
     }
 }

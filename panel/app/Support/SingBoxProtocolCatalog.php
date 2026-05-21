@@ -7,35 +7,13 @@ declare(strict_types=1);
 namespace App\Support;
 
 use App\Models\ServerConfig;
-use Illuminate\Support\Facades\Cache;
-use Throwable;
 
 final class SingBoxProtocolCatalog
 {
     public const VLESS_REALITY = 'vless_reality';
 
-    private const CACHE_SECONDS = 600;
-
-    private const PROBE_TIMEOUT_SECONDS = 0.35;
-
     /** @var array<string,array{name:string,type:string,role:string,transport:string,status:string,requires:list<string>,default?:bool}> */
     private const DEFINITIONS = [
-        'shadowsocks' => [
-            'name' => 'Shadowsocks',
-            'type' => 'shadowsocks',
-            'role' => 'server_inbound',
-            'transport' => 'tcp_udp',
-            'status' => 'catalog',
-            'requires' => ['method', 'password', 'dedicated listener'],
-        ],
-        'vmess' => [
-            'name' => 'VMess',
-            'type' => 'vmess',
-            'role' => 'server_inbound',
-            'transport' => 'tcp',
-            'status' => 'catalog',
-            'requires' => ['uuid', 'dedicated listener'],
-        ],
         self::VLESS_REALITY => [
             'name' => 'VLESS + Reality',
             'type' => 'vless',
@@ -44,70 +22,6 @@ final class SingBoxProtocolCatalog
             'status' => 'rendered',
             'requires' => ['uuid', 'reality public key', 'reality dest_host'],
             'default' => true,
-        ],
-        'trojan' => [
-            'name' => 'Trojan',
-            'type' => 'trojan',
-            'role' => 'server_inbound',
-            'transport' => 'tcp',
-            'status' => 'catalog',
-            'requires' => ['password', 'TLS certificate', 'dedicated listener'],
-        ],
-        'hysteria' => [
-            'name' => 'Hysteria',
-            'type' => 'hysteria',
-            'role' => 'server_inbound',
-            'transport' => 'udp_quic',
-            'status' => 'catalog',
-            'requires' => ['auth secret', 'TLS certificate', 'UDP listener'],
-        ],
-        'hysteria2' => [
-            'name' => 'Hysteria2',
-            'type' => 'hysteria2',
-            'role' => 'server_inbound',
-            'transport' => 'udp_quic',
-            'status' => 'catalog',
-            'requires' => ['password', 'TLS certificate', 'UDP listener'],
-        ],
-        'tuic' => [
-            'name' => 'TUIC',
-            'type' => 'tuic',
-            'role' => 'server_inbound',
-            'transport' => 'udp_quic',
-            'status' => 'catalog',
-            'requires' => ['uuid', 'password', 'TLS certificate', 'UDP listener'],
-        ],
-        'wireguard' => [
-            'name' => 'WireGuard',
-            'type' => 'wireguard',
-            'role' => 'endpoint_or_outbound',
-            'transport' => 'udp',
-            'status' => 'catalog',
-            'requires' => ['keypair', 'address pool', 'endpoint routing'],
-        ],
-        'tor' => [
-            'name' => 'Tor',
-            'type' => 'tor',
-            'role' => 'client_outbound',
-            'transport' => 'overlay',
-            'status' => 'catalog',
-            'requires' => ['client outbound route'],
-        ],
-        'ssh' => [
-            'name' => 'SSH',
-            'type' => 'ssh',
-            'role' => 'client_outbound',
-            'transport' => 'tcp',
-            'status' => 'catalog',
-            'requires' => ['remote SSH server', 'user credential'],
-        ],
-        'naive' => [
-            'name' => 'NaiveProxy',
-            'type' => 'naive',
-            'role' => 'server_inbound',
-            'transport' => 'tcp',
-            'status' => 'catalog',
-            'requires' => ['username/password', 'TLS certificate', 'dedicated listener'],
         ],
     ];
 
@@ -129,14 +43,15 @@ final class SingBoxProtocolCatalog
     /** @return list<string> */
     public static function normaliseSelected(mixed $value, bool $defaultWhenEmpty = true): array
     {
+        $rawKeys = self::rawKeys($value);
         $keys = [];
-        foreach (self::rawKeys($value) as $key) {
+        foreach ($rawKeys as $key) {
             if (array_key_exists($key, self::DEFINITIONS) && ! in_array($key, $keys, true)) {
                 $keys[] = $key;
             }
         }
 
-        if ($keys === [] && $defaultWhenEmpty) {
+        if ($keys === [] && $rawKeys === [] && $defaultWhenEmpty) {
             return self::defaultKeys();
         }
 
@@ -155,19 +70,12 @@ final class SingBoxProtocolCatalog
     /** @param list<string> $keys */
     public static function hasRenderedProtocol(array $keys): bool
     {
-        foreach ($keys as $key) {
-            if ((self::DEFINITIONS[$key]['status'] ?? null) === 'rendered') {
-                return true;
-            }
-        }
-
-        return false;
+        return in_array(self::VLESS_REALITY, $keys, true);
     }
 
     public static function modeSummary(mixed $value, bool $defaultWhenEmpty = true): string
     {
         $rendered = [];
-        $staged = [];
 
         foreach (self::normaliseSelected($value, $defaultWhenEmpty) as $key) {
             $definition = self::DEFINITIONS[$key] ?? null;
@@ -175,69 +83,14 @@ final class SingBoxProtocolCatalog
                 continue;
             }
 
-            if ($definition['status'] === 'rendered') {
-                $rendered[] = $definition['name'];
-            } else {
-                $staged[] = $definition['name'];
-            }
+            $rendered[] = $definition['name'];
         }
 
-        if ($rendered === [] && $staged === []) {
-            return 'No protocol mode selected';
-        }
-
-        $parts = [];
         if ($rendered === []) {
-            $parts[] = 'No active rendered mode';
-        } else {
-            $parts[] = implode(', ', $rendered).' active';
-        }
-        if ($staged !== []) {
-            $parts[] = implode(', ', $staged).' staged';
+            return 'No active core mode';
         }
 
-        return implode('; ', $parts);
-    }
-
-    /** @return array<string,string> */
-    public static function options(
-        ?ServerConfig $config = null,
-        ?string $realityDestHost = null,
-        bool $measureLatency = true,
-    ): array {
-        $options = [];
-        foreach (self::keys() as $key) {
-            $options[$key] = self::label($key, $config, $realityDestHost, $measureLatency);
-        }
-
-        return $options;
-    }
-
-    public static function label(
-        string $key,
-        ?ServerConfig $config = null,
-        ?string $realityDestHost = null,
-        bool $measureLatency = true,
-    ): string {
-        $definition = self::DEFINITIONS[$key] ?? null;
-        if ($definition === null) {
-            return $key;
-        }
-
-        $status = $definition['status'] === 'rendered'
-            ? 'rendered now'
-            : 'catalog staged';
-        $latency = 'latency unavailable';
-        $target = self::latencyTarget($key, $config, $realityDestHost);
-        if ($target !== null) {
-            $latencyMs = $measureLatency ? self::latencyMs($target['host'], $target['port']) : null;
-            $targetText = "{$target['host']}:{$target['port']}";
-            $latency = $latencyMs === null
-                ? "latency unavailable to {$targetText}"
-                : "{$latencyMs} ms to {$targetText}";
-        }
-
-        return "{$definition['name']} ({$definition['type']}) - {$status} - {$definition['transport']} - {$latency}";
+        return implode(', ', $rendered).' active';
     }
 
     /**
@@ -248,11 +101,10 @@ final class SingBoxProtocolCatalog
         array $selected,
         ?ServerConfig $config = null,
         ?string $realityDestHost = null,
-        bool $measureLatency = true,
     ): array {
         $entries = [];
         foreach (self::normaliseSelected($selected) as $key) {
-            $entries[] = self::manifestEntry($key, $config, $realityDestHost, $measureLatency);
+            $entries[] = self::manifestEntry($key, $config, $realityDestHost);
         }
 
         return $entries;
@@ -263,7 +115,6 @@ final class SingBoxProtocolCatalog
         string $key,
         ?ServerConfig $config,
         ?string $realityDestHost,
-        bool $measureLatency,
     ): array {
         $definition = self::DEFINITIONS[$key];
         $entry = [
@@ -273,17 +124,13 @@ final class SingBoxProtocolCatalog
             'role' => $definition['role'],
             'transport' => $definition['transport'],
             'status' => $definition['status'],
-            'usable' => $definition['status'] === 'rendered',
+            'usable' => true,
             'requires' => $definition['requires'],
         ];
 
         $target = self::latencyTarget($key, $config, $realityDestHost);
         if ($target !== null) {
             $entry['latency_target'] = "{$target['host']}:{$target['port']}";
-            $latency = $measureLatency ? self::latencyMs($target['host'], $target['port']) : null;
-            if ($latency !== null) {
-                $entry['latency_ms'] = $latency;
-            }
         }
 
         return $entry;
@@ -303,49 +150,7 @@ final class SingBoxProtocolCatalog
             return $host === '' ? null : ['host' => $host, 'port' => 443];
         }
 
-        $definition = self::DEFINITIONS[$key] ?? null;
-        if ($definition === null || $definition['transport'] !== 'tcp') {
-            return null;
-        }
-
-        $host = (string) ($config->domain ?? '');
-
-        return $host === '' ? null : ['host' => $host, 'port' => 443];
-    }
-
-    private static function latencyMs(string $host, int $port): ?int
-    {
-        $host = RealityDestinations::normaliseHost($host);
-        if (! RealityDestinations::isValidHost($host) || $port < 1 || $port > 65535) {
-            return null;
-        }
-
-        $key = 'singbox_protocol_latency:'.sha1("{$host}:{$port}");
-        try {
-            return Cache::remember($key, self::CACHE_SECONDS, fn () => self::measureLatencyMs($host, $port));
-        } catch (Throwable) {
-            return self::measureLatencyMs($host, $port);
-        }
-    }
-
-    private static function measureLatencyMs(string $host, int $port): ?int
-    {
-        $start = hrtime(true);
-        $errno = 0;
-        $errstr = '';
-        $socket = @stream_socket_client(
-            "tcp://{$host}:{$port}",
-            $errno,
-            $errstr,
-            self::PROBE_TIMEOUT_SECONDS,
-            STREAM_CLIENT_CONNECT,
-        );
-        if (! is_resource($socket)) {
-            return null;
-        }
-        fclose($socket);
-
-        return max(1, (int) round((hrtime(true) - $start) / 1_000_000));
+        return null;
     }
 
     /** @return list<string> */

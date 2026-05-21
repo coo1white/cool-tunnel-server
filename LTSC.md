@@ -30,9 +30,9 @@ A pinned, reproducible, minor-version-stable stack:
 
 | Surface | Contract | Validated by |
 | --- | --- | --- |
-| `naive+https://...` wire format | NaiveProxy HTTP/2 CONNECT, TLS 1.3 only, `cookie.*` cert from configured ACME directory | sing-box `naive` inbound; `cycle 40` audit job |
-| Subscription manifest | `SubscriptionManifestV1` JSON, signature in body's `signature` field, no project-identifying HTTP headers | `ct-protocol::subscription`; `cycle 40` audit |
-| Component reload | `≤100 ms` from operator save → client connection drops, via Redis pub/sub + Coalescer | `core/ct-server-core/src/util/debounce.rs` (1M+100k stress tests); `scripts/stress/c_revocation_latency.sh` runtime gate |
+| Subscription URL | One signed URL imports the VLESS UUID, Reality public key, dest_host, short ID, and client defaults | panel subscription tests; client manifest parser |
+| Subscription manifest | JSON manifest, signature in body's `signature` field, no project-identifying HTTP headers | panel subscription tests; `cycle 40` audit |
+| Component reload | DB save queues a render; changed `/data/config/singbox.json` is picked up by the sing-box supervisor | PHPUnit render-handler tests; `singbox:render` scheduler |
 | Cert renewal | Caddy renews; sing-box re-reads cert without operator action; ≤60 s upper bound | cert-mtime in render-change SHA-256 hash; `cycle 35` manifest-drift |
 | Schema↔code | A migration that retypes a column without `make sqlx-prepare` fails at `cargo check` | `cycle 43` sqlx-offline-check |
 | Build reproducibility | Same commit + same `.env` → byte-identical images | pinned base images, locked Cargo.lock + composer.lock + .sqlx/ |

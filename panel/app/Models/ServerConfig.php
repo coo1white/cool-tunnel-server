@@ -7,7 +7,6 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Messages\ReloadServerConfig;
-use App\Services\RedisRevocationBus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -134,21 +133,14 @@ class ServerConfig extends Model
 
     protected static function booted(): void
     {
-        // Dual-path on update: Redis pub/sub (≤100ms hot path) plus
-        // ReloadServerConfig Messenger message (slow-path render
-        // backstop). Both run via DB::afterCommit so a rollback in the
-        // surrounding Filament transaction doesn't queue a phantom
-        // reload, and the worker can't read stale state between
-        // `updated` and commit. See CHANGELOG [0.0.84] (original
-        // queue-job design) + [0.0.94] (Messenger cutover).
+        // Queue a render after the surrounding transaction commits so
+        // a rollback cannot enqueue a phantom reload and the worker
+        // cannot read stale state between `updated` and commit.
         static::updated(function (): void {
             DB::afterCommit(function (): void {
-                app(RedisRevocationBus::class)->announceServerConfigChanged();
-
-                // Catch dispatch failures (Redis backs both the
-                // Messenger transport and the pub/sub bus in the
-                // shipped .env) so a transient outage doesn't bubble
-                // out as a 500 — the row is already committed.
+                // Catch dispatch failures so a transient queue outage
+                // does not bubble out as a 500 — the row is already
+                // committed.
                 try {
                     app(MessageBusInterface::class)->dispatch(
                         new ReloadServerConfig(reason: 'server_config.updated'),
@@ -157,9 +149,8 @@ class ServerConfig extends Model
                     Log::warning('serverconfig.reload.dispatch_failed', [
                         'err' => $e->getMessage(),
                         'type' => $e::class,
-                        'note' => 'Messenger bus dispatch failed; row committed but slow-path render was not queued. '
-                            .'Redis fast-path (if Redis is up) is unaffected; the every-5-min '
-                            .'`singbox:render --if-changed` scheduled command will reconcile.',
+                        'note' => 'Messenger bus dispatch failed; row committed but render was not queued. '
+                            .'The every-5-min `singbox:render --if-changed` scheduled command will reconcile sing-box.',
                     ]);
                 }
             });

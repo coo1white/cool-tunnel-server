@@ -47,11 +47,8 @@ THIRD_PARTY_LICENSES.md.
 * NaiveProxy (https://github.com/klzgrad/naiveproxy)
   Copyright klzgrad and contributors.
   Licensed under the BSD-3-Clause License.
-  The client-side `naive` binary that runs on the user's device. Not
-  bundled in this server image; the cool-tunnel client family bundles
-  it per platform. Listed here because the wire protocol sing-box
-  speaks is the NaiveProxy protocol, and operators reading this
-  NOTICE should know the link.
+  Historical client-side runtime from the pre-v0.4 server line. It is
+  not bundled in the current VLESS+Reality server image.
 
 * Laravel (https://github.com/laravel/laravel)
   Copyright Taylor Otwell.
@@ -66,7 +63,7 @@ THIRD_PARTY_LICENSES.md.
 * predis/predis (https://github.com/predis/predis)
   Copyright the Predis contributors.
   Licensed under the MIT License.
-  Redis client used by the panel for the revocation bridge.
+  Redis client used by the panel for cache and Messenger transport.
 
 * Cargo dependencies (see core/Cargo.lock for the full graph): tokio,
   serde, serde_json, sqlx, hyper, hyper-util, hyperlocal, http-body-util,

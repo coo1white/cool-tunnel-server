@@ -7,7 +7,6 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Messages\ReloadSingBox;
-use App\Services\RedisRevocationBus;
 use App\Support\SingBoxProtocolCatalog;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -32,24 +31,12 @@ use Throwable;
 // the DB live on the same volume), so the wrapper added complexity
 // without real defence-in-depth.
 //
-// Anytime an account is created, edited, or deleted we re-render
-// sing-box's config.json. ct-singbox's supervisor file-watch handles
-// the restart. Two paths fire in sequence:
-//
-//   1. Redis pub/sub → ct-server-core daemon picks it up within ~1ms,
-//      runs through the Coalescer (≤2 renders per 100ms window
-//      regardless of burst size). This is the ≤100ms
-//      hot path operators feel — fired SYNCHRONOUSLY from booted()
-//      because the announce is already fire-and-forget at the
-//      Redis-pub level.
-//
-//   2. ASYNCHRONOUS PHP-side render as a backstop, dispatched
-//      to Symfony Messenger's Redis Streams transport (see
-//      App\Messages\ReloadSingBox + App\MessageHandlers\
-//      ReloadSingBoxHandler). [program:messenger] picks it up,
-//      renders. Both layers dedupe by SHA-256, so racing
-//      renders (e.g. worker firing while another save is mid-flight)
-//      reduce to a no-op-after-first.
+// Anytime an account is created, edited, or deleted we enqueue a
+// sing-box config render after the surrounding DB transaction commits.
+// ct-singbox's supervisor watches /data/config/singbox.json and
+// restarts sing-box when the file changes. The renderer dedupes by
+// SHA-256, so racing render jobs reduce to a no-op after the first
+// write.
 
 /**
  * @property int $id
@@ -59,8 +46,6 @@ use Throwable;
  * @property bool $enabled
  * @property int $client_default_local_port
  * @property array<int,string>|null $enabled_protocols
- * @property int|null $quota_bytes
- * @property int $used_bytes
  * @property Carbon|null $expires_at
  * @property Carbon|null $last_seen_at
  * @property Carbon|null $created_at
@@ -85,7 +70,7 @@ class ProxyAccount extends Model
         'username', 'label', 'enabled',
         'client_default_local_port',
         'enabled_protocols',
-        'quota_bytes', 'used_bytes', 'expires_at', 'last_seen_at',
+        'expires_at', 'last_seen_at',
         'metadata',
     ];
 
@@ -107,8 +92,6 @@ class ProxyAccount extends Model
             'enabled' => 'boolean',
             'client_default_local_port' => 'integer',
             'enabled_protocols' => 'array',
-            'quota_bytes' => 'integer',
-            'used_bytes' => 'integer',
             'expires_at' => 'datetime',
             'last_seen_at' => 'datetime',
             'metadata' => 'array',
@@ -171,9 +154,6 @@ class ProxyAccount extends Model
         if ($this->expires_at && $this->expires_at->isPast()) {
             return false;
         }
-        if ($this->quota_bytes && $this->used_bytes >= $this->quota_bytes) {
-            return false;
-        }
 
         return true;
     }
@@ -198,7 +178,10 @@ class ProxyAccount extends Model
     /** @return list<string> */
     public function enabledProtocolKeys(): array
     {
-        return SingBoxProtocolCatalog::normaliseSelected($this->enabled_protocols);
+        return SingBoxProtocolCatalog::normaliseSelected(
+            $this->enabled_protocols,
+            defaultWhenEmpty: false,
+        );
     }
 
     protected static function booted(): void
@@ -215,41 +198,35 @@ class ProxyAccount extends Model
             if ($current === '') {
                 $account->regenerateUuid();
             }
-            $account->enabled_protocols = SingBoxProtocolCatalog::normaliseSelected(
-                $account->enabled_protocols,
-            );
         });
 
         static::saving(function (self $account): void {
+            $defaultWhenEmpty = ! $account->exists
+                && SingBoxProtocolCatalog::invalidKeys($account->enabled_protocols) === [];
+
             $account->enabled_protocols = SingBoxProtocolCatalog::normaliseSelected(
                 $account->enabled_protocols,
+                defaultWhenEmpty: $defaultWhenEmpty,
             );
         });
 
-        // Both paths defer to DB::afterCommit so the announce + reload
-        // dispatch only fire if the surrounding DB transaction
-        // actually commits. Pre-v0.0.15 the announce ran inline in the
-        // model event, which fires AFTER the row's INSERT/UPDATE but
-        // BEFORE the transaction commits — a rollback later in the
-        // same transaction would still leave a Redis "revoked" flag
-        // and a reload message for a row that never landed.
+        // The reload dispatch defers to DB::afterCommit so it only
+        // fires if the surrounding DB transaction actually commits.
+        // Pre-v0.0.15 the reload ran inline in the model event, which
+        // fires AFTER the row's INSERT/UPDATE but BEFORE the
+        // transaction commits — a rollback later in the same
+        // transaction would still leave a reload message for a row
+        // that never landed.
         //
-        // We snapshot $username and $status at saved-time so the
-        // callback closure doesn't dereference a stale or
-        // post-rollback Eloquent instance — the values are frozen at
-        // the moment the row's intended state was decided, and the
-        // broadcast announces that frozen state when (and only if)
-        // the row actually persists.
+        // We snapshot $status at saved-time so the callback closure
+        // doesn't dereference a stale or post-rollback Eloquent
+        // instance — the value is frozen at the moment the row's
+        // intended state was decided.
         static::saved(function (self $account): void {
-            $username = $account->username;
             $status = $account->isActive() ? 'active'
                       : ($account->expires_at && $account->expires_at->isPast() ? 'expired' : 'revoked');
 
-            DB::afterCommit(function () use ($username, $status): void {
-                $bus = app(RedisRevocationBus::class);
-                $bus->setAccountStatus($username, $status);
-                $bus->announceAccountChanged($username, "saved:{$status}");
-
+            DB::afterCommit(function () use ($status): void {
                 try {
                     app(MessageBusInterface::class)->dispatch(
                         new ReloadSingBox(reason: "proxy_account.saved:{$status}"),
@@ -260,20 +237,14 @@ class ProxyAccount extends Model
                         'err' => $e->getMessage(),
                         'type' => $e::class,
                         'note' => 'ProxyAccount row committed, but slow-path sing-box render was not queued. '
-                            .'Redis fast-path (if Redis is up) is unaffected; the scheduled render reconciles.',
+                            .'The scheduled render reconciles every five minutes.',
                     ]);
                 }
             });
         });
 
         static::deleted(function (self $account): void {
-            $username = $account->username;
-
-            DB::afterCommit(function () use ($username): void {
-                $bus = app(RedisRevocationBus::class);
-                $bus->clearAccountStatus($username);
-                $bus->announceAccountChanged($username, 'deleted');
-
+            DB::afterCommit(function (): void {
                 try {
                     app(MessageBusInterface::class)->dispatch(
                         new ReloadSingBox(reason: 'proxy_account.deleted'),
@@ -284,7 +255,7 @@ class ProxyAccount extends Model
                         'err' => $e->getMessage(),
                         'type' => $e::class,
                         'note' => 'ProxyAccount row committed, but slow-path sing-box render was not queued. '
-                            .'Redis fast-path (if Redis is up) is unaffected; the scheduled render reconciles.',
+                            .'The scheduled render reconciles every five minutes.',
                     ]);
                 }
             });

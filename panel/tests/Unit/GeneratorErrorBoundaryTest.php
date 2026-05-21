@@ -35,10 +35,10 @@ use Tests\TestCase;
 //         not transient failures; the operator MUST hit a 500 and
 //         the panel logs the cause, not silently render with garbage.
 //       * Binary spawn / non-zero exit / non-JSON outcome — soft:
-//         log critical, return null. These are transient (panel
-//         container restart, docker filesystem hiccup) and the
-//         every-5-min scheduled `singbox:render --if-changed` will
-//         reconcile.
+//         log critical, return RenderResult::failed(). These are
+//         transient (panel container restart, docker filesystem
+//         hiccup) and Messenger retries / the every-5-min scheduled
+//         `singbox:render --if-changed` reconcile.
 //
 // The v0.3.x test exercised mock-CtServerCore failure modes; v0.4.0
 // exercises DB-driven prerequisites (Reality keypair, dest host).

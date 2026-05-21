@@ -41,7 +41,7 @@ final class RealityDestinations
     }
 
     /** @return array<string,string> */
-    public static function options(?string $currentHost = null, bool $measureLatency = true): array
+    public static function options(?string $currentHost = null, bool $measureLatency = false): array
     {
         $hosts = self::hosts();
         $current = self::normaliseHost((string) $currentHost);
@@ -51,7 +51,11 @@ final class RealityDestinations
 
         $options = [];
         foreach ($hosts as $host) {
-            $options[$host] = self::label($host, $measureLatency ? self::latencyMs($host) : null);
+            $options[$host] = self::label(
+                $host,
+                $measureLatency ? self::latencyMs($host) : null,
+                includeLatency: $measureLatency,
+            );
         }
 
         return $options;
@@ -84,10 +88,14 @@ final class RealityDestinations
         return rtrim($host, '.');
     }
 
-    public static function label(string $host, ?int $latencyMs = null): string
+    public static function label(string $host, ?int $latencyMs = null, bool $includeLatency = true): string
     {
         $host = self::normaliseHost($host);
         $meta = self::CANDIDATES[$host] ?? ['name' => 'Current custom', 'region' => 'custom'];
+        if (! $includeLatency) {
+            return "{$meta['name']} ({$host}) - {$meta['region']}";
+        }
+
         $latency = $latencyMs === null ? 'latency unavailable' : "{$latencyMs} ms";
 
         return "{$meta['name']} ({$host}) - {$meta['region']} - {$latency}";

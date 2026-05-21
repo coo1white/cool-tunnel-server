@@ -134,6 +134,6 @@ For operations after install, use
 | `singbox` | User proxy service supervised by `singbox-core` |
 | `panel` | Laravel + Filament admin UI and render commands |
 | `db` | MariaDB data store |
-| `redis` | Cache, queue, and revocation bus |
+| `redis` | Cache and Messenger queue |
 
 See [`STRUCTURE.md`](./STRUCTURE.md) for the code map.

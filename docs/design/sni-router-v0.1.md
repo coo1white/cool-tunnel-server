@@ -105,9 +105,9 @@ the listener shape. New CLI subcommand `ct-server-core router serve
 - **Property:** `quickcheck` over random byte prefixes, assert
   no panics regardless of input shape (peek must be hostile-input-
   safe; this is the new public attack surface, R2 territory).
-- **Stress:** the existing `scripts/stress/g_anti_tracking_probe.sh`
-  shape extended to also probe `:443` apex without naive auth,
-  assert it returns the cover site (HTML, 200, length within range).
+- **Stress:** add a current-runtime stress probe for the `:443` apex
+  cover-site path and assert it returns HTML with a stable 200 and a
+  bounded body length.
 
 ## Migration path
 

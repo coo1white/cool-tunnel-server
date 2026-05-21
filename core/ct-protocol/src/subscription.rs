@@ -210,10 +210,11 @@ mod tests {
                     AntiTrackingFeature::HideVia,
                     AntiTrackingFeature::ProbeResistance,
                 ],
-                // NaiveProxy is HTTP/2-only; manifests always advertise
-                // false (advertising true would lead clients to attempt
-                // QUIC, fail, fall back — a fingerprintable network
-                // pattern). See SubscriptionController docstring.
+                // The current VLESS+Reality stack is TCP-only;
+                // manifests always advertise false (advertising true
+                // would lead clients to attempt QUIC, fail, fall back
+                // — a fingerprintable network pattern). See
+                // SubscriptionController docstring.
                 http3: false,
                 fake_site_slug: Some("minimal-blog".into()),
             },

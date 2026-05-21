@@ -27,15 +27,21 @@ class SingBoxRender extends Command
 
     public function handle(SingBoxConfigGenerator $gen): int
     {
-        $newHash = $gen->renderToFile();
+        $result = $gen->renderToFile();
 
-        if ($newHash === null) {
+        if ($result->failed) {
+            $this->error('sing-box render failed; see singbox.render.* logs');
+
+            return self::FAILURE;
+        }
+
+        if (! $result->changed) {
             $this->info('sing-box config unchanged');
 
             return self::SUCCESS;
         }
 
-        $this->info("sing-box config rendered hash={$newHash}");
+        $this->info("sing-box config rendered hash={$result->hash}");
 
         return self::SUCCESS;
     }

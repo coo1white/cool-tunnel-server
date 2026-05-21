@@ -9,7 +9,7 @@ syscalls matter:
 | Subcommand | What it does |
 | --- | --- |
 | `ct-server-core caddyfile render` | Reads `server_configs` from the DB, substitutes into `Caddyfile.tpl`, writes atomically to `/etc/caddy/Caddyfile`. Returns the SHA-256 of the result. |
-| `ct-server-core daemon` | Long-running mode for the panel socket, Redis revocation bridge, and internal metrics endpoint. |
+| `ct-server-core daemon` | Long-running mode for the panel socket and internal metrics endpoint. |
 | `ct-server-core admin panel-domain` | Prints the resolved panel hostname. |
 | `ct-server-core version` | Prints the core binary version and protocol version. |
 

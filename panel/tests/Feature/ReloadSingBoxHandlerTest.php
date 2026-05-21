@@ -9,6 +9,7 @@ namespace Tests\Feature;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\MessageHandlers\ReloadSingBoxHandler;
 use App\Messages\ReloadSingBox;
+use App\Support\RenderResult;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -29,7 +30,7 @@ class ReloadSingBoxHandlerTest extends TestCase
     #[Test]
     public function handler_renders_when_invoked(): void
     {
-        $generator = new FakeSingBoxGenerator('sha256-of-new-content');
+        $generator = new FakeSingBoxGenerator(RenderResult::changed(str_repeat('a', 64)));
         $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
 
         $this->app->make(ReloadSingBoxHandler::class)(new ReloadSingBox(reason: 'test:hash-changed'));
@@ -44,13 +45,29 @@ class ReloadSingBoxHandlerTest extends TestCase
     #[Test]
     public function handler_tolerates_unchanged_render_no_op(): void
     {
-        // null from the generator means "file unchanged on disk".
+        // RenderResult::unchanged() means "file unchanged on disk".
         // Supervisor file-watch won't fire; nothing else to do.
         // Handler must NOT throw; this test pins that posture.
-        $generator = new FakeSingBoxGenerator(null);
+        $generator = new FakeSingBoxGenerator(RenderResult::unchanged());
         $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
 
         $this->app->make(ReloadSingBoxHandler::class)(new ReloadSingBox(reason: 'test:render-null'));
+
+        $this->assertSame(1, $generator->renderCalls);
+    }
+
+    #[Test]
+    public function handler_throws_when_render_failed_so_messenger_can_retry(): void
+    {
+        $generator = new FakeSingBoxGenerator(RenderResult::failed());
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
+
+        try {
+            $this->app->make(ReloadSingBoxHandler::class)(new ReloadSingBox(reason: 'test:render-failed'));
+            $this->fail('Failed render results must bubble out of the handler.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('sing-box render failed', $e->getMessage());
+        }
 
         $this->assertSame(1, $generator->renderCalls);
     }
@@ -63,12 +80,12 @@ final class FakeSingBoxGenerator implements SingBoxConfigGeneratorInterface
 {
     public int $renderCalls = 0;
 
-    public function __construct(private readonly ?string $hash) {}
+    public function __construct(private readonly RenderResult $result) {}
 
-    public function renderToFile(): ?string
+    public function renderToFile(): RenderResult
     {
         $this->renderCalls++;
 
-        return $this->hash;
+        return $this->result;
     }
 }

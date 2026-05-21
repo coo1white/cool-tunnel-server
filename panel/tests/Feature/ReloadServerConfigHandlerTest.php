@@ -10,6 +10,7 @@ use App\Contracts\CaddyfileGeneratorInterface;
 use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\MessageHandlers\ReloadServerConfigHandler;
 use App\Messages\ReloadServerConfig;
+use App\Support\RenderResult;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -38,7 +39,7 @@ class ReloadServerConfigHandlerTest extends TestCase
     public function handler_renders_caddy_first_then_singbox(): void
     {
         $caddy = new RecordingCaddyGenerator('sha256-caddy');
-        $singbox = new RecordingSingBoxGenerator('sha256-singbox');
+        $singbox = new RecordingSingBoxGenerator(RenderResult::changed(str_repeat('b', 64)));
         $this->app->instance(CaddyfileGeneratorInterface::class, $caddy);
         $this->app->instance(SingBoxConfigGeneratorInterface::class, $singbox);
 
@@ -55,7 +56,7 @@ class ReloadServerConfigHandlerTest extends TestCase
     public function handler_still_renders_singbox_when_caddyfile_unchanged(): void
     {
         $caddy = new RecordingCaddyGenerator(null);  // "unchanged"
-        $singbox = new RecordingSingBoxGenerator('sha256-singbox');
+        $singbox = new RecordingSingBoxGenerator(RenderResult::changed(str_repeat('b', 64)));
         $this->app->instance(CaddyfileGeneratorInterface::class, $caddy);
         $this->app->instance(SingBoxConfigGeneratorInterface::class, $singbox);
 
@@ -67,6 +68,26 @@ class ReloadServerConfigHandlerTest extends TestCase
             $singbox->renderCalls,
             'singbox.json still renders even if Caddyfile was unchanged.',
         );
+    }
+
+    #[Test]
+    public function handler_throws_when_singbox_render_failed_after_caddy_render(): void
+    {
+        $caddy = new RecordingCaddyGenerator('sha256-caddy');
+        $singbox = new RecordingSingBoxGenerator(RenderResult::failed());
+        $this->app->instance(CaddyfileGeneratorInterface::class, $caddy);
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $singbox);
+
+        try {
+            $this->app->make(ReloadServerConfigHandler::class)(new ReloadServerConfig(reason: 'test'));
+            $this->fail('Failed sing-box render results must bubble out for retry.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('sing-box render failed', $e->getMessage());
+        }
+
+        $this->assertSame(['caddy', 'singbox'], self::$invocationLog);
+        $this->assertSame(1, $caddy->renderCalls);
+        $this->assertSame(1, $singbox->renderCalls);
     }
 
     public static function recordInvocation(string $event): void
@@ -94,13 +115,13 @@ final class RecordingSingBoxGenerator implements SingBoxConfigGeneratorInterface
 {
     public int $renderCalls = 0;
 
-    public function __construct(private readonly ?string $hash) {}
+    public function __construct(private readonly RenderResult $result) {}
 
-    public function renderToFile(): ?string
+    public function renderToFile(): RenderResult
     {
         $this->renderCalls++;
         ReloadServerConfigHandlerTest::recordInvocation('singbox');
 
-        return $this->hash;
+        return $this->result;
     }
 }

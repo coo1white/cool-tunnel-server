@@ -18,9 +18,9 @@ use Illuminate\Support\Facades\Log;
  * ACME_EMAIL / ACME_DIRECTORY from the ServerConfig DB row. Rendering
  * happens on every ServerConfig save and on first-boot (entrypoint.sh).
  *
- * Public API mirrors {@see SingBoxConfigGenerator}: `renderToFile()`
- * returns the SHA-256 of the new file when it changed, or null when
- * the rendered output already matches what's on disk.
+ * `renderToFile()` returns the SHA-256 of the new file when it
+ * changed, or null when the rendered output already matches what's
+ * on disk.
  */
 class CaddyfileGenerator implements CaddyfileGeneratorInterface
 {

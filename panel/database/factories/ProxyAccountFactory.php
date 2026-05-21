@@ -33,8 +33,6 @@ class ProxyAccountFactory extends Factory
             'enabled' => true,
             'client_default_local_port' => 1080,
             'enabled_protocols' => SingBoxProtocolCatalog::defaultKeys(),
-            'quota_bytes' => null,
-            'used_bytes' => 0,
             'expires_at' => null,
             'last_seen_at' => null,
             'metadata' => null,

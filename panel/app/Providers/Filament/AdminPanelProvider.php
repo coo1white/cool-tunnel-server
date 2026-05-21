@@ -48,7 +48,6 @@ class AdminPanelProvider extends PanelProvider
             ->sidebarCollapsibleOnDesktop()
             ->navigationGroups([
                 NavigationGroup::make('Users')->icon('heroicon-o-users'),
-                NavigationGroup::make('Reporting')->icon('heroicon-o-chart-bar'),
                 NavigationGroup::make('System')->icon('heroicon-o-server-stack'),
             ])
             ->discoverResources(in: app_path('Filament/Resources'),

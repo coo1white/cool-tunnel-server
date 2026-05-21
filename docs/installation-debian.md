@@ -12,8 +12,8 @@ inline.
 > **Tested on** Debian 12 minimal cloud images. Steps that diverge
 > on 10 / 11 / 13 are flagged with a `🟢` badge under each section.
 >
-> **Reference:** this guide builds on the original bare Caddy + naive
-> deployment shape and adds the panel layer.
+> **Reference:** this guide builds on the original bare Caddy
+> deployment shape and adds the panel plus sing-box VLESS+Reality.
 
 ---
 
@@ -255,8 +255,7 @@ Switch the two `banaction` lines to `iptables-multiport` and
 ```bash
 ufw allow OpenSSH
 ufw allow 80/tcp                    # ACME HTTP-01 + http→https redirect
-ufw allow 443/tcp                   # HTTPS — sing-box NaiveProxy CONNECT
-ufw allow 443/udp                   # HTTP/3 (QUIC)
+ufw allow 443/tcp                   # HTTPS — sing-box VLESS+Reality
 ufw --force enable
 ufw status verbose
 ```
@@ -568,39 +567,19 @@ ACME hasn't completed yet — `docker logs ct-singbox` will tell you why
 In the Filament panel: **Proxy Accounts → New**.
 
 - **Username** — any ASCII you like (`alice`).
-- **Password** — leave blank to auto-generate; the cleartext is
-  shown **once** at the top of the next page. Copy it; the panel
-  only stores the bcrypt hash.
-- **Quota** — bytes/month, blank = unlimited.
+- **UUID** — generated automatically and shown once after create.
 - **Expires at** — datetime, blank = never.
 
 When you save, the panel:
 
-1. Writes the bcrypt hash AND a Laravel-Crypt-encrypted cleartext to
-   `proxy_accounts`.
-2. Publishes a `cool_tunnel:revocations` Redis message.
-3. The ct-server-core daemon (subscribed) re-renders the sing-box
-   `config.json` and PUTs `/configs?force=true&path=…` to sing-box's
-   clash-API unix socket — zero-downtime reload.
+1. Writes the account row and VLESS UUID to `proxy_accounts`.
+2. Queues a Messenger render job after the DB commit.
+3. Renders `/data/config/singbox.json`; the sing-box supervisor
+   watches that file and restarts sing-box when it changes.
 
-Verify from another machine:
-
-```bash
-curl -v --proxy "https://alice:<password>@proxy.example.com:443" \
-    https://ipinfo.io
-```
-
-Expected: `ipinfo.io` shows the **server's** IP (not yours).
-
-### Point the macOS client at it
-
-Open Cool Tunnel, *+* a profile:
-
-```
-naive+https://alice:<password>@proxy.example.com:443
-```
-
-Pick *Smart* mode. Click **Start**. Done.
+The create page shows a subscription URL. Import that URL in the Cool
+Tunnel client; it contains the server, UUID, Reality public key,
+Reality dest_host, short ID, and local SOCKS default.
 
 ---
 
@@ -627,9 +606,8 @@ migrations, re-renders the sing-box config, and `docker compose up -d`.
 ```
 
 The tarball mode is `0600` — the contents are operator-secret
-(APP_KEY decrypts every cleartext password in the DB dump). Move
-it off the VPS to a private storage bucket / encrypted disk
-ASAP.
+(APP_KEY signs subscription URLs and decrypts sealed server secrets).
+Move it off the VPS to a private storage bucket / encrypted disk ASAP.
 
 ### Restore
 
@@ -655,11 +633,11 @@ Documented disaster-recovery procedure (works on a fresh VPS):
 6. Verify: `./ct doctor` has no FAIL rows,
    and `curl -ksI https://${PANEL_DOMAIN}/admin` returns 200/302.
 
-The restored `.env` brings APP_KEY + DB + Redis + clash secrets
-across, so every existing proxy account's encrypted cleartext
-password decrypts correctly. The restored `caddy_data` brings
-the existing Let's Encrypt certs across, avoiding LE rate-limit
-budget on re-issue (5 duplicate certs per 7 days).
+The restored `.env` brings APP_KEY, DB, and Redis settings across,
+so existing signed subscription URLs and VLESS UUID credentials remain
+valid. The restored `caddy_data` brings the existing Let's Encrypt
+certs across, avoiding LE rate-limit budget on re-issue (5 duplicate
+certs per 7 days).
 
 ### Tail logs
 
@@ -669,11 +647,12 @@ docker compose logs -f --tail=200 panel   # Laravel + queue worker
 docker compose logs -f --tail=200 db
 ```
 
-### Rotate a leaked password
+### Rotate a leaked UUID
 
-Filament panel → ProxyAccounts → click the user → **Regenerate
-password**. New cleartext shown once; old credential stops working
-within ~100 ms (Redis pub/sub → sing-box reload).
+Filament panel → Proxy accounts → **Regenerate UUID**. The new UUID
+and subscription URL are shown once. The panel writes a fresh sing-box
+config immediately when it can; otherwise the queued worker or
+scheduled render reconciles it.
 
 ### Renew TLS
 
@@ -765,8 +744,9 @@ docker compose restart caddy
 
 - **Notarised domains / EV certs.** Let's Encrypt DV is fine; you do
   not need a paid CA.
-- **TLS pinning.** NaiveProxy clients use the system trust store; no
-  pinning needed on either end.
+- **TLS pinning.** VLESS+Reality clients pin the Reality public key
+  delivered in the subscription manifest; no extra CA pinning is
+  needed.
 - **Multi-tenant separation.** Every proxy account in this guide
   lives in the same Caddy process. If you want isolation between
   customers, run multiple stacks on different VPSs and federate the
