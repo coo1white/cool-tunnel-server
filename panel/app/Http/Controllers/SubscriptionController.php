@@ -9,6 +9,7 @@ namespace App\Http\Controllers;
 use App\Models\FakeWebsite;
 use App\Models\ProxyAccount;
 use App\Models\ServerConfig;
+use App\Support\ClientRuntimeCatalog;
 use App\Support\RealityDestinationCatalog;
 use App\Support\SingBoxPin;
 use App\Support\SingBoxProtocolCatalog;
@@ -55,7 +56,7 @@ use Illuminate\Support\Facades\RateLimiter;
 //   - Field order: version, server, profiles, capabilities,
 //     issued_at, expires_at, note, server_singbox_pin, signature.
 //   - Optional fields (`note`, `server_singbox_pin`,
-//     `capabilities.fake_site_slug`, `signature`) are OMITTED when
+//     `capabilities.fake_site_slug`, `client_runtime`, `signature`) are OMITTED when
 //     null — never emitted as `"key":null`. Emitting `"key":null`
 //     diverges from a deserialise→re-serialise round-trip on a
 //     spec-compliant client → HMAC mismatch → silent rejection of
@@ -337,6 +338,9 @@ class SubscriptionController extends Controller
         ];
         if ($serverSingBoxPin !== null) {
             $body['server_singbox_pin'] = $serverSingBoxPin;
+        }
+        if (($clientRuntime = ClientRuntimeCatalog::current()) !== null) {
+            $body['client_runtime'] = $clientRuntime;
         }
 
         // HMAC over the body WITHOUT a `signature` field at all.

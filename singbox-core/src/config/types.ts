@@ -143,7 +143,7 @@ export interface DnsOutbound {
 // ---------- Route ------------------------------------------------------------
 
 export interface RouteBlock {
-    readonly rules: readonly RouteRule[];
+    readonly rules?: readonly RouteRule[];
     readonly final?: string; // tag of the default outbound
     readonly auto_detect_interface?: boolean;
 }
