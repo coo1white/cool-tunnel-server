@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
-# scripts/bootstrap.sh — one-line bootstrap for Cool Tunnel Server.
+# scripts/bootstrap.sh — one-line bootstrap for cool-tunnel-server.
 #
 # Designed to be the release-pinned Homebrew-style curl target
 # referenced in README.md. Walks a fresh Debian 11/12/13 VPS from
@@ -44,7 +44,7 @@ die()  { printf '%s!!! %s%s\n' "$c_red" "$*" "$c_off" >&2; exit 1; }
 explain_and_pause() {
     cat <<EOF
 
-Cool Tunnel Server bootstrap will:
+cool-tunnel-server bootstrap will:
   - install/verify Debian packages needed for setup
   - install Docker CE + Compose v2 if Docker is missing
   - clone or fast-forward ${REPO_URL} into ${INSTALL_DIR}

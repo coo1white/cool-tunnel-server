@@ -30,7 +30,7 @@ class VersionCommandTest extends TestCase
         config(['cool-tunnel.version' => '9.9.9']);
 
         $this->artisan('ct:version')
-            ->expectsOutput('Cool Tunnel Panel 9.9.9')
+            ->expectsOutput('cool-tunnel-server panel 9.9.9')
             ->assertSuccessful();
     }
 

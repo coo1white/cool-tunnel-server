@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/install.ts — `ct install` implementation. First-time
-// bootstrap for Cool Tunnel Server on a fresh Debian VPS. Port of
+// bootstrap for cool-tunnel-server on a fresh Debian VPS. Port of
 // scripts/install.sh — preserves every step, prompt, and diagnostic
 // the bash original carried (including the incident comments that
 // document why each guard exists). Idempotent: re-runnable if any
@@ -605,7 +605,7 @@ function printSuccessBanner(env: InstallEnv): void {
     const green = ANSI.green;
     const reset = ANSI.reset;
     process.stdout.write(`
-${bold}${green}Cool Tunnel Server is up.${reset}
+${bold}${green}cool-tunnel-server is up.${reset}
 
   Panel         https://${env.PANEL_DOMAIN}/admin
   Subscription  https://${env.PANEL_DOMAIN}/api/v1/subscription/<token>

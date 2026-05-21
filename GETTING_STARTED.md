@@ -1,6 +1,6 @@
 # Getting Started
 
-Shortest path from a fresh Debian VPS to a running Cool Tunnel Server.
+Shortest path from a fresh Debian VPS to a running cool-tunnel-server.
 For the full Debian reference, use
 [`docs/installation-debian.md`](./docs/installation-debian.md).
 

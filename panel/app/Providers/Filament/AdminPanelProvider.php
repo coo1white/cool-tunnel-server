@@ -39,7 +39,7 @@ class AdminPanelProvider extends PanelProvider
             ->login(Login::class)
             ->profile()
             ->darkMode()
-            ->brandName('Cool Tunnel Server')
+            ->brandName('cool-tunnel-server')
             ->colors([
                 'primary' => Color::Indigo,
             ])

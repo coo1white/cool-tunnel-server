@@ -16,6 +16,11 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+- Promoted `client-runtime.upstream.json` from a macOS-only helper into
+  a portable runtime catalog with server release authority, source refs,
+  and per-platform asset metadata for the shared `sing-box` and
+  `cool-tunnel-core` plugins.
+
 ### Removed
 
 ### Fixed
@@ -24,10 +29,30 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
-## [0.4.14] — 2026-05-22 — Runtime asset digest sync
+## [0.4.15] — 2026-05-22 — Doctor warning cleanup
 
 ### Fixed
 
+- Updated `ct doctor` to recognize sing-box's current
+  `domain_resolver.strategy` direct outbound shape, so healthy
+  `prefer_ipv4` / `ipv4_only` configs no longer warn about the retired
+  `domain_strategy` field.
+- Added the missing `supervisorctl` control socket sections to the panel
+  supervisord config and made `ct doctor` query that config explicitly,
+  so healthy panel process supervision reports as passing.
+- Kept subscription URLs out of proxy-account notification bodies and
+  routed operators through a short `Copy URL` action instead, preventing
+  long tokens from wrapping into unreadable toast text.
+
+---
+
+## [0.4.14] — 2026-05-22 — Server-owned runtime package
+
+### Fixed
+
+- Published the server-owned `sing-box` and `cool-tunnel-core` runtime
+  binaries alongside operator binaries, with one combined `SHA256SUMS`
+  manifest for every uploaded binary.
 - Updated the server-authoritative client runtime catalog to the
   workflow-produced `v0.4.14` runtime asset hashes and sizes, so
   clients verify the exact bytes GitHub serves from the server release.
@@ -38,13 +63,9 @@ before relying on a version bump as a compatibility signal.
 
 ### Added
 
-- Added a signed `client_runtime` catalog to subscription manifests so
+- Added a signed `client_runtime` catalog and runtime plugin workflow so
   clients fetch the paired `sing-box` and `cool-tunnel-core` runtime
-  plugins from `cool-tunnel-server` releases.
-- Added a release workflow that publishes the server-owned macOS
-  runtime plugin pair and checksum manifest.
-- Added contract tests that reject drift back to independent upstream
-  `sing-box` or client-repo Rust core release assets.
+  binaries from `cool-tunnel-server` releases only.
 
 ### Changed
 

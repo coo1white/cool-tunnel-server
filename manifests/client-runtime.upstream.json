@@ -1,15 +1,29 @@
 {
     "name": "client-runtime",
-    "kind": "container-image",
+    "kind": "portable-runtime",
     "version": "0.4.14",
     "upstream": "https://github.com/coo1white/cool-tunnel-server",
+    "schema_version": 1,
+    "authority": {
+        "repo": "https://github.com/coo1white/cool-tunnel-server",
+        "release_tag": "v0.4.14",
+        "checksum_asset": "SHA256SUMS"
+    },
     "plugins": {
         "sing-box": {
             "kind": "binary",
             "version": "v1.13.12",
             "upstream": "https://github.com/coo1white/cool-tunnel-server",
+            "source": {
+                "repo": "https://github.com/SagerNet/sing-box",
+                "ref": "v1.13.12"
+            },
             "assets": {
                 "darwin-universal": {
+                    "platform": "darwin-universal",
+                    "os": "darwin",
+                    "arch": "universal",
+                    "filename": "sing-box-v1.13.12-darwin-universal",
                     "url": "https://github.com/coo1white/cool-tunnel-server/releases/download/v0.4.14/sing-box-v1.13.12-darwin-universal",
                     "sha256": "7f6a9c6dd4120253e1ce9882207007d370505b5ed9ff09cd5a8265e59290f723",
                     "size_bytes": 103799040
@@ -26,7 +40,11 @@
             },
             "assets": {
                 "darwin-universal": {
-                    "url": "https://github.com/coo1white/cool-tunnel-server/releases/download/v0.4.14/cool-tunnel-core-v3.0.6-universal",
+                    "platform": "darwin-universal",
+                    "os": "darwin",
+                    "arch": "universal",
+                    "filename": "cool-tunnel-core-v0.4.14",
+                    "url": "https://github.com/coo1white/cool-tunnel-server/releases/download/v0.4.14/cool-tunnel-core-v0.4.14",
                     "sha256": "8ded11367ac50832903e748aa28538d9e0556f00049f6f6be6e88f01496ea1ec",
                     "size_bytes": 5426800
                 }

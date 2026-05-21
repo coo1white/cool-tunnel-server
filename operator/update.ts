@@ -33,6 +33,7 @@ import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
 import { promptChoice, promptYn } from "./src/util/prompt";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
+import { credentialLockCheck } from "./src/util/credential-control";
 
 const { step, ok, warn } = makeTerm();
 
@@ -360,6 +361,25 @@ async function reloadCaddy(): Promise<void> {
     }
 }
 
+async function runPostUpdateHealthGates(): Promise<void> {
+    step("Post-update health gates");
+    const guard = await credentialLockCheck();
+    if (!guard.ok) {
+        dieWithDiag(
+            "credential-lock guard failed after update",
+            guard.stderr.split("\n").slice(0, 5).join("\n")
+                || guard.stdout.split("\n").slice(0, 5).join("\n")
+                || "docker compose exec -T panel php artisan credential-lock:check",
+        );
+    }
+    ok("credential-lock OK");
+
+    const stack = await checkStackUp(["panel", "caddy", "singbox", "db", "redis"]);
+    if (!stack.ok) dieOnFailure(stack.failure);
+    else if (stack.missing.length > 0) warn(stack.summary);
+    else ok(stack.summary);
+}
+
 async function fetchOperatorBinary(): Promise<void> {
     step("Operator binary");
     const r = await capture($`./scripts/fetch_operator_binary.sh`);
@@ -432,6 +452,7 @@ export async function runUpdate(): Promise<number> {
     // (SingBoxConfigGenerator → singbox-core render-server) when
     // bringNewImagesUp completes, so no explicit operator-side
     // re-render step is needed here.
+    await runPostUpdateHealthGates();
 
     // Non-fatal operator-binary fetch (signed release from GitHub).
     await fetchOperatorBinary();

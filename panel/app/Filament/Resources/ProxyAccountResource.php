@@ -182,7 +182,7 @@ class ProxyAccountResource extends Resource
                         $subUrl = $record->subscriptionUrl();
                         $body = $uuid;
                         if ($subUrl !== null) {
-                            $body .= "\n\nSubscription URL (import in the app):\n{$subUrl}";
+                            $body .= "\n\nSubscription URL is ready. Use Subscription URL, then Copy URL, and import it in the app.";
                         }
                         $body .= $renderConfirmed
                             ? "\n\nsing-box config rendered now; the URL is ready to import."
@@ -239,17 +239,14 @@ class ProxyAccountResource extends Resource
                         // The "Copy URL" action wires an Alpine `x-on:click`
                         // that calls `navigator.clipboard.writeText()` with
                         // the URL safely JS-encoded via json_encode (handles
-                        // quotes / unicode / line breaks). On secure
-                        // contexts (HTTPS / localhost) this copies in one
-                        // click. On non-secure contexts the API is
-                        // unavailable and the click is a silent no-op —
-                        // the URL stays visible in the notification body
-                        // for manual selection, preserving the
-                        // pre-v0.0.64 behaviour as a fallback.
+                        // quotes / unicode / line breaks). Keep the token
+                        // out of the visible notification body so it does
+                        // not wrap into unreadable, shoulder-surfable text.
                         $jsUrl = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                        $copyHandler = "if (navigator.clipboard?.writeText) { navigator.clipboard.writeText({$jsUrl}).catch(() => window.prompt('Copy subscription URL', {$jsUrl})); } else { window.prompt('Copy subscription URL', {$jsUrl}); }";
                         Notification::make()
                             ->title('Subscription URL — import in the app')
-                            ->body($url)
+                            ->body('URL is ready. Click Copy URL, then paste it into the app import field.')
                             ->success()
                             ->persistent()
                             ->actions([
@@ -258,7 +255,7 @@ class ProxyAccountResource extends Resource
                                     ->icon('heroicon-o-clipboard')
                                     ->color('gray')
                                     ->extraAttributes([
-                                        'x-on:click' => "navigator.clipboard?.writeText({$jsUrl})",
+                                        'x-on:click' => $copyHandler,
                                     ]),
                             ])
                             ->send();

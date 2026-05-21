@@ -1,6 +1,6 @@
 # ct-operator
 
-Operator CLI for Cool Tunnel Server. Replaces selected shell maintenance
+Operator CLI for cool-tunnel-server. Replaces selected shell maintenance
 scripts (`ct doctor`, `ct render`, `ct update`)
 with a single Bun-compiled binary.
 

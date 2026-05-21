@@ -1,6 +1,6 @@
 # Support and EOL policy
 
-Cool Tunnel Server is run by individual operators. We prioritise
+cool-tunnel-server is run by individual operators. We prioritise
 **predictability over novelty**: long support windows, breaking
 changes only at minor-version boundaries, and explicit EOL dates
 on every release.

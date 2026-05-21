@@ -422,7 +422,7 @@ export function renderTopic(slug: string): { ok: true; output: string } | { ok: 
 
 export function renderTopicList(): string {
     const lines: string[] = [];
-    lines.push(`${ANSI.bold}${ANSI.green}Cool Tunnel Server — operator help${ANSI.reset}`);
+    lines.push(`${ANSI.bold}${ANSI.green}cool-tunnel-server — operator help${ANSI.reset}`);
     lines.push("");
     lines.push("Usage:");
     lines.push("  ct help <topic>");

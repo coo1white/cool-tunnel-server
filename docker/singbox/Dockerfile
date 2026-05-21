@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Cool Tunnel Server — ct-singbox container (v0.4.0+).
+# cool-tunnel-server — ct-singbox container (v0.4.0+).
 #
 # Runs SagerNet/sing-box as the server-side proxy under singbox-core's
 # supervision. The SAME singbox-core binary is also embedded in the
-# macOS client (Cool Tunnel.app). One upstream tag, one config schema,
+# macOS client (cool-tunnel.app). One upstream tag, one config schema,
 # one supervisor, both ends.
 #
 # Three stages:
