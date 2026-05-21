@@ -80,4 +80,21 @@ final class ServerConfigPageTest extends TestCase
         $this->assertSame(28, RealityDestinationCatalog::cachedLatency('www.apple.com')['latency_ms']);
         Notification::assertNotified('Reality destination latency refreshed');
     }
+
+    #[Test]
+    public function page_renders_latency_check_action(): void
+    {
+        $admin = User::factory()->create();
+        ServerConfig::factory()->create([
+            'domain' => 'proxy.example.com',
+            'acme_email' => 'admin@example.com',
+            'acme_directory' => 'https://acme-staging-v02.api.letsencrypt.org/directory',
+            'reality_dest_host' => 'www.apple.com',
+        ]);
+
+        Livewire::actingAs($admin)
+            ->test(ServerConfigPage::class)
+            ->assertSee('Check latency')
+            ->assertSee('Save and reload');
+    }
 }

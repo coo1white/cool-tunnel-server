@@ -19,6 +19,7 @@ use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
 use Filament\Notifications\Notification;
+use Filament\Pages\Concerns\InteractsWithFormActions;
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Redis;
 use Throwable;
@@ -28,6 +29,7 @@ use Throwable;
  */
 class ServerConfigPage extends Page implements HasForms
 {
+    use InteractsWithFormActions;
     use InteractsWithForms;
 
     protected static ?string $navigationIcon = 'heroicon-o-cog-6-tooth';
@@ -212,9 +214,9 @@ class ServerConfigPage extends Page implements HasForms
     private function probeReloadTransport(): bool
     {
         try {
-            $pong = Redis::connection()->command('PING');
+            $pong = Redis::connection()->command('ping');
 
-            return $pong === true || $pong === 'PONG' || $pong === '+PONG';
+            return $pong === true || in_array((string) $pong, ['PONG', '+PONG'], true);
         } catch (Throwable $e) {
             return false;
         }
@@ -223,7 +225,7 @@ class ServerConfigPage extends Page implements HasForms
     protected function getFormActions(): array
     {
         return [
-            Action::make('save')->submit('save')->label('Save config'),
+            Action::make('save')->submit('save')->label('Save and reload'),
             Action::make('refreshRealityLatency')
                 ->label('Check latency')
                 ->icon('heroicon-o-signal')
