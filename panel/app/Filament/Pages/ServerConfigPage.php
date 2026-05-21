@@ -9,6 +9,8 @@ namespace App\Filament\Pages;
 use App\Models\ServerConfig;
 use App\Support\RealityDestinationCatalog;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Actions;
+use Filament\Forms\Components\Actions\Action as FormAction;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
@@ -46,7 +48,9 @@ class ServerConfigPage extends Page implements HasForms
 
     public function mount(): void
     {
-        $this->form->fill(ServerConfig::current()->toArray());
+        $config = ServerConfig::current();
+        RealityDestinationCatalog::warmCatalogLatenciesIfMissing((string) ($config->reality_dest_host ?? ''));
+        $this->form->fill($config->toArray());
     }
 
     public function form(Form $form): Form
@@ -107,6 +111,13 @@ class ServerConfigPage extends Page implements HasForms
                             ->searchable()
                             ->native(false)
                             ->helperText('Global cover website used by every VLESS + Reality subscription. Account creation reads this value; it never mutates it.'),
+                        Actions::make([
+                            FormAction::make('refreshRealityLatency')
+                                ->label('Check latency')
+                                ->icon('heroicon-o-signal')
+                                ->color('gray')
+                                ->action('refreshRealityLatency'),
+                        ]),
                         Placeholder::make('reality_dest_latency')
                             ->label('Latency')
                             ->content(fn (Get $get): string => RealityDestinationCatalog::latencyStatusText(
@@ -188,6 +199,10 @@ class ServerConfigPage extends Page implements HasForms
         ));
 
         RealityDestinationCatalog::refreshCatalogLatencies($selected);
+        $this->form->fill([
+            ...$this->form->getState(),
+            'reality_dest_host' => $selected,
+        ]);
 
         Notification::make()
             ->title('Reality destination latency refreshed')
@@ -226,11 +241,6 @@ class ServerConfigPage extends Page implements HasForms
     {
         return [
             Action::make('save')->submit('save')->label('Save and reload'),
-            Action::make('refreshRealityLatency')
-                ->label('Check latency')
-                ->icon('heroicon-o-signal')
-                ->color('gray')
-                ->action('refreshRealityLatency'),
         ];
     }
 }

@@ -82,6 +82,26 @@ final class ServerConfigPageTest extends TestCase
     }
 
     #[Test]
+    public function page_mount_warms_latency_cache_for_dropdown_labels(): void
+    {
+        $admin = User::factory()->create();
+        ServerConfig::factory()->create([
+            'domain' => 'proxy.example.com',
+            'acme_email' => 'admin@example.com',
+            'acme_directory' => 'https://acme-staging-v02.api.letsencrypt.org/directory',
+            'reality_dest_host' => 'www.apple.com',
+        ]);
+
+        RealityDestinationCatalog::useLatencyProbeForTests(fn (string $host): int => $host === 'www.apple.com' ? 34 : 12);
+
+        Livewire::actingAs($admin)
+            ->test(ServerConfigPage::class)
+            ->assertSee('34 ms');
+
+        $this->assertSame(34, RealityDestinationCatalog::cachedLatency('www.apple.com')['latency_ms']);
+    }
+
+    #[Test]
     public function page_renders_latency_check_action(): void
     {
         $admin = User::factory()->create();

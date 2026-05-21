@@ -111,7 +111,10 @@ export function renderServerConfig(input: ServerRenderInput): SingboxConfig {
     const directOut: DirectOutbound = {
         type: "direct",
         tag: "direct",
-        domain_strategy: input.direct_domain_strategy || "prefer_ipv4",
+        domain_resolver: {
+            server: "local-dns",
+            strategy: input.direct_domain_strategy || "prefer_ipv4",
+        },
         connect_timeout: input.direct_connect_timeout || "2s",
         fallback_delay: input.direct_fallback_delay || "100ms",
     };
@@ -119,6 +122,14 @@ export function renderServerConfig(input: ServerRenderInput): SingboxConfig {
 
     return {
         log: { level: input.log_level ?? "info", timestamp: true },
+        dns: {
+            servers: [
+                {
+                    type: "local",
+                    tag: "local-dns",
+                },
+            ],
+        },
         inbounds: [inbound],
         outbounds: [directOut, blockOut],
     };

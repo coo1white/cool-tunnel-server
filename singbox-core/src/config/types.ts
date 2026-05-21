@@ -16,6 +16,7 @@
  */
 export interface SingboxConfig {
     readonly log: LogBlock;
+    readonly dns?: DnsBlock;
     readonly inbounds: readonly Inbound[];
     readonly outbounds: readonly Outbound[];
     readonly route?: RouteBlock;
@@ -25,6 +26,19 @@ export interface LogBlock {
     readonly level: "trace" | "debug" | "info" | "warn" | "error" | "fatal" | "panic";
     readonly disabled?: boolean;
     readonly timestamp?: boolean;
+}
+
+// ---------- DNS ----------------------------------------------------------------
+
+export interface DnsBlock {
+    readonly servers: readonly DnsServer[];
+}
+
+export type DnsServer = LocalDnsServer;
+
+export interface LocalDnsServer {
+    readonly type: "local";
+    readonly tag: string;
 }
 
 // ---------- Inbounds ---------------------------------------------------------
@@ -106,9 +120,14 @@ export type DirectDomainStrategy = "prefer_ipv4" | "prefer_ipv6" | "ipv4_only" |
 export interface DirectOutbound {
     readonly type: "direct";
     readonly tag: string;
-    readonly domain_strategy?: DirectDomainStrategy;
+    readonly domain_resolver?: DomainResolver;
     readonly connect_timeout?: string;
     readonly fallback_delay?: string;
+}
+
+export interface DomainResolver {
+    readonly server: string;
+    readonly strategy?: DirectDomainStrategy;
 }
 
 export interface BlockOutbound {
