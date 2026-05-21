@@ -24,6 +24,34 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.12] — 2026-05-21 — Hot-fix: Docker IPv6 build preflight
+
+This release fixes the Vultr-class update failure where the host has
+working IPv4 but Docker BuildKit/Rust tries IPv6 for
+`static.rust-lang.org` and dies with `Network unreachable` during
+`cargo chef prepare`.
+
+### Fixed
+
+- **`ct update` now validates Rust build networking directly.** The
+  preflight probes `static.rust-lang.org` over IPv4 and IPv6 before
+  starting the Rust image build, instead of relying only on host route
+  heuristics.
+- **Existing sysctl-only IPv6 disables no longer fool preflight.** If
+  `/etc/sysctl.d/99-disable-ipv6.conf` exists but Docker is not pinned
+  to `"ipv6": false`, `ct update` now repairs Docker daemon config
+  before the build.
+- **Docker daemon JSON is merged, not replaced.** When auto-fixing
+  Docker IPv6, existing daemon keys are preserved while adding
+  `"ipv6": false` and default IPv4 DNS only if DNS was absent.
+- **Rust image builds no longer rustup-sync during source stages.** The
+  core Dockerfile forces the already-baked `rust:1.88-alpine` toolchain
+  with `RUSTUP_TOOLCHAIN=1.88`, preventing `cargo chef prepare` and
+  `cargo build` from re-contacting `static.rust-lang.org` after
+  `core/rust-toolchain.toml` is copied into the image.
+
+---
+
 ## [0.4.11] — 2026-05-21 — Subscription security and render performance
 
 This release hardens subscription URL revocation, privacy-safe public
@@ -11358,7 +11386,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.11...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.12...HEAD
+[0.4.12]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.8...v0.4.9
