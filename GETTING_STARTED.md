@@ -40,7 +40,8 @@ ufw allow 443/tcp
 ufw --force enable
 ```
 
-Install Docker from Docker's official Debian repository, then verify:
+Either install Docker from Docker's official Debian repository yourself,
+or let the bootstrap command below install it for you. To verify:
 
 ```sh
 docker version
@@ -50,13 +51,13 @@ docker compose version
 The detailed Docker steps live in
 [`docs/installation-debian.md`](./docs/installation-debian.md#5-install-docker-engine--compose-v2).
 
-Clone and configure:
+Bootstrap the project with the same one-command shape
+[Homebrew](https://brew.sh/) uses:
 
 ```sh
-cd /opt
-git clone https://github.com/coo1white/cool-tunnel-server.git
-cd cool-tunnel-server
-cp .env.example .env
+LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
+BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
+cd /opt/cool-tunnel-server
 $EDITOR .env
 ```
 
@@ -74,7 +75,7 @@ Set these keys in `.env`:
 Install:
 
 ```sh
-make install
+ct install
 ```
 
 The installer builds the images, migrates the DB, renders Caddy and
@@ -110,7 +111,7 @@ the panel and `singbox-core`.
 Run the local health gate:
 
 ```sh
-make doctor
+ct doctor
 ```
 
 Useful quick checks:

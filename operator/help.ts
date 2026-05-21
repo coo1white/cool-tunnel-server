@@ -27,9 +27,9 @@ export const TOPICS: Record<string, Topic> = {
         body: `You just SSH'd into a fresh Debian / Ubuntu VPS and want a
 working Cool Tunnel deployment. The whole path is:
 
-  1. Clone the repo                  (you are presumably here)
+  1. Run the Homebrew-style bootstrap command from README.md
   2. Edit .env with your domain + secrets
-  3. Run ./scripts/install.sh        (idempotent; ~5-10 min)
+  3. Run ct install                 (idempotent; ~5-10 min)
   4. Visit https://panel.<DOMAIN>/admin and log in
 
 For the long-form tutorial (with prerequisites and detailed
@@ -40,7 +40,7 @@ Next topic:  ./ct help install
 `,
     },
     "install": {
-        title: "install.sh — first-time bootstrap",
+        title: "ct install — first-time bootstrap",
         body: `What it does:
   - Verifies required tools are on PATH (docker, dig, curl, jq)
   - Asks you to copy .env.example -> .env if missing, then
@@ -78,7 +78,7 @@ Idempotent: safe to re-run if anything fails halfway.
 Diagnostics on failure:
   - Every step prints a numbered '==>' header
   - Errors come with a 'Diagnostic:' block listing next steps
-  - 'make doctor' run anytime gives the dashboard view
+  - 'ct doctor' run anytime gives the dashboard view
 
 Next topic:  ./ct help update
 `,
@@ -88,7 +88,8 @@ Next topic:  ./ct help update
         body: `What it does:
   Pre-flight:
     - Network reachable (github.com + registry-1.docker.io)
-    - Disk headroom (>= 2 GB repo, >= 4 GB docker root)
+    - Disk headroom (>= 2 GB repo, >= 4 GB docker root);
+      safe temp cleanup runs automatically only when space is low
     - Stack is up (panel + caddy running OR restarting; singbox
       allowed transiently down, depends on panel-rendered config)
     - Working tree clean (interactive stash/discard/abort if
@@ -122,8 +123,9 @@ Common failure modes:
                             stash / discard / abort
   - Network unreachable  -> diagnostic block lists ping /
                             dig / curl / proxy commands to try
-  - Disk full            -> 'docker system prune -af' usually
-                            reclaims 1-5 GB
+  - Disk full            -> auto-clean already removed safe temp
+                            and build cache; diagnostic lists
+                            the next manual commands
   - Build failure        -> diagnostic block names the most
                             common causes per image (caddy,
                             singbox, panel)
@@ -361,7 +363,7 @@ Next topic:  ./ct help troubleshooting
      known/acme-challenge/test.
 
 3. DNS A record does not match host IP
-   - Visible in 'make doctor' as a FAIL on the DNS check.
+   - Visible in 'ct doctor' as a FAIL on the DNS check.
    - 'dig +short A <DOMAIN>' to see what the world resolves
      vs 'curl -s4 https://ifconfig.co' for the host's public IP.
    - Update DNS, wait ~5-10 min for propagation, re-run doctor.
@@ -424,7 +426,6 @@ export function renderTopicList(): string {
     lines.push("");
     lines.push("Usage:");
     lines.push("  ct help <topic>");
-    lines.push("  make help-<topic>");
     lines.push("");
     lines.push("Topics:");
     for (const slug of TOPIC_SLUGS) {

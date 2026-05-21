@@ -2,17 +2,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # scripts/bootstrap.sh — one-line bootstrap for Cool Tunnel Server.
 #
-# Designed to be the release-pinned curl|bash target referenced in
-# README.md. Walks a fresh Debian 11/12/13 VPS from "just SSH'd in"
-# → "ready to edit .env and run install.sh" in a single network
-# round-trip.
+# Designed to be the release-pinned Homebrew-style curl target
+# referenced in README.md. Walks a fresh Debian 11/12/13 VPS from
+# "just SSH'd in" → "ready to edit .env and run ct install" in a
+# single network round-trip.
 #
 # Idempotent: re-running is a no-op if Docker is already installed,
 # the repo is already cloned, or .env already exists.
 #
-# Usage on a fresh VPS as root:
+# Usage on a fresh VPS as root (Homebrew-style, release-pinned):
 #   LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
-#   curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh" | BRANCH="${LATEST}" bash
+#   BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 #
 # Unattended mode (CI / Terraform / Ansible):
 #   LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
@@ -20,14 +20,14 @@
 #   PANEL_DOMAIN=panel.proxy.example.com \
 #   ACME_EMAIL=ops@example.com \
 #   AUTO_INSTALL=1 \
-#   curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh" | BRANCH="${LATEST}" bash
+#   BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 #
 # Override knobs (any can be set in the env before running):
 #   INSTALL_DIR (default /opt/cool-tunnel-server)
 #   REPO_URL    (default https://github.com/coo1white/cool-tunnel-server.git)
 #   BRANCH      (default main)
 #   DOMAIN, PANEL_DOMAIN, ACME_EMAIL — pre-fill .env
-#   AUTO_INSTALL=1  — chain ./scripts/install.sh after bootstrap
+#   AUTO_INSTALL=1  — chain ct install after bootstrap
 #                     (only valid when DOMAIN is also set)
 
 set -Eeuo pipefail
@@ -41,10 +41,42 @@ log()  { printf '%s==>%s %s\n' "$c_blue" "$c_off" "$*"; }
 warn() { printf '%s!! %s%s\n' "$c_yellow" "$*" "$c_off" >&2; }
 die()  { printf '%s!!! %s%s\n' "$c_red" "$*" "$c_off" >&2; exit 1; }
 
+explain_and_pause() {
+    cat <<EOF
+
+Cool Tunnel Server bootstrap will:
+  - install/verify Debian packages needed for setup
+  - install Docker CE + Compose v2 if Docker is missing
+  - clone or fast-forward ${REPO_URL} into ${INSTALL_DIR}
+  - fetch the signed ct-operator binary when available
+  - create ${INSTALL_DIR}/.env with generated secrets if it is missing
+
+It will not start the proxy stack unless AUTO_INSTALL=1 is set.
+EOF
+
+    if [ "${AUTO_INSTALL:-0}" = "1" ] \
+        || [ "${CT_BOOTSTRAP_NO_CONFIRM:-0}" = "1" ] \
+        || [ "${NONINTERACTIVE:-0}" = "1" ]; then
+        warn "non-interactive bootstrap mode — continuing without confirmation"
+        return
+    fi
+
+    if [ ! -t 0 ]; then
+        warn "stdin is not a TTY; continuing without confirmation"
+        return
+    fi
+
+    printf '\nPress RETURN/ENTER to continue or any other key to abort: '
+    IFS= read -r reply
+    [ -z "$reply" ] || die "aborted before making changes"
+}
+
 # ---------- 1. preflight ---------------------------------------------------
 
 [ "${EUID:-$(id -u)}" -eq 0 ] || die "must run as root (re-run via: sudo bash)"
 [ -f /etc/debian_version ] || warn "tested on Debian 11/12/13; YMMV on $(uname -a)"
+
+explain_and_pause
 
 # ---------- 2. apt deps + Docker -------------------------------------------
 
@@ -193,21 +225,21 @@ NEXT
      Random secrets for DB/Redis/admin were generated; review and
      keep a copy of PANEL_ADMIN_PASSWORD before you log in.
 
-  3. Run the 8-step bootstrap (numbered output, "↳ try:" hints
+  3. Run the 8-step install (numbered output, "↳ try:" hints
      on every failure):
        cd ${INSTALL_DIR}
-       ./scripts/install.sh
+       ct install
 
   4. Open the panel: https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
 =================================================================
 EOF
 
-# ---------- 6. optionally chain install.sh ---------------------------------
+# ---------- 6. optionally chain ct install ---------------------------------
 
 if [ "${AUTO_INSTALL:-0}" = "1" ]; then
     if [ -z "${DOMAIN:-}" ]; then
         die "AUTO_INSTALL=1 requires DOMAIN to be set in the env"
     fi
-    log "AUTO_INSTALL=1 → running ./scripts/install.sh"
-    exec bash ./scripts/install.sh
+    log "AUTO_INSTALL=1 → running ct install"
+    exec ./ct install
 fi

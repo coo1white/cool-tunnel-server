@@ -14,17 +14,18 @@
 //   4.  Pre-flight: .env (existence, 0600 mode, bcrypt-hash scan, value sanity)
 //   5.  Pre-flight: clone freshness vs origin/main (interactive)
 //   6.  Pre-flight: leftover Docker state from prior attempt (interactive)
-//   7.  Build ct-server-core (release / release-small profile)
-//   8.  Build caddy / singbox / panel images
-//   9.  Start db + redis; wait for MariaDB healthcheck
-//  10.  Start panel; wait for entrypoint sentinel; verify migrations + seed
-//  11.  Re-render Caddyfile + singbox.json from the seeded DB
-//  12.  Pre-flight: DNS A-records + port-80 reachability for ACME
-//  13.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
-//  14.  Verify singbox
-//  15.  Create the first Filament admin user (interactive ct:make-admin)
-//  16.  Strict health gates
-//  17.  Print success banner
+//   7.  Disk headroom check + low-space safe temp/build-cache cleanup
+//   8.  Build ct-server-core (release / release-small profile)
+//   9.  Build caddy / singbox / panel images
+//  10.  Start db + redis; wait for MariaDB healthcheck
+//  11.  Start panel; wait for entrypoint sentinel; verify migrations + seed
+//  12.  Re-render Caddyfile + singbox.json from the seeded DB
+//  13.  Pre-flight: DNS A-records + port-80 reachability for ACME
+//  14.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
+//  15.  Verify singbox
+//  16.  Create the first Filament admin user (interactive ct:make-admin)
+//  17.  Strict health gates
+//  18.  Print success banner
 
 import { spawnSync } from "node:child_process";
 import { $, capture, runStreaming, which } from "./src/util/sh";
@@ -35,6 +36,7 @@ import { waitFor } from "./src/util/wait";
 import { checkIpv6Routing } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { promptYn } from "./src/util/prompt";
+import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
 
 const { step, ok, warn } = makeTerm();
 
@@ -297,6 +299,18 @@ async function preflightDockerState(): Promise<void> {
     } else {
         ok("keeping existing Docker volumes and database");
     }
+}
+
+async function preflightAutoTempClean(): Promise<void> {
+    step("Pre-flight: disk headroom + safe temp cleanup");
+    const cleanup = await runAutoTempClean();
+    for (const s of cleanup.steps) {
+        if (s.action === "failed") warn(`${s.label}: ${s.detail}`);
+    }
+    if (!cleanup.disk.ok) {
+        dieWithDiag(cleanup.disk.failure.summary, cleanup.disk.failure.diag);
+    }
+    ok(formatAutoTempCleanSummary(cleanup));
 }
 
 // ---------- step 9: build core --------------------------------------------
@@ -663,6 +677,7 @@ export async function runInstall(): Promise<number> {
     const env = await validateEnvAndDeriveDefaults();
     await preflightCloneFreshness();
     await preflightDockerState();
+    await preflightAutoTempClean();
 
     await buildCore(env.CT_CORE_BUILD_PROFILE);
     await buildImage("caddy image (stock Caddy 2 — ACME provider only, no plugins)", "caddy");

@@ -49,12 +49,13 @@ nothing test-specific:
 
 ```sh
 ssh root@YOUR_VPS_IP
-curl -fsSL https://raw.githubusercontent.com/coo1white/cool-tunnel-server/main/scripts/bootstrap.sh | bash
+LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
+BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 cd /opt/cool-tunnel-server && nano .env
 #   DOMAIN=test.your-zone.com
 #   PANEL_DOMAIN=panel.test.your-zone.com
 #   ACME_EMAIL=scratch@your-zone.com
-make install
+ct install
 ```
 
 Expect ~10-15 min on the install step on a 1 vCPU VPS.
@@ -62,7 +63,7 @@ Expect ~10-15 min on the install step on a 1 vCPU VPS.
 ### 3. Health gate
 
 ```sh
-make doctor
+ct doctor
 ```
 
 The health gate is the canonical "ready to inspect" pass.
@@ -84,7 +85,7 @@ malformed.
 ### 5. Create a test proxy account + import subscription
 
 Browser → `https://panel.test.your-zone.com/admin` → log in with the
-email + password set during `make install` → **Proxy Accounts** →
+email + password set during `ct install` → **Proxy Accounts** →
 **New proxy account** → username `demo-user` → Save.
 
 Copy the **Subscription URL** from the green notification.

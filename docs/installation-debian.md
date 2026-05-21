@@ -522,22 +522,26 @@ bulk-delete admin actions at ~600 MiB.
 ## 7. First boot
 
 ```bash
-./scripts/install.sh
+ct install
 ```
 
-`install.sh` does, in order:
+`ct install` does, in order:
 
-1. `docker compose build` — sing-box (binary download),
+1. Disk headroom check. If space is low, safe temp/build-cache cleanup
+   runs automatically; it may remove stale `core/target` and Docker
+   build cache, but never Docker volumes, backups, `.env`, or database
+   data.
+2. `docker compose build` — sing-box (binary download),
    panel + Composer install.
-2. `docker compose up -d db redis` — bring up the data layer first.
-3. Wait for MariaDB healthcheck to go green.
-4. `docker compose up -d panel` — runs the entrypoint, which does
+3. `docker compose up -d db redis` — bring up the data layer first.
+4. Wait for MariaDB healthcheck to go green.
+5. `docker compose up -d panel` — runs the entrypoint, which does
    `composer install`, `key:generate`, `migrate`, and renders the
    initial `sing-box config.json`.
-5. Prompts you for a first Filament admin user (email + password).
-6. `docker compose up -d caddy singbox` — Caddy gets the panel cert
+6. Prompts you for a first Filament admin user (email + password).
+7. `docker compose up -d caddy singbox` — Caddy gets the panel cert
    and routes non-panel SNI to sing-box.
-7. Tails Caddy and sing-box logs until the panel cert is available
+8. Tails Caddy and sing-box logs until the panel cert is available
    and sing-box is running.
 
 When it finishes, open:
