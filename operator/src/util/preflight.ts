@@ -8,7 +8,8 @@
 // math, threshold compare) is split into named helpers so it can
 // be unit-tested without spawning subprocesses.
 
-import { $, capture } from "./sh";
+import { mkdirSync } from "node:fs";
+import { $, capture, which } from "./sh";
 import type { DiagFailure } from "./diag";
 
 export type PreflightResult =
@@ -275,6 +276,113 @@ export interface Ipv6PreflightResult {
     readonly detail: string;
 }
 
+const IPV6_SYSCTL_PATH = "/etc/sysctl.d/99-disable-ipv6.conf";
+const DOCKER_DAEMON_PATH = "/etc/docker/daemon.json";
+const DOCKER_IPV4_DNS = ["1.1.1.1", "8.8.8.8"] as const;
+const IPV6_SYSCTL_CONTENT = `# auto-written by ct preflight because Docker/Rust builds
+# can fail on hosts with broken IPv6 routing. Remove to re-enable
+# after also setting /etc/docker/daemon.json ipv6=true intentionally.
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+`;
+
+export type DockerDaemonIpv4OnlyMerge =
+    | { readonly ok: true; readonly text: string; readonly changed: boolean; readonly ipv6Disabled: boolean }
+    | { readonly ok: false; readonly detail: string };
+
+export function mergeDockerDaemonIpv4Only(existing: string | null): DockerDaemonIpv4OnlyMerge {
+    let config: Record<string, unknown> = {};
+    const trimmed = existing?.trim();
+    if (trimmed) {
+        try {
+            const parsed = JSON.parse(trimmed) as unknown;
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                return { ok: false, detail: `${DOCKER_DAEMON_PATH} must contain a JSON object` };
+            }
+            config = { ...(parsed as Record<string, unknown>) };
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { ok: false, detail: `${DOCKER_DAEMON_PATH} is not valid JSON: ${msg}` };
+        }
+    }
+
+    config["ipv6"] = false;
+    if (!Array.isArray(config["dns"]) || config["dns"].length === 0) {
+        config["dns"] = [...DOCKER_IPV4_DNS];
+    }
+
+    const text = JSON.stringify(config, null, 2) + "\n";
+    return {
+        ok: true,
+        text,
+        changed: existing !== text,
+        ipv6Disabled: config["ipv6"] === false,
+    };
+}
+
+export function dockerDaemonDisablesIpv6(existing: string | null): boolean {
+    const trimmed = existing?.trim();
+    if (!trimmed) return false;
+    try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        return !!parsed
+            && typeof parsed === "object"
+            && !Array.isArray(parsed)
+            && (parsed as Record<string, unknown>)["ipv6"] === false;
+    } catch {
+        return false;
+    }
+}
+
+async function readOptionalText(path: string): Promise<string | null> {
+    try {
+        if (!(await Bun.file(path).exists())) return null;
+        return await Bun.file(path).text();
+    } catch {
+        return null;
+    }
+}
+
+async function ensureDockerIpv4Only(): Promise<{ ok: boolean; detail?: string }> {
+    try {
+        await Bun.write(IPV6_SYSCTL_PATH, IPV6_SYSCTL_CONTENT);
+        const sysctl = await capture($`sysctl --system`);
+        if (!sysctl.ok) {
+            return {
+                ok: false,
+                detail: `sysctl --system failed: ${sysctl.stderr.trim().split("\n")[0] ?? `exit ${sysctl.code}`}`,
+            };
+        }
+
+        mkdirSync("/etc/docker", { recursive: true });
+        const existing = await readOptionalText(DOCKER_DAEMON_PATH);
+        const merged = mergeDockerDaemonIpv4Only(existing);
+        if (!merged.ok) return { ok: false, detail: merged.detail };
+
+        if (merged.changed) {
+            await Bun.write(DOCKER_DAEMON_PATH, merged.text);
+            const restart = await capture($`systemctl restart docker`);
+            if (!restart.ok) {
+                return {
+                    ok: false,
+                    detail: `systemctl restart docker failed: ${restart.stderr.trim().split("\n")[0] ?? `exit ${restart.code}`}`,
+                };
+            }
+        }
+
+        return {
+            ok: true,
+            detail: merged.changed
+                ? "wrote Docker ipv6=false and restarted docker"
+                : "Docker already had ipv6=false",
+        };
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, detail: msg };
+    }
+}
+
 // Pure: classify the outcome of the detect/fix steps. Exported so
 // tests can drive every branch without shelling out.
 export function classifyIpv6Preflight(input: {
@@ -282,16 +390,45 @@ export function classifyIpv6Preflight(input: {
     readonly sysctlPresent: boolean;
     readonly hasGlobalIpv6: boolean;
     readonly canDetect: boolean;
+    readonly dockerDaemonIpv6Disabled?: boolean;
+    readonly rustStaticIpv4Ok?: boolean;
     readonly fixResult: { ok: boolean; detail?: string } | null;
 }): Ipv6PreflightResult {
     if (input.skipEnv) {
         return { action: "skipped", detail: "CT_SKIP_IPV6_AUTO_DISABLE=1" };
     }
     if (!input.canDetect) {
-        return { action: "skipped", detail: "`ip` not on PATH (non-Linux host?)" };
+        return { action: "skipped", detail: "`curl` not on PATH; skipping IPv6 build-network probe" };
     }
-    if (input.sysctlPresent || input.hasGlobalIpv6) {
+
+    const dockerDaemonIpv6Disabled = input.dockerDaemonIpv6Disabled ?? input.sysctlPresent;
+    if (input.sysctlPresent && !dockerDaemonIpv6Disabled) {
+        if (!input.fixResult) {
+            return {
+                action: "warn",
+                detail: "IPv6 sysctl override exists, but Docker daemon is not pinned to ipv4-only; Rust build may still fail inside BuildKit.",
+            };
+        }
+        if (input.fixResult.ok) {
+            return {
+                action: "fixed",
+                detail: `Docker daemon pinned to ipv4-only (${input.fixResult.detail ?? "ok"})`,
+            };
+        }
+        return {
+            action: "warn",
+            detail: `Docker IPv6 auto-fix failed (${input.fixResult.detail ?? "unknown"}). Add {"ipv6": false, "dns": ["1.1.1.1", "8.8.8.8"]} to /etc/docker/daemon.json, restart Docker, then rerun ./ct update.`,
+        };
+    }
+
+    if ((input.sysctlPresent && dockerDaemonIpv6Disabled) || input.hasGlobalIpv6) {
         return { action: "ok", detail: "IPv6 routing OK (or already disabled)" };
+    }
+    if (input.rustStaticIpv4Ok === false) {
+        return {
+            action: "warn",
+            detail: "static.rust-lang.org is not reachable over IPv4; Rust build cannot download toolchain components. Check VPS outbound HTTPS/DNS, then rerun ./ct update.",
+        };
     }
     if (!input.fixResult) {
         return { action: "warn", detail: "IPv6 broken but auto-fix not attempted" };
@@ -327,44 +464,52 @@ export async function checkIpv6Routing(): Promise<Ipv6PreflightResult> {
         });
     }
 
-    const sysctlPresent = await Bun.file("/etc/sysctl.d/99-disable-ipv6.conf").exists();
-    if (sysctlPresent) {
-        return classifyIpv6Preflight({
-            skipEnv: false,
-            sysctlPresent: true,
-            hasGlobalIpv6: false,
-            canDetect: true,
-            fixResult: null,
-        });
-    }
+    const sysctlPresent = await Bun.file(IPV6_SYSCTL_PATH).exists();
+    const dockerDaemonText = await readOptionalText(DOCKER_DAEMON_PATH);
+    const dockerDaemonIpv6Disabled = dockerDaemonDisablesIpv6(dockerDaemonText);
 
-    const ip = await capture($`command -v ip`);
-    if (!ip.ok) {
+    if (!(await which("curl"))) {
         return classifyIpv6Preflight({
             skipEnv: false,
-            sysctlPresent: false,
+            sysctlPresent,
             hasGlobalIpv6: false,
             canDetect: false,
+            dockerDaemonIpv6Disabled,
             fixResult: null,
         });
     }
 
-    const route = await capture($`ip -6 route get 2606:4700:4700::1111`);
-    if (route.ok) {
+    const rustStaticIpv4 = await capture(
+        $`curl -4 -sS --connect-timeout 5 --max-time 10 -o /dev/null https://static.rust-lang.org/`,
+    );
+    const rustStaticIpv6 = await capture(
+        $`curl -6 -sS --connect-timeout 5 --max-time 10 -o /dev/null https://static.rust-lang.org/`,
+    );
+
+    const alreadyIpv4Only = sysctlPresent && dockerDaemonIpv6Disabled;
+    const needsDockerDaemonFix = sysctlPresent && !dockerDaemonIpv6Disabled;
+    const needsBrokenIpv6Fix = !alreadyIpv4Only && !rustStaticIpv6.ok && rustStaticIpv4.ok;
+    if (!needsDockerDaemonFix && !needsBrokenIpv6Fix) {
         return classifyIpv6Preflight({
             skipEnv: false,
-            sysctlPresent: false,
-            hasGlobalIpv6: true,
+            sysctlPresent,
+            hasGlobalIpv6: rustStaticIpv6.ok,
             canDetect: true,
+            dockerDaemonIpv6Disabled,
+            rustStaticIpv4Ok: rustStaticIpv4.ok,
             fixResult: null,
         });
     }
+
+    const fixResult = await ensureDockerIpv4Only();
 
     return classifyIpv6Preflight({
         skipEnv: false,
-        sysctlPresent: false,
-        hasGlobalIpv6: false,
+        sysctlPresent,
+        hasGlobalIpv6: rustStaticIpv6.ok,
         canDetect: true,
-        fixResult: null,
+        dockerDaemonIpv6Disabled,
+        rustStaticIpv4Ok: rustStaticIpv4.ok,
+        fixResult,
     });
 }

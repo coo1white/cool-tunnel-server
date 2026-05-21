@@ -10,6 +10,8 @@ import {
     classifyStackUp,
     checkNetwork,
     classifyIpv6Preflight,
+    dockerDaemonDisablesIpv6,
+    mergeDockerDaemonIpv4Only,
 } from "../src/util/preflight";
 
 // ---------- parseDfAvailableKb ----------
@@ -187,7 +189,7 @@ test("classifyIpv6Preflight: CT_SKIP_IPV6_AUTO_DISABLE=1 → skipped", () => {
     expect(r.detail).toContain("CT_SKIP_IPV6_AUTO_DISABLE");
 });
 
-test("classifyIpv6Preflight: no `ip` binary → skipped (non-Linux host)", () => {
+test("classifyIpv6Preflight: no `curl` binary → skipped", () => {
     const r = classifyIpv6Preflight({
         skipEnv: false,
         sysctlPresent: false,
@@ -196,7 +198,7 @@ test("classifyIpv6Preflight: no `ip` binary → skipped (non-Linux host)", () =>
         fixResult: null,
     });
     expect(r.action).toBe("skipped");
-    expect(r.detail).toContain("ip");
+    expect(r.detail).toContain("curl");
 });
 
 test("classifyIpv6Preflight: existing sysctl override → ok (no-op)", () => {
@@ -205,9 +207,36 @@ test("classifyIpv6Preflight: existing sysctl override → ok (no-op)", () => {
         sysctlPresent: true,
         hasGlobalIpv6: false,
         canDetect: true,
+        dockerDaemonIpv6Disabled: true,
         fixResult: null,
     });
     expect(r.action).toBe("ok");
+});
+
+test("classifyIpv6Preflight: sysctl exists but docker daemon still needs ipv4-only fix", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: true,
+        hasGlobalIpv6: false,
+        canDetect: true,
+        dockerDaemonIpv6Disabled: false,
+        fixResult: { ok: true, detail: "wrote Docker ipv6=false" },
+    });
+    expect(r.action).toBe("fixed");
+    expect(r.detail).toContain("Docker daemon");
+});
+
+test("classifyIpv6Preflight: static rust unreachable over IPv4 reports network issue", () => {
+    const r = classifyIpv6Preflight({
+        skipEnv: false,
+        sysctlPresent: false,
+        hasGlobalIpv6: false,
+        canDetect: true,
+        rustStaticIpv4Ok: false,
+        fixResult: null,
+    });
+    expect(r.action).toBe("warn");
+    expect(r.detail).toContain("static.rust-lang.org");
 });
 
 test("classifyIpv6Preflight: working IPv6 globally → ok (no fix needed)", () => {
@@ -243,4 +272,35 @@ test("classifyIpv6Preflight: broken IPv6 + failed auto-fix → warn with recover
     });
     expect(r.action).toBe("warn");
     expect(r.detail).toContain("./ct update");
+});
+
+// ---------- Docker daemon IPv6 merge ----------
+
+test("mergeDockerDaemonIpv4Only creates a minimal config when daemon.json is missing", () => {
+    const r = mergeDockerDaemonIpv4Only(null);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+        expect(JSON.parse(r.text)).toEqual({
+            ipv6: false,
+            dns: ["1.1.1.1", "8.8.8.8"],
+        });
+        expect(r.changed).toBe(true);
+    }
+});
+
+test("mergeDockerDaemonIpv4Only preserves existing Docker daemon keys", () => {
+    const r = mergeDockerDaemonIpv4Only('{"log-driver":"json-file","dns":["9.9.9.9"],"ipv6":true}');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+        const parsed = JSON.parse(r.text);
+        expect(parsed["log-driver"]).toBe("json-file");
+        expect(parsed.dns).toEqual(["9.9.9.9"]);
+        expect(parsed.ipv6).toBe(false);
+    }
+});
+
+test("dockerDaemonDisablesIpv6 only accepts exact ipv6=false config", () => {
+    expect(dockerDaemonDisablesIpv6('{"ipv6":false,"dns":["1.1.1.1"]}\n')).toBe(true);
+    expect(dockerDaemonDisablesIpv6('{"ipv6":true}')).toBe(false);
+    expect(dockerDaemonDisablesIpv6("{nope")).toBe(false);
 });

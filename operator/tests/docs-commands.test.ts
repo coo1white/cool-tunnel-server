@@ -26,3 +26,14 @@ test("bootstrap script advertises and explains the Homebrew-style flow", async (
     expect(text).toContain("Cool Tunnel Server bootstrap will:");
     expect(text).toContain("Press RETURN/ENTER to continue");
 });
+
+test("core Dockerfile uses the baked Rust toolchain without network rustup sync", async () => {
+    const toolchain = await Bun.file("../core/rust-toolchain.toml").text();
+    const dockerfile = await Bun.file("../docker/core/Dockerfile").text();
+    const channel = toolchain.match(/^channel\s*=\s*"([^"]+)"/m)?.[1];
+
+    expect(channel).toBeTruthy();
+    expect(dockerfile).toContain(`FROM rust:${channel}-alpine AS chef`);
+    expect(dockerfile).toContain(`FROM rust:${channel}-alpine AS sqlx-prepare`);
+    expect(dockerfile).toContain(`ENV RUSTUP_TOOLCHAIN=${channel}`);
+});

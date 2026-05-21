@@ -25,6 +25,14 @@
 # binding floor today.
 FROM rust:1.88-alpine AS chef
 
+# The base image already contains the exact Rust release we pin.
+# Force rustup to use it even after core/rust-toolchain.toml is
+# copied into /build/core. Without this, rustup re-checks
+# static.rust-lang.org during `cargo chef prepare` / `cargo build`;
+# on Vultr-class hosts with broken IPv6 that can fail with
+# NetworkUnreachable despite the toolchain already being present.
+ENV RUSTUP_TOOLCHAIN=1.88
+
 # Build deps: musl for static linking, openssl/pkg-config for sqlx +
 # rustls (which we use, but transitive deps still need pkg-config).
 RUN apk add --no-cache \
@@ -208,6 +216,7 @@ CMD ["--help"]
 # Brought up via:
 #   docker compose --profile sqlx run --rm sqlx-prepare
 FROM rust:1.88-alpine AS sqlx-prepare
+ENV RUSTUP_TOOLCHAIN=1.88
 RUN apk add --no-cache \
         musl-dev \
         pkgconfig \
