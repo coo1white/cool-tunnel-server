@@ -24,18 +24,18 @@ jobs:
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Build client Rust core from server-paired source
-        working-directory: ../
         run: |
-          CORE_REF="${CORE_REF:-$(jq -r '.plugins["cool-tunnel-core"].source.ref' cool-tunnel-server/manifests/client-runtime.upstream.json)}"
-          git clone --depth 1 --branch "$CORE_REF" https://github.com/coo1white/cool-tunnel.git cool-tunnel-client
-          cd cool-tunnel-client/core
+          mkdir -p "$GITHUB_WORKSPACE/runtime"
+          CORE_REF="${CORE_REF:-$(jq -r '.plugins["cool-tunnel-core"].source.ref' manifests/client-runtime.upstream.json)}"
+          git clone --depth 1 --branch "$CORE_REF" https://github.com/coo1white/cool-tunnel.git /tmp/cool-tunnel-client
+          cd /tmp/cool-tunnel-client/core
           cargo build --locked --release --target aarch64-apple-darwin --bin cool-tunnel-core
           cargo build --locked --release --target x86_64-apple-darwin --bin cool-tunnel-core
           lipo -create \
             target/aarch64-apple-darwin/release/cool-tunnel-core \
             target/x86_64-apple-darwin/release/cool-tunnel-core \
-            -output ../cool-tunnel-core-v3.0.5-universal
-          codesign --force --sign - --timestamp=none ../cool-tunnel-core-v3.0.5-universal
+            -output "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.5-universal"
+          codesign --force --sign - --timestamp=none "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-v3.0.5-universal"
 
       - name: Build server-published sing-box universal plugin
         run: |
@@ -50,12 +50,14 @@ jobs:
           TAG=$(jq -r '.upstream_tag' singbox-core/singbox.upstream.json)
           lipo -create runtime/arm64/sing-box runtime/x64/sing-box -output "runtime/sing-box-${TAG}-darwin-universal"
           codesign --force --sign - --timestamp=none "runtime/sing-box-${TAG}-darwin-universal"
+          rm -rf runtime/arm64 runtime/x64 runtime/sing-box-arm64.tar.gz runtime/sing-box-x64.tar.gz
 
       - name: Stage runtime artifacts
         run: |
-          mkdir -p runtime
-          cp ../cool-tunnel-core-v3.0.5-universal runtime/
-          shasum -a 256 runtime/* > runtime/SHA256SUMS.client-runtime
+          shasum -a 256 \
+            runtime/sing-box-*-darwin-universal \
+            runtime/cool-tunnel-core-*-universal \
+            > runtime/SHA256SUMS.client-runtime
           cat runtime/SHA256SUMS.client-runtime
 
       - name: Upload runtime plugins to server release

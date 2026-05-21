@@ -181,18 +181,39 @@ class SubscriptionContractTest extends TestCase
         $runtime = $decoded['client_runtime'];
 
         $this->assertSame('client-runtime', $runtime['name']);
-        $this->assertArrayHasKey('sing-box', $runtime['plugins']);
-        $this->assertArrayHasKey('cool-tunnel-core', $runtime['plugins']);
+        $this->assertSame(
+            ['cool-tunnel-core', 'sing-box'],
+            collect(array_keys($runtime['plugins']))->sort()->values()->all(),
+            'runtime catalog must publish exactly the two client binaries that drift together',
+        );
+        $this->assertSame(
+            'https://github.com/coo1white/cool-tunnel-server',
+            $runtime['upstream'],
+            'runtime catalog authority must be the server repository',
+        );
 
         foreach (['sing-box', 'cool-tunnel-core'] as $plugin) {
+            $this->assertSame(
+                'https://github.com/coo1white/cool-tunnel-server',
+                $runtime['plugins'][$plugin]['upstream'],
+                "{$plugin} authority must be the server repository",
+            );
+
             $asset = $runtime['plugins'][$plugin]['assets']['darwin-universal'];
             $this->assertStringStartsWith(
                 'https://github.com/coo1white/cool-tunnel-server/releases/download/',
                 $asset['url'],
                 "{$plugin} must be fetched from server GitHub releases",
             );
+            $this->assertStringContainsString(
+                '/releases/download/v'.$runtime['version'].'/',
+                $asset['url'],
+                "{$plugin} asset must come from the catalog release version",
+            );
+            $this->assertStringNotContainsString('SagerNet/sing-box', $asset['url']);
+            $this->assertStringNotContainsString('coo1white/cool-tunnel/releases/download', $asset['url']);
             $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $asset['sha256']);
-            $this->assertGreaterThan(0, $asset['size_bytes']);
+            $this->assertGreaterThan(1024 * 1024, $asset['size_bytes']);
         }
 
         $sig = $decoded['signature'];
