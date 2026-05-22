@@ -21,6 +21,32 @@ Run `ct help` for the built-in operator mini-manuals.
 
 ---
 
+## Simple operations rule
+
+Keep the VPS boring:
+
+```text
+ct install  # first setup
+ct update   # release update
+ct doctor   # health + next fix
+ct backup   # safety before changes
+```
+
+Do not maintain a private fork directly on the VPS. Do not hand-edit
+rendered Caddy or sing-box config. The repo should stay clean so
+`ct update` can fast-forward and the panel can regenerate runtime
+config from one source of truth.
+
+The server release owns these portable runtime plugins:
+
+- `sing-box`
+- `cool-tunnel-core`
+
+Clients fetch both from the `cool-tunnel-server` GitHub release and
+verify them with the release `SHA256SUMS` file.
+
+---
+
 ## Daily checklist
 
 If you're checking in on the server in the morning, this is all you
@@ -56,6 +82,23 @@ ct update     # pull + rebuild + restart — takes 1-10 minutes
 ct doctor     # confirm everything still works
 ```
 
+If the checkout is stale, pinned, or locally edited and you just want
+the published server state:
+
+```sh
+cd /opt/cool-tunnel-server
+git fetch origin
+git checkout main
+git reset --hard origin/main
+./scripts/fetch_operator_binary.sh || true
+ct update
+ct doctor
+```
+
+That reset discards tracked local source edits. On a production VPS,
+that is usually correct because config belongs in `.env`, the database,
+and the panel, not in patched source files.
+
 What `ct update` does, in plain terms:
 
 1. **Pre-flight**: checks network reachability (github.com + Docker
@@ -88,6 +131,7 @@ classes:
 | `uncommitted changes block git pull` | Working tree has local edits | Interactive prompt offers `[s]tash / [d]iscard / [a]bort`; pick stash if unsure |
 | `network: cannot reach ...` | Outbound HTTPS broken from the VPS | Check the diagnostic block's command ladder (ping / dig / curl) |
 | `low disk under repo path: NG free` | The VPS is still too full after auto-clean | Follow the diagnostic block; usually `docker system prune -af` + checking large host directories |
+| `ct-server-core build failed` + `NetworkUnreachable` | VPS cannot reach Rust/crates endpoints over outbound IPv4 | Run the Rust endpoint checks below, prune builder cache, retry |
 | `post-swap check NG: <component>` | A specific service didn't come up clean | The diagnostic block lists which component + the targeted `docker compose logs ...` to run |
 
 Before install/update builds images, `ct install` and `ct update`
@@ -110,6 +154,20 @@ docker system prune -af && docker builder prune -af
 df -h /var/lib/docker     # should be >= 4G free
 ct update                  # retry
 ```
+
+If the failing build log mentions `static.rust-lang.org`,
+`index.crates.io`, or `NetworkUnreachable`, check outbound IPv4:
+
+```sh
+curl -4 -I https://static.rust-lang.org/
+curl -4 -I https://index.crates.io/
+docker builder prune -af
+ct update
+```
+
+If those `curl -4` checks fail, fix VPS DNS/outbound HTTPS first. The
+project enforces IPv4-only Docker defaults, but it cannot repair a VPS
+provider route that cannot reach Rust or crates.io over IPv4.
 
 If you need to roll back to the previous known-good release:
 

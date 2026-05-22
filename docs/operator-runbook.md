@@ -2,6 +2,19 @@
 
 Short path for day-to-day VPS operations.
 
+## Goal
+
+Keep operations simple:
+
+```text
+install -> doctor -> use
+backup -> update -> doctor
+doctor -> follow the remediation
+```
+
+The production VPS should not be a place for long-lived source edits.
+Use `.env`, the panel, and release tags as the control surface.
+
 ## Install
 
 ```bash
@@ -25,9 +38,9 @@ docker compose exec -T panel php artisan credential-lock:check
 
 ```bash
 cd /opt/cool-tunnel-server
-git fetch origin --tags
-git pull --ff-only origin main
+ct backup
 ct update
+ct doctor
 ```
 
 `ct update` owns the release path: rebuild changed images, run
@@ -42,6 +55,19 @@ docker compose exec -T panel php artisan credential-lock:check
 ./ct doctor
 ```
 
+If git state blocks the update and this is a normal production VPS,
+reset to published main:
+
+```bash
+cd /opt/cool-tunnel-server
+git fetch origin
+git checkout main
+git reset --hard origin/main
+./scripts/fetch_operator_binary.sh || true
+ct update
+ct doctor
+```
+
 ## Fix
 
 Start with state:
@@ -52,14 +78,15 @@ docker compose ps
 ./ct doctor
 ```
 
-If a local edit blocks `git pull`, inspect only that path before
-discarding it:
+If a local edit blocks `git pull`, inspect before discarding it:
 
 ```bash
+git diff --stat
 git diff -- PATH
-git restore PATH
-git pull --ff-only origin main
 ```
+
+If you did not intentionally keep those edits, use the reset flow in
+the update section.
 
 If credentials or rendered config look stale:
 
@@ -79,3 +106,14 @@ docker compose logs --tail=120 singbox
 docker compose logs --tail=120 db
 docker compose logs --tail=120 redis
 ```
+
+If the Rust core build fails with `NetworkUnreachable`:
+
+```bash
+curl -4 -I https://static.rust-lang.org/
+curl -4 -I https://index.crates.io/
+docker builder prune -af
+ct update
+```
+
+If either `curl -4` command fails, fix VPS outbound HTTPS/DNS first.

@@ -22,6 +22,30 @@ dig +short A proxy.example.com
 
 The result should be the VPS public IP.
 
+## Simple Path
+
+Use the project this way:
+
+```text
+copy bootstrap command
+edit .env
+ct install
+ct doctor
+copy subscription URL into client
+```
+
+After that:
+
+```text
+ct backup
+ct update
+ct doctor
+```
+
+Avoid hand-editing generated Docker, Caddy, or sing-box files on the
+VPS. The panel and operator regenerate them so server, client, and
+runtime plugins stay compatible.
+
 ## Install
 
 SSH into the VPS, then:
@@ -88,6 +112,32 @@ If you skip admin creation, create one later:
 docker compose exec panel php artisan ct:make-admin
 ```
 
+## Update Later
+
+Normal update:
+
+```sh
+cd /opt/cool-tunnel-server
+ct backup
+ct update
+ct doctor
+```
+
+Recovery update when the local checkout is stale or messy:
+
+```sh
+cd /opt/cool-tunnel-server
+git fetch origin
+git checkout main
+git reset --hard origin/main
+./scripts/fetch_operator_binary.sh || true
+ct update
+ct doctor
+```
+
+`git reset --hard origin/main` discards tracked local source edits. Use
+it only on a normal production VPS where the repo should be clean.
+
 ## Use
 
 Open the admin panel:
@@ -114,6 +164,7 @@ Run the local health gate:
 ct doctor
 ```
 
+If doctor reports WARN or FAIL, follow the remediation text first.
 Useful quick checks:
 
 ```sh
@@ -121,6 +172,16 @@ docker compose ps
 docker compose logs --tail=120 caddy
 docker compose logs --tail=120 singbox
 docker compose logs --tail=120 panel
+```
+
+If a Rust/Docker build fails with `NetworkUnreachable`, the common fix
+is outbound IPv4/network or Docker cache, not app config:
+
+```sh
+curl -4 -I https://static.rust-lang.org/
+curl -4 -I https://index.crates.io/
+docker builder prune -af
+ct update
 ```
 
 For operations after install, use
