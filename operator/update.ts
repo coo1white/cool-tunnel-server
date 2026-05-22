@@ -423,7 +423,7 @@ export async function runUpdate(): Promise<number> {
     if (!net.ok) dieOnFailure(net.failure);
     else ok(net.summary ?? "network ok");
 
-    const cleanup = await runAutoTempClean();
+    const cleanup = await runAutoTempClean({ forceDockerCleanup: true });
     for (const s of cleanup.steps) {
         if (s.action === "failed") warn(`${s.label}: ${s.detail}`);
     }

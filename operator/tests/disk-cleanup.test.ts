@@ -3,6 +3,7 @@
 
 import { test, expect } from "bun:test";
 import {
+    DEFAULT_CLEANUP_COMMANDS,
     cleanupRepoBuildCache,
     describeCleanupDelta,
     formatAutoTempCleanSummary,
@@ -18,6 +19,13 @@ const dockerPrune: CleanupCommand = {
 
 test("formatCleanupCommand keeps the user-visible command exact", () => {
     expect(formatCleanupCommand(dockerPrune)).toBe("docker builder prune -f");
+});
+
+test("default cleanup prunes unused Docker images without touching volumes", () => {
+    expect(DEFAULT_CLEANUP_COMMANDS.map(formatCleanupCommand)).toEqual([
+        "docker builder prune -f",
+        "docker system prune -af",
+    ]);
 });
 
 test("describeCleanupDelta reports reclaimed headroom when whole-GB free space improves", () => {
@@ -84,6 +92,28 @@ test("runAutoTempClean skips cleanup when disk headroom is already good", async 
     expect(r.steps).toEqual([]);
     expect(r.disk.ok).toBe(true);
     expect(formatAutoTempCleanSummary(r)).toContain("no cleanup needed");
+});
+
+test("runAutoTempClean can force unused Docker cleanup even with good headroom", async () => {
+    const ran: string[] = [];
+    const r = await runAutoTempClean({
+        thresholds: { minRepoGb: 2, minDockerGb: 4 },
+        commands: [dockerPrune],
+        cleanRepoCache: () => {
+            throw new Error("repo cleanup should not run");
+        },
+        forceDockerCleanup: true,
+        measure: async () => ({ repoGb: 8, dockerGb: 12, dockerRoot: "/var/lib/docker" }),
+        run: async (cmd) => {
+            ran.push(formatCleanupCommand(cmd));
+            return { ok: true, code: 0, stdout: "", stderr: "" };
+        },
+    });
+
+    expect(ran).toEqual(["docker builder prune -f"]);
+    expect(r.steps.map((s) => s.label)).toEqual(["Docker builder cache"]);
+    expect(r.disk.ok).toBe(true);
+    expect(formatAutoTempCleanSummary(r)).toContain("temp cleanup complete");
 });
 
 test("runAutoTempClean preserves the low-disk failure when cleanup is not enough", async () => {

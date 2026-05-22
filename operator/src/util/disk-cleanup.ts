@@ -36,6 +36,7 @@ export interface AutoTempCleanOptions {
     readonly thresholds?: DiskSpaceThresholds;
     readonly commands?: readonly CleanupCommand[];
     readonly cleanRepoCache?: (space: DiskSpaceMeasurement, thresholds: DiskSpaceThresholds) => CleanupStepResult | null;
+    readonly forceDockerCleanup?: boolean;
     readonly measure?: () => Promise<DiskSpaceMeasurement>;
     readonly run?: (cmd: CleanupCommand) => Promise<ShResult>;
 }
@@ -47,8 +48,8 @@ export const DEFAULT_CLEANUP_COMMANDS: readonly CleanupCommand[] = [
         canRun: () => which("docker"),
     },
     {
-        label: "Dangling Docker objects",
-        argv: ["docker", "system", "prune", "-f"],
+        label: "Unused Docker data",
+        argv: ["docker", "system", "prune", "-af"],
         canRun: () => which("docker"),
     },
 ];
@@ -108,11 +109,12 @@ export async function runAutoTempClean(
     const run = opts.run ?? runCleanupCommand;
     const cleanRepoCache = opts.cleanRepoCache ?? cleanupRepoBuildCache;
     const commands = opts.commands ?? DEFAULT_CLEANUP_COMMANDS;
+    const forceDockerCleanup = opts.forceDockerCleanup ?? false;
 
     const before = await measure();
     const steps: CleanupStepResult[] = [];
     const beforeDisk = classifyDiskSpace(before, thresholds);
-    if (beforeDisk.ok) {
+    if (beforeDisk.ok && !forceDockerCleanup) {
         return {
             before,
             after: before,
@@ -121,8 +123,10 @@ export async function runAutoTempClean(
         };
     }
 
-    const repoStep = cleanRepoCache(before, thresholds);
-    if (repoStep) steps.push(repoStep);
+    if (!beforeDisk.ok) {
+        const repoStep = cleanRepoCache(before, thresholds);
+        if (repoStep) steps.push(repoStep);
+    }
 
     for (const cmd of commands) {
         if (cmd.canRun && !(await cmd.canRun())) {
