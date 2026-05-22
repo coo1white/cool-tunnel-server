@@ -1,7 +1,12 @@
-# Operations — running it day-to-day
+# Cool Tunnel Server Operations
 
 You've finished [GETTING_STARTED.md](../GETTING_STARTED.md) and your
-proxy is live. This page is what to do next:
+self-hosted Docker proxy server is live. This page covers the regular
+VPS operations for Cool Tunnel Server: health checks, release updates,
+backups, restores, logs, password rotation, and troubleshooting.
+
+Use it when you need to operate a sing-box VLESS Reality server and web
+admin panel after the first install:
 
 - [Daily checklist](#daily-checklist)
 - [Updating to a new release](#updating-to-a-new-release)

@@ -12,7 +12,10 @@
 import { $ } from "bun";
 
 const TARGETS = {
-    "linux-x64": "bun-linux-x64-modern",
+    // Use the baseline x64 target for low-cost VPS hosts. Standard
+    // x64 Bun executables require AVX2 and can SIGILL on older
+    // virtual CPUs.
+    "linux-x64": "bun-linux-x64-baseline",
     "linux-arm64": "bun-linux-arm64",
     "darwin-arm64": "bun-darwin-arm64",
 } as const;

@@ -8,6 +8,8 @@ namespace App\Filament\Pages\Auth;
 
 use Filament\Http\Responses\Auth\Contracts\LoginResponse;
 use Filament\Pages\Auth\Login as FilamentLogin;
+use Illuminate\Contracts\Support\Htmlable;
+use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 
 // H1 (2026-05-05 audit) — Filament 3's stock Login page does not
@@ -20,6 +22,19 @@ use Illuminate\Validation\ValidationException;
 
 class Login extends FilamentLogin
 {
+    public function getHeading(): string | Htmlable
+    {
+        return 'Log in to Cool Tunnel Server';
+    }
+
+    public function getSubheading(): string | Htmlable | null
+    {
+        return new HtmlString(
+            'Use the admin account created during <code>./ct install</code>. '.
+            'Locked out? On the VPS run <code>docker compose exec panel php artisan ct:make-admin --force --email=you@example.com</code>.',
+        );
+    }
+
     /**
      * @throws ValidationException
      */

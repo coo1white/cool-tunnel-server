@@ -1,7 +1,10 @@
-# Debian Installation Guide
+# Debian VPS Installation Guide for Cool Tunnel Server
 
 Step-by-step setup for Cool Tunnel Server on **Debian 10 (buster), 11
-(bullseye), 12 (bookworm), 13 (trixie), and later**.
+(bullseye), 12 (bookworm), 13 (trixie), and later**. This guide turns a
+fresh Debian VPS into a self-hosted proxy server with Docker Compose,
+Caddy, sing-box, VLESS + Reality, MariaDB, Redis, and the web admin
+panel.
 
 This guide is for the *operator* — somebody who has just spun up a
 fresh VPS, has root, and wants a working proxy with the Filament

@@ -89,6 +89,39 @@ Set at least these `.env` values before running `./ct install`:
 For the full install walkthrough, expected output, DNS checks, and
 recovery hints, read [GETTING_STARTED.md](./GETTING_STARTED.md).
 
+## Panel Login and Account Setup
+
+`./ct install` prompts for the first admin user near the end of the
+install. Save that email and password; they are the credentials for the
+web admin panel.
+
+Open the panel:
+
+```text
+https://<PANEL_DOMAIN>/admin
+```
+
+Log in with the admin email and password, then create a device/user
+account:
+
+```text
+Proxy accounts -> New proxy account -> Save
+```
+
+After the account is created, open the account row's **Subscription
+URL** action and copy the **Import URL** into the Cool Tunnel client.
+That URL contains the per-account subscription token, so treat it like a
+password. If you lose the URL, open the same action again; if you rotate
+the UUID, copy the fresh URL after rotation.
+
+If you skipped admin creation during install, or need to recover access:
+
+```sh
+cd /opt/cool-tunnel-server
+docker compose exec panel php artisan ct:make-admin
+docker compose exec panel php artisan ct:make-admin --force --email=you@example.com
+```
+
 ## Daily Operation
 
 Most VPS operation should stay inside the `ct` command:
@@ -99,19 +132,6 @@ cd /opt/cool-tunnel-server
 ct doctor   # health dashboard with PASS / WARN / FAIL remediation
 ct backup   # snapshot DB + .env + ACME certs
 ct update   # update to the current release and restart safely
-```
-
-Create or recover an admin user:
-
-```sh
-docker compose exec panel php artisan ct:make-admin
-docker compose exec panel php artisan ct:make-admin --force --email=you@example.com
-```
-
-Open the panel at:
-
-```text
-https://<PANEL_DOMAIN>/admin
 ```
 
 ## What Runs

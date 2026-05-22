@@ -1,8 +1,10 @@
 # ct-operator
 
-A single Bun-compiled binary for operator commands that need richer
-runtime checks than shell alone (`ct doctor`, `ct render`, `ct backup`,
-`ct restore`, and `ct update`).
+The `ct` operator is a single Bun-compiled binary for Cool Tunnel Server
+maintenance commands that need richer runtime checks than shell alone
+(`ct doctor`, `ct render`, `ct backup`, `ct restore`, and `ct update`).
+It is the main VPS operations surface for installing, updating,
+backing up, restoring, and diagnosing the self-hosted proxy server.
 
 The shell scripts remain in `scripts/` as a fallback. The top-level
 `ct` dispatcher prefers `operator/bin/ct-operator-<os>-<arch>` when it

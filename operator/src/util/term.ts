@@ -62,6 +62,7 @@ export function makeTerm(opts?: { initialStep?: number }): Term {
 }
 
 export function formatArrowProgress(input: {
+    readonly label?: string;
     readonly current: number;
     readonly total: number;
     readonly msg: string;
@@ -69,20 +70,41 @@ export function formatArrowProgress(input: {
     readonly failed?: boolean;
 }): string {
     const total = Math.max(1, input.total);
+    const label = input.label ?? "";
     const current = Math.min(Math.max(0, input.current), total);
     const pct = Math.min(100, Math.max(0, Math.round((current / total) * 100)));
-    const reserved = ` ct update ${pct}% ${current}/${total}  `.length;
-    const barWidth = Math.max(10, Math.min(40, input.width - reserved - 4));
+    const prefix = `Progress: [${pct.toString().padStart(3, " ")}%] `;
+    const suffixParts = [` ${current}/${total}`];
+    if (label) suffixParts.push(` ${label}`);
+    if (input.msg) suffixParts.push(` ${input.msg}`);
+    const suffix = suffixParts.join("");
+    const barWidth = Math.max(8, input.width - prefix.length - suffix.length - 1);
     const filled = Math.min(barWidth, Math.max(0, Math.round((pct / 100) * barWidth)));
-    const arrows = ">".repeat(filled);
-    const rest = "-".repeat(Math.max(0, barWidth - filled));
-    const raw = `ct update [${arrows}${rest}] ${pct}% ${current}/${total}  ${input.msg}`;
+    const hashes = "#".repeat(filled);
+    const dots = ".".repeat(Math.max(0, barWidth - filled));
+    const raw = `${prefix}[${hashes}${dots}]${suffix}`;
     const max = Math.max(20, input.width - 1);
     return raw.length > max ? raw.slice(0, max - 1) + "…" : raw;
 }
 
+export function terminalReserveBottomRow(rows: number): string {
+    const safeRows = Math.max(3, rows);
+    return `\x1b[1;${safeRows - 1}r\x1b[${safeRows - 1};1H`;
+}
+
+export function terminalDrawBottomLine(rows: number, line: string): string {
+    const safeRows = Math.max(1, rows);
+    return `\x1b7\x1b[${safeRows};1H\x1b[2K${line}\x1b8`;
+}
+
+export function terminalRestoreScrollRegion(rows: number): string {
+    const safeRows = Math.max(1, rows);
+    return `\x1b7\x1b[${safeRows};1H\x1b[2K\x1b8\x1b[r`;
+}
+
 export function makeArrowProgress(opts: {
     readonly total: number;
+    readonly label?: string;
     readonly stream?: ProgressStream;
     readonly enabled?: boolean;
 }): ArrowProgress {
@@ -92,19 +114,41 @@ export function makeArrowProgress(opts: {
     const tty = enabled && stream.isTTY === true;
     let current = 0;
     let lastMsg = "starting";
+    let reservedRows: number | null = null;
+
+    const reserveBottomRow = () => {
+        if (!tty) return;
+        const rows = Math.max(3, stream.rows ?? 24);
+        if (reservedRows === rows) return;
+        reservedRows = rows;
+
+        // Debian/dpkg-style status line: keep normal process output in
+        // the scroll region above the final row, then draw progress on
+        // the final row. Docker build logs can scroll all day without
+        // overwriting the reserved progress line.
+        stream.write(terminalReserveBottomRow(rows));
+    };
+
+    const restoreScrollRegion = () => {
+        if (!tty || reservedRows === null) return;
+        const rows = reservedRows;
+        stream.write(terminalRestoreScrollRegion(rows));
+        reservedRows = null;
+    };
 
     const render = (msg = lastMsg, failed = false) => {
         if (!enabled) return;
         lastMsg = msg;
         const width = Math.max(40, stream.columns ?? 100);
-        const line = formatArrowProgress({ current, total, msg, width, failed });
+        const line = formatArrowProgress({ label: opts.label, current, total, msg, width, failed });
         if (!tty) {
             stream.write(`${failed ? "!" : "==>"} ${line}\n`);
             return;
         }
+        reserveBottomRow();
         const row = Math.max(1, stream.rows ?? 1);
         const color = failed ? ANSI.red : current >= total ? ANSI.green : ANSI.yellow;
-        stream.write(`\x1b7\x1b[${row};1H\x1b[2K${color}${line}${ANSI.reset}\x1b8`);
+        stream.write(terminalDrawBottomLine(row, `${color}${line}${ANSI.reset}`));
     };
 
     return {
@@ -118,10 +162,12 @@ export function makeArrowProgress(opts: {
         complete(msg = "complete") {
             current = total;
             render(msg);
+            restoreScrollRegion();
             if (tty) stream.write("\n");
         },
         fail(msg = "failed") {
             render(msg, true);
+            restoreScrollRegion();
             if (tty) stream.write("\n");
         },
     };

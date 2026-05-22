@@ -1,6 +1,12 @@
-# Architecture
+# Cool Tunnel Server Architecture
 
-Cool Tunnel Server is a five-service stack:
+Cool Tunnel Server is an open-source self-hosted proxy server built as a
+five-service Docker Compose stack. Caddy handles ACME and SNI routing,
+sing-box runs the VLESS + Reality proxy path, the Laravel/Filament panel
+manages users and subscriptions, and MariaDB/Redis hold persistent and
+runtime state.
+
+The live deployment has these services:
 
 | Service | Role |
 | --- | --- |

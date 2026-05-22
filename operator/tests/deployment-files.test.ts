@@ -20,3 +20,9 @@ test("operator release workflow pins Bun instead of floating latest", async () =
     expect(body).toContain("bun-version: 1.3.14");
     expect(body).not.toContain("bun-version: latest");
 });
+
+test("operator linux x64 release binary uses baseline CPU target", async () => {
+    const body = await Bun.file("./build.ts").text();
+    expect(body).toContain(`"linux-x64": "bun-linux-x64-baseline"`);
+    expect(body).not.toContain("bun-linux-x64-modern");
+});

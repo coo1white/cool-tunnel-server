@@ -1,8 +1,9 @@
 # ct-operator
 
-Operator CLI for cool-tunnel-server. Replaces selected shell maintenance
-scripts (`ct doctor`, `ct render`, `ct update`)
-with a single Bun-compiled binary.
+Operator CLI for Cool Tunnel Server, the self-hosted proxy server stack.
+It replaces selected shell maintenance scripts (`ct doctor`,
+`ct render`, `ct update`) with a single Bun-compiled binary for VPS
+install, update, backup, restore, render, and health-check workflows.
 
 The legacy shell scripts remain in `scripts/` as a fallback; the top-level
 `ct` dispatcher prefers `operator/bin/ct-operator-*` when present and falls

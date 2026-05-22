@@ -3,7 +3,13 @@
 // the actual formatting is exercised via real scripts).
 
 import { test, expect } from "bun:test";
-import { formatArrowProgress, makeTerm } from "../src/util/term";
+import {
+    formatArrowProgress,
+    makeTerm,
+    terminalDrawBottomLine,
+    terminalReserveBottomRow,
+    terminalRestoreScrollRegion,
+} from "../src/util/term";
 
 test("makeTerm() returns an independent step counter per instance", () => {
     const t1 = makeTerm();
@@ -46,19 +52,22 @@ test("makeTerm({ initialStep }) seeds the counter", () => {
     expect(logs[0]).toContain("11.");
 });
 
-test("formatArrowProgress renders percent, counts, and arrow fill", () => {
+test("formatArrowProgress renders percent, counts, label, and arrow fill", () => {
     const line = formatArrowProgress({
+        label: "ct install",
         current: 6,
         total: 12,
         msg: "Rebuild images",
         width: 100,
     });
 
-    expect(line).toContain("ct update");
+    expect(line).toContain("Progress: [ 50%]");
+    expect(line).toContain("ct install");
     expect(line).toContain("50%");
     expect(line).toContain("6/12");
-    expect(line).toContain(">");
-    expect(line).toContain("Rebuild images");
+    expect(line).toContain("#");
+    expect(line).toContain(".");
+    expect(line).toContain("Rebuild ima");
 });
 
 test("formatArrowProgress clamps long labels to terminal width", () => {
@@ -71,4 +80,10 @@ test("formatArrowProgress clamps long labels to terminal width", () => {
 
     expect(line.length).toBeLessThanOrEqual(59);
     expect(line).toContain("100%");
+});
+
+test("terminal progress reserves final row like apt/dpkg", () => {
+    expect(terminalReserveBottomRow(24)).toBe("\x1b[1;23r\x1b[23;1H");
+    expect(terminalDrawBottomLine(24, "Progress")).toBe("\x1b7\x1b[24;1H\x1b[2KProgress\x1b8");
+    expect(terminalRestoreScrollRegion(24)).toBe("\x1b7\x1b[24;1H\x1b[2K\x1b8\x1b[r");
 });

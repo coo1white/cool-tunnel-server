@@ -2,7 +2,7 @@
 // operator/tests/prompt.test.ts — pure parsers for operator/src/util/prompt.ts.
 
 import { test, expect } from "bun:test";
-import { parseYn, parseChoice } from "../src/util/prompt";
+import { formatYnPrompt, parseYn, parseChoice } from "../src/util/prompt";
 
 // ---------- parseYn ----------
 
@@ -30,6 +30,15 @@ test("parseYn: garbage → retry", () => {
     expect(parseYn("maybe", "n")).toBe("retry");
     expect(parseYn("123", "y")).toBe("retry");
     expect(parseYn("?", "n")).toBe("retry");
+});
+
+test("formatYnPrompt: renders explicit SSH-friendly yes/no instructions", () => {
+    const prompt = formatYnPrompt("Continue with this state?", "n");
+    expect(prompt).toContain("? Continue with this state?");
+    expect(prompt).toContain("Type y or n, then press Enter");
+    expect(prompt).toContain("(default: n)");
+    expect(prompt).toContain("[y/N]");
+    expect(prompt).toEndWith("> ");
 });
 
 // ---------- parseChoice ----------

@@ -1,5 +1,10 @@
 # Components
 
+Cool Tunnel Server pins replaceable runtime parts so a self-hosted
+Docker proxy server can be updated and checked predictably. This page
+maps each component to its source of truth and the health gates that
+verify the deployed VPS state.
+
 Replaceable runtime parts are pinned in manifests and deployment
 sources:
 

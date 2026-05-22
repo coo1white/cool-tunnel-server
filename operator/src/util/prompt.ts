@@ -41,6 +41,17 @@ export function parseChoice(reply: string, allowed: readonly string[], fallback:
     return null;
 }
 
+export function formatYnPrompt(question: string, defaultAnswer: "y" | "n"): string {
+    const hint = defaultAnswer === "y" ? "[Y/n]" : "[y/N]";
+    const defaultText = defaultAnswer === "y" ? "default: y" : "default: n";
+    return [
+        "",
+        `    ? ${question}`,
+        `      Type y or n, then press Enter (${defaultText}). ${hint}`,
+        "      > ",
+    ].join("\n");
+}
+
 function stdinIsTty(): boolean {
     return process.stdin.isTTY === true;
 }
@@ -58,16 +69,15 @@ export async function promptYn(question: string, defaultAnswer: "y" | "n" = "n")
         process.stderr.write(`    (non-interactive: defaulting to '${defaultAnswer}')\n`);
         return defaultAnswer === "y";
     }
-    const hint = defaultAnswer === "y" ? "[Y/n]" : "[y/N]";
     const rl = createInterface({ input: process.stdin, output: process.stderr });
     try {
         for (;;) {
-            process.stderr.write(`\n    ? ${question} ${hint} `);
+            process.stderr.write(formatYnPrompt(question, defaultAnswer));
             const reply = await readLineFrom(rl);
             const r = parseYn(reply, defaultAnswer);
             if (r === "yes") return true;
             if (r === "no") return false;
-            process.stderr.write("    please answer y or n\n");
+            process.stderr.write("    Please type y or n, then press Enter.\n");
         }
     } finally {
         rl.close();

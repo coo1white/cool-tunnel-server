@@ -29,7 +29,7 @@
 
 import { spawnSync } from "node:child_process";
 import { $, capture, runStreaming, which } from "./src/util/sh";
-import { die, makeTerm, ANSI } from "./src/util/term";
+import { die, makeArrowProgress, makeTerm, ANSI, type ArrowProgress } from "./src/util/term";
 import { dieWithDiag } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
@@ -44,6 +44,19 @@ import {
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
+const INSTALL_PROGRESS_STEPS = 18;
+let installProgress: ArrowProgress | null = null;
+
+async function installStep(label: string, fn: () => Promise<void>): Promise<void> {
+    installProgress?.advance(label);
+    try {
+        await fn();
+        installProgress?.pulse(`${label} done`);
+    } catch (error) {
+        installProgress?.fail(`${label} failed`);
+        throw error;
+    }
+}
 
 // ---------- file-mode helper (portable; mirrors lib.sh::file_mode_octal) ----
 
@@ -629,6 +642,8 @@ async function createAdmin(): Promise<void> {
         warn("create one later with: docker compose exec panel php artisan ct:make-admin");
         return;
     }
+    warn("This creates the web panel login account for https://<PANEL_DOMAIN>/admin.");
+    warn("Use a real email and a long password; the password is not printed after entry.");
     // Pass-through TTY for the interactive artisan prompt. Don't use
     // Bun.$ here — it captures stdio and the prompt would never appear.
     const r = spawnSync(
@@ -638,7 +653,9 @@ async function createAdmin(): Promise<void> {
     );
     if (r.status !== 0) {
         warn("could not create admin — re-run later with: docker compose exec panel php artisan ct:make-admin");
+        return;
     }
+    ok("admin login created; open https://<PANEL_DOMAIN>/admin, then create Proxy accounts and copy each Subscription URL");
 }
 
 // ---------- success banner ------------------------------------------------
@@ -704,45 +721,65 @@ export async function runInstall(): Promise<number> {
         await acquireOpLock();
     }
 
-    await preflightTools();
+    installProgress = makeArrowProgress({ label: "ct install", total: INSTALL_PROGRESS_STEPS });
 
-    // Enforce IPv4-only before the Rust build so Docker/Rust never
-    // drift into broken provider routes for static.rust-lang.org.
-    const ipv4Only = await checkIpv4OnlyRouting();
-    if (ipv4Only.action === "warn") warn(ipv4Only.detail);
-    else ok(ipv4Only.detail);
+    let env: InstallEnv | undefined;
+    try {
+        await installStep("Pre-flight tools", async () => {
+            await preflightTools();
 
-    await preflightEnvFile();
-    const env = await validateEnvAndDeriveDefaults();
-    await preflightCloneFreshness();
-    await preflightDockerState();
-    await preflightAutoTempClean();
+            // Enforce IPv4-only before the Rust build so Docker/Rust never
+            // drift into broken provider routes for static.rust-lang.org.
+            const ipv4Only = await checkIpv4OnlyRouting();
+            if (ipv4Only.action === "warn") warn(ipv4Only.detail);
+            else ok(ipv4Only.detail);
+        });
 
-    await buildCore(env.CT_CORE_BUILD_PROFILE);
-    await buildImage("caddy image (stock Caddy 2 — ACME provider only, no plugins)", "caddy");
-    await buildImage("singbox image (downloads upstream sing-box binary)", "singbox");
-    await buildImage(
-        "panel image (FrankenPHP + Composer + ct-server-core baked in)",
-        "panel",
-        [
-            "First panel build takes 8-15 min on a 1-vCPU VPS — most of the time",
-            "is gd / intl / zip PHP-extension compilation against icu-dev /",
-            "libzip-dev (no prebuilt wheels in dunglas/frankenphp:alpine). On a",
-            "4-vCPU box ~3-5 min. Subsequent builds hit the layer cache and",
-            "drop to ~30 s. Tail: docker compose logs -f --tail=80 panel",
-        ],
-    );
+        await installStep("Validate .env", async () => {
+            await preflightEnvFile();
+            env = await validateEnvAndDeriveDefaults();
+        });
+        await installStep("Check repo freshness", preflightCloneFreshness);
+        await installStep("Check Docker state", preflightDockerState);
+        await installStep("Check disk headroom", preflightAutoTempClean);
 
-    await bringUpDataLayer();
-    await bringUpPanel();
-    await reRenderCaddyfile();
-    await reRenderSingbox();
-    await preflightDnsAndPort80(env);
-    await bringUpCaddy(env);
-    await bringUpSingbox(env);
-    await settleInstallDeployment();
-    await createAdmin();
-    printSuccessBanner(env);
+        const loadedEnv = env;
+        if (loadedEnv === undefined) die("install env was not loaded", "re-run ./ct install");
+        await installStep("Build ct-server-core", () => buildCore(loadedEnv.CT_CORE_BUILD_PROFILE));
+        await installStep("Build caddy image", () =>
+            buildImage("caddy image (stock Caddy 2 — ACME provider only, no plugins)", "caddy"),
+        );
+        await installStep("Build singbox image", () =>
+            buildImage("singbox image (downloads upstream sing-box binary)", "singbox"),
+        );
+        await installStep("Build panel image", () =>
+            buildImage(
+                "panel image (FrankenPHP + Composer + ct-server-core baked in)",
+                "panel",
+                [
+                    "First panel build takes 8-15 min on a 1-vCPU VPS — most of the time",
+                    "is gd / intl / zip PHP-extension compilation against icu-dev /",
+                    "libzip-dev (no prebuilt wheels in dunglas/frankenphp:alpine). On a",
+                    "4-vCPU box ~3-5 min. Subsequent builds hit the layer cache and",
+                    "drop to ~30 s. Tail: docker compose logs -f --tail=80 panel",
+                ],
+            ),
+        );
+
+        await installStep("Start db + redis", bringUpDataLayer);
+        await installStep("Start panel + migrations", bringUpPanel);
+        await installStep("Render Caddyfile", reRenderCaddyfile);
+        await installStep("Render singbox config", reRenderSingbox);
+        await installStep("Check DNS + ACME port", () => preflightDnsAndPort80(loadedEnv));
+        await installStep("Start Caddy", () => bringUpCaddy(loadedEnv));
+        await installStep("Start singbox", () => bringUpSingbox(loadedEnv));
+        await installStep("Settle deployment", settleInstallDeployment);
+        await installStep("Create admin user", createAdmin);
+        installProgress.complete("install complete");
+        printSuccessBanner(loadedEnv);
+    } finally {
+        installProgress = null;
+    }
     return 0;
 }
 

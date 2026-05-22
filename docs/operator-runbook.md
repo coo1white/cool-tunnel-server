@@ -1,6 +1,8 @@
 # Operator Runbook
 
-Short path for day-to-day VPS operations.
+Short path for day-to-day VPS operations on a Cool Tunnel Server
+deployment. Use this runbook for install, update, backup, doctor, and
+failure recovery on a self-hosted proxy server.
 
 ## Goal
 
