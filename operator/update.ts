@@ -24,7 +24,7 @@
 //  14. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
-import { die, makeTerm, ANSI } from "./src/util/term";
+import { die, makeArrowProgress, makeTerm, ANSI } from "./src/util/term";
 import { dieWithDiag, type DiagFailure } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
@@ -40,6 +40,31 @@ import {
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
+const progress = makeArrowProgress({ total: 12 });
+let progressFinished = false;
+
+process.on("exit", (code) => {
+    if (code !== 0 && !progressFinished) {
+        progress.fail("failed");
+        progressFinished = true;
+    }
+});
+
+function phase(msg: string): void {
+    progress.advance(msg);
+    step(msg);
+}
+
+async function withProgressPulse<T>(msg: string, work: () => Promise<T>): Promise<T> {
+    progress.pulse(msg);
+    const timer = setInterval(() => progress.pulse(msg), 1000);
+    try {
+        return await work();
+    } finally {
+        clearInterval(timer);
+        progress.pulse(msg);
+    }
+}
 
 function dieOnFailure(f: DiagFailure | undefined): void {
     if (f) dieWithDiag(f.summary, f.diag);
@@ -139,7 +164,7 @@ When ready to retry, run:
 }
 
 async function gitPullFfOnly(): Promise<void> {
-    step("git pull (fast-forward only)");
+    phase("git pull (fast-forward only)");
     const r = await capture($`git pull --ff-only`);
     if (!r.ok) {
         dieWithDiag(
@@ -166,7 +191,7 @@ main commits -- be sure that is what you want):
 }
 
 async function autoMigrateEnv(): Promise<void> {
-    step("Auto-migrate legacy .env (PANEL_DOMAIN canonical placement + APP_URL hostname)");
+    phase("Auto-migrate legacy .env (PANEL_DOMAIN canonical placement + APP_URL hostname)");
     const f = Bun.file(".env");
     if (!(await f.exists())) die("required file '.env' is missing", "cp .env.example .env  &&  $EDITOR .env");
     const before = await f.text();
@@ -182,10 +207,13 @@ async function autoMigrateEnv(): Promise<void> {
 }
 
 async function rebuildCore(): Promise<void> {
-    step("Rebuild ct-server-core (Rust)");
+    const msg = "Rebuild ct-server-core (Rust)";
+    phase(msg);
     // runStreaming surfaces BuildKit progress live so a slow VPS
     // doesn't look like a hung step.
-    const r = await runStreaming($`docker compose --profile build-only build core-builder`);
+    const r = await withProgressPulse(msg, () =>
+        runStreaming($`docker compose --profile build-only build core-builder`),
+    );
     if (!r.ok) {
         dieWithDiag(
             "ct-server-core build failed",
@@ -213,11 +241,14 @@ are usually enough to diagnose.`,
 }
 
 async function rebuildImages(): Promise<void> {
-    step("Rebuild caddy + singbox + panel images");
+    const msg = "Rebuild caddy + singbox + panel images";
+    phase(msg);
     // v0.4.0: caddy (layer4 SNI splitter via mholt/caddy-l4) +
     // singbox (sing-box VLESS+Reality, supervisored by singbox-core)
     // + panel.
-    const r = await runStreaming($`docker compose build caddy singbox panel`);
+    const r = await withProgressPulse(msg, () =>
+        runStreaming($`docker compose build caddy singbox panel`),
+    );
     if (!r.ok) {
         dieWithDiag(
             "caddy / singbox / panel build failed",
@@ -280,7 +311,7 @@ async function removeStaleCaddy(): Promise<void> {
 }
 
 async function bringNewImagesUp(): Promise<void> {
-    step("Bring new panel image up (entrypoint runs migrate + render)");
+    phase("Bring new panel image up (entrypoint runs migrate + render)");
     // v0.4.0: panel's entrypoint shells out to
     // `ct-server-core caddyfile render` AND `singbox-core
     // render-server` on startup (via SingBoxConfigGenerator).
@@ -314,7 +345,7 @@ async function bringNewImagesUp(): Promise<void> {
         );
     }
 
-    step("Bring new caddy + singbox images up");
+    phase("Bring new caddy + singbox images up");
     await removeStaleCaddy();
     const r = await capture($`docker compose up -d caddy singbox`);
     if (!r.ok) {
@@ -326,7 +357,7 @@ async function bringNewImagesUp(): Promise<void> {
 }
 
 async function migrateDb(): Promise<void> {
-    step("Verify migrations applied (idempotent re-run)");
+    phase("Verify migrations applied (idempotent re-run)");
     const r = await capture(
         $`docker compose exec -T panel php artisan migrate --force --no-interaction`,
     );
@@ -339,7 +370,7 @@ async function migrateDb(): Promise<void> {
 }
 
 async function renderCaddyfile(): Promise<void> {
-    step("Re-render Caddyfile");
+    phase("Re-render Caddyfile");
     // v0.4.0: Caddyfile is mostly-static (Domain / PanelDomain /
     // ACME email / ACME directory only); per-account credentials
     // live in singbox.json (rendered separately by the panel
@@ -355,7 +386,7 @@ async function renderCaddyfile(): Promise<void> {
 }
 
 async function reloadCaddy(): Promise<void> {
-    step("Reload Caddy (graceful — drains in-flight connections)");
+    phase("Reload Caddy (graceful — drains in-flight connections)");
     // Run Caddy's reload from the operator/host side. Calling
     // `ct-server-core caddyfile reload` inside the panel container
     // tries to spawn `docker`, but the panel image intentionally
@@ -376,7 +407,7 @@ async function reloadCaddy(): Promise<void> {
 }
 
 async function runPostUpdateHealthGates(): Promise<void> {
-    step("Post-update settle gate");
+    phase("Post-update settle gate");
     const ready = await waitForServicesReady({
         services: ["panel", "caddy", "singbox", "db", "redis"],
         log: (message) => warn(message),
@@ -402,7 +433,7 @@ async function runPostUpdateHealthGates(): Promise<void> {
 }
 
 async function fetchOperatorBinary(): Promise<void> {
-    step("Operator binary");
+    phase("Operator binary");
     const r = await capture($`./scripts/fetch_operator_binary.sh`);
     if (!r.ok) {
         process.stdout.write(
@@ -415,6 +446,16 @@ async function fetchOperatorBinary(): Promise<void> {
 }
 
 export async function runUpdate(): Promise<number> {
+    try {
+        return await runUpdateInner();
+    } catch (err) {
+        progressFinished = true;
+        progress.fail(err instanceof Error ? err.message : "failed");
+        throw err;
+    }
+}
+
+async function runUpdateInner(): Promise<number> {
     ensureRepoRoot(import.meta.url);
 
     if (!(await Bun.file(".env").exists())) {
@@ -428,7 +469,7 @@ export async function runUpdate(): Promise<number> {
     }
 
     // ---------- Pre-flight ----------
-    step("Pre-flight");
+    phase("Pre-flight");
     const net = await checkNetwork();
     if (!net.ok) dieOnFailure(net.failure);
     else ok(net.summary ?? "network ok");
@@ -477,6 +518,8 @@ export async function runUpdate(): Promise<number> {
     // Non-fatal operator-binary fetch (signed release from GitHub).
     await fetchOperatorBinary();
 
+    progressFinished = true;
+    progress.complete("Update complete");
     ok("Update complete.");
     ok("If something looks off, the safe first move is:  ct doctor");
     return 0;

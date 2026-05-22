@@ -3,7 +3,7 @@
 // the actual formatting is exercised via real scripts).
 
 import { test, expect } from "bun:test";
-import { makeTerm } from "../src/util/term";
+import { formatArrowProgress, makeTerm } from "../src/util/term";
 
 test("makeTerm() returns an independent step counter per instance", () => {
     const t1 = makeTerm();
@@ -44,4 +44,31 @@ test("makeTerm({ initialStep }) seeds the counter", () => {
         console.log = origLog;
     }
     expect(logs[0]).toContain("11.");
+});
+
+test("formatArrowProgress renders percent, counts, and arrow fill", () => {
+    const line = formatArrowProgress({
+        current: 6,
+        total: 12,
+        msg: "Rebuild images",
+        width: 100,
+    });
+
+    expect(line).toContain("ct update");
+    expect(line).toContain("50%");
+    expect(line).toContain("6/12");
+    expect(line).toContain(">");
+    expect(line).toContain("Rebuild images");
+});
+
+test("formatArrowProgress clamps long labels to terminal width", () => {
+    const line = formatArrowProgress({
+        current: 12,
+        total: 12,
+        msg: "x".repeat(120),
+        width: 60,
+    });
+
+    expect(line.length).toBeLessThanOrEqual(59);
+    expect(line).toContain("100%");
 });
