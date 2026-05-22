@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Tiny ct-server-core carrier image for release installs.
