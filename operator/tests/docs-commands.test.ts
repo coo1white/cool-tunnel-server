@@ -40,3 +40,14 @@ test("core Dockerfile uses the baked Rust toolchain without network rustup sync"
     expect(dockerfile).not.toContain(`rustup target add "\${RUST_TARGET}" &&`);
     expect(dockerfile).toContain(`rustup component list --installed | grep -qx "\${component}"`);
 });
+
+test("README current release badge and text match the panel version", async () => {
+    const readme = await Bun.file("../README.md").text();
+    const panelConfig = await Bun.file("../panel/config/cool-tunnel.php").text();
+    const version = panelConfig.match(/'version'\s*=>\s*'([^']+)'/)?.[1];
+
+    expect(version).toBeTruthy();
+    expect(readme).toContain(`release-v${version}-1c5cdc`);
+    expect(readme).toContain(`releases/tag/v${version}`);
+    expect(readme).toContain(`Latest stable server release: \`v${version}\`.`);
+});
