@@ -84,7 +84,11 @@ done
 
 (
     cd "$OUT_DIR"
-    sha256sum ct-server-core-* > SHA256SUMS.core
+    find . -maxdepth 1 -type f -name 'ct-server-core-*' -print0 \
+        | sort -z \
+        | xargs -0 sha256sum \
+        | sed 's#  ./#  #' \
+        > SHA256SUMS.core
 )
 
 echo "==> wrote ${OUT_DIR}/SHA256SUMS.core"
