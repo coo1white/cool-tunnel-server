@@ -20,7 +20,7 @@
 //  10. php artisan migrate --force
 //  11. ct-server-core caddyfile render
 //  12. caddy reload from the host-side operator
-//  13. health gates
+//  13. post-deploy settle gate
 //  14. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
@@ -33,7 +33,11 @@ import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
 import { promptChoice, promptYn } from "./src/util/prompt";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
-import { credentialLockCheck } from "./src/util/credential-control";
+import {
+    credentialLockRecoveryHint,
+    settleCredentialLock,
+    waitForServicesReady,
+} from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
 
@@ -362,22 +366,29 @@ async function reloadCaddy(): Promise<void> {
 }
 
 async function runPostUpdateHealthGates(): Promise<void> {
-    step("Post-update health gates");
-    const guard = await credentialLockCheck();
+    step("Post-update settle gate");
+    const ready = await waitForServicesReady({
+        services: ["panel", "caddy", "singbox", "db", "redis"],
+        log: (message) => warn(message),
+    });
+    if (!ready) {
+        dieWithDiag(
+            "containers did not become healthy after update",
+            "docker compose ps\ndocker compose logs --tail=80 caddy singbox panel",
+        );
+    }
+    ok("containers healthy");
+
+    const guard = await settleCredentialLock({
+        log: (message) => warn(message),
+    });
     if (!guard.ok) {
         dieWithDiag(
             "credential-lock guard failed after update",
-            guard.stderr.split("\n").slice(0, 5).join("\n")
-                || guard.stdout.split("\n").slice(0, 5).join("\n")
-                || "docker compose exec -T panel php artisan credential-lock:check",
+            credentialLockRecoveryHint(guard.guard),
         );
     }
     ok("credential-lock OK");
-
-    const stack = await checkStackUp(["panel", "caddy", "singbox", "db", "redis"]);
-    if (!stack.ok) dieOnFailure(stack.failure);
-    else if (stack.missing.length > 0) warn(stack.summary);
-    else ok(stack.summary);
 }
 
 async function fetchOperatorBinary(): Promise<void> {
@@ -450,8 +461,9 @@ export async function runUpdate(): Promise<number> {
     await reloadCaddy();
     // v0.4.0: singbox.json is rendered by the panel entrypoint
     // (SingBoxConfigGenerator → singbox-core render-server) when
-    // bringNewImagesUp completes, so no explicit operator-side
-    // re-render step is needed here.
+    // bringNewImagesUp completes. The settle gate reconciles once
+    // more after reload so transient healthcheck "starting" states
+    // and stale singbox.json reads do not look like real failures.
     await runPostUpdateHealthGates();
 
     // Non-fatal operator-binary fetch (signed release from GitHub).
