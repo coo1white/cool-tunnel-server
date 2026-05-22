@@ -27,6 +27,8 @@ export interface Term {
 export interface ArrowProgress {
     advance(msg: string): void;
     pulse(msg?: string): void;
+    hold(msg?: string): void;
+    release(): void;
     complete(msg?: string): void;
     fail(msg?: string): void;
 }
@@ -107,14 +109,16 @@ export function makeArrowProgress(opts: {
     readonly label?: string;
     readonly stream?: ProgressStream;
     readonly enabled?: boolean;
+    readonly repaintMs?: number;
 }): ArrowProgress {
-    const stream = opts.stream ?? process.stdout;
+    const stream = opts.stream ?? process.stderr;
     const total = Math.max(1, opts.total);
     const enabled = opts.enabled ?? process.env["CT_PROGRESS_BAR"] !== "0";
     const tty = enabled && stream.isTTY === true;
     let current = 0;
     let lastMsg = "starting";
     let reservedRows: number | null = null;
+    let repaintTimer: Timer | null = null;
 
     const reserveBottomRow = () => {
         if (!tty) return;
@@ -151,6 +155,12 @@ export function makeArrowProgress(opts: {
         stream.write(terminalDrawBottomLine(row, `${color}${line}${ANSI.reset}`));
     };
 
+    const stopRepaint = () => {
+        if (repaintTimer === null) return;
+        clearInterval(repaintTimer);
+        repaintTimer = null;
+    };
+
     return {
         advance(msg: string) {
             current = Math.min(total, current + 1);
@@ -159,13 +169,25 @@ export function makeArrowProgress(opts: {
         pulse(msg?: string) {
             render(msg ?? lastMsg);
         },
+        hold(msg?: string) {
+            render(msg ?? lastMsg);
+            if (!tty || repaintTimer !== null) return;
+            const interval = Math.max(250, opts.repaintMs ?? 1000);
+            repaintTimer = setInterval(() => render(lastMsg), interval);
+        },
+        release() {
+            stopRepaint();
+            render(lastMsg);
+        },
         complete(msg = "complete") {
+            stopRepaint();
             current = total;
             render(msg);
             restoreScrollRegion();
             if (tty) stream.write("\n");
         },
         fail(msg = "failed") {
+            stopRepaint();
             render(msg, true);
             restoreScrollRegion();
             if (tty) stream.write("\n");

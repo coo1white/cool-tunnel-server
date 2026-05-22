@@ -49,8 +49,10 @@ let installProgress: ArrowProgress | null = null;
 
 async function installStep(label: string, fn: () => Promise<void>): Promise<void> {
     installProgress?.advance(label);
+    installProgress?.hold(label);
     try {
         await fn();
+        installProgress?.release();
         installProgress?.pulse(`${label} done`);
     } catch (error) {
         installProgress?.fail(`${label} failed`);

@@ -5,6 +5,7 @@
 import { test, expect } from "bun:test";
 import {
     formatArrowProgress,
+    makeArrowProgress,
     makeTerm,
     terminalDrawBottomLine,
     terminalReserveBottomRow,
@@ -86,4 +87,32 @@ test("terminal progress reserves final row like apt/dpkg", () => {
     expect(terminalReserveBottomRow(24)).toBe("\x1b[1;23r\x1b[23;1H");
     expect(terminalDrawBottomLine(24, "Progress")).toBe("\x1b7\x1b[24;1H\x1b[2KProgress\x1b8");
     expect(terminalRestoreScrollRegion(24)).toBe("\x1b7\x1b[24;1H\x1b[2K\x1b8\x1b[r");
+});
+
+test("makeArrowProgress can repaint a held tty progress line", async () => {
+    const writes: string[] = [];
+    const progress = makeArrowProgress({
+        label: "ct install",
+        total: 18,
+        repaintMs: 250,
+        stream: {
+            isTTY: true,
+            columns: 100,
+            rows: 24,
+            write: (s: string) => {
+                writes.push(s);
+            },
+        },
+    });
+
+    progress.advance("Build ct-server-core");
+    progress.hold();
+    await new Promise((resolve) => setTimeout(resolve, 310));
+    progress.release();
+    progress.complete();
+
+    const draws = writes.filter((s) => s.includes("Progress: ["));
+    expect(draws.length).toBeGreaterThanOrEqual(3);
+    expect(writes.join("")).toContain("\x1b[1;23r");
+    expect(writes.join("")).toContain("\x1b[r");
 });
