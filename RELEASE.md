@@ -9,7 +9,8 @@ checklist.
 - Push permission to `coo1white/cool-tunnel-server`
 - `gh` CLI authenticated as `coo1white`
 - Local Rust toolchain matching `core/rust-toolchain.toml`
-- Optional: docker (for image builds + digest pinning)
+- Local Docker/Buildx Linux builder for release assets. A Lima VM is
+  fine. The release must not depend on compiling Rust on a user's VPS.
 
 ## The recipe
 
@@ -92,7 +93,33 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-### 8. Create GitHub release
+### 8. Build release binaries locally
+
+Build the Linux `ct-server-core` assets before publishing the release.
+Use mirror overrides when Docker Hub or Alpine CDN routing is poor:
+
+```sh
+BUILDER=rootless \
+CT_RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.88.0-alpine \
+CT_ALPINE_BASE_IMAGE=public.ecr.aws/docker/library/alpine:3.20 \
+CT_ALPINE_REPOSITORY_BASE=https://mirrors.aliyun.com/alpine \
+./scripts/build_release_core_assets.sh
+```
+
+The script writes:
+
+- `release-assets/ct-server-core-linux-x64`
+- `release-assets/ct-server-core-linux-arm64`
+- `release-assets/SHA256SUMS.core`
+
+Verify the assets before upload:
+
+```sh
+file release-assets/ct-server-core-linux-*
+sha256sum -c release-assets/SHA256SUMS.core
+```
+
+### 9. Create GitHub release
 
 ```sh
 gh release create vX.Y.Z \
@@ -108,7 +135,27 @@ the new release on real metal and `late-night-comeback.sh` reports
 ≥ 80%. After that, edit the release on the GitHub UI to drop the
 pre-release flag.
 
-### 9. Generate + attach SBOMs
+### 10. Attach release assets
+
+Upload locally built core assets first, then let GitHub's
+`ct-operator release` workflow upload the operator binaries and merge
+`SHA256SUMS`. The final release must contain all of:
+
+- `ct-operator-linux-x64`
+- `ct-operator-linux-arm64`
+- `ct-server-core-linux-x64`
+- `ct-server-core-linux-arm64`
+- `SHA256SUMS`
+
+```sh
+gh release upload vX.Y.Z release-assets/ct-server-core-linux-* --clobber
+gh workflow run "ct-operator release" --ref vX.Y.Z
+gh run watch --exit-status "$(gh run list --workflow "ct-operator release" --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh release download vX.Y.Z --pattern SHA256SUMS --dir /tmp/ct-release-check --clobber
+sha256sum -c /tmp/ct-release-check/SHA256SUMS --ignore-missing
+```
+
+### 11. Generate + attach SBOMs
 
 ```sh
 make sbom
@@ -120,7 +167,7 @@ container image layer that goes into the release. Auditors can
 diff two releases' SBOMs to see exactly what changed in the supply
 chain.
 
-### 10. Pin Docker base images by digest (optional but LTSC-shape)
+### 12. Pin Docker base images by digest (optional but LTSC-shape)
 
 If docker is available locally:
 
