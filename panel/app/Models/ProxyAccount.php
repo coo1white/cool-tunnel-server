@@ -43,6 +43,8 @@ use Throwable;
  * @property int $id
  * @property string $username
  * @property string $uuid
+ * @property string|null $previous_uuid
+ * @property Carbon|null $previous_uuid_valid_until
  * @property string|null $subscription_secret
  * @property string|null $label
  * @property bool $enabled
@@ -86,6 +88,7 @@ class ProxyAccount extends Model
      */
     protected $hidden = [
         'uuid',
+        'previous_uuid',
         'subscription_secret',
     ];
 
@@ -95,6 +98,7 @@ class ProxyAccount extends Model
             'enabled' => 'boolean',
             'client_default_local_port' => 'integer',
             'enabled_protocols' => 'array',
+            'previous_uuid_valid_until' => 'datetime',
             'expires_at' => 'datetime',
             'last_seen_at' => 'datetime',
             'metadata' => 'array',
@@ -191,11 +195,27 @@ class ProxyAccount extends Model
      */
     public function regenerateUuid(): string
     {
+        $oldUuid = (string) ($this->uuid ?? '');
         $uuid = (string) Str::uuid();
+        if ($oldUuid !== '' && $oldUuid !== $uuid) {
+            $this->previous_uuid = $oldUuid;
+            $this->previous_uuid_valid_until = now()->addMinutes(10);
+        }
         $this->uuid = $uuid;
         $this->rotateSubscriptionSecret();
 
         return $uuid;
+    }
+
+    public function hasPreviousUuidGrace(): bool
+    {
+        $previousUuid = (string) ($this->previous_uuid ?? '');
+        if ($previousUuid === '') {
+            return false;
+        }
+
+        return $this->previous_uuid_valid_until !== null
+            && $this->previous_uuid_valid_until->isFuture();
     }
 
     public function rotateSubscriptionSecret(): string

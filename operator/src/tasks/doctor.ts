@@ -61,6 +61,10 @@ type SupervisordCheck = {
     readonly severity: Severity;
     readonly detail: string;
 };
+type RealityInvalidCheck = {
+    readonly severity: Severity;
+    readonly detail: string;
+};
 
 export function indexComposeRowsByService(output: string): Map<string, ComposePsRow> {
     const rowsByService = new Map<string, ComposePsRow>();
@@ -121,6 +125,20 @@ export function checkSupervisordStatusOutput(output: string): SupervisordCheck {
         return { severity: "warn", detail: `${running}/${total} programs running` };
     }
     return { severity: "fail", detail: `0/${total} programs running` };
+}
+
+export function checkRecentRealityInvalidOutput(output: string): RealityInvalidCheck {
+    const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+    const count = lines.length;
+    if (count === 0) {
+        return { severity: "pass", detail: "no invalid handshakes in last 10m" };
+    }
+
+    const first = lines[0]?.replace(/^.*\| /, "").slice(0, 96) ?? "recent invalid handshake";
+    return {
+        severity: "warn",
+        detail: `${count} invalid handshakes in last 10m; first=${first}`,
+    };
 }
 
 // ---------- individual checks (port of doctor.sh) -------------------------
@@ -542,6 +560,29 @@ async function checkSupervisord(_c: CheckCtx): Promise<CheckLine> {
     };
 }
 
+async function checkRecentRealityInvalid(_c: CheckCtx): Promise<CheckLine> {
+    const r = await capture(
+        $`bash -c "docker compose logs --since=10m --no-color singbox 2>&1 | grep -F 'REALITY: processed invalid connection' || true"`,
+    );
+    const checked = checkRecentRealityInvalidOutput(r.stdout);
+    if (checked.severity === "pass") {
+        return {
+            group: G_COMPOSE,
+            label: "Reality auth",
+            severity: "pass",
+            detail: checked.detail,
+        };
+    }
+
+    return {
+        group: G_COMPOSE,
+        label: "Reality auth",
+        severity: "warn",
+        detail: checked.detail,
+        hint: "Re-import the Subscription URL on stale clients; after UUID regen the previous UUID is accepted briefly, then old profiles must stop dialing",
+    };
+}
+
 function parseDfAvailKb(out: string): number {
     const line = out.trim().split("\n")[1];
     if (!line) return 0;
@@ -679,6 +720,7 @@ const CHECKS: CheckFn[] = [
     checkPanelPublicLatency,
     checkContainerHealth,
     checkSupervisord,
+    checkRecentRealityInvalid,
     checkDisk,
     checkRam,
     infoReleaseVersion,

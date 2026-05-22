@@ -188,7 +188,14 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
         // cursor() avoids hydrating the full table before rendering.
         $accounts = [];
         foreach (ProxyAccount::query()
-            ->select(['id', 'username', 'uuid', 'enabled_protocols'])
+            ->select([
+                'id',
+                'username',
+                'uuid',
+                'previous_uuid',
+                'previous_uuid_valid_until',
+                'enabled_protocols',
+            ])
             ->active()
             ->orderBy('id')
             ->cursor() as $account) {
@@ -203,6 +210,12 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
                 'username' => $account->username,
                 'uuid' => $uuid,
             ];
+            if ($account->hasPreviousUuidGrace()) {
+                $accounts[] = [
+                    'username' => "__previous_uuid:{$account->id}:{$account->username}",
+                    'uuid' => (string) $account->previous_uuid,
+                ];
+            }
         }
         if (empty($accounts)) {
             // singbox-core's render-server validator rejects empty
