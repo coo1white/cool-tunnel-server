@@ -311,13 +311,13 @@ class CredentialLockCheck extends Command
 
         $failures = [];
         if ($missing !== []) {
-            $failures[] = "{$leftName}<->{$rightName} missing_in_{$rightName}=".implode(',', $missing);
+            $failures[] = "{$leftName}<->{$rightName} missing_in_{$rightName}=".count($missing);
         }
         if ($extra !== []) {
-            $failures[] = "{$leftName}<->{$rightName} extra_in_{$rightName}=".implode(',', $extra);
+            $failures[] = "{$leftName}<->{$rightName} extra_in_{$rightName}=".count($extra);
         }
         if ($mismatch !== []) {
-            $failures[] = "{$leftName}<->{$rightName} uuid_mismatch=".implode(',', $mismatch);
+            $failures[] = "{$leftName}<->{$rightName} uuid_mismatch=".count($mismatch);
         }
 
         return $failures;

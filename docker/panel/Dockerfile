@@ -45,12 +45,18 @@ FROM ${CT_CORE_IMAGE} AS ct-core-stage
 # project convention; if a future shared-base image makes sense
 # we'll add it then).
 FROM oven/bun:1.1-alpine AS singbox-core-build
+ARG TARGETARCH
 WORKDIR /build
 COPY singbox-core /build/singbox-core
 RUN cd singbox-core \
-    && bun install --frozen-lockfile 2>/dev/null || bun install \
+    && bun install --frozen-lockfile \
     && bunx tsc --noEmit \
-    && bun build --compile --target=bun-linux-x64 \
+    && case "${TARGETARCH:-amd64}" in \
+         amd64) bun_target=bun-linux-x64 ;; \
+         arm64) bun_target=bun-linux-arm64 ;; \
+         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
+    && bun build --compile --target="${bun_target}" \
         src/cli.ts \
         --outfile /out/singbox-core
 

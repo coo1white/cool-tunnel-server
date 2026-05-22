@@ -43,6 +43,8 @@ export function parseDotenv(text: string): EnvMap {
             (val.startsWith("'") && val.endsWith("'"))
         ) {
             val = val.slice(1, -1);
+        } else {
+            val = val.replace(/\s+#.*$/, "").trimEnd();
         }
         env[key] = val;
     }

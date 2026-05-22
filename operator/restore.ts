@@ -16,7 +16,8 @@
 // Refuses to run over a populated stack. Single-flight under the
 // same per-project flock as backup/install/update.
 
-import { mkdirSync, rmSync, chmodSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, chmodSync, mkdtempSync } from "node:fs";
+import { posix as pathPosix } from "node:path";
 import { $, capture } from "./src/util/sh";
 import { loadDotenv } from "./src/util/env";
 import { composeProjectName } from "./src/util/compose";
@@ -41,9 +42,57 @@ export function parseRestoreArgs(argv: readonly string[]): { path: string } | st
     return { path: rest[0]! };
 }
 
+export function validateTarEntries(entries: readonly string[]): string | null {
+    for (const raw of entries) {
+        const entry = raw.trim();
+        if (entry === "") continue;
+        if (entry.startsWith("/") || entry.startsWith("\\")) {
+            return `backup archive contains absolute path: ${entry}`;
+        }
+        if (/^[A-Za-z]:[\\/]/.test(entry)) {
+            return `backup archive contains drive-qualified path: ${entry}`;
+        }
+        const normalized = pathPosix.normalize(entry.replace(/\\/g, "/"));
+        if (normalized === ".." || normalized.startsWith("../")) {
+            return `backup archive escapes restore directory: ${entry}`;
+        }
+    }
+    return null;
+}
+
+export function expectedRestoreVolumes(project: string): string[] {
+    return [`${project}_db_data`, `${project}_redis_data`, `${project}_caddy_data`, `${project}_caddy_etc`, `${project}_singbox_config`];
+}
+
+export function staleVolumeNames(existing: readonly string[], project: string): string[] {
+    const expected = new Set(expectedRestoreVolumes(project));
+    return existing.filter((name) => expected.has(name)).sort();
+}
+
+async function validateTarballMembers(path: string): Promise<void> {
+    const listed = await capture($`tar -tzf ${path}`);
+    if (!listed.ok) {
+        die(`tar -tzf ${path} failed`, listed.stderr.split("\n")[0] ?? "");
+    }
+    const err = validateTarEntries(listed.stdout.split("\n"));
+    if (err) die(err, "refusing to restore an unsafe backup archive");
+}
+
+function requireRestoredPath(path: string, label: string): void {
+    if (!existsSync(path)) {
+        die(`backup is missing required ${label}`, `expected ${path} after extraction`);
+    }
+}
+
 async function stackIsRunning(): Promise<boolean> {
     const r = await capture($`docker compose ps -q`);
     return r.ok && r.stdout.trim().length > 0;
+}
+
+async function composeVolumeNames(): Promise<string[]> {
+    const r = await capture($`docker volume ls --format ${"{{.Name}}"}`);
+    if (!r.ok) return [];
+    return r.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 
 async function dbHealthy(): Promise<boolean> {
@@ -59,6 +108,7 @@ async function panelEntrypointDone(): Promise<boolean> {
 }
 
 export async function runRestore(backupPath: string): Promise<number> {
+    process.umask(0o077);
     ensureRepoRoot(import.meta.url);
 
     // Pre-flight: require the tarball, docker, and a non-running
@@ -85,29 +135,56 @@ export async function runRestore(backupPath: string): Promise<number> {
         );
     }
 
+    const project = await composeProjectName();
+    const staleVolumes = staleVolumeNames(await composeVolumeNames(), project);
+    if (staleVolumes.length > 0) {
+        die(
+            "existing Docker volumes would be mixed with backup data",
+            `remove the old stack first: docker compose down -v\nstale volumes: ${staleVolumes.join(", ")}`,
+        );
+    }
+
     // ---------- Stage 1 ----------
     step("Stage backup tarball under tmp/restore");
-    rmSync("tmp/restore", { recursive: true, force: true });
-    mkdirSync("tmp/restore", { recursive: true });
-    {
-        const r = await capture($`tar -xzf ${backupPath} -C tmp/restore`);
-        if (!r.ok) die(`tar -xzf ${backupPath} failed`, r.stderr.split("\n")[0] ?? "");
-    }
-    const lsR = await capture($`ls tmp/restore`);
-    if (lsR.ok) process.stdout.write(lsR.stdout.split("\n").slice(0, 10).join("\n") + "\n");
+    mkdirSync("tmp", { recursive: true });
+    const restoreDir = mkdtempSync("tmp/restore-");
+    const cleanupRestoreDir = () => {
+        try {
+            rmSync(restoreDir, { recursive: true, force: true });
+        } catch {
+            // best effort
+        }
+    };
+    process.once("exit", cleanupRestoreDir);
+    try {
+        await validateTarballMembers(backupPath);
+        {
+            const r = await capture($`tar -xzf ${backupPath} -C ${restoreDir}`);
+            if (!r.ok) die(`tar -xzf ${backupPath} failed`, r.stderr.split("\n")[0] ?? "");
+        }
+        const lsR = await capture($`ls ${restoreDir}`);
+        if (lsR.ok) process.stdout.write(lsR.stdout.split("\n").slice(0, 10).join("\n") + "\n");
 
     // ---------- Stage 2 ----------
     step("Restore .env, manifests, templates");
     // .env contains the operator's DOMAIN / *_PASSWORD / APP_KEY edits.
     // Without it the panel cannot decrypt stored data and subscription
     // signatures will not verify.
-    await capture($`cp tmp/restore/.env .env`);
+    requireRestoredPath(`${restoreDir}/.env`, ".env");
+    requireRestoredPath(`${restoreDir}/manifests`, "manifests/");
+    requireRestoredPath(`${restoreDir}/db.sql`, "db.sql");
+    requireRestoredPath(`${restoreDir}/caddy_data.tgz`, "caddy_data.tgz");
+    await validateTarballMembers(`${restoreDir}/caddy_data.tgz`);
+    cpSync(`${restoreDir}/.env`, ".env");
     chmodSync(".env", 0o600);
-    await capture($`cp -r tmp/restore/manifests .`);
+    rmSync("manifests", { recursive: true, force: true });
+    cpSync(`${restoreDir}/manifests`, "manifests", { recursive: true });
     // Template: legacy backups may lack it; the in-tree post-update
     // template is the correct fallback in that case, so cp failure is
     // non-fatal.
-    await capture($`cp tmp/restore/caddy/Caddyfile.tpl caddy/Caddyfile.tpl`);
+    if (existsSync(`${restoreDir}/caddy/Caddyfile.tpl`)) {
+        cpSync(`${restoreDir}/caddy/Caddyfile.tpl`, "caddy/Caddyfile.tpl");
+    }
     ok(".env restored (mode 0600), manifests + Caddy template in place");
 
     // ---------- Stage 3 ----------
@@ -137,7 +214,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     const dbName = env["DB_DATABASE"] ?? "cooltunnel";
     {
         const r = await capture(
-            $`docker compose exec -T -e MYSQL_PWD=${dbPw} db mariadb -u root ${dbName} < tmp/restore/db.sql`,
+            $`docker compose exec -T -e MYSQL_PWD=${dbPw} db mariadb -u root ${dbName} < ${`${restoreDir}/db.sql`}`,
         );
         if (!r.ok) {
             die(`db.sql import failed — see ct-db logs`, "docker compose logs --tail=50 db");
@@ -147,7 +224,6 @@ export async function runRestore(backupPath: string): Promise<number> {
 
     // ---------- Stage 5 ----------
     step("Restore caddy_data volume from caddy_data.tgz");
-    const project = await composeProjectName();
     const caddyDataVolume = `${project}_caddy_data`;
     const inspect = await capture($`docker volume inspect ${caddyDataVolume}`);
     if (!inspect.ok) {
@@ -156,7 +232,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     const cwd = process.cwd();
     {
         const r = await capture(
-            $`docker run --rm -v ${`${caddyDataVolume}:/data`} -v ${`${cwd}/tmp/restore:/in:ro`} alpine sh -c ${"cd /data && tar xzf /in/caddy_data.tgz"}`,
+            $`docker run --rm -v ${`${caddyDataVolume}:/data`} -v ${`${cwd}/${restoreDir}:/in:ro`} alpine sh -c ${"cd /data && tar xzf /in/caddy_data.tgz"}`,
         );
         if (!r.ok) {
             die(
@@ -204,7 +280,8 @@ export async function runRestore(backupPath: string): Promise<number> {
         ok("doctor gate passed");
     }
 
-    rmSync("tmp/restore", { recursive: true, force: true });
+    process.removeListener("exit", cleanupRestoreDir);
+    cleanupRestoreDir();
 
     const panelDomain = env["PANEL_DOMAIN"] ?? "?";
     process.stdout.write(`
@@ -224,6 +301,10 @@ singbox all read the same values:
   docker compose up -d --force-recreate
 `);
     return 0;
+    } finally {
+        process.removeListener("exit", cleanupRestoreDir);
+        cleanupRestoreDir();
+    }
 }
 
 async function main(): Promise<number> {

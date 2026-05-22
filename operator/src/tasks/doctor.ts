@@ -66,6 +66,10 @@ type RealityInvalidCheck = {
     readonly detail: string;
 };
 
+export function opensslSClientArgs(domain: string): string[] {
+    return ["s_client", "-servername", domain, "-connect", `${domain}:443`];
+}
+
 export function indexComposeRowsByService(output: string): Map<string, ComposePsRow> {
     const rowsByService = new Map<string, ComposePsRow>();
     for (const line of output.split("\n")) {
@@ -256,10 +260,8 @@ async function checkAcmeCert(c: CheckCtx): Promise<CheckLine> {
     if (!domain) {
         return { group: G_STRUCT, label: "ACME cert", severity: "warn", detail: "skipped (PANEL_DOMAIN and DOMAIN unset)" };
     }
-    const probe = await capture(
-        $`bash -c "echo | timeout 6 openssl s_client -servername ${domain} -connect ${domain}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null"`,
-    );
-    const out = probe.stdout.trim();
+    const probe = await probeCertificateEnddate(domain);
+    const out = probe.trim();
     if (!out) {
         return {
             group: G_STRUCT,
@@ -294,6 +296,30 @@ async function checkAcmeCert(c: CheckCtx): Promise<CheckLine> {
         };
     }
     return { group: G_STRUCT, label: "ACME cert", severity: "pass", detail: `valid, expires in ${daysLeft} days` };
+}
+
+async function probeCertificateEnddate(domain: string): Promise<string> {
+    const sClient = Bun.spawn(["openssl", ...opensslSClientArgs(domain)], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+    });
+    sClient.stdin?.write("\n");
+    sClient.stdin?.end();
+    const x509 = Bun.spawn(["openssl", "x509", "-noout", "-enddate"], {
+        stdin: sClient.stdout,
+        stdout: "pipe",
+        stderr: "ignore",
+    });
+    const timeout = new Promise<Uint8Array>((resolve) => {
+        setTimeout(() => resolve(new Uint8Array()), 6000);
+    });
+    const out = await Promise.race([new Response(x509.stdout).bytes(), timeout]);
+    if (out.length === 0) {
+        sClient.kill();
+        x509.kill();
+    }
+    return new TextDecoder().decode(out);
 }
 
 async function checkUpEndpoint(_c: CheckCtx): Promise<CheckLine> {

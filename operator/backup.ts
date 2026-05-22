@@ -19,7 +19,7 @@
 // (e.g. /opt/ct-prod and /opt/ct-staging) don't serialise against
 // each other — matches scripts/lib.sh::acquire_op_lock.
 
-import { mkdirSync, rmSync, chmodSync } from "node:fs";
+import { mkdirSync, rmSync, chmodSync, mkdtempSync } from "node:fs";
 import { $, capture } from "./src/util/sh";
 import { loadDotenv } from "./src/util/env";
 import { composeProjectName, serviceRunning } from "./src/util/compose";
@@ -48,7 +48,7 @@ async function dumpDatabase(env: Record<string, string>, dest: string): Promise<
     ok("db.sql written");
 }
 
-async function snapshotCaddyData(volumeName: string, destInTmp: string): Promise<void> {
+async function snapshotCaddyData(volumeName: string, tmpDir: string, destName: string): Promise<void> {
     step("Snapshot caddy_data volume (ACME certificates + private keys)");
     // Quiesce caddy first — a cert renewal completing mid-tar would
     // land a half-written *.crt or *.key in the archive.
@@ -56,12 +56,16 @@ async function snapshotCaddyData(volumeName: string, destInTmp: string): Promise
     if (wasRunning) {
         await capture($`docker compose stop caddy`);
     }
-    const cwd = process.cwd();
-    const r = await capture(
-        $`docker run --rm -v ${`${volumeName}:/data:ro`} -v ${`${cwd}/tmp:/out`} alpine sh -c ${`cd /data && tar czf /out/${destInTmp} .`}`,
-    );
-    if (wasRunning) {
-        await capture($`docker compose start caddy`);
+    let r;
+    try {
+        const cwd = process.cwd();
+        r = await capture(
+            $`docker run --rm -v ${`${volumeName}:/data:ro`} -v ${`${cwd}/${tmpDir}:/out`} alpine sh -c ${`cd /data && tar czf /out/${destName} .`}`,
+        );
+    } finally {
+        if (wasRunning) {
+            await capture($`docker compose start caddy`);
+        }
     }
     if (!r.ok) {
         die(`tar of caddy_data volume failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
@@ -69,10 +73,10 @@ async function snapshotCaddyData(volumeName: string, destInTmp: string): Promise
     ok(`caddy_data.tgz written (from volume ${volumeName})`);
 }
 
-async function bundleTarball(outPath: string): Promise<void> {
+async function bundleTarball(outPath: string, tmpDir: string): Promise<void> {
     step(`Bundle into ${outPath}`);
     const r = await capture(
-        $`tar -czf ${outPath} -C tmp db.sql caddy_data.tgz -C .. .env manifests caddy/Caddyfile.tpl`,
+        $`tar -czf ${outPath} -C ${tmpDir} db.sql caddy_data.tgz -C .. .env manifests caddy/Caddyfile.tpl`,
     );
     if (!r.ok) {
         die(`tar bundle failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
@@ -122,15 +126,16 @@ export async function runBackup(): Promise<number> {
     const out = `backups/cool-tunnel-${ts}.tar.gz`;
     mkdirSync("backups", { recursive: true });
     mkdirSync("tmp", { recursive: true });
+    const tmpDir = mkdtempSync("tmp/backup-");
 
     try {
-        await dumpDatabase(env, "tmp/db.sql");
+        await dumpDatabase(env, `${tmpDir}/db.sql`);
 
         const project = await composeProjectName();
         const caddyDataVolume = `${project}_caddy_data`;
-        await snapshotCaddyData(caddyDataVolume, "caddy_data.tgz");
+        await snapshotCaddyData(caddyDataVolume, tmpDir, "caddy_data.tgz");
 
-        await bundleTarball(out);
+        await bundleTarball(out, tmpDir);
 
         const ls = await capture($`ls -lh ${out}`);
         const sizeAndPath = ls.ok
@@ -139,7 +144,7 @@ export async function runBackup(): Promise<number> {
         ok(`wrote ${sizeAndPath} (mode 0600 — operator-only)`);
     } finally {
         try {
-            rmSync("tmp", { recursive: true, force: true });
+            rmSync(tmpDir, { recursive: true, force: true });
         } catch {
             // best effort
         }
