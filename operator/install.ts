@@ -37,6 +37,11 @@ import { checkIpv6Routing } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { promptYn } from "./src/util/prompt";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
+import {
+    credentialLockRecoveryHint,
+    settleCredentialLock,
+    waitForServicesReady,
+} from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
 
@@ -577,6 +582,34 @@ docker compose logs --tail=80 singbox`,
     ok(`    SNI=${env.PANEL_DOMAIN} → inner panel listener`);
 }
 
+// ---------- step 18b: post-deploy settle gate -----------------------------
+
+async function settleInstallDeployment(): Promise<void> {
+    step("Post-install settle gate (containers + credential lock)");
+    const ready = await waitForServicesReady({
+        services: ["panel", "caddy", "singbox", "db", "redis"],
+        log: (message) => warn(message),
+    });
+    if (!ready) {
+        dieWithDiag(
+            "containers did not become healthy after install",
+            "docker compose ps\ndocker compose logs --tail=80 caddy singbox panel",
+        );
+    }
+    ok("containers healthy");
+
+    const guard = await settleCredentialLock({
+        log: (message) => warn(message),
+    });
+    if (!guard.ok) {
+        dieWithDiag(
+            "credential-lock guard failed after install",
+            credentialLockRecoveryHint(guard.guard),
+        );
+    }
+    ok("credential-lock OK");
+}
+
 // ---------- step 19: create first admin -----------------------------------
 
 async function createAdmin(): Promise<void> {
@@ -701,6 +734,7 @@ export async function runInstall(): Promise<number> {
     await preflightDnsAndPort80(env);
     await bringUpCaddy(env);
     await bringUpSingbox(env);
+    await settleInstallDeployment();
     await createAdmin();
     printSuccessBanner(env);
     return 0;

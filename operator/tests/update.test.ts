@@ -3,6 +3,11 @@
 
 import { test, expect } from "bun:test";
 import { caddyReloadCommand, shouldRemoveStaleCaddy } from "../update";
+import {
+    describeUnreadyServices,
+    parseComposePsRows,
+    serviceReady,
+} from "../src/util/deploy-settle";
 
 test("shouldRemoveStaleCaddy removes compose-created dead states", () => {
     expect(shouldRemoveStaleCaddy("created")).toBe(true);
@@ -31,4 +36,19 @@ test("caddyReloadCommand reloads from host-side docker compose, not panel ct-ser
         "--adapter",
         "caddyfile",
     ]);
+});
+
+test("deploy settle treats running/starting healthchecks as not ready", () => {
+    const rows = parseComposePsRows([
+        JSON.stringify({ Service: "panel", State: "running", Health: "healthy" }),
+        JSON.stringify({ Service: "caddy", State: "running", Health: "starting" }),
+        JSON.stringify({ Service: "singbox", State: "running", Health: "starting" }),
+    ].join("\n"));
+
+    expect(serviceReady(rows.get("panel"))).toBe(true);
+    expect(serviceReady(rows.get("caddy"))).toBe(false);
+    expect(serviceReady(rows.get("singbox"))).toBe(false);
+    expect(describeUnreadyServices(rows, ["panel", "caddy", "singbox"])).toBe(
+        "caddy=running/starting,singbox=running/starting",
+    );
 });

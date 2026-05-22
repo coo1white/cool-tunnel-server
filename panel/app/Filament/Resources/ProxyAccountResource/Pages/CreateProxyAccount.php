@@ -12,7 +12,6 @@ use App\Models\ServerConfig;
 use App\Support\RealityDestinationCatalog;
 use App\Support\SingBoxProtocolCatalog;
 use App\Support\SingBoxRenderConfirmation;
-use Filament\Notifications\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
@@ -105,30 +104,16 @@ class CreateProxyAccount extends CreateRecord
         $body = "Username: {$record->username}\nUUID: {$this->generatedUuid}\nLocal SOCKS port: {$port}\nReality dest_host: {$destLabel}";
         $body .= "\nProtocol: ".SingBoxProtocolCatalog::modeSummary($this->selectedProtocols ?: $record->enabledProtocolKeys());
         if ($subUrl !== null) {
-            $body .= "\n\nSubscription URL is ready. Use Copy URL, then import it in the app.";
+            $body .= "\n\nOpen Subscription URL to copy the import URL.";
         }
         $body .= $this->renderConfirmed
-            ? "\n\nsing-box config rendered now; the URL is ready to import."
+            ? "\n\nsing-box config rendered now."
             : "\n\nReload queued, but immediate render was not confirmed. If import fails, wait a few seconds and retry, then check panel logs for singbox.render.*.";
-
-        $actions = [];
-        if ($subUrl !== null) {
-            $jsUrl = json_encode($subUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            $copyHandler = "if (navigator.clipboard?.writeText) { navigator.clipboard.writeText({$jsUrl}).catch(() => window.prompt('Copy subscription URL', {$jsUrl})); } else { window.prompt('Copy subscription URL', {$jsUrl}); }";
-            $actions[] = Action::make('copy_subscription_url')
-                ->label('Copy URL')
-                ->icon('heroicon-o-clipboard')
-                ->color('gray')
-                ->extraAttributes([
-                    'x-on:click' => $copyHandler,
-                ]);
-        }
 
         $notification = Notification::make()
             ->title($this->renderConfirmed ? 'Proxy account created — URL ready' : 'Proxy account created — reload queued')
             ->body($body)
-            ->persistent()
-            ->actions($actions);
+            ->persistent();
 
         if ($this->renderConfirmed) {
             $notification->success();

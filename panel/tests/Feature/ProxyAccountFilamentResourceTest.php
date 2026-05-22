@@ -121,6 +121,52 @@ final class ProxyAccountFilamentResourceTest extends TestCase
     }
 
     #[Test]
+    public function subscription_url_action_opens_copy_modal_without_toast_noise(): void
+    {
+        config()->set('cool-tunnel.panel_domain', 'panel.example.test');
+        $admin = User::factory()->create();
+        $account = ProxyAccount::factory()->create();
+
+        Livewire::actingAs($admin)
+            ->test(ListProxyAccounts::class)
+            ->mountTableAction('show_subscription_url', $account)
+            ->assertTableActionMounted('show_subscription_url')
+            ->assertTableActionDataSet([
+                'subscription_url' => $account->subscriptionUrl(),
+            ])
+            ->assertSeeText('Import URL')
+            ->assertSeeText('Copy URL')
+            ->assertHasNoTableActionErrors();
+
+        Notification::assertNotNotified('Subscription URL — import in the app');
+    }
+
+    #[Test]
+    public function regenerate_uuid_sends_one_clean_notification_and_rotates_subscription_url(): void
+    {
+        config()->set('cool-tunnel.panel_domain', 'panel.example.test');
+        $admin = User::factory()->create();
+        $account = ProxyAccount::factory()->create();
+        $oldUuid = $account->uuid;
+        $oldUrl = $account->subscriptionUrl();
+        $generator = new ProxyAccountResourceFakeSingBoxGenerator(RenderResult::changed(str_repeat('e', 64)));
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
+
+        Livewire::actingAs($admin)
+            ->test(ListProxyAccounts::class)
+            ->callTableAction('regenerate_uuid', $account)
+            ->assertHasNoTableActionErrors();
+
+        $account->refresh();
+        $this->assertNotSame($oldUuid, $account->uuid);
+        $this->assertNotSame($oldUrl, $account->subscriptionUrl());
+        $this->assertSame(1, $generator->renderCalls);
+        Notification::assertNotified('New UUID — URL ready');
+        Notification::assertNotNotified('Subscription URL — import in the app');
+        Notification::assertNotNotified('Subscription URL not generated');
+    }
+
+    #[Test]
     public function edit_save_preserves_existing_protocol_mode(): void
     {
         $admin = User::factory()->create();

@@ -13,13 +13,15 @@ use App\Support\RealityDestinationCatalog;
 use App\Support\SingBoxProtocolCatalog;
 use App\Support\SingBoxRenderConfirmation;
 use Filament\Forms;
+use Filament\Forms\Components\Actions\Action as FormAction;
 use Filament\Forms\Form;
-use Filament\Notifications\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Support\Enums\MaxWidth;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Js;
 
 // Manage proxy accounts (the {name, uuid} entries that end up in
 // sing-box's `vless` inbound users[] array under VLESS+Reality).
@@ -180,12 +182,12 @@ class ProxyAccountResource extends Resource
                         $renderConfirmed = SingBoxRenderConfirmation::renderNow('proxy_account.regenerate_uuid');
 
                         $subUrl = $record->subscriptionUrl();
-                        $body = $uuid;
+                        $body = "New UUID: {$uuid}";
                         if ($subUrl !== null) {
-                            $body .= "\n\nSubscription URL is ready. Use Subscription URL, then Copy URL, and import it in the app.";
+                            $body .= "\n\nSubscription URL was rotated. Open Subscription URL to copy the fresh import URL.";
                         }
                         $body .= $renderConfirmed
-                            ? "\n\nsing-box config rendered now; the URL is ready to import."
+                            ? "\n\nsing-box config rendered now."
                             : "\n\nReload queued, but immediate render was not confirmed. If import fails, wait a few seconds and retry, then check panel logs for singbox.render.*.";
 
                         $notification = Notification::make()
@@ -219,47 +221,22 @@ class ProxyAccountResource extends Resource
                     ->label('Subscription URL')
                     ->icon('heroicon-o-link')
                     ->color('info')
+                    ->modalHeading('Subscription URL')
+                    ->modalDescription('Paste this URL into the cool-tunnel app import field.')
+                    ->modalWidth(MaxWidth::ThreeExtraLarge)
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('Close')
+                    ->form(fn (ProxyAccount $record): array => self::subscriptionUrlForm($record))
+                    ->mountUsing(fn (Form $form, ProxyAccount $record) => $form->fill([
+                        'subscription_url' => $record->subscriptionUrl() ?? '',
+                    ]))
+                    ->action(static function (): void {})
                     // Mirror the regenerate_password guard above. The
                     // generated URL embeds the per-account HMAC token —
                     // exposing it without authz would let an attacker
                     // who reaches this Livewire endpoint enumerate
                     // active subscription URLs.
-                    ->authorize(fn (): bool => auth()->check())
-                    ->action(function (ProxyAccount $record) {
-                        $url = $record->subscriptionUrl();
-                        if ($url === null) {
-                            Notification::make()
-                                ->title('Cannot generate URL')
-                                ->body('APP_KEY is not configured. Run php artisan key:generate and restart the panel.')
-                                ->danger()
-                                ->send();
-
-                            return;
-                        }
-                        // The "Copy URL" action wires an Alpine `x-on:click`
-                        // that calls `navigator.clipboard.writeText()` with
-                        // the URL safely JS-encoded via json_encode (handles
-                        // quotes / unicode / line breaks). Keep the token
-                        // out of the visible notification body so it does
-                        // not wrap into unreadable, shoulder-surfable text.
-                        $jsUrl = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                        $copyHandler = "if (navigator.clipboard?.writeText) { navigator.clipboard.writeText({$jsUrl}).catch(() => window.prompt('Copy subscription URL', {$jsUrl})); } else { window.prompt('Copy subscription URL', {$jsUrl}); }";
-                        Notification::make()
-                            ->title('Subscription URL — import in the app')
-                            ->body('URL is ready. Click Copy URL, then paste it into the app import field.')
-                            ->success()
-                            ->persistent()
-                            ->actions([
-                                Action::make('copy')
-                                    ->label('Copy URL')
-                                    ->icon('heroicon-o-clipboard')
-                                    ->color('gray')
-                                    ->extraAttributes([
-                                        'x-on:click' => $copyHandler,
-                                    ]),
-                            ])
-                            ->send();
-                    }),
+                    ->authorize(fn (): bool => auth()->check()),
                 Tables\Actions\DeleteAction::make()
                     ->successNotification(null)
                     ->after(fn () => self::sendRenderNotification('Proxy account deleted', 'proxy_account.delete')),
@@ -304,5 +281,49 @@ class ProxyAccountResource extends Resource
         }
 
         $notification->send();
+    }
+
+    /** @return array<int, Forms\Components\Component> */
+    private static function subscriptionUrlForm(ProxyAccount $record): array
+    {
+        $url = $record->subscriptionUrl();
+        if ($url === null) {
+            return [
+                Forms\Components\Placeholder::make('subscription_url_unavailable')
+                    ->label('URL unavailable')
+                    ->content('APP_KEY or PANEL_DOMAIN is not configured. Fix panel config before importing this account.'),
+            ];
+        }
+
+        $jsUrl = Js::from($url)->toHtml();
+        $copyHandler = <<<JS
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText({$jsUrl})
+                    .then(() => \$tooltip('Copied', { theme: \$store.theme, timeout: 1500 }))
+                    .catch(() => window.prompt('Copy subscription URL', {$jsUrl}));
+            } else {
+                window.prompt('Copy subscription URL', {$jsUrl});
+            }
+        JS;
+
+        return [
+            Forms\Components\TextInput::make('subscription_url')
+                ->label('Import URL')
+                ->readOnly()
+                ->dehydrated(false)
+                ->extraInputAttributes([
+                    'spellcheck' => 'false',
+                    'autocomplete' => 'off',
+                    'class' => 'font-mono text-xs sm:text-sm',
+                ])
+                ->suffixAction(
+                    FormAction::make('copy_subscription_url')
+                        ->label('Copy URL')
+                        ->icon('heroicon-o-clipboard')
+                        ->color('gray')
+                        ->alpineClickHandler($copyHandler),
+                    isInline: true,
+                ),
+        ];
     }
 }
