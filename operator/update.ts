@@ -190,14 +190,24 @@ async function rebuildCore(): Promise<void> {
         dieWithDiag(
             "ct-server-core build failed",
             `Common causes (in priority order):
-  - Out of disk     ->  df -h .   then  docker builder prune -af
-  - Network blip    ->  retry: ./ct update
-  - Cargo cache rot ->  rm -rf core/target  then retry
-  - Buildkit bug    ->  docker buildx rm default-builder; retry
+  - Docker cache pressure ->  docker builder prune -af
+  - Network route issue   ->  curl -4 -I https://static.rust-lang.org/
+                              curl -4 -I https://index.crates.io/
+  - Cargo cache rot       ->  rm -rf core/target  then retry
+  - Buildkit bug          ->  docker buildx rm default-builder; retry
 
-If the build error mentions a specific Rust crate, paste the last
-20 lines of output when asking for help. The crate name + line
-number are usually enough to diagnose.`,
+This release pins Rust to the exact rust:1.88.0-alpine image and
+skips already-installed rustup targets. If the log still says
+NetworkUnreachable, it is not an IPv6 drift bug; it means the VPS
+cannot reach the Rust or crates.io endpoints over outbound IPv4.
+
+Recovery:
+  docker builder prune -af
+  ./ct update
+
+If the build error mentions a specific Rust crate, paste the last 20
+lines of output when asking for help. The crate name + line number
+are usually enough to diagnose.`,
         );
     }
 }

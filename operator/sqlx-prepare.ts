@@ -80,7 +80,7 @@ async function runHostPrepare(env: Record<string, string>): Promise<void> {
 async function runContainerPrepare(): Promise<void> {
     // Build the project's own sqlx-prepare image (a stage of
     // docker/core/Dockerfile). BuildKit reuses the cached
-    // rust:1.88-alpine + alpine layers from previous core-builder
+    // rust:1.88.0-alpine + alpine layers from previous core-builder
     // builds, so no fresh Docker Hub pull is needed (rate-limit-
     // safe). First run takes ~3-5 min on a 1-vCPU VPS to compile
     // sqlx-cli; subsequent runs land in seconds (layer cached).
@@ -145,7 +145,7 @@ async function main(): Promise<number> {
     let useContainer = false;
     if (!(await which("cargo"))) {
         useContainer = true;
-        ok("cargo not on host — will run prepare inside rust:1.88-alpine container");
+        ok("cargo not on host — will run prepare inside rust:1.88.0-alpine container");
     } else if (!(await which("cargo-sqlx"))) {
         step("Install sqlx-cli (0.8.x, mysql + rustls)");
         const inst = await capture(

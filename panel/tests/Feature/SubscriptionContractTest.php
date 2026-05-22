@@ -239,7 +239,7 @@ class SubscriptionContractTest extends TestCase
             'https://github.com/coo1white/cool-tunnel',
             $runtime['plugins']['cool-tunnel-core']['source']['repo'],
         );
-        $this->assertSame('v3.0.6', $runtime['plugins']['cool-tunnel-core']['source']['ref']);
+        $this->assertSame('v3.0.8', $runtime['plugins']['cool-tunnel-core']['source']['ref']);
 
         $sig = $decoded['signature'];
         unset($decoded['signature']);
