@@ -51,6 +51,32 @@ That means:
 - when something fails, the diagnostic should name the next command to
   run.
 
+## Current release
+
+Latest stable server release: `v0.4.18`.
+
+For VPS installs and updates, use the repository default branch plus
+`ct update`; the operator resolves the current release and applies the
+safe deploy flow.
+
+```sh
+cd /opt/cool-tunnel-server
+ct backup
+ct update
+ct doctor
+```
+
+Release packaging stays intentionally small:
+
+- one server package/source release;
+- one `SHA256SUMS` file;
+- server-owned runtime assets for `sing-box` and `cool-tunnel-core`.
+
+The macOS client and future clients should fetch `sing-box` and
+`cool-tunnel-core` from
+[`cool-tunnel-server` releases](https://github.com/coo1white/cool-tunnel-server/releases),
+so client and server stay on the same runtime parts.
+
 ## 60-second quickstart
 
 The bootstrap follows the same copy/paste installer shape as
