@@ -424,6 +424,14 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 		manifests/ct-server-core.upstream.json \
 		manifests/ct-protocol.upstream.json \
 		manifests/panel.upstream.json
+	@jq --arg v "$(V)" \
+	    '.version = $$v \
+	     | .authority.release_tag = ("v" + $$v) \
+	     | .plugins["sing-box"].assets["darwin-universal"].url |= sub("/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+/"; "/releases/download/v" + $$v + "/") \
+	     | .plugins["cool-tunnel-core"].assets["darwin-universal"].filename = ("cool-tunnel-core-v" + $$v) \
+	     | .plugins["cool-tunnel-core"].assets["darwin-universal"].url = ("https://github.com/coo1white/cool-tunnel-server/releases/download/v" + $$v + "/cool-tunnel-core-v" + $$v)' \
+	    manifests/client-runtime.upstream.json > manifests/client-runtime.upstream.json.tmp
+	@mv manifests/client-runtime.upstream.json.tmp manifests/client-runtime.upstream.json
 	@# panel/config/cool-tunnel.php::version is the runtime source of
 	@# truth for the `ct:version` artisan command. Keep it aligned
 	@# with manifests/panel.upstream.json.
@@ -462,7 +470,7 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 	        echo ""; \
 	        exit 1; \
 	    }
-	@echo "    bumped to $(V) in: core/Cargo.toml, core/Cargo.lock, manifests/{ct-server-core,ct-protocol,panel}.upstream.json"
+	@echo "    bumped to $(V) in: core/Cargo.toml, core/Cargo.lock, manifests/{ct-server-core,ct-protocol,panel,client-runtime}.upstream.json"
 
 .PHONY: set-component-version
 set-component-version: ## bump component version across compose + Dockerfile + manifest in lockstep; pass COMPONENT=<slug> V=X.Y.Z

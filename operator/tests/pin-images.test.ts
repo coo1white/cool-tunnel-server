@@ -11,9 +11,9 @@ test("fromLineRe matches a bare FROM <image> line", () => {
 });
 
 test("fromLineRe matches FROM <image> AS <stage>", () => {
-    const re = fromLineRe("rust:1.88-alpine");
-    expect(re.test("FROM rust:1.88-alpine AS chef")).toBe(true);
-    expect(re.test("FROM rust:1.88-alpine AS sqlx-prepare")).toBe(true);
+    const re = fromLineRe("rust:1.88.0-alpine");
+    expect(re.test("FROM rust:1.88.0-alpine AS chef")).toBe(true);
+    expect(re.test("FROM rust:1.88.0-alpine AS sqlx-prepare")).toBe(true);
 });
 
 test("fromLineRe matches an already-pinned line", () => {
@@ -45,17 +45,17 @@ test("rewriteDockerfile pins a single FROM line", () => {
 
 test("rewriteDockerfile pins multiple FROM lines for the same image", () => {
     const body = [
-        "FROM rust:1.88-alpine AS chef",
+        "FROM rust:1.88.0-alpine AS chef",
         "FROM chef AS planner",
         "FROM chef AS builder",
         "FROM alpine:3.20 AS runtime",
-        "FROM rust:1.88-alpine AS sqlx-prepare",
+        "FROM rust:1.88.0-alpine AS sqlx-prepare",
         "",
     ].join("\n");
-    const r = rewriteDockerfile(body, "rust:1.88-alpine", "sha256:xyz");
+    const r = rewriteDockerfile(body, "rust:1.88.0-alpine", "sha256:xyz");
     expect(r.changedLines).toBe(2);
-    expect(r.content).toContain("FROM rust:1.88-alpine@sha256:xyz AS chef");
-    expect(r.content).toContain("FROM rust:1.88-alpine@sha256:xyz AS sqlx-prepare");
+    expect(r.content).toContain("FROM rust:1.88.0-alpine@sha256:xyz AS chef");
+    expect(r.content).toContain("FROM rust:1.88.0-alpine@sha256:xyz AS sqlx-prepare");
     // Untouched lines stay byte-for-byte identical.
     expect(r.content).toContain("FROM alpine:3.20 AS runtime");
 });
