@@ -101,7 +101,7 @@ export function checkDirectDialOutbound(direct: Record<string, unknown>): Direct
 
     if (strategy) {
         return {
-            ok: strategy === "prefer_ipv4" || strategy === "ipv4_only",
+            ok: strategy === "ipv4_only",
             detail: `${strategyField}=${strategy} ${timing}`,
         };
     }
@@ -441,7 +441,7 @@ async function checkSingboxDirectStrategy(_c: CheckCtx): Promise<CheckLine> {
             label: "Direct dial",
             severity: "warn",
             detail: checked.detail,
-            hint: "Set SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4 or ipv4_only, then ./ct render singbox",
+            hint: "Set SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only, then ./ct render singbox",
         };
     } catch {
         return {

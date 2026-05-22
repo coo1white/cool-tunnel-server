@@ -21,9 +21,9 @@ inline.
 
 | Thing | Detail |
 | --- | --- |
-| **VPS** | 1 vCPU, 1 GB RAM, 10 GB disk, public IPv4 (and ideally IPv6). 2 GB RAM is more comfortable once the panel + MariaDB + Caddy are all running. |
+| **VPS** | 1 vCPU, 1 GB RAM, 10 GB disk, public IPv4. 2 GB RAM is more comfortable once the panel + MariaDB + Caddy are all running. |
 | **Domain** | A real domain you control. ACME (Let's Encrypt) needs to validate it via HTTP-01 on port 80. Subdomains are fine (e.g. `proxy.example.com`). |
-| **DNS records** | `A` (and `AAAA` if you have v6) pointing at the VPS, **TTL 300**, **proxy disabled** (Cloudflare grey cloud, not orange). |
+| **DNS records** | `A` pointing at the VPS public IPv4, **TTL 300**, **proxy disabled** (Cloudflare grey cloud, not orange). |
 | **Ports open** at the cloud-provider firewall | `22/tcp` (SSH, your IP only is best), `80/tcp` (ACME), `443/tcp`, `443/udp` (HTTP/3 / QUIC). |
 | **SSH access** | Key-based, root or a sudoer. The commands below assume you're `root`; prefix with `sudo` otherwise. |
 
@@ -34,11 +34,9 @@ Before *anything else*, confirm DNS resolves to the box you're sitting on:
 ```bash
 # Replace with your domain. Should print the VPS public IP.
 dig +short A   proxy.example.com
-dig +short AAAA proxy.example.com   # only if you set an AAAA
 
 # And confirm what the box thinks its public IP is:
 curl -s4 https://ifconfig.co
-curl -s6 https://ifconfig.co        # only if you have v6
 ```
 
 If `dig` returns nothing or the wrong address, **fix DNS first**.
@@ -203,8 +201,8 @@ bantime  = 1h
 # Whitelist your own management IPs so you don't lock yourself out.
 # Replace with your operator's static IP / CIDR. Multiple values are
 # space-separated.
-ignoreip = 127.0.0.1/8 ::1
-# ignoreip = 127.0.0.1/8 ::1 203.0.113.42
+ignoreip = 127.0.0.1/8
+# ignoreip = 127.0.0.1/8 203.0.113.42
 
 # Use the modern nftables backend on Debian 11+. On Debian 10
 # (iptables-legacy) change to "iptables-multiport".
@@ -721,9 +719,9 @@ docker compose restart caddy
   Without `caddy_data`, every `docker compose down -v` resets
   your cert and burns LE rate-limit budget (5 duplicate-cert
   issuances per 7-day window).
-- **Public IPv6** — if your VPS has v6, set the `AAAA` record. Some
-  censorship systems are weaker over v6, and clients pick up the
-  faster path automatically (Happy Eyeballs).
+- **IPv4-only networking** — the installer pins the host and Docker
+  daemon to IPv4-only routing before Rust/Docker builds. Use an `A`
+  record for the proxy hostname.
 - **Protect the panel hostname.** Use a dedicated `PANEL_DOMAIN`,
   keep admin passwords unique, and leave Cloudflare proxying off for
   the panel/proxy records so ACME and Reality routing stay predictable.

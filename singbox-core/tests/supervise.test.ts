@@ -24,12 +24,7 @@ test("config watcher treats null filenames as relevant", () => {
 test("legacy direct outbound domain_strategy is migrated to domain_resolver", () => {
     const cfg: Record<string, unknown> = {
         outbounds: [
-            {
-                type: "direct",
-                tag: "direct",
-                domain_strategy: "prefer_ipv4",
-                connect_timeout: "2s",
-            },
+            { type: "direct", tag: "direct", domain_strategy: "prefer_ipv4", connect_timeout: "2s" },
         ],
     };
 
@@ -42,7 +37,7 @@ test("legacy direct outbound domain_strategy is migrated to domain_resolver", ()
             {
                 type: "direct",
                 tag: "direct",
-                domain_resolver: { server: "local-dns", strategy: "prefer_ipv4" },
+                domain_resolver: { server: "local-dns", strategy: "ipv4_only" },
                 connect_timeout: "2s",
             },
         ],
@@ -58,8 +53,8 @@ test("legacy migration preserves an existing domain_resolver", () => {
             {
                 type: "direct",
                 tag: "direct",
-                domain_strategy: "prefer_ipv6",
-                domain_resolver: { server: "custom-dns", strategy: "ipv6_only" },
+                domain_strategy: "prefer_ipv4",
+                domain_resolver: { server: "custom-dns", strategy: "prefer_ipv4" },
             },
         ],
     };
@@ -69,7 +64,7 @@ test("legacy migration preserves an existing domain_resolver", () => {
     expect(Array.isArray(outbounds) ? outbounds[0] : null).toEqual({
         type: "direct",
         tag: "direct",
-        domain_resolver: { server: "custom-dns", strategy: "ipv6_only" },
+        domain_resolver: { server: "custom-dns", strategy: "ipv4_only" },
     });
     const dns = cfg["dns"] as { servers?: unknown };
     expect(dns.servers).toEqual([{ type: "local", tag: "local-dns" }]);
@@ -84,7 +79,7 @@ test("legacy migration is a no-op for already modern configs", () => {
             {
                 type: "direct",
                 tag: "direct",
-                domain_resolver: { server: "local-dns", strategy: "prefer_ipv4" },
+                domain_resolver: { server: "local-dns", strategy: "ipv4_only" },
             },
         ],
     };
@@ -98,7 +93,7 @@ test("legacy migration is a no-op for already modern configs", () => {
             {
                 type: "direct",
                 tag: "direct",
-                domain_resolver: { server: "local-dns", strategy: "prefer_ipv4" },
+                domain_resolver: { server: "local-dns", strategy: "ipv4_only" },
             },
         ],
     });

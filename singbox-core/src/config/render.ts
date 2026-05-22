@@ -52,11 +52,7 @@ export interface ServerRenderInput {
     readonly accounts: readonly ServerAccountInput[];
     /** Log level. Production default: "info". */
     readonly log_level?: "trace" | "debug" | "info" | "warn" | "error";
-    /**
-     * Strategy for server-side direct outbound DNS answers. Defaults
-     * to prefer_ipv4 because many VPS providers expose broken IPv6
-     * routes; operators can set ipv4_only when IPv6 is fully disabled.
-     */
+    /** Strategy for server-side direct outbound DNS answers. */
     readonly direct_domain_strategy?: DirectDomainStrategy | "";
     /** Server-side direct outbound connect timeout, e.g. "2s". */
     readonly direct_connect_timeout?: string;
@@ -84,7 +80,7 @@ export function renderServerConfig(input: ServerRenderInput): SingboxConfig {
     const inbound: VlessInbound = {
         type: "vless",
         tag: "vless-in",
-        listen: "::",
+        listen: "0.0.0.0",
         listen_port: input.listen_port,
         users: input.accounts.map((a) => ({
             name: a.username,
@@ -112,7 +108,7 @@ export function renderServerConfig(input: ServerRenderInput): SingboxConfig {
         tag: "direct",
         domain_resolver: {
             server: "local-dns",
-            strategy: input.direct_domain_strategy || "prefer_ipv4",
+            strategy: input.direct_domain_strategy || "ipv4_only",
         },
         connect_timeout: input.direct_connect_timeout || "2s",
         fallback_delay: input.direct_fallback_delay || "100ms",

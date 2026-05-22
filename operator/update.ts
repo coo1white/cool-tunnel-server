@@ -28,7 +28,7 @@ import { die, makeTerm, ANSI } from "./src/util/term";
 import { dieWithDiag, type DiagFailure } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
-import { checkNetwork, checkStackUp, checkIpv6Routing } from "./src/util/preflight";
+import { checkNetwork, checkStackUp, checkIpv4OnlyRouting } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
 import { promptChoice, promptYn } from "./src/util/prompt";
@@ -440,14 +440,12 @@ export async function runUpdate(): Promise<number> {
     else if (stack.missing.length > 0) warn(stack.summary);
     else ok(stack.summary);
 
-    // IPv6 broken-routing auto-disable — mirrors the install-time
-    // logic. Without it, a Vultr/RackNerd box whose docker
-    // daemon.json got re-enabled for IPv6 (kernel update, provider
-    // reboot) would hit "static.rust-lang.org Network unreachable"
-    // on the next Rust rebuild. Skip via CT_SKIP_IPV6_AUTO_DISABLE=1.
-    const ipv6 = await checkIpv6Routing();
-    if (ipv6.action === "warn") warn(ipv6.detail);
-    else ok(ipv6.detail);
+    // Enforce IPv4-only before the Rust build so Docker/Rust never
+    // drift into broken provider routes for static.rust-lang.org.
+    // Skip via CT_SKIP_IPV6_AUTO_DISABLE=1.
+    const ipv4Only = await checkIpv4OnlyRouting();
+    if (ipv4Only.action === "warn") warn(ipv4Only.detail);
+    else ok(ipv4Only.detail);
 
     await preflightCleanTree();
 

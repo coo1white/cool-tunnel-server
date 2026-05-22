@@ -34,13 +34,13 @@ test("checkDirectDialOutbound accepts current domain_resolver strategy shape", (
     const checked = checkDirectDialOutbound({
         type: "direct",
         tag: "direct",
-        domain_resolver: { server: "local-dns", strategy: "prefer_ipv4" },
+        domain_resolver: { server: "local-dns", strategy: "ipv4_only" },
         connect_timeout: "2s",
         fallback_delay: "100ms",
     });
 
     expect(checked.ok).toBe(true);
-    expect(checked.detail).toContain("domain_resolver.strategy=prefer_ipv4");
+    expect(checked.detail).toContain("domain_resolver.strategy=ipv4_only");
 });
 
 test("checkDirectDialOutbound still accepts legacy domain_strategy shape", () => {

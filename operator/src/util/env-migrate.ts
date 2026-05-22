@@ -14,7 +14,7 @@
 //   3. Substitute `APP_URL=https?://${DOMAIN}` → `…${PANEL_DOMAIN}`
 //      (the pre-v0.0.68 APP_URL shape causes Livewire 3 419s).
 //   4. Backfill sing-box direct outbound dial defaults so old VPSes
-//      pick up the persistent IPv4-preferred renderer behaviour.
+//      pick up the persistent IPv4-only renderer behaviour.
 //
 // Pure: each function takes `.env` text in, returns the new text +
 // a Change descriptor describing what (if anything) was rewritten.
@@ -165,16 +165,31 @@ export function fixLegacyAppUrl(content: string): { content: string; change: Env
 // ---------- Phase 4: sing-box direct outbound defaults ----------
 
 export function backfillSingboxDirectDefaults(content: string): { content: string; change: EnvChange | null } {
+    const canonical = content.replace(
+        /^SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4$/m,
+        "SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only",
+    );
+    const strategyCanonicalized = canonical !== content;
+    content = canonical;
+
     if (
         SINGBOX_DIRECT_DOMAIN_STRATEGY_RE.test(content) &&
         SINGBOX_DIRECT_CONNECT_TIMEOUT_RE.test(content) &&
         SINGBOX_DIRECT_FALLBACK_DELAY_RE.test(content)
     ) {
-        return { content, change: null };
+        return {
+            content,
+            change: strategyCanonicalized
+                ? {
+                    phase: "singbox-direct-defaults",
+                    summary: "changed sing-box direct outbound strategy from prefer_ipv4 to ipv4_only",
+                }
+                : null,
+        };
     }
-    const additions = ["", "# v0.4.9 auto-migration — sing-box direct outbound dial policy"];
+    const additions = ["", "# v0.4.17 auto-migration — sing-box direct outbound IPv4-only policy"];
     if (!SINGBOX_DIRECT_DOMAIN_STRATEGY_RE.test(content)) {
-        additions.push("SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4");
+        additions.push("SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only");
     }
     if (!SINGBOX_DIRECT_CONNECT_TIMEOUT_RE.test(content)) {
         additions.push("SINGBOX_DIRECT_CONNECT_TIMEOUT=2s");
@@ -187,7 +202,9 @@ export function backfillSingboxDirectDefaults(content: string): { content: strin
         content: content.endsWith("\n") ? `${content}${block.slice(1)}\n` : `${content}${block}\n`,
         change: {
             phase: "singbox-direct-defaults",
-            summary: "added sing-box direct outbound IPv4-preferred defaults to .env",
+            summary: strategyCanonicalized
+                ? "changed sing-box direct outbound strategy to ipv4_only and added missing defaults"
+                : "added sing-box direct outbound IPv4-only defaults to .env",
         },
     };
 }

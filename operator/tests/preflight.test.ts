@@ -9,8 +9,8 @@ import {
     classifyDiskSpace,
     classifyStackUp,
     checkNetwork,
-    classifyIpv6Preflight,
-    dockerDaemonDisablesIpv6,
+    classifyIpv4OnlyPreflight,
+    dockerDaemonIsIpv4Only,
     mergeDockerDaemonIpv4Only,
 } from "../src/util/preflight";
 
@@ -175,13 +175,13 @@ test("checkNetwork: every probe fails → both hosts listed", async () => {
     }
 });
 
-// ---------- classifyIpv6Preflight ----------
+// ---------- classifyIpv4OnlyPreflight ----------
 
-test("classifyIpv6Preflight: CT_SKIP_IPV6_AUTO_DISABLE=1 → skipped", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: CT_SKIP_IPV6_AUTO_DISABLE=1 → skipped", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: true,
         sysctlPresent: false,
-        hasGlobalIpv6: false,
+        hasGlobalRoute: false,
         canDetect: true,
         fixResult: null,
     });
@@ -189,72 +189,73 @@ test("classifyIpv6Preflight: CT_SKIP_IPV6_AUTO_DISABLE=1 → skipped", () => {
     expect(r.detail).toContain("CT_SKIP_IPV6_AUTO_DISABLE");
 });
 
-test("classifyIpv6Preflight: no `curl` binary → skipped", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: no `curl` binary and no fix → warn", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: false,
         sysctlPresent: false,
-        hasGlobalIpv6: false,
+        hasGlobalRoute: false,
         canDetect: false,
         fixResult: null,
     });
-    expect(r.action).toBe("skipped");
+    expect(r.action).toBe("warn");
     expect(r.detail).toContain("curl");
 });
 
-test("classifyIpv6Preflight: existing sysctl override → ok (no-op)", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: existing sysctl + Docker override → ok", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: false,
         sysctlPresent: true,
-        hasGlobalIpv6: false,
+        hasGlobalRoute: false,
         canDetect: true,
-        dockerDaemonIpv6Disabled: true,
-        fixResult: null,
+        dockerDaemonIpv4Only: true,
+        fixResult: { ok: true, detail: "IPv4-only already enforced" },
     });
     expect(r.action).toBe("ok");
 });
 
-test("classifyIpv6Preflight: sysctl exists but docker daemon still needs ipv4-only fix", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: sysctl exists but docker daemon still needs IPv4-only fix", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: false,
         sysctlPresent: true,
-        hasGlobalIpv6: false,
+        hasGlobalRoute: false,
         canDetect: true,
-        dockerDaemonIpv6Disabled: false,
-        fixResult: { ok: true, detail: "wrote Docker ipv6=false" },
+        dockerDaemonIpv4Only: false,
+        fixResult: { ok: true, detail: "wrote Docker daemon config" },
     });
     expect(r.action).toBe("fixed");
     expect(r.detail).toContain("Docker daemon");
 });
 
-test("classifyIpv6Preflight: static rust unreachable over IPv4 reports network issue", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: static rust unreachable over IPv4 reports network issue after enforcement", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: false,
         sysctlPresent: false,
-        hasGlobalIpv6: false,
+        hasGlobalRoute: false,
         canDetect: true,
         rustStaticIpv4Ok: false,
-        fixResult: null,
+        fixResult: { ok: true, detail: "enforced" },
     });
     expect(r.action).toBe("warn");
     expect(r.detail).toContain("static.rust-lang.org");
 });
 
-test("classifyIpv6Preflight: working IPv6 globally → ok (no fix needed)", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: working global route still enforces IPv4-only", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: false,
         sysctlPresent: false,
-        hasGlobalIpv6: true,
+        hasGlobalRoute: true,
         canDetect: true,
-        fixResult: null,
+        fixResult: { ok: true, detail: "enforced" },
     });
-    expect(r.action).toBe("ok");
+    expect(r.action).toBe("fixed");
+    expect(r.detail).toContain("IPv4-only");
 });
 
-test("classifyIpv6Preflight: broken IPv6 + successful auto-fix → fixed", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: IPv4-only enforcement success → fixed", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: false,
         sysctlPresent: false,
-        hasGlobalIpv6: false,
+        hasGlobalRoute: false,
         canDetect: true,
         fixResult: { ok: true },
     });
@@ -262,11 +263,11 @@ test("classifyIpv6Preflight: broken IPv6 + successful auto-fix → fixed", () =>
     expect(r.detail).toContain("IPv4");
 });
 
-test("classifyIpv6Preflight: broken IPv6 + failed auto-fix → warn with recovery hint", () => {
-    const r = classifyIpv6Preflight({
+test("classifyIpv4OnlyPreflight: IPv4-only enforcement failure → warn with recovery hint", () => {
+    const r = classifyIpv4OnlyPreflight({
         skipEnv: false,
         sysctlPresent: false,
-        hasGlobalIpv6: false,
+        hasGlobalRoute: false,
         canDetect: true,
         fixResult: { ok: false, detail: "permission denied on sysctl.d" },
     });
@@ -274,7 +275,7 @@ test("classifyIpv6Preflight: broken IPv6 + failed auto-fix → warn with recover
     expect(r.detail).toContain("./ct update");
 });
 
-// ---------- Docker daemon IPv6 merge ----------
+// ---------- Docker daemon IPv4-only merge ----------
 
 test("mergeDockerDaemonIpv4Only creates a minimal config when daemon.json is missing", () => {
     const r = mergeDockerDaemonIpv4Only(null);
@@ -299,8 +300,8 @@ test("mergeDockerDaemonIpv4Only preserves existing Docker daemon keys", () => {
     }
 });
 
-test("dockerDaemonDisablesIpv6 only accepts exact ipv6=false config", () => {
-    expect(dockerDaemonDisablesIpv6('{"ipv6":false,"dns":["1.1.1.1"]}\n')).toBe(true);
-    expect(dockerDaemonDisablesIpv6('{"ipv6":true}')).toBe(false);
-    expect(dockerDaemonDisablesIpv6("{nope")).toBe(false);
+test("dockerDaemonIsIpv4Only only accepts exact Docker IPv4-only config", () => {
+    expect(dockerDaemonIsIpv4Only('{"ipv6":false,"dns":["1.1.1.1"]}\n')).toBe(true);
+    expect(dockerDaemonIsIpv4Only('{"ipv6":true}')).toBe(false);
+    expect(dockerDaemonIsIpv4Only("{nope")).toBe(false);
 });

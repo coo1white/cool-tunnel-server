@@ -29,7 +29,7 @@ FROM rust:1.88-alpine AS chef
 # Force rustup to use it even after core/rust-toolchain.toml is
 # copied into /build/core. Without this, rustup re-checks
 # static.rust-lang.org during `cargo chef prepare` / `cargo build`;
-# on Vultr-class hosts with broken IPv6 that can fail with
+# on Vultr-class hosts with broken provider routing that can fail with
 # NetworkUnreachable despite the toolchain already being present.
 ENV RUSTUP_TOOLCHAIN=1.88
 

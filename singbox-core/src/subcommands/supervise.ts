@@ -138,16 +138,23 @@ export function migrateLegacyDomainStrategyConfig(config: unknown): boolean {
     let changed = false;
     const outbounds = config["outbounds"];
     for (const outbound of outbounds) {
-        if (!isRecord(outbound) || !("domain_strategy" in outbound)) continue;
-        const strategy = outbound["domain_strategy"];
+        if (!isRecord(outbound) || outbound["type"] !== "direct") continue;
+        if ("domain_strategy" in outbound) {
+            delete outbound["domain_strategy"];
+            changed = true;
+        }
         if (!isRecord(outbound["domain_resolver"])) {
             outbound["domain_resolver"] = {
                 server: "local-dns",
-                ...(typeof strategy === "string" && strategy !== "" ? { strategy } : {}),
+                strategy: "ipv4_only",
             };
+            changed = true;
+        } else {
+            if (outbound["domain_resolver"]["strategy"] !== "ipv4_only") {
+                outbound["domain_resolver"]["strategy"] = "ipv4_only";
+                changed = true;
+            }
         }
-        delete outbound["domain_strategy"];
-        changed = true;
     }
 
     if (!changed) return false;
