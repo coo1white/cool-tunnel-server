@@ -40,6 +40,7 @@ test("prebuilt core fetch path wraps release binary as panel source image", asyn
     const script = await Bun.file("../scripts/fetch_core_binary.sh").text();
     const buildScript = await Bun.file("../scripts/build_release_core_assets.sh").text();
     const dockerfile = await Bun.file("../docker/core/prebuilt.Dockerfile").text();
+    const assetDockerfile = await Bun.file("../docker/core/release-asset.Dockerfile").text();
     const install = await Bun.file("./install.ts").text();
     const update = await Bun.file("./update.ts").text();
 
@@ -53,8 +54,11 @@ test("prebuilt core fetch path wraps release binary as panel source image", asyn
     expect(install).toContain("./scripts/fetch_core_binary.sh");
     expect(update).toContain("./scripts/fetch_core_binary.sh");
     expect(buildScript).toContain("docker buildx build");
+    expect(buildScript).toContain("docker/core/release-asset.Dockerfile");
     expect(buildScript).toContain("linux/amd64");
     expect(buildScript).toContain("linux/arm64");
     expect(buildScript).toContain("CT_ALPINE_REPOSITORY_BASE");
     expect(buildScript).toContain("SHA256SUMS.core");
+    expect(assetDockerfile).toContain("cargo build --release --locked --bin ct-server-core");
+    expect(assetDockerfile).not.toContain("cargo chef");
 });

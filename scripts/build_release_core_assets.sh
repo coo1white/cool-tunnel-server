@@ -19,6 +19,7 @@ PLATFORMS="${PLATFORMS:-linux/amd64 linux/arm64}"
 CT_RUST_BASE_IMAGE="${CT_RUST_BASE_IMAGE:-rust:1.88.0-alpine}"
 CT_ALPINE_BASE_IMAGE="${CT_ALPINE_BASE_IMAGE:-alpine:3.20}"
 CT_ALPINE_REPOSITORY_BASE="${CT_ALPINE_REPOSITORY_BASE:-}"
+CT_CORE_ASSET_TARGET="${CT_CORE_ASSET_TARGET:-artifact}"
 
 mkdir -p "$OUT_DIR"
 
@@ -42,24 +43,24 @@ build_one() {
     echo "==> building ct-server-core-${suffix} (${platform})"
     local cmd=(docker buildx build
         --platform "$platform"
-        --target runtime
+        --target "$CT_CORE_ASSET_TARGET"
         --provenance=false
         --build-arg "CT_RUST_BASE_IMAGE=${CT_RUST_BASE_IMAGE}"
         --build-arg "CT_ALPINE_BASE_IMAGE=${CT_ALPINE_BASE_IMAGE}"
         --build-arg "CT_ALPINE_REPOSITORY_BASE=${CT_ALPINE_REPOSITORY_BASE}"
         --output "type=local,dest=${target_dir}"
-        -f docker/core/Dockerfile
+        -f docker/core/release-asset.Dockerfile
         .)
     if [[ -n "$BUILDER" ]]; then
         cmd=(docker buildx build --builder "$BUILDER"
             --platform "$platform"
-            --target runtime
+            --target "$CT_CORE_ASSET_TARGET"
             --provenance=false
             --build-arg "CT_RUST_BASE_IMAGE=${CT_RUST_BASE_IMAGE}"
             --build-arg "CT_ALPINE_BASE_IMAGE=${CT_ALPINE_BASE_IMAGE}"
             --build-arg "CT_ALPINE_REPOSITORY_BASE=${CT_ALPINE_REPOSITORY_BASE}"
             --output "type=local,dest=${target_dir}"
-            -f docker/core/Dockerfile
+            -f docker/core/release-asset.Dockerfile
             .)
     fi
     "${cmd[@]}"
