@@ -36,4 +36,7 @@ test("core Dockerfile uses the baked Rust toolchain without network rustup sync"
     expect(dockerfile).toContain(`FROM rust:${channel}-alpine AS chef`);
     expect(dockerfile).toContain(`FROM rust:${channel}-alpine AS sqlx-prepare`);
     expect(dockerfile).toContain(`ENV RUSTUP_TOOLCHAIN=${channel}`);
+    expect(dockerfile).toContain(`rustup target list --installed | grep -qx "\${RUST_TARGET}"`);
+    expect(dockerfile).not.toContain(`rustup target add "\${RUST_TARGET}" &&`);
+    expect(dockerfile).toContain(`rustup component list --installed | grep -qx "\${component}"`);
 });

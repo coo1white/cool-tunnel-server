@@ -23,7 +23,7 @@
 # `cargo install cargo-chef --locked` resolves cargo-platform 0.3.2
 # transitively, and cargo-platform 0.3.2 requires rustc 1.88 — the
 # binding floor today.
-FROM rust:1.88-alpine AS chef
+FROM rust:1.88.0-alpine AS chef
 
 # The base image already contains the exact Rust release we pin.
 # Force rustup to use it even after core/rust-toolchain.toml is
@@ -31,7 +31,7 @@ FROM rust:1.88-alpine AS chef
 # static.rust-lang.org during `cargo chef prepare` / `cargo build`;
 # on Vultr-class hosts with broken provider routing that can fail with
 # NetworkUnreachable despite the toolchain already being present.
-ENV RUSTUP_TOOLCHAIN=1.88
+ENV RUSTUP_TOOLCHAIN=1.88.0
 
 # Build deps: musl for static linking, openssl/pkg-config for sqlx +
 # rustls (which we use, but transitive deps still need pkg-config).
@@ -64,7 +64,9 @@ RUN case "${TARGETARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/arm
         arm)   RUST_TARGET=armv7-unknown-linux-musleabihf ;; \
         *)     echo "unsupported TARGETARCH: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
     esac && \
-    rustup target add "${RUST_TARGET}" && \
+    if ! rustup target list --installed | grep -qx "${RUST_TARGET}"; then \
+        rustup target add "${RUST_TARGET}"; \
+    fi && \
     printf '%s' "${RUST_TARGET}" > /tmp/rust-target
 
 WORKDIR /build/core
@@ -215,8 +217,8 @@ CMD ["--help"]
 #
 # Brought up via:
 #   docker compose --profile sqlx run --rm sqlx-prepare
-FROM rust:1.88-alpine AS sqlx-prepare
-ENV RUSTUP_TOOLCHAIN=1.88
+FROM rust:1.88.0-alpine AS sqlx-prepare
+ENV RUSTUP_TOOLCHAIN=1.88.0
 RUN apk add --no-cache \
         musl-dev \
         pkgconfig \
@@ -229,8 +231,14 @@ RUN apk add --no-cache \
 # at every runtime invocation and tries to download them from
 # static.rust-lang.org — which fails on the ct-data internal-only
 # network. We bake them in at build time when the container has
-# regular internet via BuildKit.
-RUN rustup component add clippy rustfmt
+# regular internet via BuildKit. Skip already-baked components so
+# hosts with blocked static.rust-lang.org routes can still reuse the
+# base image without a rustup sync.
+RUN for component in clippy rustfmt; do \
+        if ! rustup component list --installed | grep -qx "${component}"; then \
+            rustup component add "${component}"; \
+        fi; \
+    done
 RUN cargo install sqlx-cli --version "~0.8" \
         --no-default-features --features "rustls,mysql" --locked
 WORKDIR /build/core
