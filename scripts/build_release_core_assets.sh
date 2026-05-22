@@ -65,7 +65,11 @@ build_one() {
     fi
     "${cmd[@]}"
 
-    cp "${target_dir}/usr/local/bin/ct-server-core" "$binary"
+    if [[ -f "${target_dir}/ct-server-core" ]]; then
+        cp "${target_dir}/ct-server-core" "$binary"
+    else
+        cp "${target_dir}/usr/local/bin/ct-server-core" "$binary"
+    fi
     chmod 0755 "$binary"
     rm -rf "$target_dir"
     if command -v file >/dev/null 2>&1; then
