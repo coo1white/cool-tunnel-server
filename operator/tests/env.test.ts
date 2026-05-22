@@ -17,6 +17,13 @@ test("parseDotenv strips comments and blank lines", () => {
     expect(Object.keys(env)).toHaveLength(2);
 });
 
+test("parseDotenv strips inline comments on unquoted values only", () => {
+    const env = parseDotenv("A=value # comment\nB=has#hash\nC=\"quoted # value\"\n");
+    expect(env["A"]).toBe("value");
+    expect(env["B"]).toBe("has#hash");
+    expect(env["C"]).toBe("quoted # value");
+});
+
 test("parseDotenv strips surrounding quotes", () => {
     const env = parseDotenv(`A="hello world"\nB='single quoted'\nC=bare\n`);
     expect(env["A"]).toBe("hello world");

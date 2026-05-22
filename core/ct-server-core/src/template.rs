@@ -169,8 +169,8 @@ impl Bindings {
 /// **Caddyfile** directive. Returns `Err(_)` if the value contains a
 /// character that would let an operator-controlled binding break out
 /// of its directive context: newlines (`\n`/`\r`) terminate a
-/// directive, `{`/`}` open or close a site block, `"` opens a quoted
-/// string. A hostile DOMAIN like
+/// directive, spaces/tabs split unquoted arguments, `{`/`}` open or
+/// close a site block, and `"` opens a quoted string. A hostile DOMAIN like
 ///
 ///   `example.com\n}\nadmin localhost:2019\n{`
 ///
@@ -197,7 +197,7 @@ impl Bindings {
 pub fn caddyfile_validate(field: &str, value: &str) -> Result<(), String> {
     for c in value.chars() {
         match c {
-            '\n' | '\r' | '{' | '}' | '"' => {
+            '\n' | '\r' | '\t' | ' ' | '{' | '}' | '"' => {
                 return Err(format!(
                     "binding `{field}` contains Caddyfile-metasyntax \
                      character `{}` (codepoint U+{:04X}); refusing to \
@@ -352,6 +352,8 @@ mod tests {
         for (label, c) in [
             ("newline", '\n'),
             ("carriage-return", '\r'),
+            ("tab", '\t'),
+            ("space", ' '),
             ("open-brace", '{'),
             ("close-brace", '}'),
             ("double-quote", '"'),

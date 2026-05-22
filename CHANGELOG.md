@@ -16,16 +16,52 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
-- Promoted `client-runtime.upstream.json` from a macOS-only helper into
-  a portable runtime catalog with server release authority, source refs,
-  and per-platform asset metadata for the shared `sing-box` and
-  `cool-tunnel-core` plugins.
-
 ### Removed
 
 ### Fixed
 
 ### Security
+
+---
+
+## [0.4.19] — 2026-05-22 — Operator safety and progress hardening
+
+### Added
+
+- Added a `ct update` arrow progress indicator that shows phase count and
+  percentage during long VPS updates, including periodic redraws while Docker
+  build output is streaming.
+
+### Changed
+
+- Promoted `client-runtime.upstream.json` from a macOS-only helper into
+  a portable runtime catalog with server release authority, source refs,
+  and per-platform asset metadata for the shared `sing-box` and
+  `cool-tunnel-core` plugins.
+- Pinned the operator release workflow to Bun 1.3.14 so rebuilding a release
+  tag does not float to whichever Bun version is latest on that day.
+- Made the panel and singbox Dockerfiles compile `singbox-core` for the target
+  platform (`linux-x64` or `linux-arm64`) and fail on lockfile drift instead of
+  silently re-resolving dependencies.
+
+### Fixed
+
+- Fixed `ct restore` so it refuses stale project volumes, validates backup tar
+  members before extraction, checks required backup contents explicitly, and
+  cleans private extracted data on failure.
+- Fixed `ct backup` to use a per-run private temp directory and always restart
+  Caddy after snapshot attempts.
+- Fixed `.env` parsing so unquoted inline comments are stripped without
+  corrupting literal `#` characters in secrets.
+- Tightened Caddyfile binding validation to reject spaces and tabs in unquoted
+  directive values.
+
+### Security
+
+- Removed a nested-shell ACME certificate probe in `ct doctor`; hostile domain
+  values are now passed to `openssl` as argv data instead of shell syntax.
+- Changed `credential-lock:check` drift summaries to report counts instead of
+  usernames, keeping diagnostic output useful without leaking account names.
 
 ---
 

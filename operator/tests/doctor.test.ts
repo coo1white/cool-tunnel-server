@@ -7,6 +7,7 @@ import {
     checkRecentRealityInvalidOutput,
     checkSupervisordStatusOutput,
     indexComposeRowsByService,
+    opensslSClientArgs,
 } from "../src/tasks/doctor";
 
 test("indexComposeRowsByService indexes valid compose rows by service", () => {
@@ -116,4 +117,15 @@ test("checkRecentRealityInvalidOutput warns with count and first sample", () => 
     expect(checked.severity).toBe("warn");
     expect(checked.detail).toContain("2 invalid handshakes");
     expect(checked.detail).toContain("REALITY");
+});
+
+test("opensslSClientArgs keeps hostile domain inside one argv value", () => {
+    const hostile = "panel.example.com; touch /tmp/ct-pwn #";
+    expect(opensslSClientArgs(hostile)).toEqual([
+        "s_client",
+        "-servername",
+        hostile,
+        "-connect",
+        `${hostile}:443`,
+    ]);
 });
