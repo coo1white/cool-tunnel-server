@@ -10,6 +10,7 @@ import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
+import { parseDfAvailableKb } from "../util/preflight";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -68,6 +69,10 @@ type RealityInvalidCheck = {
 
 export function opensslSClientArgs(domain: string): string[] {
     return ["s_client", "-servername", domain, "-connect", `${domain}:443`];
+}
+
+export function recentRealityLogArgs(): string[] {
+    return ["compose", "logs", "--since=10m", "--no-color", "singbox"];
 }
 
 export function indexComposeRowsByService(output: string): Map<string, ComposePsRow> {
@@ -132,16 +137,18 @@ export function checkSupervisordStatusOutput(output: string): SupervisordCheck {
 }
 
 export function checkRecentRealityInvalidOutput(output: string): RealityInvalidCheck {
-    const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+    const lines = output
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.includes("REALITY: processed invalid connection"));
     const count = lines.length;
     if (count === 0) {
         return { severity: "pass", detail: "no invalid handshakes in last 10m" };
     }
 
-    const first = lines[0]?.replace(/^.*\| /, "").slice(0, 96) ?? "recent invalid handshake";
     return {
         severity: "warn",
-        detail: `${count} invalid handshakes in last 10m; first=${first}`,
+        detail: `${count} invalid handshakes in last 10m`,
     };
 }
 
@@ -587,10 +594,17 @@ async function checkSupervisord(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function checkRecentRealityInvalid(_c: CheckCtx): Promise<CheckLine> {
-    const r = await capture(
-        $`bash -c "docker compose logs --since=10m --no-color singbox 2>&1 | grep -F 'REALITY: processed invalid connection' || true"`,
-    );
-    const checked = checkRecentRealityInvalidOutput(r.stdout);
+    const logs = await probeRecentRealityInvalidLogs();
+    if (!logs.ok) {
+        return {
+            group: G_COMPOSE,
+            label: "Reality auth",
+            severity: "warn",
+            detail: "could not read recent singbox logs",
+            hint: "docker compose ps singbox; docker compose logs --tail=80 singbox",
+        };
+    }
+    const checked = checkRecentRealityInvalidOutput(logs.output);
     if (checked.severity === "pass") {
         return {
             group: G_COMPOSE,
@@ -609,11 +623,29 @@ async function checkRecentRealityInvalid(_c: CheckCtx): Promise<CheckLine> {
     };
 }
 
+async function probeRecentRealityInvalidLogs(): Promise<{ ok: boolean; output: string }> {
+    const logs = Bun.spawn(["docker", ...recentRealityLogArgs()], {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const grep = Bun.spawn(["grep", "-F", "REALITY: processed invalid connection"], {
+        stdin: logs.stdout,
+        stdout: "pipe",
+        stderr: "ignore",
+    });
+    const [output, logsExit] = await Promise.all([
+        new Response(grep.stdout).text(),
+        logs.exited,
+        grep.exited,
+    ]);
+    if (logsExit !== 0) {
+        return { ok: false, output: await new Response(logs.stderr).text() };
+    }
+    return { ok: true, output };
+}
+
 function parseDfAvailKb(out: string): number {
-    const line = out.trim().split("\n")[1];
-    if (!line) return 0;
-    const cols = line.split(/\s+/);
-    return Number(cols[3] ?? 0) || 0;
+    return parseDfAvailableKb(out) ?? 0;
 }
 
 async function checkDisk(_c: CheckCtx): Promise<CheckLine> {
@@ -684,9 +716,19 @@ async function checkRam(_c: CheckCtx): Promise<CheckLine> {
 
 async function infoReleaseVersion(_c: CheckCtx): Promise<CheckLine> {
     const r = await capture(
-        $`bash -c "docker compose exec -T panel ct-server-core --json version 2>/dev/null | jq -r '.version // \"?\"'"`,
+        $`docker compose exec -T panel ct-server-core --json version`,
     );
-    const v = r.ok && r.stdout.trim() ? r.stdout.trim() : "?";
+    let v = "?";
+    if (r.ok && r.stdout.trim()) {
+        try {
+            const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+            if (typeof parsed["version"] === "string" && parsed["version"] !== "") {
+                v = parsed["version"];
+            }
+        } catch {
+            v = "?";
+        }
+    }
     return { group: G_INFO, label: "Release", severity: "info", detail: `v${v}` };
 }
 

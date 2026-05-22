@@ -23,6 +23,7 @@ export async function waitFor(opts: WaitOptions): Promise<boolean> {
     const progressEveryMs = opts.progressEveryMs ?? 15_000;
     for (let i = 0; i < opts.maxAttempts; i++) {
         if (await opts.probe()) return true;
+        if (i === opts.maxAttempts - 1) break;
         const now = Date.now();
         if (progressEveryMs > 0 && now - lastProgressAt >= progressEveryMs) {
             const elapsedSec = Math.round(((i + 1) * opts.intervalMs) / 1000);

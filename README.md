@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-1c5cdc)](./LICENSE)
 [![LTSC-Heng Draft](https://img.shields.io/badge/license--draft-LTSC--Heng-111111)](./LTSC-HENG-LICENSE-DRAFT.md)
-[![Latest release](https://img.shields.io/badge/release-v0.4.18-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.4.18)
+[![Latest release](https://img.shields.io/badge/release-v0.4.20-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.4.20)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
 
@@ -53,7 +53,7 @@ That means:
 
 ## Current release
 
-Latest stable server release: `v0.4.18`.
+Latest stable server release: `v0.4.20`.
 
 For VPS installs and updates, use the repository default branch plus
 `ct update`; the operator resolves the current release and applies the

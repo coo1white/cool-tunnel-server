@@ -24,6 +24,30 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.20] — 2026-05-22 — Doctor performance and privacy hardening
+
+### Changed
+
+- Reduced `ct doctor` process overhead by removing nested shell pipelines from
+  the Reality invalid-handshake and release-version checks.
+- Reused the operator's shared `df` parser for doctor disk checks so doctor
+  and update/install classify filesystem headroom consistently.
+- Made bounded waits return immediately after the final failed probe instead
+  of sleeping one extra interval before reporting timeout.
+
+### Fixed
+
+- Updated README release badge and current-release text to match the release
+  being cut, with a regression test against panel config drift.
+
+### Security
+
+- Kept recent Reality invalid-handshake diagnostics count-only in `ct doctor`
+  instead of echoing raw sing-box log samples that may contain fingerprintable
+  timing or connection context.
+
+---
+
 ## [0.4.19] — 2026-05-22 — Operator safety and progress hardening
 
 ### Added

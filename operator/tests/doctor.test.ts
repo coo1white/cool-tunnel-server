@@ -8,6 +8,7 @@ import {
     checkSupervisordStatusOutput,
     indexComposeRowsByService,
     opensslSClientArgs,
+    recentRealityLogArgs,
 } from "../src/tasks/doctor";
 
 test("indexComposeRowsByService indexes valid compose rows by service", () => {
@@ -106,7 +107,18 @@ test("checkRecentRealityInvalidOutput passes when recent logs are clean", () => 
     expect(checked.detail).toContain("no invalid handshakes");
 });
 
-test("checkRecentRealityInvalidOutput warns with count and first sample", () => {
+test("checkRecentRealityInvalidOutput ignores unrelated singbox logs", () => {
+    const checked = checkRecentRealityInvalidOutput(
+        [
+            "ct-singbox | INFO inbound/vless[vless-in]: connection opened",
+            "ct-singbox | ERROR unrelated TLS handshake failure",
+        ].join("\n"),
+    );
+
+    expect(checked.severity).toBe("pass");
+});
+
+test("checkRecentRealityInvalidOutput warns with count only", () => {
     const checked = checkRecentRealityInvalidOutput(
         [
             "ct-singbox | +0000 2026-05-22 11:10:49 ERROR inbound/vless[vless-in]: TLS handshake: REALITY: processed invalid connection",
@@ -116,7 +128,8 @@ test("checkRecentRealityInvalidOutput warns with count and first sample", () => 
 
     expect(checked.severity).toBe("warn");
     expect(checked.detail).toContain("2 invalid handshakes");
-    expect(checked.detail).toContain("REALITY");
+    expect(checked.detail).not.toContain("REALITY");
+    expect(checked.detail).not.toContain("ct-singbox");
 });
 
 test("opensslSClientArgs keeps hostile domain inside one argv value", () => {
@@ -128,4 +141,8 @@ test("opensslSClientArgs keeps hostile domain inside one argv value", () => {
         "-connect",
         `${hostile}:443`,
     ]);
+});
+
+test("recentRealityLogArgs avoids shell pipelines", () => {
+    expect(recentRealityLogArgs()).toEqual(["compose", "logs", "--since=10m", "--no-color", "singbox"]);
 });

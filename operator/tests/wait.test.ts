@@ -24,3 +24,17 @@ test("waitFor emits periodic progress while polling", async () => {
 
     expect(errors.some((line) => line.includes("waiting for test dependency"))).toBe(true);
 });
+
+test("waitFor does not sleep after the final failed probe", async () => {
+    const started = Date.now();
+    const ok = await waitFor({
+        label: "fast failure",
+        maxAttempts: 1,
+        intervalMs: 100,
+        probe: async () => false,
+        onTimeout: () => undefined,
+    });
+
+    expect(ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(80);
+});
