@@ -58,6 +58,7 @@ caddy/Caddyfile.rendered
 # Backup tarballs from scripts/backup.sh
 backups/
 diagnostics/
+release-assets/
 
 # Rust build artifacts (the workspace lives in core/)
 core/target/
