@@ -34,8 +34,9 @@
 #
 #         panel      Filament 3 admin (PHP). Writes
 #                    /data/config/singbox.json via singbox-core
-#                    render-server (Bun, replacing the v0.3.x Rust
-#                    renderer). Manages Reality keypair + per-user
+#                    render-server (prebuilt Bun-compiled binary,
+#                    replacing the v0.3.x Rust renderer). Manages
+#                    Reality keypair + per-user
 #                    UUIDs instead of basic-auth passwords.
 #
 #         db / redis MariaDB + Redis.
@@ -194,11 +195,13 @@ services:
   singbox:
     <<: *svc-hardening
     build:
-      # Context is the repo root so the Dockerfile can COPY the
-      # singbox-core/ source tree from there for the `bun build
-      # --compile` stage.
+      # Context is the repo root so the Dockerfile can COPY from the
+      # local prebuilt singbox-core carrier image prepared by
+      # scripts/fetch_singbox_core_binary.sh.
       context: .
       dockerfile: docker/singbox/Dockerfile
+      args:
+        CT_SINGBOX_CORE_IMAGE: cool-tunnel-server-singbox-core:latest
     image: cool-tunnel-server-singbox:latest
     container_name: ct-singbox
     restart: unless-stopped
@@ -240,16 +243,14 @@ services:
     <<: *svc-hardening
     build:
       # Context is the repo ROOT (not ./docker/panel) so the
-      # Dockerfile's singbox-core-build stage can COPY singbox-core/
-      # from the repo root. v0.3.x had the narrower ./docker/panel
-      # context; v0.4.0+ widens it for the Bun-compile stage. All
-      # the existing `COPY opcache.ini …` lines were rewritten to
-      # the absolute-from-context form (`COPY docker/panel/opcache.ini
-      # …`) in the same commit.
+      # Dockerfile can copy panel/ plus shared Docker assets. The
+      # singbox-core binary is supplied by the prebuilt carrier image
+      # prepared by scripts/fetch_singbox_core_binary.sh.
       context: .
       dockerfile: docker/panel/Dockerfile
       args:
         CT_CORE_IMAGE: cool-tunnel-server-core:latest
+        CT_SINGBOX_CORE_IMAGE: cool-tunnel-server-singbox-core:latest
     image: cool-tunnel-server-panel:latest
     container_name: ct-panel
     restart: unless-stopped

@@ -28,6 +28,9 @@ before relying on a version bump as a compatibility signal.
 
 ### Changed
 
+- Moved server-side `singbox-core` to prebuilt Linux release assets consumed
+  by panel and singbox Docker images, so weak VPS installs no longer run
+  `bun install`, `bunx tsc`, or `bun build --compile` during Docker builds.
 - Reduced `ct doctor` process overhead by removing nested shell pipelines from
   the Reality invalid-handshake and release-version checks.
 - Reused the operator's shared `df` parser for doctor disk checks so doctor
@@ -39,6 +42,8 @@ before relying on a version bump as a compatibility signal.
 
 - Updated README release badge and current-release text to match the release
   being cut, with a regression test against panel config drift.
+- Added the linux-arm64 upstream sing-box pin required by prebuilt
+  `singbox-core-linux-arm64` release assets.
 
 ### Security
 

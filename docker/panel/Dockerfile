@@ -33,32 +33,16 @@ ARG CT_CORE_IMAGE=cool-tunnel-server-core:latest
 FROM ${CT_CORE_IMAGE} AS ct-core-stage
 
 # ----------------------------------------------------------------------
-# singbox-core-build — v0.4.0+ Bun compile of singbox-core
+# singbox-core-stage — v0.4.0+ prebuilt singbox-core carrier
 # ----------------------------------------------------------------------
 #
-# Compiles singbox-core/src/cli.ts to a self-contained linux-x64
-# binary the panel runtime shells to (SingboxConfigGenerator.php
-# spawns `/usr/local/bin/singbox-core render-server`). The same
-# source is also compiled inside docker/singbox/Dockerfile for the
-# ct-singbox supervisor — duplicating the stage rather than sharing
-# avoids cross-Dockerfile coupling (one Dockerfile per image is the
-# project convention; if a future shared-base image makes sense
-# we'll add it then).
-FROM oven/bun:1.1-alpine AS singbox-core-build
-ARG TARGETARCH
-WORKDIR /build
-COPY singbox-core /build/singbox-core
-RUN cd singbox-core \
-    && bun install --frozen-lockfile \
-    && bunx tsc --noEmit \
-    && case "${TARGETARCH:-amd64}" in \
-         amd64) bun_target=bun-linux-x64 ;; \
-         arm64) bun_target=bun-linux-arm64 ;; \
-         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-       esac \
-    && bun build --compile --target="${bun_target}" \
-        src/cli.ts \
-        --outfile /out/singbox-core
+# The panel runtime shells to `/usr/local/bin/singbox-core
+# render-server` (SingboxConfigGenerator.php). Release installs fetch a
+# signed/checksummed singbox-core binary and wrap it as this tiny local
+# image, so low-resource VPS hosts do not run Bun install/typecheck/
+# compile during `ct install` or `ct update`.
+ARG CT_SINGBOX_CORE_IMAGE=cool-tunnel-server-singbox-core:latest
+FROM ${CT_SINGBOX_CORE_IMAGE} AS singbox-core-stage
 
 # dunglas/frankenphp ships PHP + Caddy + Composer in a single Alpine
 # image. PHP 8.4 over the prior 8.3-fpm-alpine: laravel/octane v2.17
@@ -212,7 +196,7 @@ RUN chmod +x /usr/local/bin/ct-server-core \
 # path. A docker-exec into a sibling container adds latency + a new
 # dependency on the docker socket. Embedding the compiled binary
 # keeps the call shape identical to the v0.3.x naive-render flow.
-COPY --from=singbox-core-build /out/singbox-core /usr/local/bin/singbox-core
+COPY --from=singbox-core-stage /usr/local/bin/singbox-core /usr/local/bin/singbox-core
 RUN chmod +x /usr/local/bin/singbox-core \
     && /usr/local/bin/singbox-core version || true
 

@@ -28,7 +28,7 @@ export const SINGBOX_UPSTREAM: UpstreamPin = upstreamRaw as UpstreamPin;
 /**
  * Asset key for the current Bun build target.
  *
- * Resolves to one of: linux-amd64 / darwin-amd64 / darwin-arm64.
+ * Resolves to one of: linux-amd64 / linux-arm64 / darwin-amd64 / darwin-arm64.
  * Throws on unsupported host so the operator hits the failure
  * during install rather than at first spawn.
  */
@@ -36,10 +36,11 @@ export function currentAssetKey(): keyof typeof SINGBOX_UPSTREAM.assets {
     const platform = process.platform;
     const arch = process.arch;
     if (platform === "linux" && arch === "x64") return "linux-amd64";
+    if (platform === "linux" && arch === "arm64") return "linux-arm64";
     if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
     if (platform === "darwin" && arch === "x64") return "darwin-amd64";
     throw new Error(
         `unsupported host platform/arch: ${platform}/${arch}; ` +
-            `singbox-core supports linux-x64, darwin-arm64, darwin-x64`,
+            `singbox-core supports linux-x64, linux-arm64, darwin-arm64, darwin-x64`,
     );
 }

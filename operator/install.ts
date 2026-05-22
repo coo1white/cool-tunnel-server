@@ -16,16 +16,17 @@
 //   6.  Pre-flight: leftover Docker state from prior attempt (interactive)
 //   7.  Disk headroom check + low-space safe temp/build-cache cleanup
 //   8.  Prepare ct-server-core (prebuilt release asset; source build fallback)
-//   9.  Build caddy / singbox / panel images
-//  10.  Start db + redis; wait for MariaDB healthcheck
-//  11.  Start panel; wait for entrypoint sentinel; verify migrations + seed
-//  12.  Re-render Caddyfile + singbox.json from the seeded DB
-//  13.  Pre-flight: DNS A-records + port-80 reachability for ACME
-//  14.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
-//  15.  Verify singbox
-//  16.  Create the first Filament admin user (interactive ct:make-admin)
-//  17.  Strict health gates
-//  18.  Print success banner
+//   9.  Prepare singbox-core (prebuilt release asset)
+//  10.  Build caddy / singbox / panel images
+//  11.  Start db + redis; wait for MariaDB healthcheck
+//  12.  Start panel; wait for entrypoint sentinel; verify migrations + seed
+//  13.  Re-render Caddyfile + singbox.json from the seeded DB
+//  14.  Pre-flight: DNS A-records + port-80 reachability for ACME
+//  15.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
+//  16.  Verify singbox
+//  17.  Create the first Filament admin user (interactive ct:make-admin)
+//  18.  Strict health gates
+//  19.  Print success banner
 
 import { spawnSync } from "node:child_process";
 import { $, capture, runStreaming, which } from "./src/util/sh";
@@ -44,7 +45,7 @@ import {
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
-const INSTALL_PROGRESS_STEPS = 18;
+const INSTALL_PROGRESS_STEPS = 19;
 let installProgress: ArrowProgress | null = null;
 
 async function installStep(label: string, fn: () => Promise<void>): Promise<void> {
@@ -383,6 +384,41 @@ Recovery:
         );
     }
     ok(`ct-server-core built (profile=${coreProfile})`);
+}
+
+async function prepareSingboxCore(): Promise<void> {
+    step("Prepare singbox-core image");
+    const prebuilt = await runStreaming($`./scripts/fetch_singbox_core_binary.sh`);
+    if (prebuilt.ok) {
+        ok("singbox-core prebuilt release image ready");
+        return;
+    }
+    if (prebuilt.code !== 2) {
+        dieWithDiag(
+            "singbox-core prebuilt fetch failed",
+            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
+
+Recovery:
+  ./scripts/fetch_singbox_core_binary.sh
+  ./ct install
+
+If this is a just-published release, wait for the release assets to finish,
+then retry the same command.`,
+        );
+    }
+
+    dieWithDiag(
+        "singbox-core release asset unavailable",
+        `This release is missing the prebuilt ${"singbox-core"} binary for this VPS.
+
+Recovery:
+  ./scripts/fetch_singbox_core_binary.sh
+  ./ct install
+
+Maintainer recovery:
+  build and upload singbox-core-linux-x64 / singbox-core-linux-arm64,
+  then re-run ./ct install.`,
+    );
 }
 
 // ---------- steps 10/11/12: build caddy / singbox / panel -----------------
@@ -770,11 +806,12 @@ export async function runInstall(): Promise<number> {
         const loadedEnv = env;
         if (loadedEnv === undefined) die("install env was not loaded", "re-run ./ct install");
         await installStep("Build ct-server-core", () => buildCore(loadedEnv.CT_CORE_BUILD_PROFILE));
+        await installStep("Prepare singbox-core", prepareSingboxCore);
         await installStep("Build caddy image", () =>
             buildImage("caddy image (stock Caddy 2 — ACME provider only, no plugins)", "caddy"),
         );
         await installStep("Build singbox image", () =>
-            buildImage("singbox image (downloads upstream sing-box binary)", "singbox"),
+            buildImage("singbox image (prebuilt singbox-core + pinned upstream sing-box)", "singbox"),
         );
         await installStep("Build panel image", () =>
             buildImage(

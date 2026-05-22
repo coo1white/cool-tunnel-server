@@ -73,10 +73,18 @@ jobs:
           chmod +x operator/bin/ct-server-core-linux-*
           ls -lh operator/bin/ct-server-core-linux-*
 
+      - name: Build prebuilt singbox-core assets
+        run: |
+          mkdir -p operator/bin
+          ./scripts/build_release_singbox_core_assets.sh
+          cp release-assets/singbox-core-linux-* operator/bin/
+          chmod +x operator/bin/singbox-core-linux-*
+          ls -lh operator/bin/singbox-core-linux-*
+
       - name: Generate SHA256SUMS
         working-directory: operator/bin
         run: |
-          sha256sum ct-operator-* ct-server-core-* > SHA256SUMS.generated
+          sha256sum ct-operator-* ct-server-core-* singbox-core-* > SHA256SUMS.generated
           cp SHA256SUMS.generated SHA256SUMS
           cat SHA256SUMS
 
@@ -104,6 +112,7 @@ jobs:
           subject-path: |
             operator/bin/ct-operator-*
             operator/bin/ct-server-core-*
+            operator/bin/singbox-core-*
 
       - name: Upload artifacts to release (tag ref)
         if: startsWith(github.ref, 'refs/tags/')
@@ -113,6 +122,7 @@ jobs:
           files: |
             operator/bin/ct-operator-*
             operator/bin/ct-server-core-*
+            operator/bin/singbox-core-*
             operator/bin/SHA256SUMS
 
       - name: Upload artifacts (non-tag ref — workflow artifact)
@@ -123,5 +133,6 @@ jobs:
           path: |
             operator/bin/ct-operator-*
             operator/bin/ct-server-core-*
+            operator/bin/singbox-core-*
             operator/bin/SHA256SUMS
           retention-days: 14

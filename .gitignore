@@ -6,6 +6,7 @@
 panel/vendor/
 panel/node_modules/
 singbox-core/node_modules/
+singbox-core/bin/
 # `php artisan octane:install --server=frankenphp` downloads the
 # host-arch FrankenPHP binary (~165 MiB) into panel/frankenphp for
 # `php artisan octane:start` use OUTSIDE Docker. The container

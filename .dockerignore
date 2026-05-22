@@ -28,6 +28,7 @@ core/Cargo.lock        # we want it in the image actually — see negation below
 panel/vendor/
 panel/node_modules/
 singbox-core/node_modules/
+singbox-core/bin/
 panel/storage/app/*
 panel/storage/framework/cache/data/*
 panel/storage/framework/sessions/*

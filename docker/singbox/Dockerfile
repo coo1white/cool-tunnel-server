@@ -10,8 +10,8 @@
 #
 # Three stages:
 #
-#   1. bun-build: Bun 1.1+ alpine image, compiles singbox-core/ to a
-#      self-contained binary via `bun build --compile`.
+#   1. singbox-core-stage: release installs provide a tiny local
+#      carrier image containing the prebuilt singbox-core binary.
 #   2. singbox-fetch: alpine image with curl + tar, uses singbox-core
 #      install to fetch + SHA-256 verify the sing-box binary at the
 #      pinned tag in singbox-core/singbox.upstream.json.
@@ -21,28 +21,10 @@
 #      bind :443.
 
 # ----------------------------------------------------------------------
-# Stage 1 — compile singbox-core to a self-contained binary
+# Stage 1 — prebuilt singbox-core carrier
 # ----------------------------------------------------------------------
-FROM oven/bun:1.1-alpine AS bun-build
-ARG TARGETARCH
-
-WORKDIR /build
-COPY singbox-core /build/singbox-core
-
-# Install dev dependencies + run a typecheck before compiling. A
-# typecheck failure here fails the build with a clearer error than the
-# eventual runtime traceback would.
-RUN cd singbox-core \
-    && bun install --frozen-lockfile \
-    && bunx tsc --noEmit \
-    && case "${TARGETARCH:-amd64}" in \
-         amd64) bun_target=bun-linux-x64 ;; \
-         arm64) bun_target=bun-linux-arm64 ;; \
-         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-       esac \
-    && bun build --compile --target="${bun_target}" \
-        src/cli.ts \
-        --outfile /build/singbox-core
+ARG CT_SINGBOX_CORE_IMAGE=cool-tunnel-server-singbox-core:latest
+FROM ${CT_SINGBOX_CORE_IMAGE} AS singbox-core-stage
 
 # ----------------------------------------------------------------------
 # Stage 2 — fetch + verify sing-box upstream binary
@@ -51,7 +33,7 @@ FROM alpine:3.21 AS singbox-fetch
 
 RUN apk add --no-cache curl tar ca-certificates gcompat libstdc++ libgcc
 
-COPY --from=bun-build /build/singbox-core /usr/local/bin/singbox-core
+COPY --from=singbox-core-stage /usr/local/bin/singbox-core /usr/local/bin/singbox-core
 # We need singbox.upstream.json to be at the path version.ts resolves
 # at runtime — but since version.ts uses `import … with { type: "json" }`
 # the JSON is BAKED INTO the compiled binary at build time. So no
@@ -74,7 +56,7 @@ RUN apk add --no-cache ca-certificates libcap gcompat libstdc++ libgcc \
     && addgroup -S singbox -g 65532 \
     && adduser -S singbox -G singbox -u 65532 -h /home/singbox
 
-COPY --from=bun-build /build/singbox-core /usr/local/bin/singbox-core
+COPY --from=singbox-core-stage /usr/local/bin/singbox-core /usr/local/bin/singbox-core
 COPY --from=singbox-fetch /out/sing-box /usr/local/bin/sing-box
 
 # File-cap on the sing-box binary so the non-root container user can

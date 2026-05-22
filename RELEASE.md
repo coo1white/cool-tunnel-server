@@ -95,8 +95,9 @@ git push origin vX.Y.Z
 
 ### 8. Build release binaries locally
 
-Build the Linux `ct-server-core` assets before publishing the release.
-Use mirror overrides when Docker Hub or Alpine CDN routing is poor:
+Build the Linux `ct-server-core` and `singbox-core` assets before
+publishing the release. Use mirror overrides when Docker Hub or Alpine
+CDN routing is poor:
 
 ```sh
 BUILDER=rootless \
@@ -104,19 +105,25 @@ CT_RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.88.0-alpine \
 CT_ALPINE_BASE_IMAGE=public.ecr.aws/docker/library/alpine:3.20 \
 CT_ALPINE_REPOSITORY_BASE=https://mirrors.aliyun.com/alpine \
 ./scripts/build_release_core_assets.sh
+./scripts/build_release_singbox_core_assets.sh
 ```
 
 The script writes:
 
 - `release-assets/ct-server-core-linux-x64`
 - `release-assets/ct-server-core-linux-arm64`
+- `release-assets/singbox-core-linux-x64`
+- `release-assets/singbox-core-linux-arm64`
 - `release-assets/SHA256SUMS.core`
+- `release-assets/SHA256SUMS.singbox-core`
 
 Verify the assets before upload:
 
 ```sh
 file release-assets/ct-server-core-linux-*
+file release-assets/singbox-core-linux-*
 sha256sum -c release-assets/SHA256SUMS.core
+sha256sum -c release-assets/SHA256SUMS.singbox-core
 ```
 
 ### 9. Create GitHub release
@@ -145,10 +152,12 @@ Upload locally built core assets first, then let GitHub's
 - `ct-operator-linux-arm64`
 - `ct-server-core-linux-x64`
 - `ct-server-core-linux-arm64`
+- `singbox-core-linux-x64`
+- `singbox-core-linux-arm64`
 - `SHA256SUMS`
 
 ```sh
-gh release upload vX.Y.Z release-assets/ct-server-core-linux-* --clobber
+gh release upload vX.Y.Z release-assets/ct-server-core-linux-* release-assets/singbox-core-linux-* --clobber
 gh workflow run "ct-operator release" --ref vX.Y.Z
 gh run watch --exit-status "$(gh run list --workflow "ct-operator release" --limit 1 --json databaseId --jq '.[0].databaseId')"
 gh release download vX.Y.Z --pattern SHA256SUMS --dir /tmp/ct-release-check --clobber
@@ -203,6 +212,8 @@ git checkout vX.Y.Z
 ( cd panel && composer install --no-dev --no-interaction --prefer-dist )
 
 # Docker images: deterministic with digest-pinned base images.
+./scripts/fetch_core_binary.sh
+./scripts/fetch_singbox_core_binary.sh
 docker compose --profile build-only build core-builder
 docker compose build
 ```

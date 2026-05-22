@@ -13,15 +13,16 @@
 //   3. git pull --ff-only
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
 //   5. prepare ct-server-core image (prebuilt release asset; source fallback)
-//   6. compose build caddy singbox panel
-//   7. compose up -d panel
-//   8. wait for panel entrypoint sentinel
-//   9. clear stale non-running ct-caddy, then compose up -d caddy singbox
-//  10. php artisan migrate --force
-//  11. ct-server-core caddyfile render
-//  12. caddy reload from the host-side operator
-//  13. post-deploy settle gate
-//  14. fetch_operator_binary.sh (non-fatal)
+//   6. prepare singbox-core image (prebuilt release asset)
+//   7. compose build caddy singbox panel
+//   8. compose up -d panel
+//   9. wait for panel entrypoint sentinel
+//  10. clear stale non-running ct-caddy, then compose up -d caddy singbox
+//  11. php artisan migrate --force
+//  12. ct-server-core caddyfile render
+//  13. caddy reload from the host-side operator
+//  14. post-deploy settle gate
+//  15. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
 import { die, makeArrowProgress, makeTerm, ANSI } from "./src/util/term";
@@ -40,7 +41,7 @@ import {
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
-const progress = makeArrowProgress({ total: 12 });
+const progress = makeArrowProgress({ total: 13 });
 let progressFinished = false;
 
 process.on("exit", (code) => {
@@ -260,6 +261,42 @@ are usually enough to diagnose.`,
     }
 }
 
+async function prepareSingboxCore(): Promise<void> {
+    const msg = "Prepare singbox-core image";
+    phase(msg);
+    const prebuilt = await withProgressPulse(msg, () => runStreaming($`./scripts/fetch_singbox_core_binary.sh`));
+    if (prebuilt.ok) {
+        ok("singbox-core prebuilt release image ready");
+        return;
+    }
+    if (prebuilt.code !== 2) {
+        dieWithDiag(
+            "singbox-core prebuilt fetch failed",
+            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
+
+Recovery:
+  ./scripts/fetch_singbox_core_binary.sh
+  ./ct update
+
+If this is a just-published release, wait for the release assets to finish,
+then retry the same command.`,
+        );
+    }
+
+    dieWithDiag(
+        "singbox-core release asset unavailable",
+        `This release is missing the prebuilt ${"singbox-core"} binary for this VPS.
+
+Recovery:
+  ./scripts/fetch_singbox_core_binary.sh
+  ./ct update
+
+Maintainer recovery:
+  build and upload singbox-core-linux-x64 / singbox-core-linux-arm64,
+  then re-run ./ct update.`,
+    );
+}
+
 async function rebuildImages(): Promise<void> {
     const msg = "Rebuild caddy + singbox + panel images";
     phase(msg);
@@ -280,6 +317,8 @@ async function rebuildImages(): Promise<void> {
                                 mholt/caddy-l4 plugin via xcaddy;
                                 first build pulls a Go dep graph
                                 from proxy.golang.org.)
+  - singbox-core asset gap    ->  ./scripts/fetch_singbox_core_binary.sh
+                                then retry: ./ct update
   - Composer.lock conflict  ->  check the entrypoint output for
                                 "platform-req" errors
 
@@ -523,6 +562,7 @@ async function runUpdateInner(): Promise<number> {
     await gitPullFfOnly();
     await autoMigrateEnv();
     await rebuildCore();
+    await prepareSingboxCore();
     await rebuildImages();
     await bringNewImagesUp();
     await migrateDb();
