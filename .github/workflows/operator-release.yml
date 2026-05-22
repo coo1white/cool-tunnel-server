@@ -76,8 +76,27 @@ jobs:
       - name: Generate SHA256SUMS
         working-directory: operator/bin
         run: |
-          sha256sum ct-operator-* ct-server-core-* > SHA256SUMS
+          sha256sum ct-operator-* ct-server-core-* > SHA256SUMS.generated
+          cp SHA256SUMS.generated SHA256SUMS
           cat SHA256SUMS
+
+      - name: Merge existing release checksums
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p operator/bin/checksums
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern SHA256SUMS \
+            --dir operator/bin/checksums \
+            --clobber || true
+          if [ -s operator/bin/checksums/SHA256SUMS ]; then
+            cat operator/bin/SHA256SUMS.generated operator/bin/checksums/SHA256SUMS \
+              | awk 'NF && !seen[$2]++' \
+              > operator/bin/SHA256SUMS
+          fi
+          cat operator/bin/SHA256SUMS
 
       - name: Attest release binaries
         uses: actions/attest-build-provenance@v2
