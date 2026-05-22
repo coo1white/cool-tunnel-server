@@ -9,5 +9,3 @@
 
 FROM scratch AS runtime
 COPY singbox-core /usr/local/bin/singbox-core
-ENTRYPOINT ["/usr/local/bin/singbox-core"]
-CMD ["version"]

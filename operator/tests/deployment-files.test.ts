@@ -55,6 +55,7 @@ test("prebuilt core fetch path wraps release binary as panel source image", asyn
     expect(dockerfile).toContain("FROM scratch AS runtime");
     expect(dockerfile).toContain("COPY ct-server-core /usr/local/bin/ct-server-core");
     expect(dockerfile).not.toContain("docker/dockerfile:");
+    expect(dockerfile).not.toContain("ENTRYPOINT");
     expect(await Bun.file("../docker/core/Dockerfile").text()).toContain("CT_RUST_BASE_IMAGE");
     expect(install).toContain("./scripts/fetch_core_binary.sh");
     expect(update).toContain("./scripts/fetch_core_binary.sh");
@@ -86,6 +87,7 @@ test("prebuilt singbox-core fetch path wraps release binary for panel and singbo
     expect(dockerfile).toContain("FROM scratch AS runtime");
     expect(dockerfile).toContain("COPY singbox-core /usr/local/bin/singbox-core");
     expect(dockerfile).not.toContain("docker/dockerfile:");
+    expect(dockerfile).not.toContain("ENTRYPOINT");
     expect(compose).toContain("CT_SINGBOX_CORE_IMAGE: cool-tunnel-server-singbox-core:latest");
     expect(install).toContain("./scripts/fetch_singbox_core_binary.sh");
     expect(install).toContain("singbox-core release asset unavailable");

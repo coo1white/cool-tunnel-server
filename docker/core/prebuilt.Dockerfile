@@ -9,5 +9,3 @@
 
 FROM scratch AS runtime
 COPY ct-server-core /usr/local/bin/ct-server-core
-ENTRYPOINT ["/usr/local/bin/ct-server-core"]
-CMD ["--help"]
