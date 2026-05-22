@@ -33,6 +33,24 @@ have a private proxy they can use.
 You don't need prior Docker / Laravel / Rust experience. You do need
 root SSH access to a Linux VPS and a domain you control.
 
+## Project rule
+
+The operator experience should stay simple:
+
+```text
+install simple -> update simple -> doctor simple -> fix simple
+```
+
+That means:
+
+- the server owns the published runtime plugins (`sing-box` and
+  `cool-tunnel-core`);
+- the client fetches those plugins from `cool-tunnel-server` releases;
+- `ct install`, `ct update`, and `ct doctor` are the normal user
+  surface;
+- when something fails, the diagnostic should name the next command to
+  run.
+
 ## 60-second quickstart
 
 The bootstrap follows the same copy/paste installer shape as
@@ -76,49 +94,49 @@ ct backup        # snapshot DB + .env + ACME certs
 
 ### Update to a release
 
-Latest confirmed release: `v0.4.12`.
-
-Run this on the VPS:
+Run this on the VPS for normal updates:
 
 ```sh
 cd /opt/cool-tunnel-server
 
-./ct backup
-
-git fetch origin --tags
-git checkout v0.4.12
-
-./ct update
-./ct doctor
+ct backup
+ct update
+ct doctor
 ```
 
-If the VPS is very old and `./ct` is missing or broken, refresh the
-checkout and fetch the operator binary first:
+If the VPS checkout is old, broken, or pinned to a stale tag, reset to
+the published main first:
 
 ```sh
 cd /opt/cool-tunnel-server
-git fetch origin --tags
-git checkout v0.4.12
+git fetch origin
+git checkout main
+git reset --hard origin/main
 chmod +x ./ct ./scripts/*.sh
 ./scripts/fetch_operator_binary.sh || true
-./ct update
-./ct doctor
+ct update
+ct doctor
 ```
 
-If `git checkout v0.4.12` complains about local changes:
+If `git reset --hard origin/main` feels scary, stop and inspect first:
 
 ```sh
 git status
+git diff --stat
 ```
 
-If you did not intentionally edit those files on the VPS, stash them and
-continue:
+For a production VPS, the repo should normally be clean. Put custom
+notes in a separate file outside the repo, not by editing tracked
+source files.
+
+If a Rust/Docker build fails after the project already enforced
+IPv4-only routing, check outbound IPv4 reachability:
 
 ```sh
-git stash push -m "pre-v0.4.12-vps-local-changes"
-git checkout v0.4.12
-./ct update
-./ct doctor
+curl -4 -I https://static.rust-lang.org/
+curl -4 -I https://index.crates.io/
+docker builder prune -af
+ct update
 ```
 
 Do not skip the backup. `ct update` handles legacy `.env` migration,
