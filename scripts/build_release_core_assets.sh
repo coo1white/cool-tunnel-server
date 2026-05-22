@@ -16,6 +16,9 @@ cd "$(dirname "$0")/.." || exit 1
 OUT_DIR="${OUT_DIR:-release-assets}"
 BUILDER="${BUILDER:-}"
 PLATFORMS="${PLATFORMS:-linux/amd64 linux/arm64}"
+CT_RUST_BASE_IMAGE="${CT_RUST_BASE_IMAGE:-rust:1.88.0-alpine}"
+CT_ALPINE_BASE_IMAGE="${CT_ALPINE_BASE_IMAGE:-alpine:3.20}"
+CT_ALPINE_REPOSITORY_BASE="${CT_ALPINE_REPOSITORY_BASE:-}"
 
 mkdir -p "$OUT_DIR"
 
@@ -41,6 +44,9 @@ build_one() {
         --platform "$platform"
         --target runtime
         --provenance=false
+        --build-arg "CT_RUST_BASE_IMAGE=${CT_RUST_BASE_IMAGE}"
+        --build-arg "CT_ALPINE_BASE_IMAGE=${CT_ALPINE_BASE_IMAGE}"
+        --build-arg "CT_ALPINE_REPOSITORY_BASE=${CT_ALPINE_REPOSITORY_BASE}"
         --output "type=local,dest=${target_dir}"
         -f docker/core/Dockerfile
         .)
@@ -49,6 +55,9 @@ build_one() {
             --platform "$platform"
             --target runtime
             --provenance=false
+            --build-arg "CT_RUST_BASE_IMAGE=${CT_RUST_BASE_IMAGE}"
+            --build-arg "CT_ALPINE_BASE_IMAGE=${CT_ALPINE_BASE_IMAGE}"
+            --build-arg "CT_ALPINE_REPOSITORY_BASE=${CT_ALPINE_REPOSITORY_BASE}"
             --output "type=local,dest=${target_dir}"
             -f docker/core/Dockerfile
             .)

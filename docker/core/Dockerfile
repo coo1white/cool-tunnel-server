@@ -23,7 +23,10 @@
 # `cargo install cargo-chef --locked` resolves cargo-platform 0.3.2
 # transitively, and cargo-platform 0.3.2 requires rustc 1.88 — the
 # binding floor today.
-FROM rust:1.88.0-alpine AS chef
+ARG CT_RUST_BASE_IMAGE=rust:1.88.0-alpine
+ARG CT_ALPINE_BASE_IMAGE=alpine:3.20
+
+FROM ${CT_RUST_BASE_IMAGE} AS chef
 
 # The base image already contains the exact Rust release we pin.
 # Force rustup to use it even after core/rust-toolchain.toml is
@@ -32,6 +35,10 @@ FROM rust:1.88.0-alpine AS chef
 # on Vultr-class hosts with broken provider routing that can fail with
 # NetworkUnreachable despite the toolchain already being present.
 ENV RUSTUP_TOOLCHAIN=1.88.0
+ARG CT_ALPINE_REPOSITORY_BASE=
+RUN if [ -n "${CT_ALPINE_REPOSITORY_BASE}" ]; then \
+        sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${CT_ALPINE_REPOSITORY_BASE}#g" /etc/apk/repositories; \
+    fi
 
 # Build deps: musl for static linking, openssl/pkg-config for sqlx +
 # rustls (which we use, but transitive deps still need pkg-config).
@@ -190,7 +197,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # ct-server-core binary. The panel image's
 # `COPY --from=ct-core-stage /usr/local/bin/ct-server-core` then
 # fails with "/usr/local/bin/ct-server-core: not found".
-FROM alpine:3.20 AS runtime
+FROM ${CT_ALPINE_BASE_IMAGE} AS runtime
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 COPY --from=builder /ct-server-core /usr/local/bin/ct-server-core
@@ -217,8 +224,12 @@ CMD ["--help"]
 #
 # Brought up via:
 #   docker compose --profile sqlx run --rm sqlx-prepare
-FROM rust:1.88.0-alpine AS sqlx-prepare
+FROM ${CT_RUST_BASE_IMAGE} AS sqlx-prepare
 ENV RUSTUP_TOOLCHAIN=1.88.0
+ARG CT_ALPINE_REPOSITORY_BASE=
+RUN if [ -n "${CT_ALPINE_REPOSITORY_BASE}" ]; then \
+        sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${CT_ALPINE_REPOSITORY_BASE}#g" /etc/apk/repositories; \
+    fi
 RUN apk add --no-cache \
         musl-dev \
         pkgconfig \

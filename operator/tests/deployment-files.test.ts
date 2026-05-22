@@ -49,10 +49,12 @@ test("prebuilt core fetch path wraps release binary as panel source image", asyn
     expect(script).toContain("exit 2");
     expect(dockerfile).toContain("FROM scratch AS runtime");
     expect(dockerfile).toContain("COPY ct-server-core /usr/local/bin/ct-server-core");
+    expect(await Bun.file("../docker/core/Dockerfile").text()).toContain("CT_RUST_BASE_IMAGE");
     expect(install).toContain("./scripts/fetch_core_binary.sh");
     expect(update).toContain("./scripts/fetch_core_binary.sh");
     expect(buildScript).toContain("docker buildx build");
     expect(buildScript).toContain("linux/amd64");
     expect(buildScript).toContain("linux/arm64");
+    expect(buildScript).toContain("CT_ALPINE_REPOSITORY_BASE");
     expect(buildScript).toContain("SHA256SUMS.core");
 });
