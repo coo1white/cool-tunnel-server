@@ -227,7 +227,7 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
             'log_level' => 'info',
             'direct_domain_strategy' => (string) config(
                 'cool-tunnel.singbox_direct_domain_strategy',
-                'prefer_ipv4'
+                'ipv4_only'
             ),
             'direct_connect_timeout' => (string) config(
                 'cool-tunnel.singbox_direct_connect_timeout',

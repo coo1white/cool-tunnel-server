@@ -136,16 +136,27 @@ test("fixLegacyAppUrl: no-op when APP_URL already canonical", () => {
 
 // ---------- Phase 4: backfillSingboxDirectDefaults ----------
 
-test("backfillSingboxDirectDefaults: appends IPv4-preferred defaults when missing", () => {
+test("backfillSingboxDirectDefaults: appends IPv4-only defaults when missing", () => {
     const env = `DOMAIN=proxy.example.com
 PANEL_DOMAIN=admin.example.com
 APP_URL=https://\${PANEL_DOMAIN}/admin
 `;
     const r = backfillSingboxDirectDefaults(env);
     expect(r.change?.phase).toBe("singbox-direct-defaults");
-    expect(r.content).toContain("SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4");
+    expect(r.content).toContain("SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only");
     expect(r.content).toContain("SINGBOX_DIRECT_CONNECT_TIMEOUT=2s");
     expect(r.content).toContain("SINGBOX_DIRECT_FALLBACK_DELAY=100ms");
+});
+
+test("backfillSingboxDirectDefaults: rewrites legacy prefer_ipv4 to ipv4_only", () => {
+    const env = `SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4
+SINGBOX_DIRECT_CONNECT_TIMEOUT=2s
+SINGBOX_DIRECT_FALLBACK_DELAY=100ms
+`;
+    const r = backfillSingboxDirectDefaults(env);
+    expect(r.change?.phase).toBe("singbox-direct-defaults");
+    expect(r.content).toContain("SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only");
+    expect(r.content).not.toContain("prefer_ipv4");
 });
 
 test("backfillSingboxDirectDefaults: no-op when strategy already present", () => {
@@ -179,8 +190,8 @@ SINGBOX_DIRECT_CONNECT_TIMEOUT=2s
 SINGBOX_DIRECT_FALLBACK_DELAY=100ms
 `;
     const r = migrateEnv(env);
-    expect(r.changes).toEqual([]);
-    expect(r.content).toBe(env);
+    expect(r.changes.map((c) => c.phase)).toEqual(["singbox-direct-defaults"]);
+    expect(r.content).toContain("SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only");
 });
 
 test("migrateEnv: pre-v0.0.33 legacy .env triggers all three phases", () => {

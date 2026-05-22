@@ -29,6 +29,7 @@ test("renderServerConfig produces a valid-shape VLESS+Reality inbound", () => {
     const inbound = cfg.inbounds[0]!;
     expect(inbound.type).toBe("vless");
     if (inbound.type !== "vless") throw new Error("unreachable");
+    expect(inbound.listen).toBe("0.0.0.0");
     expect(inbound.listen_port).toBe(443);
     expect(inbound.users.length).toBe(1);
     expect(inbound.users[0]!.uuid).toBe("550e8400-e29b-41d4-a716-446655440000");
@@ -39,13 +40,13 @@ test("renderServerConfig produces a valid-shape VLESS+Reality inbound", () => {
     expect(inbound.tls.reality.private_key).toBe(SERVER_INPUT.reality_private_key);
 });
 
-test("renderServerConfig defaults direct outbound to IPv4-preferred dial", () => {
+test("renderServerConfig defaults direct outbound to IPv4-only dial", () => {
     const cfg = renderServerConfig(SERVER_INPUT);
     expect(cfg.dns?.servers).toEqual([{ type: "local", tag: "local-dns" }]);
     const direct = cfg.outbounds.find((o) => o.type === "direct");
     expect(direct).toBeDefined();
     if (direct?.type !== "direct") throw new Error("unreachable");
-    expect(direct.domain_resolver).toEqual({ server: "local-dns", strategy: "prefer_ipv4" });
+    expect(direct.domain_resolver).toEqual({ server: "local-dns", strategy: "ipv4_only" });
     expect(direct.connect_timeout).toBe("2s");
     expect(direct.fallback_delay).toBe("100ms");
 });

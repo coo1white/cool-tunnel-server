@@ -10,7 +10,7 @@ For the full Debian reference, use
 | --- | --- |
 | Debian 11, 12, or 13 VPS | Debian 12 is the primary target |
 | Root SSH or sudo | Needed for Docker and firewall setup |
-| A domain pointed at the VPS | Set `A` and, if available, `AAAA` records |
+| A domain pointed at the VPS | Set an `A` record to the VPS public IPv4 |
 | Ports `80/tcp` and `443/tcp` open | Caddy uses 80 for ACME and 443 for panel/proxy traffic |
 | Docker Engine + Compose v2 | The installer checks this before building |
 

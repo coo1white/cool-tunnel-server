@@ -48,7 +48,7 @@ export type Inbound = VlessInbound | SocksInbound;
 export interface VlessInbound {
     readonly type: "vless";
     readonly tag: string;
-    readonly listen: string; // "::" for dual-stack, "0.0.0.0" for v4-only
+    readonly listen: string;
     readonly listen_port: number;
     readonly users: readonly VlessUser[];
     readonly tls: VlessRealityTls;
@@ -115,7 +115,7 @@ export interface RealityClientConfig {
     readonly short_id: string;
 }
 
-export type DirectDomainStrategy = "prefer_ipv4" | "prefer_ipv6" | "ipv4_only" | "ipv6_only";
+export type DirectDomainStrategy = "ipv4_only";
 
 export interface DirectOutbound {
     readonly type: "direct";

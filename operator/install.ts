@@ -9,7 +9,7 @@
 //
 // Stages (mirrors install.sh):
 //   1.  Pre-flight: required tools (openssl, sed, dig, curl, jq, docker)
-//   2.  IPv6 broken-route advisory (auto-disable handled in bootstrap.sh)
+//   2.  IPv4-only routing enforcement
 //   3.  acquireOpLock (per-project flock; re-execs self under flock)
 //   4.  Pre-flight: .env (existence, 0600 mode, bcrypt-hash scan, value sanity)
 //   5.  Pre-flight: clone freshness vs origin/main (interactive)
@@ -33,7 +33,7 @@ import { die, makeTerm, ANSI } from "./src/util/term";
 import { dieWithDiag } from "./src/util/diag";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
-import { checkIpv6Routing } from "./src/util/preflight";
+import { checkIpv4OnlyRouting } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { promptYn } from "./src/util/prompt";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
@@ -517,7 +517,7 @@ async function probePort80(publicIp: string): Promise<void> {
         ok("Port 80 reachable from public IP");
     } else {
         warn(`Port 80 NOT reachable from public IP ${publicIp}`);
-        warn("Likely causes: cloud-provider firewall, ufw, IPv6-only DNS, CGNAT");
+        warn("Likely causes: cloud-provider firewall, ufw, DNS, CGNAT");
         warn("ACME HTTP-01 will fail. Fix: open TCP 80 inbound + verify DNS");
     }
 }
@@ -696,15 +696,11 @@ export async function runInstall(): Promise<number> {
 
     await preflightTools();
 
-    // IPv6 routing advisory. Auto-disable happens in bootstrap.sh
-    // (writes /etc/sysctl.d/99-disable-ipv6.conf + /etc/docker/
-    // daemon.json). install.ts only flags the live routing state so
-    // a box that was upgraded post-bootstrap and lost the disable
-    // gets a visible warning before the Rust build's first
-    // `static.rust-lang.org Network unreachable`.
-    const ipv6 = await checkIpv6Routing();
-    if (ipv6.action === "warn") warn(ipv6.detail);
-    else ok(ipv6.detail);
+    // Enforce IPv4-only before the Rust build so Docker/Rust never
+    // drift into broken provider routes for static.rust-lang.org.
+    const ipv4Only = await checkIpv4OnlyRouting();
+    if (ipv4Only.action === "warn") warn(ipv4Only.detail);
+    else ok(ipv4Only.detail);
 
     await preflightEnvFile();
     const env = await validateEnvAndDeriveDefaults();
