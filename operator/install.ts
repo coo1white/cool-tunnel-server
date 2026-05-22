@@ -307,8 +307,8 @@ async function preflightDockerState(): Promise<void> {
 }
 
 async function preflightAutoTempClean(): Promise<void> {
-    step("Pre-flight: disk headroom + safe temp cleanup");
-    const cleanup = await runAutoTempClean();
+    step("Pre-flight: disk headroom + unused Docker cleanup");
+    const cleanup = await runAutoTempClean({ forceDockerCleanup: true });
     for (const s of cleanup.steps) {
         if (s.action === "failed") warn(`${s.label}: ${s.detail}`);
     }
