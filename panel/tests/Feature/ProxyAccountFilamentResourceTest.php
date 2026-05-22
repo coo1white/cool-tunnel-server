@@ -159,6 +159,8 @@ final class ProxyAccountFilamentResourceTest extends TestCase
 
         $account->refresh();
         $this->assertNotSame($oldUuid, $account->uuid);
+        $this->assertSame($oldUuid, $account->previous_uuid);
+        $this->assertTrue($account->hasPreviousUuidGrace());
         $this->assertNotSame($oldUrl, $account->subscriptionUrl());
         $this->assertSame(1, $generator->renderCalls);
         Notification::assertNotified('New UUID — URL ready');

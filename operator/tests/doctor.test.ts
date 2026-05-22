@@ -2,7 +2,12 @@
 // operator/tests/doctor.test.ts
 
 import { expect, test } from "bun:test";
-import { checkDirectDialOutbound, checkSupervisordStatusOutput, indexComposeRowsByService } from "../src/tasks/doctor";
+import {
+    checkDirectDialOutbound,
+    checkRecentRealityInvalidOutput,
+    checkSupervisordStatusOutput,
+    indexComposeRowsByService,
+} from "../src/tasks/doctor";
 
 test("indexComposeRowsByService indexes valid compose rows by service", () => {
     const rows = [
@@ -91,4 +96,24 @@ test("checkSupervisordStatusOutput warns on partial running state", () => {
 
     expect(checked.severity).toBe("warn");
     expect(checked.detail).toBe("1/2 programs running");
+});
+
+test("checkRecentRealityInvalidOutput passes when recent logs are clean", () => {
+    const checked = checkRecentRealityInvalidOutput("");
+
+    expect(checked.severity).toBe("pass");
+    expect(checked.detail).toContain("no invalid handshakes");
+});
+
+test("checkRecentRealityInvalidOutput warns with count and first sample", () => {
+    const checked = checkRecentRealityInvalidOutput(
+        [
+            "ct-singbox | +0000 2026-05-22 11:10:49 ERROR inbound/vless[vless-in]: TLS handshake: REALITY: processed invalid connection",
+            "ct-singbox | +0000 2026-05-22 11:10:54 ERROR inbound/vless[vless-in]: TLS handshake: REALITY: processed invalid connection",
+        ].join("\n"),
+    );
+
+    expect(checked.severity).toBe("warn");
+    expect(checked.detail).toContain("2 invalid handshakes");
+    expect(checked.detail).toContain("REALITY");
 });

@@ -40,6 +40,23 @@ test("renderServerConfig produces a valid-shape VLESS+Reality inbound", () => {
     expect(inbound.tls.reality.private_key).toBe(SERVER_INPUT.reality_private_key);
 });
 
+test("renderServerConfig can carry previous UUID grace users", () => {
+    const cfg = renderServerConfig({
+        ...SERVER_INPUT,
+        accounts: [
+            { username: "demo-user", uuid: "550e8400-e29b-41d4-a716-446655440000" },
+            { username: "__previous_uuid:1:demo-user", uuid: "550e8400-e29b-41d4-a716-446655440001" },
+        ],
+    });
+    const inbound = cfg.inbounds[0]!;
+    if (inbound.type !== "vless") throw new Error("unreachable");
+    expect(inbound.users.map((u) => u.name)).toEqual(["demo-user", "__previous_uuid:1:demo-user"]);
+    expect(inbound.users.map((u) => u.uuid)).toEqual([
+        "550e8400-e29b-41d4-a716-446655440000",
+        "550e8400-e29b-41d4-a716-446655440001",
+    ]);
+});
+
 test("renderServerConfig defaults direct outbound to IPv4-only dial", () => {
     const cfg = renderServerConfig(SERVER_INPUT);
     expect(cfg.dns?.servers).toEqual([{ type: "local", tag: "local-dns" }]);

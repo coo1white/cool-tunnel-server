@@ -26,6 +26,8 @@ class CredentialLockCheck extends Command
 
     private const PLACEHOLDER_UUID = '00000000-0000-0000-0000-000000000000';
 
+    private const PREVIOUS_UUID_PREFIX = '__previous_uuid:';
+
     protected $signature = 'credential-lock:check
                             {--config=/data/config/singbox.json : Rendered sing-box server config path}';
 
@@ -183,6 +185,10 @@ class CredentialLockCheck extends Command
                 $this->error('rendered sing-box users[] contains an entry with empty name or UUID');
 
                 return null;
+            }
+
+            if (str_starts_with($username, self::PREVIOUS_UUID_PREFIX)) {
+                continue;
             }
 
             $out[$username] = $uuid;
