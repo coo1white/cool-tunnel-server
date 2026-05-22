@@ -12,7 +12,7 @@
 //      (TTY: interactive stash/discard/abort; non-TTY: dies)
 //   3. git pull --ff-only
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
-//   5. compose build core-builder (Rust)
+//   5. prepare ct-server-core image (prebuilt release asset; source fallback)
 //   6. compose build caddy singbox panel
 //   7. compose up -d panel
 //   8. wait for panel entrypoint sentinel
@@ -207,17 +207,37 @@ async function autoMigrateEnv(): Promise<void> {
 }
 
 async function rebuildCore(): Promise<void> {
-    const msg = "Rebuild ct-server-core (Rust)";
+    const msg = "Prepare ct-server-core image";
     phase(msg);
-    // runStreaming surfaces BuildKit progress live so a slow VPS
-    // doesn't look like a hung step.
-    const r = await withProgressPulse(msg, () =>
+    const prebuilt = await withProgressPulse(msg, () => runStreaming($`./scripts/fetch_core_binary.sh`));
+    if (prebuilt.ok) {
+        ok("ct-server-core prebuilt release image ready");
+        return;
+    }
+    if (prebuilt.code !== 2) {
+        dieWithDiag(
+            "ct-server-core prebuilt fetch failed",
+            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
+
+Recovery:
+  ./scripts/fetch_core_binary.sh
+  ./ct update
+
+If you intentionally want to compile Rust on this VPS:
+  CT_CORE_BUILD_FROM_SOURCE=1 ./ct update`,
+        );
+    }
+
+    warn("prebuilt ct-server-core asset unavailable; falling back to local Rust build");
+    warn("on a 1-vCPU / 1 GB VPS this can take a long time and may need swap");
+    const source = await withProgressPulse("Build ct-server-core from source", () =>
         runStreaming($`docker compose --profile build-only build core-builder`),
     );
-    if (!r.ok) {
+    if (!source.ok) {
         dieWithDiag(
             "ct-server-core build failed",
             `Common causes (in priority order):
+  - Release asset missing ->  ./scripts/fetch_core_binary.sh
   - Docker cache pressure ->  docker builder prune -af
   - Network route issue   ->  curl -4 -I https://static.rust-lang.org/
                               curl -4 -I https://index.crates.io/

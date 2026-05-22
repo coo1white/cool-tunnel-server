@@ -374,26 +374,32 @@ sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
 
 ---
 
-## ⚠️ Before first boot — low-memory VPS prep (1 vCPU / 1 GB)
+## Before first boot — low-memory VPS prep (1 vCPU / 1 GB)
 
 The minimum spec — **1 vCPU, 1 GB RAM** — is enough to *run* the
-stack (idle ≈ 240 MiB, moderate load ≈ 400-500 MiB) but tight for
-the *initial build* of `ct-server-core` (the Rust core peaks at
-~1.5-2 GB during `cargo build --release` with full LTO). Without
-the prep below, `install.sh` will OOM-kill the compiler partway
-through and you'll see one of:
+stack (idle ≈ 240 MiB, moderate load ≈ 400-500 MiB). Tagged releases
+download and verify a prebuilt Linux `ct-server-core` binary, then build
+a tiny local wrapper image. That means the normal path does **not**
+compile Rust crates on the VPS.
+
+The swap and low-memory build profile below are only for the fallback
+source-build path: unreleased development checkouts, missing release
+assets, or installs where you intentionally set
+`CT_CORE_BUILD_FROM_SOURCE=1`. Without the prep below, a source build
+can OOM-kill the compiler partway through and you'll see one of:
 
 - `signal: 9, SIGKILL: kill` from cargo
 - `error: linking with cc failed` after a long pause
 - the compose build process simply vanishing
 
-If your VPS has **≥ 2 GB RAM**, skip this section and go straight
+If your VPS has **≥ 2 GB RAM**, or you are installing a normal release
+with a published prebuilt core asset, skip this section and go straight
 to step 7. Everything below is a no-op overhead on a bigger box.
 
 ### a. Add a 2 GB swapfile
 
-Cloud images often ship without swap. The build briefly needs more
-RAM than the box has; swap is the safety net.
+Cloud images often ship without swap. A fallback Rust source build
+briefly needs more RAM than a 1 GB box has; swap is the safety net.
 
 ```bash
 # Skip if `swapon --show` already lists ≥2 GB.
@@ -437,9 +443,10 @@ response over a network and DB, not CPU-bound. Switch in `.env`:
 echo 'CT_CORE_BUILD_PROFILE=release-small' >> .env
 ```
 
-`install.sh` reads `CT_CORE_BUILD_PROFILE` and passes it through to
-`docker compose build` as `--build-arg CARGO_PROFILE=…`. Do this
-**before** step 7.
+`ct install` reads `CT_CORE_BUILD_PROFILE` and passes it through to
+`docker compose build` as `--build-arg CARGO_PROFILE=…` only when it
+has to compile `ct-server-core` from source. Do this **before** step 7
+if you are intentionally using `CT_CORE_BUILD_FROM_SOURCE=1`.
 
 ### c. Confirm the runtime tuning knobs (already low-mem-friendly by default)
 
@@ -532,17 +539,21 @@ ct install
    runs automatically; it may remove stale `core/target` and Docker
    build cache, but never Docker volumes, backups, `.env`, or database
    data.
-2. `docker compose build` — sing-box (binary download),
+2. `./scripts/fetch_core_binary.sh` — download and verify the prebuilt
+   `ct-server-core` release asset, then build the local carrier image.
+   If the asset is unavailable, `ct install` falls back to the source
+   build path.
+3. `docker compose build` — sing-box (binary download),
    panel + Composer install.
-3. `docker compose up -d db redis` — bring up the data layer first.
-4. Wait for MariaDB healthcheck to go green.
-5. `docker compose up -d panel` — runs the entrypoint, which does
+4. `docker compose up -d db redis` — bring up the data layer first.
+5. Wait for MariaDB healthcheck to go green.
+6. `docker compose up -d panel` — runs the entrypoint, which does
    `composer install`, `key:generate`, `migrate`, and renders the
    initial `sing-box config.json`.
-6. Prompts you for a first Filament admin user (email + password).
-7. `docker compose up -d caddy singbox` — Caddy gets the panel cert
+7. Prompts you for a first Filament admin user (email + password).
+8. `docker compose up -d caddy singbox` — Caddy gets the panel cert
    and routes non-panel SNI to sing-box.
-8. Tails Caddy and sing-box logs until the panel cert is available
+9. Tails Caddy and sing-box logs until the panel cert is available
    and sing-box is running.
 
 When it finishes, open:

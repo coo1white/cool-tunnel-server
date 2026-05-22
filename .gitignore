@@ -61,6 +61,7 @@ diagnostics/
 
 # Rust build artifacts (the workspace lives in core/)
 core/target/
+core/bin/
 **/target/
 
 # sqlx offline metadata: core/.sqlx/ IS committed. Listed here as
@@ -70,6 +71,7 @@ core/target/
 # CI's sqlx-offline-check job fails if it's missing.
 
 # Runtime + session artefacts (VPS-local, never committed)
+.runtime/
 .claude/
 state/
 results/

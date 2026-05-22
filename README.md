@@ -26,6 +26,8 @@ the VPS, domain, updates, backups, provider terms, and local law.
 - **Docker Compose runtime** with Caddy SNI routing, sing-box, panel,
   MariaDB, and Redis.
 - **Release-pinned runtime assets** with `SHA256SUMS` verification.
+- **Prebuilt Rust core for VPS installs** so normal releases do not
+  compile Cargo dependencies on small servers.
 - **Privacy-first diagnostics**: project health checks must not log
   per-user destinations or track users.
 
@@ -77,6 +79,12 @@ nano .env
 ./ct install
 ./ct doctor
 ```
+
+Release installs download and verify the prebuilt Linux
+`ct-server-core` binary, then build a tiny local wrapper image for the
+panel. A small VPS should not spend time compiling Rust crates unless
+you explicitly set `CT_CORE_BUILD_FROM_SOURCE=1` or the release asset is
+not available.
 
 Set at least these `.env` values before running `./ct install`:
 

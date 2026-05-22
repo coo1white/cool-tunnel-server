@@ -15,7 +15,7 @@
 //   5.  Pre-flight: clone freshness vs origin/main (interactive)
 //   6.  Pre-flight: leftover Docker state from prior attempt (interactive)
 //   7.  Disk headroom check + low-space safe temp/build-cache cleanup
-//   8.  Build ct-server-core (release / release-small profile)
+//   8.  Prepare ct-server-core (prebuilt release asset; source build fallback)
 //   9.  Build caddy / singbox / panel images
 //  10.  Start db + redis; wait for MariaDB healthcheck
 //  11.  Start panel; wait for entrypoint sentinel; verify migrations + seed
@@ -333,18 +333,40 @@ async function preflightAutoTempClean(): Promise<void> {
     ok(formatAutoTempCleanSummary(cleanup));
 }
 
-// ---------- step 9: build core --------------------------------------------
+// ---------- step 9: prepare core -------------------------------------------
 
 async function buildCore(coreProfile: string): Promise<void> {
-    step("Build ct-server-core (Rust, musl-static)");
+    step("Prepare ct-server-core image");
+    const prebuilt = await runStreaming($`./scripts/fetch_core_binary.sh`);
+    if (prebuilt.ok) {
+        ok("ct-server-core prebuilt release image ready");
+        return;
+    }
+    if (prebuilt.code !== 2) {
+        dieWithDiag(
+            "ct-server-core prebuilt fetch failed",
+            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
+
+Recovery:
+  ./scripts/fetch_core_binary.sh
+  ./ct install
+
+If you intentionally want to compile Rust on this VPS:
+  CT_CORE_BUILD_FROM_SOURCE=1 ./ct install`,
+        );
+    }
+
+    warn("prebuilt ct-server-core asset unavailable; falling back to local Rust build");
+    warn("on a 1-vCPU / 1 GB VPS this can take a long time and may need swap");
     ok(`core build profile: ${coreProfile}`);
-    const r = await runStreaming(
+    const source = await runStreaming(
         $`docker compose --profile build-only build core-builder --build-arg CARGO_PROFILE=${coreProfile}`,
     );
-    if (!r.ok) {
+    if (!source.ok) {
         dieWithDiag(
             "ct-server-core build failed",
             `Common causes (in priority order):
+  - Release asset missing ->  ./scripts/fetch_core_binary.sh
   - Docker cache pressure ->  docker builder prune -af
   - Network route issue   ->  curl -4 -I https://static.rust-lang.org/
                               curl -4 -I https://index.crates.io/

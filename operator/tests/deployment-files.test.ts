@@ -26,3 +26,28 @@ test("operator linux x64 release binary uses baseline CPU target", async () => {
     expect(body).toContain(`"linux-x64": "bun-linux-x64-baseline"`);
     expect(body).not.toContain("bun-linux-x64-modern");
 });
+
+test("release workflow publishes prebuilt ct-server-core assets with checksums", async () => {
+    const body = await Bun.file("../.github/workflows/operator-release.yml").text();
+    expect(body).toContain("Build prebuilt ct-server-core assets");
+    expect(body).toContain("operator/bin/ct-server-core-linux-x64");
+    expect(body).toContain("operator/bin/ct-server-core-linux-arm64");
+    expect(body).toContain("sha256sum ct-operator-* ct-server-core-* > SHA256SUMS");
+    expect(body).toContain("operator/bin/ct-server-core-*");
+});
+
+test("prebuilt core fetch path wraps release binary as panel source image", async () => {
+    const script = await Bun.file("../scripts/fetch_core_binary.sh").text();
+    const dockerfile = await Bun.file("../docker/core/prebuilt.Dockerfile").text();
+    const install = await Bun.file("./install.ts").text();
+    const update = await Bun.file("./update.ts").text();
+
+    expect(script).toContain('TARGET="ct-server-core-${OS}-${ARCH}"');
+    expect(script).toContain('IMAGE="${CT_CORE_IMAGE:-cool-tunnel-server-core:latest}"');
+    expect(script).toContain("docker/core/prebuilt.Dockerfile");
+    expect(script).toContain("exit 2");
+    expect(dockerfile).toContain("FROM scratch AS runtime");
+    expect(dockerfile).toContain("COPY ct-server-core /usr/local/bin/ct-server-core");
+    expect(install).toContain("./scripts/fetch_core_binary.sh");
+    expect(update).toContain("./scripts/fetch_core_binary.sh");
+});

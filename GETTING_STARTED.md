@@ -104,9 +104,11 @@ Install:
 ct install
 ```
 
-The installer builds the images, migrates the DB, renders Caddy and
-sing-box config, starts the stack, and prompts for the first Filament
-admin user when running interactively.
+The installer fetches the prebuilt Rust `ct-server-core` release asset,
+builds the Docker images, migrates the DB, renders Caddy and sing-box
+config, starts the stack, and prompts for the first Filament admin user
+when running interactively. On normal tagged releases, a small VPS does
+not compile Rust crates locally.
 
 If you skip admin creation, create one later:
 
@@ -197,10 +199,12 @@ docker compose logs --tail=120 singbox
 docker compose logs --tail=120 panel
 ```
 
-If a Rust/Docker build fails with `NetworkUnreachable`, the common fix
-is outbound IPv4/network or Docker cache, not app config:
+If `ct-server-core` falls back to a local Rust build and fails with
+`NetworkUnreachable`, the common fix is outbound IPv4/network or Docker
+cache, not app config:
 
 ```sh
+./scripts/fetch_core_binary.sh
 curl -4 -I https://static.rust-lang.org/
 curl -4 -I https://index.crates.io/
 docker builder prune -af
