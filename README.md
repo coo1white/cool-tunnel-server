@@ -81,10 +81,9 @@ nano .env
 ```
 
 Release installs download and verify the prebuilt Linux
-`ct-server-core` binary, then build a tiny local wrapper image for the
-panel. A small VPS should not spend time compiling Rust crates unless
-you explicitly set `CT_CORE_BUILD_FROM_SOURCE=1` or the release asset is
-not available.
+`ct-server-core` and `singbox-core` binaries, then build tiny local
+wrapper images for Docker. A small VPS should not spend time compiling
+Rust crates or Bun/TypeScript during install.
 
 Set at least these `.env` values before running `./ct install`:
 
@@ -99,9 +98,8 @@ recovery hints, read [GETTING_STARTED.md](./GETTING_STARTED.md).
 
 ## Panel Login and Account Setup
 
-`./ct install` prompts for the first admin user near the end of the
-install. Save that email and password; they are the credentials for the
-web admin panel.
+Near the end, `./ct install` asks for the first admin email and
+password. Save them; they are the credentials for the web admin panel.
 
 Open the panel:
 

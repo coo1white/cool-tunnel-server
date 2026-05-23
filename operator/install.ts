@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/install.ts — `ct install` implementation. First-time
 // bootstrap for cool-tunnel-server on a fresh Debian VPS. Port of
-// scripts/install.sh — preserves every step, prompt, and diagnostic
+// scripts/install.sh — preserves every step and diagnostic
 // the bash original carried (including the incident comments that
 // document why each guard exists). Idempotent: re-runnable if any
 // step fails halfway.
@@ -13,7 +13,7 @@
 //   3.  acquireOpLock (per-project flock; re-execs self under flock)
 //   4.  Pre-flight: .env (existence, 0600 mode, bcrypt-hash scan, value sanity)
 //   5.  Pre-flight: clone freshness vs origin/main (interactive)
-//   6.  Pre-flight: leftover Docker state from prior attempt (interactive)
+//   6.  Pre-flight: leftover Docker state from prior attempt (preserve by default)
 //   7.  Disk headroom check + low-space safe temp/build-cache cleanup
 //   8.  Prepare ct-server-core (prebuilt release asset; source build fallback)
 //   9.  Prepare singbox-core (prebuilt release asset)
@@ -36,7 +36,6 @@ import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { waitFor } from "./src/util/wait";
 import { checkIpv4OnlyRouting } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
-import { promptYn } from "./src/util/prompt";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
 import {
     credentialLockRecoveryHint,
@@ -100,17 +99,13 @@ async function preflightEnvFile(): Promise<void> {
     step("Pre-flight: .env");
     const envExists = await Bun.file(".env").exists();
     if (!envExists) {
-        if (await promptYn("No .env file found. Copy .env.example to .env now?", "y")) {
-            const cp = await capture($`cp .env.example .env`);
-            if (!cp.ok) die("cp .env.example .env failed", cp.stderr.trim());
-            const chmod = await capture($`chmod 0600 .env`);
-            if (!chmod.ok) die("chmod 0600 .env failed", chmod.stderr.trim());
-            ok("created .env from template (mode 0600)");
-            warn("you must edit .env (DOMAIN, ACME_EMAIL, *_PASSWORD) before continuing");
-            die("open .env, fill in real values, then re-run ./ct install", "$EDITOR .env");
-        } else {
-            die(".env is required", "cp .env.example .env  &&  $EDITOR .env");
-        }
+        const cp = await capture($`cp .env.example .env`);
+        if (!cp.ok) die("cp .env.example .env failed", cp.stderr.trim());
+        const chmod = await capture($`chmod 0600 .env`);
+        if (!chmod.ok) die("chmod 0600 .env failed", chmod.stderr.trim());
+        ok("created .env from template (mode 0600)");
+        warn("edit .env with real DOMAIN, PANEL_DOMAIN, ACME_EMAIL, and passwords, then re-run ./ct install");
+        die("missing required .env values", "$EDITOR .env");
     }
     // Refuse to proceed if .env is world-readable. APP_KEY encrypts
     // every proxy_accounts.password_cleartext_encrypted row and signs
@@ -159,11 +154,7 @@ async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
     const get = (k: string): string => env[k] ?? "";
 
     if ((get("DOMAIN") || "proxy.example.com") === "proxy.example.com") {
-        warn("DOMAIN is still set to the placeholder 'proxy.example.com'");
-        warn("ACME will fail unless you point a real domain at this server");
-        if (!(await promptYn("Continue anyway (e.g. for local docker-only testing)?", "n"))) {
-            die("aborted on placeholder DOMAIN", "edit .env");
-        }
+        die("DOMAIN is still placeholder 'proxy.example.com'", "edit .env: set DOMAIN to a real DNS name pointing at this VPS");
     }
     if ((get("ACME_EMAIL") || "admin@example.com") === "admin@example.com") {
         warn("ACME_EMAIL is still the placeholder; Let's Encrypt sends renewal warnings to it");
@@ -186,11 +177,7 @@ async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
         await upsertEnvKey("PANEL_DOMAIN", panelDomain);
     }
     if (panelDomain === "panel.proxy.example.com") {
-        warn("PANEL_DOMAIN is still set to the placeholder 'panel.proxy.example.com'");
-        warn("ACME will fail unless this points at a DNS A record on this VPS");
-        if (!(await promptYn("Continue anyway (e.g. for local docker-only testing)?", "n"))) {
-            die("aborted on placeholder PANEL_DOMAIN", "edit .env");
-        }
+        die("PANEL_DOMAIN is still placeholder 'panel.proxy.example.com'", "edit .env: set PANEL_DOMAIN to a real DNS name pointing at this VPS");
     }
 
     return {
@@ -272,26 +259,25 @@ async function preflightCloneFreshness(): Promise<void> {
         const behind = (await capture($`git rev-list --count HEAD..origin/main`)).stdout.trim() || "?";
         warn(`your clone is ${behind} commit(s) behind origin/main`);
         warn("stale clones often hit hotfixes that already shipped");
-        if (await promptYn("Pull origin/main now?", "y")) {
-            const pull = await capture($`git pull --ff-only origin main`);
-            if (!pull.ok) die("git pull failed", "resolve manually then re-run ./ct install");
-            const short = (await capture($`git rev-parse --short HEAD`)).stdout.trim();
-            ok(`fast-forwarded to ${short}`);
-            warn("the script you're running is the OLD in-memory copy; exit and re-run to pick up the new one");
-            if (!(await promptYn("Continue with the OLD in-memory script anyway?", "n"))) {
-                die("aborted so you can re-run with the fresh script", "./ct install");
-            }
-        } else {
-            warn("continuing with stale clone (you've been warned)");
-        }
+        const pull = await capture($`git pull --ff-only origin main`);
+        if (!pull.ok) die("git pull failed", "resolve manually then re-run ./ct install");
+        const short = (await capture($`git rev-parse --short HEAD`)).stdout.trim();
+        ok(`fast-forwarded to ${short}`);
+        die("re-run with the fresh installer code", "./ct install");
     } else if (mergeBase === remote) {
         const ahead = (await capture($`git rev-list --count origin/main..HEAD`)).stdout.trim() || "?";
         ok(`clone has ${ahead} unpushed commit(s) ahead of origin/main (assuming intentional)`);
     } else {
         warn("clone has diverged from origin/main (commits on each side)");
-        if (!(await promptYn("Continue with this state?", "n"))) {
-            die("aborted on diverged clone", "git rebase origin/main  (or: git reset --hard origin/main)");
-        }
+        const stamp = new Date().toISOString().replace(/[-:.]/g, "").replace(/\..*/, "").replace("T", "T");
+        const short = (await capture($`git rev-parse --short HEAD`)).stdout.trim() || "unknown";
+        const backup = `ct-backup/pre-install-${stamp}Z-${short}`;
+        const branch = await capture($`git branch ${backup} HEAD`);
+        if (!branch.ok) die("could not create backup branch before reset", branch.stderr.split("\n")[0] ?? "");
+        const reset = await capture($`git reset --hard origin/main`);
+        if (!reset.ok) die("git reset --hard origin/main failed", reset.stderr.split("\n")[0] ?? "");
+        ok(`reset to origin/main; previous HEAD saved as ${backup}`);
+        die("re-run with the fresh installer code", "./ct install");
     }
 }
 
@@ -313,13 +299,8 @@ async function preflightDockerState(): Promise<void> {
     }
     warn("Docker state from a prior install detected:");
     warn(`  containers: ${containerCount}    volumes: ${volumeCount}`);
-    warn("wipe only for a fresh reinstall; keep existing state to preserve data");
-    if (await promptYn("Wipe Docker volumes? DESTROYS database data", "n")) {
-        await capture($`docker compose down -v`);
-        ok("prior containers + volumes removed");
-    } else {
-        ok("keeping existing Docker volumes and database");
-    }
+    warn("keeping existing Docker volumes and database (no automatic wipe)");
+    ok("existing Docker state preserved");
 }
 
 async function preflightAutoTempClean(): Promise<void> {
@@ -455,8 +436,10 @@ async function bringUpDataLayer(): Promise<void> {
             "MariaDB never reached healthy after 60s",
             `docker compose logs --tail=80 db
 Most common: stale volume from a prior install (DB_PASSWORD
-changed since volume init) — re-run install and answer 'y' to
-the wipe prompt; or a CPU-starved VPS still running initdb.`,
+changed since volume init) or a CPU-starved VPS still running initdb.
+To intentionally wipe a fresh failed install:
+  docker compose down -v
+  ./ct install`,
         );
     }
 }
@@ -766,15 +749,11 @@ export async function runInstall(): Promise<number> {
         die("required command 'docker' is not on PATH", "Install per docs/installation-debian.md (uses Docker's official apt repo).");
     }
     if (!(await Bun.file(".env").exists())) {
-        if (await promptYn("No .env file found. Copy .env.example to .env now?", "y")) {
-            const cp = await capture($`cp .env.example .env`);
-            if (!cp.ok) die("cp .env.example .env failed", cp.stderr.trim());
-            await capture($`chmod 0600 .env`);
-            warn("created .env from template (mode 0600)");
-            die("open .env, fill in real values, then re-run ./ct install", "$EDITOR .env");
-        } else {
-            die(".env is required", "cp .env.example .env  &&  $EDITOR .env");
-        }
+        const cp = await capture($`cp .env.example .env`);
+        if (!cp.ok) die("cp .env.example .env failed", cp.stderr.trim());
+        await capture($`chmod 0600 .env`);
+        warn("created .env from template (mode 0600)");
+        die("missing required .env values", "$EDITOR .env");
     }
 
     if (!process.env[LOCK_HELD_MARKER]) {

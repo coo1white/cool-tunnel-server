@@ -8,8 +8,8 @@
 //
 // Stages:
 //   1. acquireOpLock (per-project flock)
-//   2. preflight: network, disk space, low-space cleanup, stack-up, clean tree
-//      (TTY: interactive stash/discard/abort; non-TTY: dies)
+//   2. preflight: network, disk space, low-space cleanup, stack-up,
+//      auto-stash local edits
 //   3. git pull --ff-only
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
 //   5. prepare ct-server-core image (prebuilt release asset; source fallback)
@@ -32,7 +32,6 @@ import { waitFor } from "./src/util/wait";
 import { checkNetwork, checkStackUp, checkIpv4OnlyRouting } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
-import { promptChoice, promptYn } from "./src/util/prompt";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
 import {
     credentialLockRecoveryHint,
@@ -86,107 +85,65 @@ async function preflightCleanTree(): Promise<void> {
     if (diff.ok) for (const l of diff.stdout.split("\n").slice(0, 30)) process.stderr.write(`    ${l}\n`);
     process.stderr.write(`\n`);
 
-    // Interactive prompt (matches scripts/lib.sh::preflight_clean_tree).
-    // Non-TTY (cron, CI) → dies with a diagnostic that points at
-    // the manual recovery commands; same shape as before.
-    if (!process.stdin.isTTY) {
-        dieWithDiag(
-            "uncommitted changes block git pull",
-            `Running non-interactively, so this script will not auto-decide.
-
-To preserve the edits and proceed:
-  git stash push -u -m "preflight-$(date -u +%Y%m%dT%H%M%SZ)"
-  ./ct update
-
-To discard the edits and proceed:
-  git checkout -- .
-  ./ct update`,
-        );
+    warn("auto-stashing local edits before update (no prompt)");
+    const label = `preflight-${new Date().toISOString().replace(/[-:.]/g, "").replace(/\..*/, "").replace("T", "T")}Z`;
+    const stash = await capture($`git stash push -u -m ${label}`);
+    if (stash.ok) {
+        ok(`stashed as '${label}' (recover with: git stash pop)`);
+        return;
     }
-
-    for (;;) {
-        const choice = await promptChoice(
-            [
-                "  How do you want to proceed?",
-                "    [s] stash with timestamp label (preserves edits, recoverable via 'git stash pop')",
-                "    [d] discard local edits (NOT recoverable)",
-                "    [a] abort — I'll handle it manually",
-            ],
-            "  choice [s/d/a]: ",
-            ["s", "d", "a"],
-            "a",
-        );
-        if (choice === "s") {
-            const label = `preflight-${new Date().toISOString().replace(/[-:.]/g, "").replace(/\..*/, "").replace("T", "T")}Z`;
-            const stash = await capture($`git stash push -u -m ${label}`);
-            if (stash.ok) {
-                ok(`stashed as '${label}' (recover with: git stash pop)`);
-                return;
-            }
-            dieWithDiag(
-                "git stash failed",
-                `git refused to stash — usually means the index is in a
+    dieWithDiag(
+        "git stash failed",
+        `git refused to stash — usually means the index is in a
 broken state. Inspect with:
   git status
   git stash list
 If you see an in-progress merge / rebase / cherry-pick:
-  git merge --abort  (or rebase --abort, etc.)`,
-            );
-        }
-        if (choice === "d") {
-            if (
-                await promptYn(
-                    "Discard ALL uncommitted changes to TRACKED files? (untracked files preserved)",
-                    "n",
-                )
-            ) {
-                const checkout = await capture($`git checkout -- .`);
-                if (!checkout.ok) {
-                    dieWithDiag(
-                        "git checkout -- . failed",
-                        checkout.stderr.split("\n")[0] ?? "",
-                    );
-                }
-                ok("tracked-file changes reverted (untracked files left alone)");
-                return;
-            }
-            // user declined the second confirmation; re-prompt the
-            // top-level menu.
-            continue;
-        }
-        // 'a' (abort) — or fallback when prompt returned null.
-        dieWithDiag(
-            "aborted on uncommitted changes",
-            `You chose to handle this manually. The diff is shown above.
-When ready to retry, run:
+  git merge --abort  (or rebase --abort, etc.)
+
+After fixing git state, retry:
   ./ct update`,
+    );
+}
+
+async function resetToOriginMainAfterPullFailure(stderr: string): Promise<void> {
+    warn("git pull --ff-only refused; creating backup branch and resetting to origin/main");
+    const stamp = new Date().toISOString().replace(/[-:.]/g, "").replace(/\..*/, "").replace("T", "T");
+    const short = (await capture($`git rev-parse --short HEAD`)).stdout.trim() || "unknown";
+    const backup = `ct-backup/pre-update-${stamp}Z-${short}`;
+    const branch = await capture($`git branch ${backup} HEAD`);
+    if (!branch.ok) {
+        dieWithDiag(
+            "could not create backup branch before reset",
+            `${branch.stderr.split("\n")[0] ?? ""}
+
+Original git pull error:
+${stderr || "(no stderr)"}`,
         );
     }
+    const fetch = await capture($`git fetch --quiet origin main`);
+    if (!fetch.ok) {
+        dieWithDiag("git fetch origin main failed", fetch.stderr.split("\n")[0] ?? "");
+    }
+    const reset = await capture($`git reset --hard origin/main`);
+    if (!reset.ok) {
+        dieWithDiag(
+            "git reset --hard origin/main failed",
+            `${reset.stderr.split("\n")[0] ?? ""}
+
+Your previous HEAD is preserved at:
+  ${backup}`,
+        );
+    }
+    ok(`reset to origin/main; previous HEAD saved as ${backup}`);
 }
 
 async function gitPullFfOnly(): Promise<void> {
     phase("git pull (fast-forward only)");
     const r = await capture($`git pull --ff-only`);
     if (!r.ok) {
-        dieWithDiag(
-            "git pull --ff-only refused to fast-forward",
-            `Working tree is clean (preflight passed), so this is a non-FF
-situation -- usually one of:
-  - Upstream main was force-pushed (rare; check #incidents channel)
-  - Local main has diverged from origin/main (you committed
-    directly to main, not through a PR)
-  - Detached HEAD or wrong branch
-
-Inspect with:
-  git log --oneline -5 HEAD origin/main
-  git status
-
-Recover by hard-resetting to the published main (loses any local
-main commits -- be sure that is what you want):
-  git fetch origin
-  git reset --hard origin/main
-  ./ct update`,
-        );
+        await resetToOriginMainAfterPullFailure(r.stderr);
+        return;
     }
     if (r.stdout) process.stdout.write(r.stdout);
 }

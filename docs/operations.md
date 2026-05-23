@@ -133,7 +133,7 @@ classes:
 
 | What you see | Why | What to do |
 |--------------|-----|-----------|
-| `uncommitted changes block git pull` | Working tree has local edits | Interactive prompt offers `[s]tash / [d]iscard / [a]bort`; pick stash if unsure |
+| `auto-stashing local edits before update` | Working tree has local edits | `ct update` stashes them automatically; recover with `git stash pop` |
 | `network: cannot reach ...` | Outbound HTTPS broken from the VPS | Check the diagnostic block's command ladder (ping / dig / curl) |
 | `low disk under repo path: NG free` | The VPS is still too full after auto-clean | Follow the diagnostic block; usually `docker system prune -af` + checking large host directories |
 | `ct-server-core build failed` + `NetworkUnreachable` | VPS cannot reach Rust/crates endpoints over outbound IPv4 | Run the Rust endpoint checks below, prune builder cache, retry |

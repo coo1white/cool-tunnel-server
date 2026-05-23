@@ -100,3 +100,22 @@ test("prebuilt singbox-core fetch path wraps release binary for panel and singbo
     expect(pkg).toContain("build:linux-arm64");
     expect(version).toContain('platform === "linux" && arch === "arm64"');
 });
+
+test("install and update avoid y/n prompts during deploy preflights", async () => {
+    const install = await Bun.file("./install.ts").text();
+    const update = await Bun.file("./update.ts").text();
+
+    for (const body of [install, update]) {
+        expect(body).not.toContain("promptYn");
+        expect(body).not.toContain("promptChoice");
+        expect(body).not.toContain("[y/N]");
+        expect(body).not.toContain("[Y/n]");
+        expect(body).not.toContain("Continue with this state?");
+        expect(body).not.toContain("Wipe Docker volumes?");
+    }
+
+    expect(install).toContain("existing Docker state preserved");
+    expect(install).toContain("reset to origin/main; previous HEAD saved as");
+    expect(update).toContain("auto-stashing local edits before update");
+    expect(update).toContain("reset to origin/main; previous HEAD saved as");
+});
