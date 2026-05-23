@@ -162,6 +162,23 @@ cd "$INSTALL_DIR"
 # prints actionable advice if no production operator binary is present.
 ./scripts/fetch_operator_binary.sh || warn "fetch_operator_binary failed; install.sh will retry"
 
+# Install the friendly top-level command after the repo is present. The
+# project-local ./ct keeps working either way, but a PATH shim prevents the
+# common fresh-VPS mistake of typing `ct install` from the wrong directory and
+# getting "command not found".
+if [ -x ./ct ]; then
+    install -d -m 0755 /usr/local/bin
+    if [ -e /usr/local/bin/ct ] && [ ! -L /usr/local/bin/ct ]; then
+        warn "/usr/local/bin/ct exists and is not a symlink; leaving it unchanged"
+        warn "use ${INSTALL_DIR}/ct or ./ct from ${INSTALL_DIR}"
+    else
+        ln -sfn "${INSTALL_DIR}/ct" /usr/local/bin/ct
+        log "installed /usr/local/bin/ct -> ${INSTALL_DIR}/ct"
+    fi
+else
+    warn "repo dispatcher ./ct is missing or not executable; use ./scripts/install.sh as fallback"
+fi
+
 # ---------- 4. .env scaffold (auto-generate strong secrets) ----------------
 
 if [ ! -f .env ]; then
@@ -228,8 +245,9 @@ NEXT
        cd ${INSTALL_DIR}
        ct install
 
-  4. Open the panel: https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
-       initial login: holder / cool-tunnel-server-2026
+  4. Open the panel after ct install finishes:
+       https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
+       login: holder / CT_BOOTSTRAP_ADMIN_PASSWORD from ${INSTALL_DIR}/.env
        change the password after first login
 =================================================================
 EOF

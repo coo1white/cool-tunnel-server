@@ -12,7 +12,6 @@ use Filament\Forms\Components\TextInput;
 use Filament\Pages\Auth\Login as FilamentLogin;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Contracts\Support\Htmlable;
-use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 
 // H1 (2026-05-05 audit) — Filament 3's stock Login page does not
@@ -32,11 +31,7 @@ class Login extends FilamentLogin
 
     public function getSubheading(): string | Htmlable | null
     {
-        return new HtmlString(
-            'Initial login: <code>holder</code> / <code>cool-tunnel-server-2026</code>. '.
-            'You will be asked to change the password after first login. '.
-            'Locked out? On the VPS run <code>docker compose exec panel php artisan ct:make-admin --force --email=you@example.com</code>.',
-        );
+        return null;
     }
 
     /**

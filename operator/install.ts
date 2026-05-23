@@ -33,6 +33,7 @@ import { waitFor } from "./src/util/wait";
 import { checkIpv4OnlyRouting } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
+import { ensureBootstrapAdminPassword } from "./src/util/bootstrap-admin";
 import {
     credentialLockRecoveryHint,
     settleCredentialLock,
@@ -141,10 +142,17 @@ interface InstallEnv {
     PANEL_DOMAIN: string;
     ACME_EMAIL: string;
     ACME_DIRECTORY: string;
+    BOOTSTRAP_ADMIN_PASSWORD: string;
 }
 
 async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
-    const text = await Bun.file(".env").text();
+    let text = await Bun.file(".env").text();
+    const adminPassword = ensureBootstrapAdminPassword(text);
+    if (adminPassword.changed) {
+        await Bun.write(".env", adminPassword.content);
+        text = adminPassword.content;
+        ok("generated VPS-local bootstrap admin password in .env");
+    }
     const env = parseSimpleEnv(text);
     const get = (k: string): string => env[k] ?? "";
 
@@ -180,6 +188,7 @@ async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
         PANEL_DOMAIN: panelDomain,
         ACME_EMAIL: get("ACME_EMAIL"),
         ACME_DIRECTORY: get("ACME_DIRECTORY"),
+        BOOTSTRAP_ADMIN_PASSWORD: adminPassword.password,
     };
 }
 
@@ -598,17 +607,28 @@ async function settleInstallDeployment(): Promise<void> {
 
 // ---------- step 19: create first admin -----------------------------------
 
-async function createAdmin(): Promise<void> {
+async function createAdmin(env: InstallEnv): Promise<void> {
     step("Ensure the default Filament admin user exists");
     const r = await capture(
-        $`docker compose exec -T panel php artisan ct:make-admin --bootstrap-default --no-interaction`,
+        $`docker compose exec -T panel php artisan ct:make-admin --bootstrap-default --password=${env.BOOTSTRAP_ADMIN_PASSWORD} --no-interaction`,
     );
     if (!r.ok) {
         warn("could not create default admin - recover with:");
         warn("    docker compose exec panel php artisan ct:make-admin");
         return;
     }
-    ok("admin login ready: holder / cool-tunnel-server-2026 (password change required after first login)");
+    const output = `${r.stdout}\n${r.stderr}`;
+    if (output.includes("rotated")) {
+        ok("legacy holder password rotated to .env CT_BOOTSTRAP_ADMIN_PASSWORD (password change required)");
+    } else if (output.includes("created")) {
+        ok("admin login ready: holder / password from .env CT_BOOTSTRAP_ADMIN_PASSWORD (password change required after first login)");
+    } else if (output.includes("already present")) {
+        ok("holder admin already present; existing changed password preserved");
+    } else if (output.includes("active admin already exists")) {
+        ok("custom active admin already exists; holder bootstrap account not created");
+    } else {
+        ok("admin safety check complete");
+    }
 }
 
 // ---------- success banner ------------------------------------------------
@@ -633,7 +653,7 @@ What to do next:
 
   2. Create your first proxy account:
        open https://${env.PANEL_DOMAIN}/admin -> ProxyAccounts -> New
-       login: holder / cool-tunnel-server-2026
+       login: holder / ${env.BOOTSTRAP_ADMIN_PASSWORD}
        change the password when prompted
 
   3. Import the subscription URL into the macOS client.
@@ -705,7 +725,7 @@ export async function runInstall(): Promise<number> {
         await installStep("Start Caddy", () => bringUpCaddy(loadedEnv));
         await installStep("Start singbox", () => bringUpSingbox(loadedEnv));
         await installStep("Settle deployment", settleInstallDeployment);
-        await installStep("Create admin user", createAdmin);
+        await installStep("Create admin user", () => createAdmin(loadedEnv));
         installProgress.complete("install complete");
         printSuccessBanner(loadedEnv);
     } finally {

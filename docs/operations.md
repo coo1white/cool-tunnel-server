@@ -114,7 +114,7 @@ What `ct update` does, in plain terms:
 2. **Locks** so no one else can run an update at the same time.
 3. **Pulls** the latest code from GitHub (`git pull --ff-only`).
 4. **Auto-migrates** legacy `.env` shape if needed (idempotent).
-5. **Loads** the verified Docker image bundle for the release.
+5. **Loads** the verified Docker image BOM/slices for the release.
 6. **Brings up** the new panel image and waits for the entrypoint
    sentinel.
 7. **Runs migrations** (no-op if nothing pending).
@@ -135,7 +135,7 @@ classes:
 | `auto-stashing local edits before update` | Working tree has local edits | `ct update` stashes them automatically; recover with `git stash pop` |
 | `network: cannot reach ...` | Outbound HTTPS broken from the VPS | Check the diagnostic block's command ladder (ping / dig / curl) |
 | `low disk under repo path: NG free` | The VPS is still too full after auto-clean | Follow the diagnostic block; usually `docker system prune -af` + checking large host directories |
-| `prebuilt Docker image bundle is required` | Release asset is missing for this CPU architecture | Run `./scripts/fetch_image_bundle.sh`; if it says no entry in `SHA256SUMS`, publish the missing bundle |
+| `prebuilt Docker image bundle is required` | Release asset is missing for this CPU architecture | Run `./scripts/fetch_image_bundle.sh`; if it says no entry in `SHA256SUMS`, publish the missing image BOM/slices |
 | `post-swap check NG: <component>` | A specific service didn't come up clean | The diagnostic block lists which component + the targeted `docker compose logs ...` to run |
 
 Before install/update loads release images, `ct install` and
@@ -158,7 +158,7 @@ df -h /var/lib/docker     # should be >= 4G free
 ct update                  # retry
 ```
 
-If the image bundle is missing from the release:
+If the image BOM or slices are missing from the release:
 
 ```sh
 ./scripts/fetch_image_bundle.sh
@@ -406,7 +406,7 @@ For operators who want to understand the exact sequence:
 3. `git pull --ff-only` to the latest tag on `main`.
 4. Auto-migrates legacy `.env` shape (PANEL_DOMAIN placement, APP_URL
    hostname) if needed; idempotent on already-canonical files.
-5. Loads the verified Docker image bundle for the release.
+5. Loads the verified Docker image BOM/slices for the release.
 6. Brings the new panel image up and waits for the entrypoint
    sentinel.
 7. Runs Laravel migrations (no-op if nothing pending).

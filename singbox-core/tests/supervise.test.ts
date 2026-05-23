@@ -5,6 +5,7 @@ import { test, expect } from "bun:test";
 import {
     isConfigWatchEvent,
     migrateLegacyDomainStrategyConfig,
+    shouldPollConfigRestart,
 } from "../src/subcommands/supervise.ts";
 
 const CONFIG_PATH = "/data/config/singbox.json";
@@ -19,6 +20,12 @@ test("config watcher ignores sibling temp-file churn", () => {
 
 test("config watcher treats null filenames as relevant", () => {
     expect(isConfigWatchEvent(CONFIG_PATH, null)).toBe(true);
+});
+
+test("config poller restarts when mtime changes", () => {
+    expect(shouldPollConfigRestart(100, 200)).toBe(true);
+    expect(shouldPollConfigRestart(200, 200)).toBe(false);
+    expect(shouldPollConfigRestart(200, 0)).toBe(false);
 });
 
 test("legacy direct outbound domain_strategy is migrated to domain_resolver", () => {

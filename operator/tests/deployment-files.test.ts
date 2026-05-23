@@ -99,8 +99,15 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     const update = await Bun.file("./update.ts").text();
     const restore = await Bun.file("./restore.ts").text();
 
-    expect(fetchScript).toContain('TARGET="cool-tunnel-server-images-${OS}-${ARCH}.tar.gz"');
-    expect(fetchScript).toContain("docker load -i");
+    expect(fetchScript).toContain('BOM_TARGET="cool-tunnel-server-images-${OS}-${ARCH}.bom.json"');
+    expect(fetchScript).toContain('LEGACY_TARGET="cool-tunnel-server-images-${OS}-${ARCH}.tar.gz"');
+    expect(fetchScript).toContain("load_image_bom");
+    expect(fetchScript).toContain("load_legacy_bundle");
+    expect(fetchScript).toContain("docker load");
+    expect(fetchScript).toContain("CT_KEEP_IMAGE_BUNDLE_PARTS");
+    expect(fetchScript).toContain("CT_IMAGE_BUNDLE_DIR");
+    expect(fetchScript).toContain("CT_IMAGE_BUNDLE_STREAM_TMPDIR");
+    expect(fetchScript).toContain("mktemp -d");
     expect(fetchScript).toContain("cool-tunnel-server-caddy:latest");
     expect(fetchScript).toContain("cool-tunnel-server-singbox:latest");
     expect(fetchScript).toContain("cool-tunnel-server-panel:latest");
@@ -109,6 +116,9 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(fetchScript).not.toContain("CT_SKIP_IMAGE_BUNDLE_FETCH");
     expect(buildScript).toContain("docker save");
     expect(buildScript).toContain("cool-tunnel-server-images-");
+    expect(buildScript).toContain("cool-tunnel-server-image-");
+    expect(buildScript).toContain("cool-tunnel-server-image-bom");
+    expect(buildScript).toContain("CT_IMAGE_BOM_PART_SIZE_MB");
     expect(buildScript).toContain("DOCKER_DEFAULT_PLATFORM");
     expect(buildScript).toContain("docker compose build caddy singbox panel");
     expect(buildScript).toContain("SHA256SUMS.images");
@@ -161,4 +171,27 @@ test("panel entrypoint exports generated APP_KEY before encrypted seed data", as
     expect(body).toContain("rm -f bootstrap/cache/config.php");
     expect(body.indexOf("sync_app_key_env_from_file")).toBeLessThan(body.indexOf("php artisan db:seed"));
     expect(body.indexOf("php artisan key:generate --force")).toBeLessThan(body.indexOf("php artisan db:seed"));
+});
+
+test("install path uses VPS-local bootstrap admin password, not a public fixed secret", async () => {
+    const install = await Bun.file("./install.ts").text();
+    const update = await Bun.file("./update.ts").text();
+    const envMigrate = await Bun.file("./src/util/env-migrate.ts").text();
+    const panelEntrypoint = await Bun.file("../docker/panel/entrypoint.sh").text();
+    const envExample = await Bun.file("../.env.example").text();
+    const readme = await Bun.file("../README.md").text();
+
+    expect(install).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
+    expect(install).toContain("--password=${env.BOOTSTRAP_ADMIN_PASSWORD}");
+    expect(update).toContain("generateBootstrapAdminPassword");
+    expect(update).toContain("ct:make-admin --bootstrap-default");
+    expect(envMigrate).toContain("bootstrap-admin-password");
+    expect(panelEntrypoint).toContain("ensure_bootstrap_admin_password_env");
+    expect(panelEntrypoint).toContain("ct:make-admin --bootstrap-default --no-interaction");
+    expect(envExample).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD=");
+    expect(readme).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
+
+    for (const body of [install, update, envMigrate, panelEntrypoint, envExample, readme]) {
+        expect(body).not.toContain("cool-tunnel-server-2026");
+    }
 });

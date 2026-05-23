@@ -41,6 +41,40 @@ sync_app_key_env_from_file() {
     fi
 }
 
+ensure_bootstrap_admin_password_env() {
+    local raw value generated tmp
+    raw=$(sed -n 's/^CT_BOOTSTRAP_ADMIN_PASSWORD=//p' .env 2>/dev/null | tail -1 || true)
+    value="$raw"
+    value="${value#\"}"
+    value="${value%\"}"
+    value="${value#\'}"
+    value="${value%\'}"
+    value="$(printf '%s' "$value" | tr -d '[:space:]')"
+
+    if [[ -n "$value" ]]; then
+        export CT_BOOTSTRAP_ADMIN_PASSWORD="$value"
+        return 0
+    fi
+
+    generated=$(php -r 'echo bin2hex(random_bytes(16));')
+    tmp=$(mktemp)
+    if grep -q '^CT_BOOTSTRAP_ADMIN_PASSWORD=' .env 2>/dev/null; then
+        sed "s|^CT_BOOTSTRAP_ADMIN_PASSWORD=.*|CT_BOOTSTRAP_ADMIN_PASSWORD=${generated}|" .env > "$tmp"
+    else
+        cp .env "$tmp"
+        {
+            printf '\n'
+            printf '# v0.4.22 auto-migration — VPS-local first admin bootstrap password\n'
+            printf 'CT_BOOTSTRAP_ADMIN_PASSWORD=%s\n' "$generated"
+        } >> "$tmp"
+    fi
+    cat "$tmp" > .env
+    rm -f "$tmp"
+    chmod 0600 .env 2>/dev/null || true
+    export CT_BOOTSTRAP_ADMIN_PASSWORD="$generated"
+    echo "[entrypoint] generated VPS-local bootstrap admin password in .env"
+}
+
 # Hand storage/ + bootstrap/cache/ to www-data. The entrypoint runs
 # as root (so we can write into bind-mounted volumes whose host
 # ownership we don't control). Pre-swap: PHP-FPM workers ran as
@@ -181,6 +215,10 @@ if ! php artisan migrate --force --no-interaction; then
     echo "[entrypoint] WARN: inspect: docker compose logs panel | grep 'WARN:'" >&2
     date -u +'%Y-%m-%dT%H:%M:%SZ' > /tmp/cool-tunnel/migrate-failed
 fi
+
+ensure_bootstrap_admin_password_env
+php artisan ct:make-admin --bootstrap-default --no-interaction || \
+    echo "[entrypoint] WARN: bootstrap default admin check failed" >&2
 
 # Seed the singleton ServerConfig row + the default cover-site
 # template. Both paths are idempotent (ServerConfig::current() is

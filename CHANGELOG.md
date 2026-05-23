@@ -24,6 +24,43 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.22] — 2026-05-23 — Credential and Reality hotfix
+
+### Changed
+
+- Release image assets now use a per-architecture image BOM with
+  smaller verified Docker image slices. The VPS loads each component
+  one at a time, reducing peak archive disk usage versus the previous
+  single 400+ MB full-stack tarball. The old full-bundle path remains
+  as a compatibility fallback for older releases.
+- `ct install` now generates a VPS-local `CT_BOOTSTRAP_ADMIN_PASSWORD`
+  in `.env` and uses it for the first `holder` admin instead of a public
+  fixed password.
+- `ct update` now backfills missing or blank `CT_BOOTSTRAP_ADMIN_PASSWORD`
+  values and runs the bootstrap-admin safety check after migrations.
+- Install/update messaging now distinguishes a created admin, a rotated
+  legacy admin, and an already-changed admin password.
+
+### Fixed
+
+- Fixed the login page so it no longer prints bootstrap credentials or
+  recovery commands to unauthenticated visitors.
+- Fixed Reality destination drift after changing server config in the
+  panel: saves render sing-box config immediately, nudge the config mtime,
+  and the singbox supervisor now polls mtime as a fallback when filesystem
+  watch events are missed.
+
+### Security
+
+- Existing `holder@cool-tunnel.local` users that still match the legacy
+  public default password are rotated to `CT_BOOTSTRAP_ADMIN_PASSWORD` and
+  forced to change password on next login.
+- The panel container entrypoint also performs the bootstrap password
+  backfill and legacy-admin rotation, protecting updates that were started
+  by an older operator binary.
+
+---
+
 ## [0.4.21] — 2026-05-23 — Bundle-only VPS installs
 
 ### Added
@@ -11539,7 +11576,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.21...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.22...HEAD
+[0.4.22]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.21...v0.4.22
 [0.4.21]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.20...v0.4.21
 [0.4.20]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.19...v0.4.20
 [0.4.19]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.18...v0.4.19

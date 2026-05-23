@@ -43,6 +43,7 @@ const DEFAULTS: Readonly<{
     healthzPort: number;
     bootTimeoutMs: number;
     debounceMs: number;
+    pollMs: number;
     graceMs: number;
 }> = {
     config: "/data/config/singbox.json",
@@ -51,6 +52,7 @@ const DEFAULTS: Readonly<{
     healthzPort: 9091,
     bootTimeoutMs: 60_000,
     debounceMs: 250,
+    pollMs: 2_000,
     graceMs: 5_000,
 };
 
@@ -277,6 +279,27 @@ export function isConfigWatchEvent(configPath: string, filename: string | Buffer
     return filename.toString() === basename(configPath);
 }
 
+export function shouldPollConfigRestart(lastSeenMtime: number, currentMtime: number): boolean {
+    return currentMtime > 0 && currentMtime !== lastSeenMtime;
+}
+
+function startConfigPoller(args: ParsedArgs): void {
+    let lastSeenMtime = safeMtime(args.config);
+    setInterval(() => {
+        const currentMtime = safeMtime(args.config);
+        if (!shouldPollConfigRestart(lastSeenMtime, currentMtime)) {
+            return;
+        }
+
+        lastSeenMtime = currentMtime;
+        scheduleRestart(args, "config_poll_changed");
+    }, DEFAULTS.pollMs);
+    log("info", "config_polling_enabled", {
+        config: args.config,
+        interval_ms: DEFAULTS.pollMs,
+    });
+}
+
 function startHealthz(args: ParsedArgs): void {
     Bun.serve({
         hostname: args.healthzHost,
@@ -330,6 +353,12 @@ export async function runSupervise(argv: readonly string[]): Promise<number> {
                     scheduleRestart(args, "config_changed");
                 }
             });
+            // Docker named volumes + atomic rename usually work with
+            // fs.watch, but provider kernels/filesystems occasionally
+            // miss the directory event. Polling mtime is the cheap
+            // safety net that closes the "rendered file changed, live
+            // sing-box process still old" drift window.
+            startConfigPoller(args);
             startHealthz(args);
 
             // Forward parent signals to the child for clean shutdown.

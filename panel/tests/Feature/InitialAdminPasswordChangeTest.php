@@ -20,22 +20,30 @@ final class InitialAdminPasswordChangeTest extends TestCase
 {
     use RefreshDatabase;
 
+    private const BOOTSTRAP_PASSWORD = 'local-bootstrap-password-2026';
+
     #[Test]
     public function bootstrap_default_admin_is_idempotent_and_requires_password_change(): void
     {
-        $this->artisan('ct:make-admin', ['--bootstrap-default' => true])
+        $this->artisan('ct:make-admin', [
+            '--bootstrap-default' => true,
+            '--password' => self::BOOTSTRAP_PASSWORD,
+        ])
             ->expectsOutputToContain('default admin created')
             ->assertExitCode(0);
 
         $user = User::where('name', MakeAdmin::DEFAULT_NAME)->first();
         $this->assertNotNull($user);
         $this->assertSame(MakeAdmin::DEFAULT_EMAIL, $user->email);
-        $this->assertTrue(Hash::check(MakeAdmin::DEFAULT_PASSWORD, $user->password));
+        $this->assertTrue(Hash::check(self::BOOTSTRAP_PASSWORD, $user->password));
         $this->assertTrue($user->is_active);
         $this->assertSame(User::ROLE_ADMIN, $user->role);
         $this->assertTrue($user->must_change_password);
 
-        $this->artisan('ct:make-admin', ['--bootstrap-default' => true])
+        $this->artisan('ct:make-admin', [
+            '--bootstrap-default' => true,
+            '--password' => self::BOOTSTRAP_PASSWORD,
+        ])
             ->expectsOutputToContain('default admin already present')
             ->assertExitCode(0);
 
@@ -43,11 +51,41 @@ final class InitialAdminPasswordChangeTest extends TestCase
     }
 
     #[Test]
+    public function bootstrap_default_admin_rotates_legacy_public_password(): void
+    {
+        $user = User::factory()->create([
+            'name' => MakeAdmin::DEFAULT_NAME,
+            'email' => MakeAdmin::DEFAULT_EMAIL,
+            'password' => 'cool-tunnel-server-2026',
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+            'must_change_password' => false,
+        ]);
+
+        $this->artisan('ct:make-admin', [
+            '--bootstrap-default' => true,
+            '--password' => self::BOOTSTRAP_PASSWORD,
+        ])
+            ->expectsOutputToContain('default admin rotated to CT_BOOTSTRAP_ADMIN_PASSWORD')
+            ->assertExitCode(0);
+
+        $user->refresh();
+        $this->assertTrue(Hash::check(self::BOOTSTRAP_PASSWORD, $user->password));
+        $this->assertFalse(Hash::check('cool-tunnel-server-2026', $user->password));
+        $this->assertSame(User::ROLE_ADMIN, $user->role);
+        $this->assertTrue($user->is_active);
+        $this->assertTrue($user->must_change_password);
+    }
+
+    #[Test]
     public function bootstrap_default_admin_does_not_recreate_known_password_when_an_admin_exists(): void
     {
         User::factory()->create(['email' => 'real-admin@example.com']);
 
-        $this->artisan('ct:make-admin', ['--bootstrap-default' => true])
+        $this->artisan('ct:make-admin', [
+            '--bootstrap-default' => true,
+            '--password' => self::BOOTSTRAP_PASSWORD,
+        ])
             ->expectsOutputToContain('active admin already exists')
             ->assertExitCode(0);
 
@@ -58,12 +96,15 @@ final class InitialAdminPasswordChangeTest extends TestCase
     #[Test]
     public function login_accepts_default_admin_name_and_existing_admin_email(): void
     {
-        $this->artisan('ct:make-admin', ['--bootstrap-default' => true])->assertExitCode(0);
+        $this->artisan('ct:make-admin', [
+            '--bootstrap-default' => true,
+            '--password' => self::BOOTSTRAP_PASSWORD,
+        ])->assertExitCode(0);
 
         Livewire::test(Login::class)
             ->fillForm([
                 'email' => MakeAdmin::DEFAULT_NAME,
-                'password' => MakeAdmin::DEFAULT_PASSWORD,
+                'password' => self::BOOTSTRAP_PASSWORD,
             ])
             ->call('authenticate')
             ->assertHasNoFormErrors();
@@ -105,7 +146,10 @@ final class InitialAdminPasswordChangeTest extends TestCase
     #[Test]
     public function changing_password_clears_force_change_flag_and_replaces_default_password(): void
     {
-        $this->artisan('ct:make-admin', ['--bootstrap-default' => true])->assertExitCode(0);
+        $this->artisan('ct:make-admin', [
+            '--bootstrap-default' => true,
+            '--password' => self::BOOTSTRAP_PASSWORD,
+        ])->assertExitCode(0);
         $admin = User::where('email', MakeAdmin::DEFAULT_EMAIL)->firstOrFail();
 
         Livewire::actingAs($admin);
@@ -121,7 +165,7 @@ final class InitialAdminPasswordChangeTest extends TestCase
 
         $admin->refresh();
         $this->assertFalse($admin->must_change_password);
-        $this->assertFalse(Hash::check(MakeAdmin::DEFAULT_PASSWORD, $admin->password));
+        $this->assertFalse(Hash::check(self::BOOTSTRAP_PASSWORD, $admin->password));
         $this->assertTrue(Hash::check('new-cool-tunnel-password-2026', $admin->password));
     }
 }

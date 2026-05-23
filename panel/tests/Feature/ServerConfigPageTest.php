@@ -6,9 +6,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Contracts\SingBoxConfigGeneratorInterface;
 use App\Filament\Pages\ServerConfigPage;
 use App\Models\ServerConfig;
 use App\Models\User;
+use App\Support\RenderResult;
 use App\Support\RealityDestinationCatalog;
 use Filament\Notifications\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -39,6 +41,8 @@ final class ServerConfigPageTest extends TestCase
             'acme_directory' => 'https://acme-staging-v02.api.letsencrypt.org/directory',
             'reality_dest_host' => 'www.microsoft.com',
         ]);
+        $generator = new ServerConfigPageFakeSingBoxGenerator(RenderResult::changed(str_repeat('f', 64)));
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
 
         Livewire::actingAs($admin)
             ->test(ServerConfigPage::class)
@@ -53,6 +57,34 @@ final class ServerConfigPageTest extends TestCase
             ->assertHasNoFormErrors();
 
         $this->assertSame('ya.ru', ServerConfig::current()->reality_dest_host);
+        $this->assertSame(1, $generator->renderCalls);
+        Notification::assertNotified('Server config saved — config current');
+    }
+
+    #[Test]
+    public function reality_destination_save_warns_when_immediate_render_fails(): void
+    {
+        $admin = User::factory()->create();
+        ServerConfig::factory()->create([
+            'domain' => 'proxy.example.com',
+            'acme_email' => 'admin@example.com',
+            'acme_directory' => 'https://acme-staging-v02.api.letsencrypt.org/directory',
+            'reality_dest_host' => 'www.microsoft.com',
+        ]);
+        $generator = new ServerConfigPageFakeSingBoxGenerator(RenderResult::failed());
+        $this->app->instance(SingBoxConfigGeneratorInterface::class, $generator);
+
+        Livewire::actingAs($admin)
+            ->test(ServerConfigPage::class)
+            ->fillForm([
+                'reality_dest_host' => 'ya.ru',
+            ])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('ya.ru', ServerConfig::current()->reality_dest_host);
+        $this->assertSame(1, $generator->renderCalls);
+        Notification::assertNotified('Server config saved (reload path degraded)');
     }
 
     #[Test]
@@ -116,5 +148,19 @@ final class ServerConfigPageTest extends TestCase
             ->test(ServerConfigPage::class)
             ->assertSee('Check latency')
             ->assertSee('Save and reload');
+    }
+}
+
+final class ServerConfigPageFakeSingBoxGenerator implements SingBoxConfigGeneratorInterface
+{
+    public int $renderCalls = 0;
+
+    public function __construct(private readonly RenderResult $result) {}
+
+    public function renderToFile(): RenderResult
+    {
+        $this->renderCalls++;
+
+        return $this->result;
     }
 }

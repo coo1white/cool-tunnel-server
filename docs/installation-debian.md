@@ -338,16 +338,17 @@ sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
 
 The minimum spec — **1 vCPU, 1 GB RAM** — is enough to *run* the
 stack (idle ≈ 240 MiB, moderate load ≈ 400-500 MiB). Tagged releases
-download one verified Docker image bundle for the VPS CPU architecture
-and load it with Docker. The normal production path does **not** build
-Rust, Bun, Go, PHP extensions, or Docker images on the VPS.
+download a verified image BOM plus Docker image slices for the VPS CPU
+architecture and load them one component at a time. The normal
+production path does **not** build Rust, Bun, Go, PHP extensions, or
+Docker images on the VPS.
 
 The swap step below is optional runtime safety for very small servers.
 It is no longer required for release installs, because release installs
 must not compile or build runtime images locally. If `ct install` says a
-prebuilt Docker image bundle is missing, the release asset is incomplete
-for your architecture; the fix is to publish that bundle, not to compile
-on the VPS.
+prebuilt Docker image bundle is missing, the release assets are
+incomplete for your architecture; the fix is to publish the image BOM
+and slices, not to compile on the VPS.
 
 ### a. Add a 2 GB swapfile
 
@@ -386,7 +387,7 @@ FrankenPHP's worker pool size is configured in
 `docker/panel/Caddyfile` via the `frankenphp { worker { num 4 } }`
 block — NOT via env. To grow the pool: edit the `num` value in
 that file and rebuild the panel image on a maintainer build host, then
-publish a new image bundle. Default
+publish a new image BOM and image slices. Default
 `num 4` matches the prior PHP-FPM `pm.max_children` cap and
 keeps steady-state ~250 MiB inside the panel container's 320 MiB
 mem_limit. Raising past 4 should usually be paired with a
@@ -463,7 +464,7 @@ ct install
    app setup, migrations, and the initial `sing-box config.json`
    render.
 6. Creates the bootstrap admin when needed:
-   `holder` / `cool-tunnel-server-2026`.
+   `holder` with the VPS-local `CT_BOOTSTRAP_ADMIN_PASSWORD` from `.env`.
 7. `docker compose up -d caddy singbox` — Caddy gets the panel cert
    and routes non-panel SNI to sing-box.
 8. Tails Caddy and sing-box logs until the panel cert is available
@@ -475,8 +476,9 @@ When it finishes, open:
 https://${PANEL_DOMAIN}/admin
 ```
 
-Log in with `holder` / `cool-tunnel-server-2026`. The panel requires
-you to change that bootstrap password before using the admin area.
+Log in as `holder` with `CT_BOOTSTRAP_ADMIN_PASSWORD` from `.env`.
+The panel requires you to change that bootstrap password before using
+the admin area.
 
 ### Check the certificate landed
 

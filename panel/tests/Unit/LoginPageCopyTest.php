@@ -13,17 +13,18 @@ use Tests\TestCase;
 class LoginPageCopyTest extends TestCase
 {
     #[Test]
-    public function login_page_explains_admin_account_and_recovery_command(): void
+    public function login_page_does_not_expose_bootstrap_credentials_or_recovery_commands(): void
     {
         $page = new Login;
 
         $this->assertSame('Log in to Cool Tunnel Server', $page->getHeading());
 
-        $copy = (string) $page->getSubheading();
-        $this->assertStringContainsString('holder', $copy);
-        $this->assertStringContainsString('cool-tunnel-server-2026', $copy);
-        $this->assertStringContainsString('change the password', $copy);
-        $this->assertStringContainsString('ct:make-admin --force', $copy);
-        $this->assertStringContainsString('you@example.com', $copy);
+        $copy = (string) ($page->getSubheading() ?? '');
+        $this->assertSame('', $copy);
+        $this->assertStringNotContainsString('holder', $copy);
+        $this->assertStringNotContainsString('cool-tunnel-server-2026', $copy);
+        $this->assertStringNotContainsString('ct:make-admin', $copy);
+        $this->assertStringNotContainsString('docker compose', $copy);
+        $this->assertStringNotContainsString('you@example.com', $copy);
     }
 }

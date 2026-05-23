@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 
 // Project-specific admin creator. Replaces Filament's stock
@@ -55,7 +56,7 @@ class MakeAdmin extends Command
 
     public const DEFAULT_EMAIL = 'holder@cool-tunnel.local';
 
-    public const DEFAULT_PASSWORD = 'cool-tunnel-server-2026';
+    private const LEGACY_PUBLIC_DEFAULT_PASSWORD = 'cool-tunnel-server-2026';
 
     private const SMART_QUOTE_PATTERN = '/[\x{2018}\x{2019}\x{201A}\x{201B}\x{201C}\x{201D}\x{201E}\x{201F}]/u';
 
@@ -63,7 +64,7 @@ class MakeAdmin extends Command
                             {--name= : Display name (prompts if omitted; ignored on --force update of existing user)}
                             {--email= : Email address (prompts if omitted)}
                             {--password= : Cleartext password (prompts if omitted; never logged)}
-                            {--bootstrap-default : Idempotently create the first default admin login (holder / cool-tunnel-server-2026)}
+                            {--bootstrap-default : Idempotently create the first default admin login (holder; password from --password or CT_BOOTSTRAP_ADMIN_PASSWORD)}
                             {--force : Reset password on an existing email instead of erroring (docs as the recover-from-lost-password path)}';
 
     protected $description = 'Create a Filament admin user, or reset an existing admin\'s password with --force';
@@ -170,8 +171,26 @@ class MakeAdmin extends Command
             ->where('is_active', true)
             ->count();
 
+        $password = $this->validatedBootstrapPassword();
+        if ($password === null) {
+            return self::FAILURE;
+        }
+
         $existing = User::query()->where('email', self::DEFAULT_EMAIL)->first();
         if ($existing !== null) {
+            if (Hash::check(self::LEGACY_PUBLIC_DEFAULT_PASSWORD, (string) $existing->password)) {
+                $existing->password = $password;
+                $existing->role = User::ROLE_ADMIN;
+                $existing->is_active = true;
+                $existing->must_change_password = true;
+                $existing->save();
+
+                Log::notice('admin.default_rotated_from_legacy_public_password', ['email' => self::DEFAULT_EMAIL]);
+                $this->info('default admin rotated to CT_BOOTSTRAP_ADMIN_PASSWORD: holder (must_change_password=true)');
+
+                return self::SUCCESS;
+            }
+
             $this->info('default admin already present: holder');
 
             return self::SUCCESS;
@@ -186,7 +205,7 @@ class MakeAdmin extends Command
         $user = new User;
         $user->name = self::DEFAULT_NAME;
         $user->email = self::DEFAULT_EMAIL;
-        $user->password = self::DEFAULT_PASSWORD;
+        $user->password = $password;
         $user->role = User::ROLE_ADMIN;
         $user->is_active = true;
         $user->must_change_password = true;
@@ -196,5 +215,33 @@ class MakeAdmin extends Command
         $this->info('default admin created: holder (must_change_password=true)');
 
         return self::SUCCESS;
+    }
+
+    private function validatedBootstrapPassword(): ?string
+    {
+        $password = (string) ($this->option('password') ?: env('CT_BOOTSTRAP_ADMIN_PASSWORD', ''));
+        if ($password === '') {
+            $this->error('Bootstrap admin password missing. Pass --password or set CT_BOOTSTRAP_ADMIN_PASSWORD in .env.');
+
+            return null;
+        }
+        if (self::containsSmartQuote($password)) {
+            $this->error('Bootstrap admin password contains smart quotes. Re-run with straight shell quotes or regenerate CT_BOOTSTRAP_ADMIN_PASSWORD.');
+
+            return null;
+        }
+        $validator = Validator::make(
+            ['password' => $password],
+            ['password' => ['required', 'string', 'min:8']],
+        );
+        if ($validator->fails()) {
+            foreach ($validator->errors()->all() as $msg) {
+                $this->error($msg);
+            }
+
+            return null;
+        }
+
+        return $password;
     }
 }

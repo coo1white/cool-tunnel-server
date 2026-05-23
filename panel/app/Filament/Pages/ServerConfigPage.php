@@ -8,6 +8,7 @@ namespace App\Filament\Pages;
 
 use App\Models\ServerConfig;
 use App\Support\RealityDestinationCatalog;
+use App\Support\SingBoxRenderConfirmation;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Actions;
 use Filament\Forms\Components\Actions\Action as FormAction;
@@ -161,28 +162,45 @@ class ServerConfigPage extends Page implements HasForms
 
         $config->fill($data)->save();
 
-        // The model's `updated` hook dispatches a queued
-        // ReloadServerConfig message after commit instead of running
-        // render subprocesses inline. Probe Redis once so the panel
-        // can distinguish "queued" from "saved but queue unavailable"
-        // without blocking on the render itself.
+        // Reality destination changes must be reflected in the live
+        // server config before clients refresh their subscription.
+        // Relying only on Messenger/scheduler leaves a drift window:
+        // subscription JSON can say "Yahoo" while ct-singbox is still
+        // running the previous "Microsoft" Reality handshake.
+        $renderConfirmed = SingBoxRenderConfirmation::renderNow('server_config.save');
+
+        // The model's `updated` hook still dispatches a queued
+        // ReloadServerConfig message after commit as a safety net.
+        // Probe Redis once so the panel can distinguish "queued"
+        // from "saved but queue unavailable".
         $reloadOk = $this->probeReloadTransport();
 
-        if ($reloadOk) {
+        if ($renderConfirmed) {
             Notification::make()
-                ->title('Server config saved')
+                ->title('Server config saved — config current')
                 ->body(
-                    'Render job queued. sing-box picks up changed config files automatically. Caddyfile changes are rendered here; the host-side operator update flow owns the live Caddy reload. '
-                    .'If a change is not visible after a minute, check `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
+                    'sing-box config rendered now; refreshed subscriptions use the same Reality destination as the running server. '
+                    .'The queued reload path remains as a backup for Caddyfile updates.'
                 )
                 ->success()
+                ->send();
+        } elseif ($reloadOk) {
+            Notification::make()
+                ->title('Server config saved — reload queued')
+                ->body(
+                    'The DB row was committed, but immediate sing-box render was not confirmed. '
+                    .'The queued worker or every-5-min scheduler should reconcile it; until then clients may see a Reality destination mismatch. '
+                    .'Run `docker compose exec panel php artisan singbox:render --if-changed && docker compose restart singbox` if the client fails.'
+                )
+                ->warning()
+                ->persistent()
                 ->send();
         } else {
             Notification::make()
                 ->title('Server config saved (reload path degraded)')
                 ->body(
-                    'The DB row was committed, but Redis appears unreachable from the panel right now. The Messenger render job will not run until Redis recovers. '
-                    .'The every-5-min `singbox:render --if-changed` scheduler will reconcile sing-box once Redis is back. Run `docker compose ps redis` and grep `docker compose logs panel` for `serverconfig.reload.dispatch_failed`.'
+                    'The DB row was committed, but immediate sing-box render was not confirmed and Redis appears unreachable from the panel right now. '
+                    .'Run `docker compose exec panel php artisan singbox:render --if-changed && docker compose restart singbox`, then check `docker compose ps redis`.'
                 )
                 ->warning()
                 ->persistent()

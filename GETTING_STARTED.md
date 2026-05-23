@@ -104,11 +104,11 @@ Install:
 ct install
 ```
 
-The installer downloads the verified Docker image bundle for your CPU
-architecture, loads it with Docker, migrates the DB, renders Caddy and
-sing-box config, starts the stack, and creates the first admin login.
-On normal tagged releases, a small VPS does not build Rust, Bun, Go,
-PHP extensions, or Docker images locally.
+The installer downloads verified Docker image slices for your CPU
+architecture, loads them with Docker, migrates the DB, renders Caddy
+and sing-box config, starts the stack, and creates the first admin
+login. On normal tagged releases, a small VPS does not build Rust, Bun,
+Go, PHP extensions, or Docker images locally.
 
 ## Update Later
 
@@ -148,7 +148,7 @@ Initial admin login:
 
 ```text
 admin name: holder
-password: cool-tunnel-server-2026
+password: value of CT_BOOTSTRAP_ADMIN_PASSWORD in /opt/cool-tunnel-server/.env
 ```
 
 The panel forces a password change after the first login. If you need
@@ -201,8 +201,8 @@ docker compose logs --tail=120 panel
 
 If `ct install` or `ct update` says the prebuilt Docker image bundle is
 missing, the release is incomplete for that CPU architecture. Fetching
-the bundle manually should either load it or print the exact missing
-asset/checksum:
+the release images manually should either load them or print the exact
+missing asset/checksum:
 
 ```sh
 ./scripts/fetch_image_bundle.sh

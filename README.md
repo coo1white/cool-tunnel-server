@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-1c5cdc)](./LICENSE)
 [![LTSC-Heng Draft](https://img.shields.io/badge/license--draft-LTSC--Heng-111111)](./LTSC-HENG-LICENSE-DRAFT.md)
-[![Latest release](https://img.shields.io/badge/release-v0.4.21-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.4.21)
+[![Latest release](https://img.shields.io/badge/release-v0.4.22-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.4.22)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
 
@@ -25,8 +25,8 @@ the VPS, domain, updates, backups, provider terms, and local law.
   and config rendering.
 - **Docker Compose runtime** with Caddy SNI routing, sing-box, panel,
   MariaDB, and Redis.
-- **Release-pinned Docker image bundles** with `SHA256SUMS`
-  verification.
+- **Release-pinned Docker image slices** with `SHA256SUMS`
+  verification and a per-architecture image BOM.
 - **No local runtime builds on the VPS** during normal install/update:
   the server downloads verified release images and loads them with
   Docker.
@@ -82,10 +82,10 @@ nano .env
 ./ct doctor
 ```
 
-Release installs download one verified Docker image bundle for the VPS
-CPU architecture. The VPS uses `docker load`; it does not build Rust,
-Bun, Go, PHP extensions, or Docker images during `ct install` or
-`ct update`.
+Release installs download verified Docker image slices for the VPS CPU
+architecture and load them one at a time. The VPS uses `docker load`;
+it does not build Rust, Bun, Go, PHP extensions, or Docker images
+during `ct install` or `ct update`.
 
 Set at least these `.env` values before running `./ct install`:
 
@@ -110,7 +110,7 @@ Initial admin login:
 
 ```text
 admin name: holder
-password: cool-tunnel-server-2026
+password: value of CT_BOOTSTRAP_ADMIN_PASSWORD in /opt/cool-tunnel-server/.env
 ```
 
 The panel forces a password change after the first login. After that,
@@ -175,7 +175,7 @@ something fails.
 
 ## Release
 
-Latest stable server release: `v0.4.21`.
+Latest stable server release: `v0.4.22`.
 
 Server releases own the runtime assets used by clients:
 

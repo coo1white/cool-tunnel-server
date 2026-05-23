@@ -86,8 +86,8 @@ malformed.
 
 ### 5. Create a test proxy account + import subscription
 
-Browser → `https://panel.test.your-zone.com/admin` → log in with the
-bootstrap admin `holder` / `cool-tunnel-server-2026`, change the
+Browser → `https://panel.test.your-zone.com/admin` → log in as
+`holder` with `CT_BOOTSTRAP_ADMIN_PASSWORD` from `.env`, change the
 password when prompted, then go to **Proxy Accounts** →
 **New proxy account** → username `demo-user` → Save.
 

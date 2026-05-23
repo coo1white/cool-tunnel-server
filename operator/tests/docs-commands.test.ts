@@ -25,6 +25,8 @@ test("bootstrap script advertises and explains the Homebrew-style flow", async (
     expect(text).toContain(BREW_STYLE_BOOTSTRAP);
     expect(text).toContain("cool-tunnel-server bootstrap will:");
     expect(text).toContain("Press RETURN/ENTER to continue");
+    expect(text).toContain("installed /usr/local/bin/ct ->");
+    expect(text).toContain("/usr/local/bin/ct exists and is not a symlink");
 });
 
 test("core Dockerfile uses the baked Rust toolchain without network rustup sync", async () => {

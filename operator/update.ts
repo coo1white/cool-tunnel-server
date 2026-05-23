@@ -17,10 +17,11 @@
 //   7. wait for panel entrypoint sentinel
 //   8. clear stale non-running ct-caddy, then compose up -d caddy singbox
 //   9. php artisan migrate --force
-//  10. ct-server-core caddyfile render
-//  11. caddy reload from the host-side operator
-//  12. post-deploy settle gate
-//  13. fetch_operator_binary.sh (non-fatal)
+//  10. rotate legacy default admin password if present
+//  11. ct-server-core caddyfile render
+//  12. caddy reload from the host-side operator
+//  13. post-deploy settle gate
+//  14. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
 import { die, makeArrowProgress, makeTerm, ANSI } from "./src/util/term";
@@ -30,6 +31,8 @@ import { waitFor } from "./src/util/wait";
 import { checkNetwork, checkStackUp, checkIpv4OnlyRouting } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { migrateEnv } from "./src/util/env-migrate";
+import { BOOTSTRAP_ADMIN_PASSWORD_KEY, generateBootstrapAdminPassword } from "./src/util/bootstrap-admin";
+import { parseDotenv } from "./src/util/env";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
 import {
     credentialLockRecoveryHint,
@@ -38,7 +41,8 @@ import {
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
-const progress = makeArrowProgress({ total: 13 });
+const UPDATE_PROGRESS_STEPS = 12;
+const progress = makeArrowProgress({ total: UPDATE_PROGRESS_STEPS });
 let progressFinished = false;
 
 process.on("exit", (code) => {
@@ -151,7 +155,7 @@ async function autoMigrateEnv(): Promise<void> {
     const f = Bun.file(".env");
     if (!(await f.exists())) die("required file '.env' is missing", "cp .env.example .env  &&  $EDITOR .env");
     const before = await f.text();
-    const r = migrateEnv(before);
+    const r = migrateEnv(before, generateBootstrapAdminPassword);
     if (r.warning) warn(r.warning);
     if (r.changes.length === 0) {
         ok("PANEL_DOMAIN already present in .env");
@@ -281,6 +285,43 @@ async function migrateDb(): Promise<void> {
             "php artisan migrate failed",
             r.stderr.split("\n").slice(0, 5).join("\n") || "check ct-db + panel logs",
         );
+    }
+}
+
+async function ensureBootstrapAdmin(): Promise<void> {
+    phase("Ensure bootstrap admin is safe");
+    const env = parseDotenv(await Bun.file(".env").text());
+    const password = env[BOOTSTRAP_ADMIN_PASSWORD_KEY] ?? "";
+    if (password === "") {
+        dieWithDiag(
+            "bootstrap admin password missing after .env migration",
+            `Check ${BOOTSTRAP_ADMIN_PASSWORD_KEY} in .env, then retry:
+  ./ct update`,
+        );
+    }
+
+    const r = await capture(
+        $`docker compose exec -T panel php artisan ct:make-admin --bootstrap-default --password=${password} --no-interaction`,
+    );
+    if (!r.ok) {
+        dieWithDiag(
+            "bootstrap admin safety check failed",
+            r.stderr.split("\n").slice(0, 5).join("\n") ||
+                "docker compose exec panel php artisan ct:make-admin --bootstrap-default",
+        );
+    }
+
+    const output = `${r.stdout}\n${r.stderr}`;
+    if (output.includes("rotated")) {
+        ok(`legacy holder password rotated to ${BOOTSTRAP_ADMIN_PASSWORD_KEY} (password change required)`);
+    } else if (output.includes("created")) {
+        ok(`holder admin created from ${BOOTSTRAP_ADMIN_PASSWORD_KEY} (password change required)`);
+    } else if (output.includes("already present")) {
+        ok("holder admin already present; existing changed password preserved");
+    } else if (output.includes("active admin already exists")) {
+        ok("custom active admin already exists; holder bootstrap account not created");
+    } else {
+        ok("bootstrap admin safety check complete");
     }
 }
 
@@ -420,6 +461,7 @@ async function runUpdateInner(): Promise<number> {
     await prepareImageBundle();
     await bringNewImagesUp();
     await migrateDb();
+    await ensureBootstrapAdmin();
     await renderCaddyfile();
     await reloadCaddy();
     // v0.4.0: singbox.json is rendered by the panel entrypoint

@@ -5,11 +5,21 @@
 # Maintainer flow:
 #   1. Build ct-server-core and singbox-core Linux assets.
 #   2. Run this script on a Docker host with enough CPU/RAM.
-#   3. Upload cool-tunnel-server-images-linux-*.tar.gz to the release.
+#   3. Upload cool-tunnel-server-images-*.bom.json plus the
+#      cool-tunnel-server-image-linux-* component parts to the release.
 #
-# VPS installs then download one verified bundle and `docker load` it,
-# avoiding Rust, Bun, Go/xcaddy, Composer, PHP-extension builds, and
-# Docker Hub pulls on low-resource machines.
+# Emergency/repack flow:
+#   CT_REPACK_LOADED_IMAGES=1 PLATFORMS=linux/amd64 ./scripts/build_release_image_bundle.sh
+#   verifies that the runtime images are already loaded locally, then
+#   writes only the BOM/sliced archives. This is useful when the base
+#   images were built in a prior clean run and only tiny baked runtime
+#   files were patched locally; it intentionally skips all network pulls
+#   and image builds.
+#
+# VPS installs then download a verified image BOM and load each
+# component one at a time. This avoids Rust, Bun, Go/xcaddy, Composer,
+# PHP-extension builds, and Docker Hub pulls on low-resource machines
+# without requiring one giant archive to fit on disk.
 
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -28,18 +38,23 @@ CT_REDIS_IMAGE="${CT_REDIS_IMAGE:-redis:7.4.8-alpine}"
 CT_MARIADB_IMAGE="${CT_MARIADB_IMAGE:-mariadb:11.8.6}"
 CT_ALPINE_REPOSITORY_BASE="${CT_ALPINE_REPOSITORY_BASE:-}"
 CT_PHP_EXT_BUILD_JOBS="${CT_PHP_EXT_BUILD_JOBS:-1}"
-UPSTREAM_IMAGES=(
-    "mariadb:11.8.6"
-    "redis:7.4.8-alpine"
-)
-IMAGES=(
-    "$CORE_IMAGE"
-    "$SINGBOX_CORE_IMAGE"
+CT_BUILD_FULL_IMAGE_BUNDLE="${CT_BUILD_FULL_IMAGE_BUNDLE:-0}"
+CT_IMAGE_BOM_PART_SIZE_MB="${CT_IMAGE_BOM_PART_SIZE_MB:-95}"
+RUNTIME_IMAGES=(
     "cool-tunnel-server-caddy:latest"
     "cool-tunnel-server-singbox:latest"
     "cool-tunnel-server-panel:latest"
-    "${UPSTREAM_IMAGES[@]}"
+    "mariadb:11.8.6"
+    "redis:7.4.8-alpine"
 )
+IMAGE_COMPONENTS=(
+    "caddy|cool-tunnel-server-caddy:latest"
+    "singbox|cool-tunnel-server-singbox:latest"
+    "panel|cool-tunnel-server-panel:latest"
+    "mariadb|mariadb:11.8.6"
+    "redis|redis:7.4.8-alpine"
+)
+GENERATED_IMAGE_ASSETS=()
 
 mkdir -p "$OUT_DIR"
 
@@ -133,6 +148,143 @@ pull_and_tag() {
     fi
 }
 
+json_string() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '"%s"' "$value"
+}
+
+asset_sha() {
+    sha256sum "$1" | awk '{print $1}'
+}
+
+asset_size() {
+    wc -c < "$1" | tr -d ' '
+}
+
+write_image_bom() {
+    local platform="$1"
+    local suffix="$2"
+    local bom="${OUT_DIR}/cool-tunnel-server-images-${suffix}.bom.json"
+    local version part_bytes first_image
+
+    version=$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
+        | head -1 \
+        | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
+    if [[ -z "$version" ]]; then
+        echo "cannot determine version from panel/config/cool-tunnel.php" >&2
+        return 1
+    fi
+
+    part_bytes=$((CT_IMAGE_BOM_PART_SIZE_MB * 1024 * 1024))
+    rm -f \
+        "${OUT_DIR}/cool-tunnel-server-image-${suffix}-"*.tar.gz \
+        "${OUT_DIR}/cool-tunnel-server-image-${suffix}-"*.tar.gz.part-* \
+        "$bom"
+
+    {
+        printf '{\n'
+        printf '  "kind": "cool-tunnel-server-image-bom",\n'
+        printf '  "schema_version": 1,\n'
+        printf '  "version": '
+        json_string "$version"
+        printf ',\n'
+        printf '  "release_tag": '
+        json_string "v${version}"
+        printf ',\n'
+        printf '  "platform": '
+        json_string "$platform"
+        printf ',\n'
+        printf '  "part_size_bytes": %s,\n' "$part_bytes"
+        printf '  "images": [\n'
+    } > "$bom"
+
+    first_image=1
+    for component in "${IMAGE_COMPONENTS[@]}"; do
+        local name ref archive archive_name archive_sha archive_bytes parts first_part
+        name="${component%%|*}"
+        ref="${component#*|}"
+        archive="${OUT_DIR}/cool-tunnel-server-image-${suffix}-${name}.tar.gz"
+        archive_name="$(basename "$archive")"
+
+        echo "==> saving component ${archive_name} (${ref})"
+        docker save "$ref" | gzip -n > "$archive"
+        chmod 0644 "$archive"
+        archive_sha="$(asset_sha "$archive")"
+        archive_bytes="$(asset_size "$archive")"
+
+        parts=("$archive")
+        if (( archive_bytes > part_bytes )); then
+            echo "==> splitting ${archive_name} into <= ${CT_IMAGE_BOM_PART_SIZE_MB} MiB parts"
+            split -b "${CT_IMAGE_BOM_PART_SIZE_MB}m" -d -a 3 "$archive" "${archive}.part-"
+            rm -f "$archive"
+            mapfile -t parts < <(find "$OUT_DIR" -maxdepth 1 -type f -name "${archive_name}.part-*" | sort)
+        fi
+
+        if (( first_image == 0 )); then
+            printf ',\n' >> "$bom"
+        fi
+        first_image=0
+
+        {
+            printf '    {\n'
+            printf '      "name": '
+            json_string "$name"
+            printf ',\n'
+            printf '      "docker_ref": '
+            json_string "$ref"
+            printf ',\n'
+            printf '      "archive_sha256": '
+            json_string "$archive_sha"
+            printf ',\n'
+            printf '      "archive_size_bytes": %s,\n' "$archive_bytes"
+            printf '      "parts": [\n'
+        } >> "$bom"
+
+        first_part=1
+        for part in "${parts[@]}"; do
+            local part_name part_sha part_bytes_actual
+            part_name="$(basename "$part")"
+            part_sha="$(asset_sha "$part")"
+            part_bytes_actual="$(asset_size "$part")"
+            GENERATED_IMAGE_ASSETS+=("$part")
+
+            if (( first_part == 0 )); then
+                printf ',\n' >> "$bom"
+            fi
+            first_part=0
+
+            {
+                printf '        {\n'
+                printf '          "filename": '
+                json_string "$part_name"
+                printf ',\n'
+                printf '          "sha256": '
+                json_string "$part_sha"
+                printf ',\n'
+                printf '          "size_bytes": %s\n' "$part_bytes_actual"
+                printf '        }'
+            } >> "$bom"
+        done
+
+        {
+            printf '\n'
+            printf '      ]\n'
+            printf '    }'
+        } >> "$bom"
+    done
+
+    {
+        printf '\n'
+        printf '  ]\n'
+        printf '}\n'
+    } >> "$bom"
+    chmod 0644 "$bom"
+    GENERATED_IMAGE_ASSETS+=("$bom")
+    echo "==> wrote ${bom}"
+}
+
 build_one() {
     local platform="$1"
     local suffix asset
@@ -146,6 +298,18 @@ build_one() {
             return 2
             ;;
     esac
+
+    if [[ "${CT_REPACK_LOADED_IMAGES:-0}" == "1" ]]; then
+        echo "==> repacking already-loaded runtime images (${platform})"
+        for image in "${RUNTIME_IMAGES[@]}"; do
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+                echo "missing loaded runtime image: $image" >&2
+                return 1
+            fi
+        done
+        write_image_bom "$platform" "$suffix"
+        return 0
+    fi
 
     require_file "${OUT_DIR}/ct-server-core-${suffix}"
     require_file "${OUT_DIR}/singbox-core-${suffix}"
@@ -177,13 +341,18 @@ build_one() {
     pull_and_tag "$platform" "$CT_MARIADB_IMAGE" "mariadb:11.8.6"
     pull_and_tag "$platform" "$CT_REDIS_IMAGE" "redis:7.4.8-alpine"
 
-    asset="${OUT_DIR}/cool-tunnel-server-images-${suffix}.tar.gz"
-    rm -f "$asset"
-    echo "==> saving ${asset}"
-    docker save "${IMAGES[@]}" | gzip -n > "$asset"
-    chmod 0644 "$asset"
-    ls -lh "$asset"
-    sha256sum "$asset"
+    write_image_bom "$platform" "$suffix"
+
+    if [[ "$CT_BUILD_FULL_IMAGE_BUNDLE" == "1" ]]; then
+        asset="${OUT_DIR}/cool-tunnel-server-images-${suffix}.tar.gz"
+        rm -f "$asset"
+        echo "==> saving legacy full bundle ${asset}"
+        docker save "${RUNTIME_IMAGES[@]}" | gzip -n > "$asset"
+        chmod 0644 "$asset"
+        ls -lh "$asset"
+        sha256sum "$asset"
+        GENERATED_IMAGE_ASSETS+=("$asset")
+    fi
 }
 
 for platform in $PLATFORMS; do
@@ -191,12 +360,13 @@ for platform in $PLATFORMS; do
 done
 
 (
-    cd "$OUT_DIR"
-    find . -maxdepth 1 -type f -name 'cool-tunnel-server-images-*.tar.gz' -print0 \
-        | sort -z \
-        | xargs -0 sha256sum \
-        | sed 's#  ./#  #' \
-        > SHA256SUMS.images
+    if [[ ${#GENERATED_IMAGE_ASSETS[@]} -eq 0 ]]; then
+        : > "${OUT_DIR}/SHA256SUMS.images"
+    else
+        sha256sum "${GENERATED_IMAGE_ASSETS[@]}" \
+            | sed "s#  ${OUT_DIR}/#  #" \
+            > "${OUT_DIR}/SHA256SUMS.images"
+    fi
 )
 
 echo "==> wrote ${OUT_DIR}/SHA256SUMS.images"

@@ -12,10 +12,15 @@ use Throwable;
 
 final class SingBoxRenderConfirmation
 {
+    private const CONFIG_PATH = '/data/config/singbox.json';
+
     public static function renderNow(string $context): bool
     {
         try {
             $result = app(SingBoxConfigGeneratorInterface::class)->renderToFile();
+            if (! $result->failed) {
+                self::nudgeConfigMtime($context);
+            }
 
             return ! $result->failed;
         } catch (Throwable $e) {
@@ -25,6 +30,19 @@ final class SingBoxRenderConfirmation
             ]);
 
             return false;
+        }
+    }
+
+    private static function nudgeConfigMtime(string $context): void
+    {
+        if (! is_file(self::CONFIG_PATH)) {
+            return;
+        }
+
+        if (@touch(self::CONFIG_PATH) !== true) {
+            Log::warning("{$context}.config_mtime_nudge_failed", [
+                'path' => self::CONFIG_PATH,
+            ]);
         }
     }
 }
