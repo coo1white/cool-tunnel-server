@@ -12,6 +12,7 @@ use App\Models\ServerConfig;
 use App\Services\CaddyfileGenerator;
 use App\Services\SingBoxConfigGenerator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Process;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -50,21 +51,49 @@ final class GeneratorErrorBoundaryTest extends TestCase
     use RefreshDatabase;
 
     #[Test]
-    public function singbox_throws_when_reality_private_key_is_missing(): void
+    public function singbox_render_input_generates_missing_reality_keypair(): void
     {
-        // First-boot deploy: ServerConfig row exists but the
-        // operator hasn't run reality-keygen yet. Rendering would
-        // produce a config sing-box rejects at load time; the
-        // generator hard-fails so the surrounding handler doesn't
-        // silently write a broken file.
+        // First-boot deploy: ServerConfig row exists but keygen may
+        // not have completed during seeding. The render path retries
+        // the prerequisite so `ct install` can recover before it
+        // attempts to write /data/config/singbox.json.
+        Process::fake([
+            '*' => Process::result(json_encode([
+                'private_key' => 'TEST-GENERATED-PRIVATE-KEY-base64url-32',
+                'public_key' => 'TEST-GENERATED-PUBLIC-KEY-base64url-32',
+            ], JSON_THROW_ON_ERROR)),
+        ]);
+
         ServerConfig::factory()->create(['reality_private_key' => null]);
         ProxyAccount::factory()->create();
 
         $gen = $this->app->make(SingBoxConfigGenerator::class);
+        $method = new \ReflectionMethod($gen, 'buildRenderInput');
+        $method->setAccessible(true);
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/reality_private_key/i');
-        $gen->renderToFile();
+        /** @var array<string,mixed> $input */
+        $input = $method->invoke($gen);
+
+        $this->assertSame('TEST-GENERATED-PRIVATE-KEY-base64url-32', $input['reality_private_key']);
+        $this->assertSame(
+            'TEST-GENERATED-PUBLIC-KEY-base64url-32',
+            ServerConfig::current()->reality_public_key,
+        );
+    }
+
+    #[Test]
+    public function singbox_render_command_reports_reality_keygen_failure(): void
+    {
+        Process::fake([
+            '*' => Process::result('', 'missing shared library: libstdc++.so.6', 127),
+        ]);
+
+        ServerConfig::factory()->create(['reality_private_key' => null]);
+        ProxyAccount::factory()->create();
+
+        $this->artisan('singbox:render --no-interaction')
+            ->expectsOutputToContain('sing-box render failed: reality keypair generation failed: missing shared library')
+            ->assertExitCode(1);
     }
 
     #[Test]

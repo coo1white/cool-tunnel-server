@@ -442,9 +442,10 @@ async function reRenderSingbox(): Promise<void> {
         $`docker compose exec -T panel php artisan singbox:render --no-interaction`,
     );
     if (!r.ok) {
+        const output = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n");
         dieWithDiag(
             "singbox.json render failed",
-            `docker compose logs --tail=120 panel
+            `${output ? `Render command output:\n${output}\n\n` : ""}docker compose logs --tail=120 panel
 docker compose exec -T panel php artisan singbox:render --no-interaction`,
         );
     }

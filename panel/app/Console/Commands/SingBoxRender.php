@@ -8,6 +8,7 @@ namespace App\Console\Commands;
 
 use App\Services\SingBoxConfigGenerator;
 use Illuminate\Console\Command;
+use Throwable;
 
 /**
  * `php artisan singbox:render` — write sing-box's config.json from
@@ -27,7 +28,13 @@ class SingBoxRender extends Command
 
     public function handle(SingBoxConfigGenerator $gen): int
     {
-        $result = $gen->renderToFile();
+        try {
+            $result = $gen->renderToFile();
+        } catch (Throwable $e) {
+            $this->error('sing-box render failed: '.$e->getMessage());
+
+            return self::FAILURE;
+        }
 
         if ($result->failed) {
             $this->error('sing-box render failed; see singbox.render.* logs');
