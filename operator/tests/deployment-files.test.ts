@@ -35,7 +35,9 @@ test("release workflow publishes prebuilt core assets with checksums", async () 
     expect(body).toContain("operator/bin/ct-server-core-linux-x64");
     expect(body).toContain("operator/bin/ct-server-core-linux-arm64");
     expect(body).toContain("operator/bin/singbox-core-linux-*");
-    expect(body).toContain("sha256sum ct-operator-* ct-server-core-* singbox-core-* > SHA256SUMS");
+    expect(body).toContain("sha256sum ct-operator-* > SHA256SUMS.generated");
+    expect(body).toContain('github.event.inputs.scope != \'operator-only\'');
+    expect(body).toContain("sha256sum ct-server-core-* singbox-core-* >> SHA256SUMS.generated");
     expect(body).toContain("operator/bin/ct-server-core-*");
     expect(body).toContain("operator/bin/singbox-core-*");
 });
