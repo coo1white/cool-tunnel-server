@@ -96,12 +96,16 @@ class ServerConfig extends Model
 
         $result = Process::timeout(15)->run(['/usr/local/bin/singbox-core', 'reality-keygen', '--json']);
         if (! $result->successful()) {
+            $stderr = trim($result->errorOutput());
             Log::critical('serverconfig.reality_keygen_failed', [
                 'exit' => $result->exitCode(),
-                'stderr' => substr(trim($result->errorOutput()), 0, 240),
+                'stderr' => substr($stderr, 0, 240),
             ]);
 
-            return;
+            throw new \RuntimeException(
+                'reality keypair generation failed'.
+                ($stderr !== '' ? ": {$stderr}" : '')
+            );
         }
 
         try {
@@ -111,7 +115,7 @@ class ServerConfig extends Model
                 'err' => $e->getMessage(),
             ]);
 
-            return;
+            throw new \RuntimeException('reality keypair generation returned non-JSON output');
         }
 
         $private = is_array($pair) ? (string) ($pair['private_key'] ?? '') : '';
@@ -119,7 +123,7 @@ class ServerConfig extends Model
         if ($private === '' || $public === '') {
             Log::critical('serverconfig.reality_keygen_missing_fields', []);
 
-            return;
+            throw new \RuntimeException('reality keypair generation returned missing key fields');
         }
 
         $this->forceFill([

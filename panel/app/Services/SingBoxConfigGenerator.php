@@ -154,6 +154,7 @@ class SingBoxConfigGenerator implements SingBoxConfigGeneratorInterface
     private function buildRenderInput(): array
     {
         $cfg = ServerConfig::current();
+        $cfg->ensureRealityKeypair();
 
         $privateKey = (string) ($cfg->reality_private_key ?? '');
         if ($privateKey === '') {
