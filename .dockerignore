@@ -43,6 +43,7 @@ panel/tests/
 
 # Generated / one-off documentation outputs.
 *.tar.gz
+*.tar
 *.tar.bz2
 *.tgz
 .runtime/

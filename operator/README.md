@@ -5,9 +5,10 @@ It replaces selected shell maintenance scripts (`ct doctor`,
 `ct render`, `ct update`) with a single Bun-compiled binary for VPS
 install, update, backup, restore, render, and health-check workflows.
 
-The legacy shell scripts remain in `scripts/` as a fallback; the top-level
-`ct` dispatcher prefers `operator/bin/ct-operator-*` when present and falls
-back to the `.sh` versions otherwise. No flag day.
+The top-level `ct` dispatcher fetches and prefers
+`operator/bin/ct-operator-*` for production commands. Shell scripts in
+`scripts/` are thin bootstraps or maintainer/development helpers, not a
+second production install/update implementation.
 
 ## Layout
 

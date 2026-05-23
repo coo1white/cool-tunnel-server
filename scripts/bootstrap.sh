@@ -3,7 +3,7 @@
 # scripts/bootstrap.sh — one-line bootstrap for cool-tunnel-server.
 #
 # Designed to be the release-pinned Homebrew-style curl target
-# referenced in README.md. Walks a fresh Debian 11/12/13 VPS from
+# referenced in README.md. Walks a fresh Debian 12+ VPS from
 # "just SSH'd in" → "ready to edit .env and run ct install" in a
 # single network round-trip.
 #
@@ -74,7 +74,7 @@ EOF
 # ---------- 1. preflight ---------------------------------------------------
 
 [ "${EUID:-$(id -u)}" -eq 0 ] || die "must run as root (re-run via: sudo bash)"
-[ -f /etc/debian_version ] || warn "tested on Debian 11/12/13; YMMV on $(uname -a)"
+[ -f /etc/debian_version ] || warn "tested on Debian 12+; YMMV on $(uname -a)"
 
 explain_and_pause
 
@@ -107,8 +107,8 @@ else
     log "docker already installed — skipping"
 fi
 
-# IPv4-only project default. This prevents Docker/Rust builds from
-# drifting into broken provider routes while fetching toolchains.
+# IPv4-only project default. This prevents release downloads and Docker
+# pulls from drifting into broken provider IPv6 routes.
 if [ "${CT_SKIP_IPV6_AUTO_DISABLE:-}" != "1" ]; then
     log "enforcing IPv4-only host + Docker networking"
     cat >/etc/sysctl.d/99-disable-ipv6.conf <<'EOF'
@@ -158,9 +158,9 @@ cd "$INSTALL_DIR"
 # this binary. Doing the fetch here means the user's first
 # `./scripts/install.sh` doesn't need a network round-trip + the
 # fetch step is visible alongside the rest of the bootstrap output.
-# Failure is non-fatal: install.sh falls back to `bun run` and
-# prints actionable advice if neither path is available.
-./scripts/fetch_operator_binary.sh || warn "fetch_operator_binary failed; install.sh will retry or fall back to bun"
+# Failure is non-fatal: install.sh retries the binary fetch and then
+# prints actionable advice if no production operator binary is present.
+./scripts/fetch_operator_binary.sh || warn "fetch_operator_binary failed; install.sh will retry"
 
 # ---------- 4. .env scaffold (auto-generate strong secrets) ----------------
 
@@ -178,7 +178,7 @@ if [ ! -f .env ]; then
 
     # generate random passwords for any unset/changeme placeholder
     gen_pass() { openssl rand -base64 30 | tr -d '/=+' | cut -c1-32; }
-    for key in DB_PASSWORD DB_ROOT_PASSWORD REDIS_PASSWORD PANEL_ADMIN_PASSWORD; do
+    for key in DB_PASSWORD DB_ROOT_PASSWORD REDIS_PASSWORD; do
         if grep -qE "^${key}=(\"\"|''|changeme.*)?$" .env 2> /dev/null; then
             new_val=$(gen_pass)
             # shellcheck disable=SC2002  # readability over UUOC
@@ -221,8 +221,7 @@ NEXT
        PANEL_DOMAIN=    # your panel domain, e.g. panel.proxy.example.com
        ACME_EMAIL=      # for Let's Encrypt cert issuance
 
-     Random secrets for DB/Redis/admin were generated; review and
-     keep a copy of PANEL_ADMIN_PASSWORD before you log in.
+     Random secrets for DB/Redis were generated.
 
   3. Run the 8-step install (numbered output, "↳ try:" hints
      on every failure):
@@ -230,6 +229,8 @@ NEXT
        ct install
 
   4. Open the panel: https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
+       initial login: holder / cool-tunnel-server-2026
+       change the password after first login
 =================================================================
 EOF
 

@@ -48,7 +48,7 @@ Next topic:  ./ct help install
   - Cross-validates .env values: DOMAIN, ACME_EMAIL,
     DB_PASSWORD, DB_ROOT_PASSWORD, REDIS_PASSWORD, PANEL_DOMAIN,
     port 80/443 are free, DNS A record matches host IP
-  - Builds all images (ct-server-core + caddy + sing-box + panel)
+  - Loads the verified release Docker image bundle
   - Brings the stack up; panel's entrypoint runs the first
     migration + initial Caddyfile/sing-box render
   - Waits for ACME (Let's Encrypt) to acquire the cert
@@ -70,8 +70,9 @@ Common failure modes:
                             cannot reach port 80 (firewall,
                             cloud provider). Check
                             'docker compose logs caddy'.
-  - PECL/composer error  -> see CHANGELOG v0.0.95; the
-                            ext-redis pin is now in place.
+  - Image bundle missing -> release asset is incomplete for this
+                            CPU architecture; run
+                            ./scripts/fetch_image_bundle.sh
 
 Idempotent: safe to re-run if anything fails halfway.
 
@@ -84,10 +85,10 @@ Next topic:  ./ct help update
 `,
     },
     "update": {
-        title: "update — pull a new release, rebuild, hot-swap",
+        title: "update — pull a new release and hot-swap",
         body: `What it does:
   Pre-flight:
-    - Network reachable (github.com + registry-1.docker.io)
+    - Network reachable (GitHub release downloads)
     - Disk headroom (>= 2 GB repo, >= 4 GB docker root);
       safe temp cleanup runs automatically only when space is low
     - Stack is up (panel + caddy running OR restarting; singbox
@@ -98,8 +99,7 @@ Next topic:  ./ct help update
   Main flow:
     - git pull --ff-only
     - Auto-migrate legacy .env (PANEL_DOMAIN, APP_URL)
-    - Rebuild ct-server-core (Rust)
-    - Rebuild caddy + singbox + panel
+    - Load the verified Docker image bundle for this release
     - Bring the new panel image up, then caddy + singbox
     - Wait for panel entrypoint sentinel
     - Re-render Caddyfile and reload Caddy
@@ -126,9 +126,9 @@ Common failure modes:
   - Disk full            -> auto-clean already removed safe temp
                             and build cache; diagnostic lists
                             the next manual commands
-  - Build failure        -> diagnostic block names the most
-                            common causes per image (caddy,
-                            singbox, panel)
+  - Image bundle missing -> release asset is incomplete for this
+                            CPU architecture; run
+                            ./scripts/fetch_image_bundle.sh
   - Health gate failed   -> diagnostic block gives the
                             remediation command to run next
 
@@ -139,7 +139,7 @@ in the entrypoint.
 
 Roll back if needed:
   git checkout v0.0.96  # (or the prior known-good tag)
-  ./ct update
+      ./ct update
 
 Next topic:  ./ct help doctor
 `,
@@ -282,7 +282,7 @@ When to run:
     rewrite history, swap hosting providers)
 
 What it does NOT include:
-  - Container images (those rebuild from source on restore)
+  - Container images (reload the matching release image bundle first)
   - The repo itself (re-clone from git on restore)
   - Operating system / docker daemon state
 
@@ -326,7 +326,7 @@ What it does NOT do:
     on v0.0.X and you currently run v0.0.Y, the restore
     brings DB schema + config to v0.0.X; the panel image
     stays at v0.0.Y unless you also 'git checkout v0.0.X'
-    and 'docker compose build'.
+    and the matching release image bundle.
 
 DESTRUCTIVE: the import step drops + recreates the cool_tunnel
 database. There is no 'are you sure?' prompt -- run with care.

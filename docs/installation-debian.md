@@ -1,7 +1,7 @@
 # Debian VPS Installation Guide for Cool Tunnel Server
 
-Step-by-step setup for Cool Tunnel Server on **Debian 10 (buster), 11
-(bullseye), 12 (bookworm), 13 (trixie), and later**. This guide turns a
+Step-by-step setup for Cool Tunnel Server on **Debian 12 (bookworm) and
+newer**. This guide turns a
 fresh Debian VPS into a self-hosted proxy server with Docker Compose,
 Caddy, sing-box, VLESS + Reality, MariaDB, Redis, and the web admin
 panel.
@@ -12,8 +12,8 @@ admin panel in about 20 minutes. Every command is explicit and
 copy-pasteable; per-Debian-version differences are called out
 inline.
 
-> **Tested on** Debian 12 minimal cloud images. Steps that diverge
-> on 10 / 11 / 13 are flagged with a `🟢` badge under each section.
+> **Tested on** Debian 12 minimal cloud images. Debian 12+ is the
+> supported path for release installs.
 >
 > **Reference:** this guide builds on the original bare Caddy
 > deployment shape and adds the panel plus sing-box VLESS+Reality.
@@ -66,30 +66,15 @@ apt -y upgrade
 
 # Common tools we'll use throughout this guide.
 apt install -y \
-    ca-certificates curl gnupg ufw dnsutils \
+    ca-certificates curl git gnupg jq openssl apache2-utils ufw dnsutils \
     htop tmux less rsync \
     unattended-upgrades chrony fail2ban
 ```
 
-🟢 **Debian 10 (buster) only** — buster is EOL for regular security
-updates (LTS ended June 2024). You can still run it, but apply this
-extra step to pull security patches from the Debian archive:
-
-```bash
-# Replace deb.debian.org/security with archive.debian.org if your
-# mirror has dropped buster.
-sed -i 's|http://security.debian.org|http://archive.debian.org|g' /etc/apt/sources.list
-sed -i 's|http://deb.debian.org/debian-security|http://archive.debian.org/debian-security|g' /etc/apt/sources.list
-apt update
-```
-
-Even after this, **plan to upgrade**. We won't be issuing patches
-specifically for buster much longer.
-
 ### Enable unattended security updates
 
 ```bash
-dpkg-reconfigure -plow unattended-upgrades   # answer "Yes"
+dpkg-reconfigure -plow unattended-upgrades
 # Verify:
 cat /etc/apt/apt.conf.d/20auto-upgrades
 # Should show:
@@ -99,7 +84,9 @@ cat /etc/apt/apt.conf.d/20auto-upgrades
 
 ### Add a small swap file (for 1 GB VPSs)
 
-Composer + Caddy build occasionally peaks above 1 GB. Skip on 2 GB+.
+The release install path does not build images on the VPS, but a small
+swap file still gives 1 GB servers breathing room during package
+updates and Docker image loading. Skip on 2 GB+.
 
 ```bash
 fallocate -l 1G /swapfile && chmod 600 /swapfile
@@ -122,9 +109,7 @@ A proxy server is a network workload. Three tweaks pay back hugely:
    `failed to sufficiently increase receive buffer size` warnings
    in Caddy's logs without this.
 
-🟢 **Per-version note:** BBR is built into every supported Debian
-kernel — buster (4.19), bullseye (5.10), bookworm (6.1), trixie (6.x).
-No backport needed.
+BBR is built into supported Debian 12+ kernels. No backport is needed.
 
 ```bash
 cat >/etc/sysctl.d/99-cool-tunnel.conf <<'EOF'
@@ -207,8 +192,7 @@ bantime  = 1h
 ignoreip = 127.0.0.1/8
 # ignoreip = 127.0.0.1/8 203.0.113.42
 
-# Use the modern nftables backend on Debian 11+. On Debian 10
-# (iptables-legacy) change to "iptables-multiport".
+# Use the modern nftables backend.
 banaction = nftables-multiport
 banaction_allports = nftables-allports
 
@@ -240,10 +224,6 @@ fail2ban-client get sshd bantime         # should show 3600
 fail2ban-client banned 2>/dev/null | head -5
 ```
 
-🟢 **Debian 10 (buster):** `nftables` isn't the default backend.
-Switch the two `banaction` lines to `iptables-multiport` and
-`iptables-allports` respectively. Everything else is identical.
-
 > **On the Caddy side**, fail2ban's role is small — `probe_resistance`
 > already makes brute-force basic_auth attempts indistinguishable
 > from "wrong page" 404s, so there's nothing in the (default-disabled)
@@ -261,11 +241,9 @@ ufw --force enable
 ufw status verbose
 ```
 
-🟢 **Debian 10 (buster)** uses `iptables-legacy` by default. UFW
-works fine on top of it — no extra steps. **Debian 11+** uses
-`nftables`; UFW handles that transparently too. If you've previously
-installed `nftables` and have your own table, switch to it instead
-of UFW.
+Debian 12+ uses `nftables`; UFW handles that transparently. If you've
+previously installed `nftables` and have your own table, switch to it
+instead of UFW.
 
 🟢 **Cloud-provider firewall:** *also* allow these ports at the
 provider level (DigitalOcean Cloud Firewall, AWS Security Group,
@@ -280,8 +258,8 @@ Cool Tunnel Server runs as a Docker Compose stack. Don't use the
 distro-packaged `docker.io` — it's almost always too old; use
 Docker's own repo.
 
-🟢 **All Debian versions** — same recipe, same repo, Docker handles
-the per-codename split automatically.
+🟢 **Supported Debian 12+ versions** — same recipe, same repo, Docker
+handles the per-codename split automatically.
 
 ```bash
 # Make the keyring directory.
@@ -311,20 +289,6 @@ docker compose version          # note: 'compose' is a subcommand now,
                                 # NOT 'docker-compose' (that's v1, EOL)
 ```
 
-🟢 **Debian 10 (buster)** — Docker dropped buster from their CI in
-2024 but the repo entries still exist. If `apt update` complains
-about a missing release, you may need to use `bullseye` packages
-instead — Docker binaries are statically built and run fine on
-buster:
-
-```bash
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/debian bullseye stable" \
-    | tee /etc/apt/sources.list.d/docker.list >/dev/null
-apt update && apt install -y docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin
-```
-
 ### Stop conflicting web servers (if any)
 
 ACME needs port 80 free.
@@ -342,14 +306,10 @@ ss -ltnup | grep -E ':80\b|:443\b' || echo "ports clear"
 ## 6. Pull and configure Cool Tunnel Server
 
 ```bash
-# A neutral install location. /opt is conventional for site-local
-# stacks; pick anything you like.
-mkdir -p /opt && cd /opt
-git clone https://github.com/coo1white/cool-tunnel-server.git
-cd cool-tunnel-server
-
-# Copy the env template.
-cp .env.example .env
+# Install the latest official release into /opt/cool-tunnel-server.
+LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
+BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
+cd /opt/cool-tunnel-server
 
 # Generate strong random values for every secret. Three calls because
 # we need three independent passwords (DB_ROOT_PASSWORD, DB_PASSWORD,
@@ -378,28 +338,21 @@ sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
 
 The minimum spec — **1 vCPU, 1 GB RAM** — is enough to *run* the
 stack (idle ≈ 240 MiB, moderate load ≈ 400-500 MiB). Tagged releases
-download and verify a prebuilt Linux `ct-server-core` binary, then build
-a tiny local wrapper image. That means the normal path does **not**
-compile Rust crates on the VPS.
+download one verified Docker image bundle for the VPS CPU architecture
+and load it with Docker. The normal production path does **not** build
+Rust, Bun, Go, PHP extensions, or Docker images on the VPS.
 
-The swap and low-memory build profile below are only for the fallback
-source-build path: unreleased development checkouts, missing release
-assets, or installs where you intentionally set
-`CT_CORE_BUILD_FROM_SOURCE=1`. Without the prep below, a source build
-can OOM-kill the compiler partway through and you'll see one of:
-
-- `signal: 9, SIGKILL: kill` from cargo
-- `error: linking with cc failed` after a long pause
-- the compose build process simply vanishing
-
-If your VPS has **≥ 2 GB RAM**, or you are installing a normal release
-with a published prebuilt core asset, skip this section and go straight
-to step 7. Everything below is a no-op overhead on a bigger box.
+The swap step below is optional runtime safety for very small servers.
+It is no longer required for release installs, because release installs
+must not compile or build runtime images locally. If `ct install` says a
+prebuilt Docker image bundle is missing, the release asset is incomplete
+for your architecture; the fix is to publish that bundle, not to compile
+on the VPS.
 
 ### a. Add a 2 GB swapfile
 
-Cloud images often ship without swap. A fallback Rust source build
-briefly needs more RAM than a 1 GB box has; swap is the safety net.
+Cloud images often ship without swap. Swap gives a 1 GB box more room
+for temporary runtime spikes and package installation.
 
 ```bash
 # Skip if `swapon --show` already lists ≥2 GB.
@@ -426,36 +379,14 @@ swapon --show
 free -h
 ```
 
-### b. Pick the low-memory build profile
-
-`core/Cargo.toml` ships two release profiles:
-
-| Profile | Peak compile RAM | Build time | Runtime cost |
-| --- | --- | --- | --- |
-| `release` (default) | ~1.5-2 GB | ~6-8 min | baseline |
-| `release-small` | ~0.6-0.9 GB | ~1-2 min | ~5-15 % slower CPU paths |
-
-The runtime cost is invisible in practice — the panel is request /
-response over a network and DB, not CPU-bound. Switch in `.env`:
-
-```bash
-# Edit .env and append (or change the existing line):
-echo 'CT_CORE_BUILD_PROFILE=release-small' >> .env
-```
-
-`ct install` reads `CT_CORE_BUILD_PROFILE` and passes it through to
-`docker compose build` as `--build-arg CARGO_PROFILE=…` only when it
-has to compile `ct-server-core` from source. Do this **before** step 7
-if you are intentionally using `CT_CORE_BUILD_FROM_SOURCE=1`.
-
-### c. Confirm the runtime tuning knobs (already low-mem-friendly by default)
+### b. Confirm the runtime tuning knobs (already low-mem-friendly by default)
 
 The shipped defaults are already sized for a 1 GB box.
 FrankenPHP's worker pool size is configured in
 `docker/panel/Caddyfile` via the `frankenphp { worker { num 4 } }`
 block — NOT via env. To grow the pool: edit the `num` value in
-that file and rebuild the panel image (`docker compose build
-panel && docker compose up -d --force-recreate panel`). Default
+that file and rebuild the panel image on a maintainer build host, then
+publish a new image bundle. Default
 `num 4` matches the prior PHP-FPM `pm.max_children` cap and
 keeps steady-state ~250 MiB inside the panel container's 320 MiB
 mem_limit. Raising past 4 should usually be paired with a
@@ -482,23 +413,7 @@ services:
       - --performance-schema=ON
 ```
 
-### d. Watch for OOM during build (sanity)
-
-In a second SSH session while `install.sh` is running, tail
-`dmesg` for `Out of memory` events. None should appear with the
-swap + `release-small` combo above:
-
-```bash
-dmesg -wT | grep -E 'Out of memory|invoked oom-killer|Killed process'
-```
-
-If you do see one, the build was killed before completion. Either
-your swapfile didn't activate (`swapon --show` should list it) or
-your `.env` didn't pick up `CT_CORE_BUILD_PROFILE=release-small`
-(check with `docker compose --profile build-only config | grep
-CARGO_PROFILE`).
-
-### e. Steady-state expectation
+### c. Steady-state expectation
 
 After install completes, `docker stats --no-stream` should show
 something like:
@@ -539,21 +454,19 @@ ct install
    runs automatically; it may remove stale `core/target` and Docker
    build cache, but never Docker volumes, backups, `.env`, or database
    data.
-2. `./scripts/fetch_core_binary.sh` — download and verify the prebuilt
-   `ct-server-core` release asset, then build the local carrier image.
-   If the asset is unavailable, `ct install` falls back to the source
-   build path.
-3. `docker compose build` — sing-box (binary download),
-   panel + Composer install.
-4. `docker compose up -d db redis` — bring up the data layer first.
-5. Wait for MariaDB healthcheck to go green.
-6. `docker compose up -d panel` — runs the entrypoint, which does
-   `composer install`, `key:generate`, `migrate`, and renders the
-   initial `sing-box config.json`.
-7. Prompts you for a first Filament admin user (email + password).
-8. `docker compose up -d caddy singbox` — Caddy gets the panel cert
+2. `./scripts/fetch_image_bundle.sh` — download the release image
+   bundle, verify it through `SHA256SUMS`, and load it with
+   `docker load`.
+3. `docker compose up -d db redis` — bring up the data layer first.
+4. Wait for MariaDB healthcheck to go green.
+5. `docker compose up -d panel` — runs the entrypoint, which applies
+   app setup, migrations, and the initial `sing-box config.json`
+   render.
+6. Creates the bootstrap admin when needed:
+   `holder` / `cool-tunnel-server-2026`.
+7. `docker compose up -d caddy singbox` — Caddy gets the panel cert
    and routes non-panel SNI to sing-box.
-9. Tails Caddy and sing-box logs until the panel cert is available
+8. Tails Caddy and sing-box logs until the panel cert is available
    and sing-box is running.
 
 When it finishes, open:
@@ -562,7 +475,8 @@ When it finishes, open:
 https://${PANEL_DOMAIN}/admin
 ```
 
-Filament's login page asks for the admin user you created in step 5.
+Log in with `holder` / `cool-tunnel-server-2026`. The panel requires
+you to change that bootstrap password before using the admin area.
 
 ### Check the certificate landed
 
@@ -573,7 +487,8 @@ echo | openssl s_client -servername proxy.example.com \
 ```
 
 You want `issuer=… Let's Encrypt`. If you see a self-signed cert,
-ACME hasn't completed yet — `docker logs ct-singbox` will tell you why
+ACME hasn't completed yet — `docker compose logs --tail=120 caddy`
+will tell you why
 (usually port 80 not reachable, or DNS not yet propagated).
 
 ---
@@ -608,8 +523,9 @@ cd /opt/cool-tunnel-server
 ./ct update
 ```
 
-`update.sh` does `git pull`, `docker compose build --pull`, runs new
-migrations, re-renders the sing-box config, and `docker compose up -d`.
+`ct update` does `git pull`, downloads and loads the verified release
+image bundle, runs new migrations, re-renders the sing-box config, and
+starts the updated containers.
 
 ### Back up
 
@@ -635,11 +551,12 @@ Documented disaster-recovery procedure (works on a fresh VPS):
 
 1. Provision the new VPS (1 vCPU / 1 GB minimum, same region or
    the closest one to your users).
-2. Install Docker + clone the repo:
+2. Install the same base tools and Docker Engine from this guide, then
+   bootstrap the latest official release:
    ```bash
-   curl -fsSL https://get.docker.com | sh
-   git clone https://github.com/coo1white/cool-tunnel-server.git
-   cd cool-tunnel-server
+   LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
+   BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
+   cd /opt/cool-tunnel-server
    ```
 3. Copy the backup tarball into `backups/`.
 4. **Repoint DNS** — update both `${DOMAIN}` and `${PANEL_DOMAIN}`
@@ -658,8 +575,9 @@ certs per 7 days).
 ### Tail logs
 
 ```bash
-docker compose logs -f --tail=200 sing-box   # ACME + proxy access
-docker compose logs -f --tail=200 panel   # Laravel + queue worker
+docker compose logs -f --tail=200 caddy      # ACME + routing
+docker compose logs -f --tail=200 singbox    # proxy runtime
+docker compose logs -f --tail=200 panel      # Laravel + queue worker
 docker compose logs -f --tail=200 db
 ```
 
@@ -691,7 +609,7 @@ docker compose restart caddy
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `dial tcp ...:80: connection refused` during ACME | Port 80 not open at cloud firewall, or another web server running | Check `ss -ltnp | grep :80`; open port at provider firewall |
-| `unable to verify the first certificate` from `curl` | ACME hasn't completed yet (self-signed in use) | `docker logs ct-singbox` and wait |
+| `unable to verify the first certificate` from `curl` | ACME hasn't completed yet (self-signed in use) | `docker compose logs --tail=120 caddy` and wait |
 | `SSL_ERROR_SYSCALL` from the macOS client | sing-box up but config did not load | `docker compose logs --tail=120 singbox`; `docker compose exec -T singbox sing-box check -c /data/config/singbox.json` |
 | Connections work but feel slow | BBR not active | `sysctl net.ipv4.tcp_congestion_control` should be `bbr` |
 | QUIC (`Alt-Svc h3`) not advertised | UDP/443 blocked or buffer too small | Open UDP/443 at provider; verify `sysctl net.core.rmem_max` ≥ 7500000 |
@@ -734,7 +652,7 @@ docker compose restart caddy
   your cert and burns LE rate-limit budget (5 duplicate-cert
   issuances per 7-day window).
 - **IPv4-only networking** — the installer pins the host and Docker
-  daemon to IPv4-only routing before Rust/Docker builds. Use an `A`
+  daemon to IPv4-only routing before release downloads. Use an `A`
   record for the proxy hostname.
 - **Protect the panel hostname.** Use a dedicated `PANEL_DOMAIN`,
   keep admin passwords unique, and leave Cloudflare proxying off for
@@ -742,17 +660,17 @@ docker compose restart caddy
 
 ---
 
-## Per-version cheat sheet
+## Debian 12+ cheat sheet
 
-| Step | Debian 10 (buster) | Debian 11 (bullseye) | Debian 12 (bookworm) | Debian 13 (trixie) |
-| --- | --- | --- | --- | --- |
-| Apt sources for security | `archive.debian.org` (LTS off) | `security.debian.org/debian-security bullseye-security main` | `security.debian.org/debian-security bookworm-security main` | `security.debian.org/debian-security trixie-security main` |
-| Default kernel | 4.19 | 5.10 | 6.1 | 6.x |
-| BBR module | built-in | built-in | built-in | built-in |
-| NFTables default | no (iptables-legacy) | yes | yes | yes |
-| Docker repo codename | use `bullseye` packages | `bullseye` | `bookworm` | `trixie` (or `bookworm` while trixie ships) |
-| Compose v2 plugin pkg | `docker-compose-plugin` | `docker-compose-plugin` | `docker-compose-plugin` | `docker-compose-plugin` |
-| systemd-resolved enabled by default | no | no | no | no |
+| Step | Debian 12 (bookworm) | Debian 13+ |
+| --- | --- | --- |
+| Apt sources for security | `security.debian.org/debian-security bookworm-security main` | Use the matching Debian security suite |
+| Default kernel | 6.1 | 6.x or newer |
+| BBR module | built-in | built-in |
+| NFTables default | yes | yes |
+| Docker repo codename | `bookworm` | matching codename, or `bookworm` while a new Debian release is still settling |
+| Compose v2 plugin pkg | `docker-compose-plugin` | `docker-compose-plugin` |
+| systemd-resolved enabled by default | no | no |
 
 ---
 

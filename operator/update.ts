@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/update.ts — `ct update` implementation.
 //
-// Pulls a new release, rebuilds images, runs migrations + Caddy
-// reload, then runs health gates. On failure the OLD images are
-// still running on their volumes (compose hasn't swapped traffic).
+// Pulls a new release, loads the release's prebuilt Docker image
+// bundle, runs migrations + Caddy reload, then runs health gates. The
+// production VPS path does not compile or build runtime images locally.
 //
 // Stages:
 //   1. acquireOpLock (per-project flock)
@@ -12,17 +12,15 @@
 //      auto-stash local edits
 //   3. git pull --ff-only
 //   4. .env auto-migrate (PANEL_DOMAIN + APP_URL)
-//   5. prepare ct-server-core image (prebuilt release asset; source fallback)
-//   6. prepare singbox-core image (prebuilt release asset)
-//   7. compose build caddy singbox panel
-//   8. compose up -d panel
-//   9. wait for panel entrypoint sentinel
-//  10. clear stale non-running ct-caddy, then compose up -d caddy singbox
-//  11. php artisan migrate --force
-//  12. ct-server-core caddyfile render
-//  13. caddy reload from the host-side operator
-//  14. post-deploy settle gate
-//  15. fetch_operator_binary.sh (non-fatal)
+//   5. load prebuilt Docker image bundle
+//   6. compose up -d panel
+//   7. wait for panel entrypoint sentinel
+//   8. clear stale non-running ct-caddy, then compose up -d caddy singbox
+//   9. php artisan migrate --force
+//  10. ct-server-core caddyfile render
+//  11. caddy reload from the host-side operator
+//  12. post-deploy settle gate
+//  13. fetch_operator_binary.sh (non-fatal)
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
 import { die, makeArrowProgress, makeTerm, ANSI } from "./src/util/term";
@@ -164,125 +162,26 @@ async function autoMigrateEnv(): Promise<void> {
     for (const c of r.changes) ok(c.summary);
 }
 
-async function rebuildCore(): Promise<void> {
-    const msg = "Prepare ct-server-core image";
+async function prepareImageBundle(): Promise<void> {
+    const msg = "Prepare prebuilt Docker image bundle";
     phase(msg);
-    const prebuilt = await withProgressPulse(msg, () => runStreaming($`./scripts/fetch_core_binary.sh`));
-    if (prebuilt.ok) {
-        ok("ct-server-core prebuilt release image ready");
+    const bundle = await withProgressPulse(msg, () => runStreaming($`./scripts/fetch_image_bundle.sh`));
+    if (bundle.ok) {
+        ok("prebuilt Docker image bundle loaded");
         return;
     }
-    if (prebuilt.code !== 2) {
-        dieWithDiag(
-            "ct-server-core prebuilt fetch failed",
-            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
-
-Recovery:
-  ./scripts/fetch_core_binary.sh
-  ./ct update
-
-If you intentionally want to compile Rust on this VPS:
-  CT_CORE_BUILD_FROM_SOURCE=1 ./ct update`,
-        );
-    }
-
-    warn("prebuilt ct-server-core asset unavailable; falling back to local Rust build");
-    warn("on a 1-vCPU / 1 GB VPS this can take a long time and may need swap");
-    const source = await withProgressPulse("Build ct-server-core from source", () =>
-        runStreaming($`docker compose --profile build-only build core-builder`),
-    );
-    if (!source.ok) {
-        dieWithDiag(
-            "ct-server-core build failed",
-            `Common causes (in priority order):
-  - Release asset missing ->  ./scripts/fetch_core_binary.sh
-  - Docker cache pressure ->  docker builder prune -af
-  - Network route issue   ->  curl -4 -I https://static.rust-lang.org/
-                              curl -4 -I https://index.crates.io/
-  - Cargo cache rot       ->  rm -rf core/target  then retry
-  - Buildkit bug          ->  docker buildx rm default-builder; retry
-
-This release pins Rust to the exact rust:1.88.0-alpine image and
-skips already-installed rustup targets. If the log still says
-NetworkUnreachable, it is not an IPv6 drift bug; it means the VPS
-cannot reach the Rust or crates.io endpoints over outbound IPv4.
-
-Recovery:
-  docker builder prune -af
-  ./ct update
-
-If the build error mentions a specific Rust crate, paste the last 20
-lines of output when asking for help. The crate name + line number
-are usually enough to diagnose.`,
-        );
-    }
-}
-
-async function prepareSingboxCore(): Promise<void> {
-    const msg = "Prepare singbox-core image";
-    phase(msg);
-    const prebuilt = await withProgressPulse(msg, () => runStreaming($`./scripts/fetch_singbox_core_binary.sh`));
-    if (prebuilt.ok) {
-        ok("singbox-core prebuilt release image ready");
-        return;
-    }
-    if (prebuilt.code !== 2) {
-        dieWithDiag(
-            "singbox-core prebuilt fetch failed",
-            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
-
-Recovery:
-  ./scripts/fetch_singbox_core_binary.sh
-  ./ct update
-
-If this is a just-published release, wait for the release assets to finish,
-then retry the same command.`,
-        );
-    }
-
     dieWithDiag(
-        "singbox-core release asset unavailable",
-        `This release is missing the prebuilt ${"singbox-core"} binary for this VPS.
+        "prebuilt Docker image bundle is required",
+        `This VPS install/update path does not compile Docker images locally.
 
 Recovery:
-  ./scripts/fetch_singbox_core_binary.sh
+  ./scripts/fetch_image_bundle.sh
   ./ct update
 
 Maintainer recovery:
-  build and upload singbox-core-linux-x64 / singbox-core-linux-arm64,
-  then re-run ./ct update.`,
+  build and upload cool-tunnel-server-images-linux-x64.tar.gz and
+  cool-tunnel-server-images-linux-arm64.tar.gz for this release.`,
     );
-}
-
-async function rebuildImages(): Promise<void> {
-    const msg = "Rebuild caddy + singbox + panel images";
-    phase(msg);
-    // v0.4.0: caddy (layer4 SNI splitter via mholt/caddy-l4) +
-    // singbox (sing-box VLESS+Reality, supervisored by singbox-core)
-    // + panel.
-    const r = await withProgressPulse(msg, () =>
-        runStreaming($`docker compose build caddy singbox panel`),
-    );
-    if (!r.ok) {
-        dieWithDiag(
-            "caddy / singbox / panel build failed",
-            `Common causes (in priority order):
-  - Out of disk             ->  df -h /var/lib/docker
-                                then docker system prune -af
-  - xcaddy / Go transient   ->  retry: ./ct update
-                                (Caddy is built with the
-                                mholt/caddy-l4 plugin via xcaddy;
-                                first build pulls a Go dep graph
-                                from proxy.golang.org.)
-  - singbox-core asset gap    ->  ./scripts/fetch_singbox_core_binary.sh
-                                then retry: ./ct update
-  - Composer.lock conflict  ->  check the entrypoint output for
-                                "platform-req" errors
-
-The build prints which Dockerfile step failed; that pinpoints
-which image (caddy / singbox / panel) and which line.`,
-        );
-    }
 }
 
 async function panelEntrypointDone(): Promise<boolean> {
@@ -340,7 +239,7 @@ async function bringNewImagesUp(): Promise<void> {
     // (e.g. ct-naive lingering from a v0.3.x box, ct-haproxy from
     // a v0.1.x box, or a future service we retire). Safer than
     // the default that would leave orphans mapping ports.
-    const panel = await capture($`docker compose up -d --remove-orphans panel`);
+    const panel = await capture($`docker compose up -d --no-build --pull never --remove-orphans panel`);
     if (!panel.ok) {
         dieWithDiag(
             "compose up -d panel failed",
@@ -363,7 +262,7 @@ async function bringNewImagesUp(): Promise<void> {
 
     phase("Bring new caddy + singbox images up");
     await removeStaleCaddy();
-    const r = await capture($`docker compose up -d caddy singbox`);
+    const r = await capture($`docker compose up -d --no-build --pull never caddy singbox`);
     if (!r.ok) {
         dieWithDiag(
             "compose up -d caddy singbox failed",
@@ -453,7 +352,7 @@ async function fetchOperatorBinary(): Promise<void> {
     const r = await capture($`./scripts/fetch_operator_binary.sh`);
     if (!r.ok) {
         process.stdout.write(
-            `  ${ANSI.yellow}!${ANSI.reset} operator binary fetch did not complete; .sh fallbacks remain in use.\n`,
+            `  ${ANSI.yellow}!${ANSI.reset} operator binary fetch did not complete; retry before the next ct command if needed.\n`,
         );
         process.stdout.write(`     retry later with:  make operator-fetch\n`);
         return;
@@ -507,8 +406,8 @@ async function runUpdateInner(): Promise<number> {
     else if (stack.missing.length > 0) warn(stack.summary);
     else ok(stack.summary);
 
-    // Enforce IPv4-only before the Rust build so Docker/Rust never
-    // drift into broken provider routes for static.rust-lang.org.
+    // Enforce IPv4-only before fetching the release image bundle so
+    // low-end VPSes do not drift into broken provider IPv6 routes.
     // Skip via CT_SKIP_IPV6_AUTO_DISABLE=1.
     const ipv4Only = await checkIpv4OnlyRouting();
     if (ipv4Only.action === "warn") warn(ipv4Only.detail);
@@ -518,9 +417,7 @@ async function runUpdateInner(): Promise<number> {
 
     await gitPullFfOnly();
     await autoMigrateEnv();
-    await rebuildCore();
-    await prepareSingboxCore();
-    await rebuildImages();
+    await prepareImageBundle();
     await bringNewImagesUp();
     await migrateDb();
     await renderCaddyfile();

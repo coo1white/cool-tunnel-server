@@ -6,7 +6,7 @@
 #
 #   ct install      first-time bootstrap on a fresh VPS
 #   ct doctor       read-only health dashboard
-#   ct update       pull latest, rebuild, hot-swap
+#   ct update       pull latest, load release images, hot-swap
 #   ct status       one-shot "what's running"
 #   ct logs         tail every container's logs
 #   ct backup       snapshot db + .env + caddy data
@@ -51,7 +51,7 @@ EVERYDAY COMMANDS
   install        first-time bootstrap on a fresh VPS (~5-10 min)
   reinstall      rerun install safely; asks before any data wipe
   doctor         read-only health dashboard (PASS / WARN / FAIL)
-  update         pull the latest release, rebuild, hot-swap
+  update         pull the latest release, load release images, hot-swap
   status         one-shot "what's running" check
   logs           tail every container's logs
 
@@ -267,9 +267,9 @@ operator_bootstrap_if_skewed() {
 # ---------- ct-operator binary preference ------------------------
 #
 # For operator-owned subcommands, prefer the compiled ct-operator binary
-# in operator/bin/ when it exists; otherwise fall back to the legacy
-# shell script. Either path is behaviourally equivalent on the operator
-# command surface.
+# in operator/bin/. Only a few old commands still have explicit shell
+# fallbacks; install/update/doctor/backup/restore are binary-first
+# production paths.
 dispatch_via_operator() {
     local subcmd="$1"; shift
     local fallback="$1"; shift

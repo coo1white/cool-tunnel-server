@@ -51,18 +51,29 @@ use Illuminate\Support\Facades\Validator;
 
 class MakeAdmin extends Command
 {
+    public const DEFAULT_NAME = 'holder';
+
+    public const DEFAULT_EMAIL = 'holder@cool-tunnel.local';
+
+    public const DEFAULT_PASSWORD = 'cool-tunnel-server-2026';
+
     private const SMART_QUOTE_PATTERN = '/[\x{2018}\x{2019}\x{201A}\x{201B}\x{201C}\x{201D}\x{201E}\x{201F}]/u';
 
     protected $signature = 'ct:make-admin
                             {--name= : Display name (prompts if omitted; ignored on --force update of existing user)}
                             {--email= : Email address (prompts if omitted)}
                             {--password= : Cleartext password (prompts if omitted; never logged)}
+                            {--bootstrap-default : Idempotently create the first default admin login (holder / cool-tunnel-server-2026)}
                             {--force : Reset password on an existing email instead of erroring (docs as the recover-from-lost-password path)}';
 
     protected $description = 'Create a Filament admin user, or reset an existing admin\'s password with --force';
 
     public function handle(): int
     {
+        if ((bool) $this->option('bootstrap-default')) {
+            return $this->bootstrapDefaultAdmin();
+        }
+
         $force = (bool) $this->option('force');
         $name = $this->option('name') ?: ($force ? '' : $this->ask('Name'));
         $email = $this->option('email') ?: $this->ask('Email address');
@@ -108,6 +119,7 @@ class MakeAdmin extends Command
                 $existing->password = $password;     // 'hashed' cast hashes on assign
                 $existing->role = User::ROLE_ADMIN;  // re-promote if previously demoted
                 $existing->is_active = true;         // re-enable if previously disabled
+                $existing->must_change_password = false;
                 if ($name !== '') {
                     $existing->name = $name;         // optional rename
                 }
@@ -127,6 +139,7 @@ class MakeAdmin extends Command
             $user->password = $password;     // 'hashed' cast applies on assign
             $user->role = User::ROLE_ADMIN;
             $user->is_active = true;
+            $user->must_change_password = false;
             $user->save();
             Log::notice('admin.created', ['email' => $email]);
             $this->info("admin created: {$email} (role=admin, is_active=true)");
@@ -148,5 +161,40 @@ class MakeAdmin extends Command
     private static function containsSmartQuote(string $value): bool
     {
         return preg_match(self::SMART_QUOTE_PATTERN, $value) === 1;
+    }
+
+    private function bootstrapDefaultAdmin(): int
+    {
+        $adminCount = User::query()
+            ->where('role', User::ROLE_ADMIN)
+            ->where('is_active', true)
+            ->count();
+
+        $existing = User::query()->where('email', self::DEFAULT_EMAIL)->first();
+        if ($existing !== null) {
+            $this->info('default admin already present: holder');
+
+            return self::SUCCESS;
+        }
+
+        if ($adminCount > 0) {
+            $this->info('active admin already exists; not creating default admin');
+
+            return self::SUCCESS;
+        }
+
+        $user = new User;
+        $user->name = self::DEFAULT_NAME;
+        $user->email = self::DEFAULT_EMAIL;
+        $user->password = self::DEFAULT_PASSWORD;
+        $user->role = User::ROLE_ADMIN;
+        $user->is_active = true;
+        $user->must_change_password = true;
+        $user->save();
+
+        Log::notice('admin.default_created', ['email' => self::DEFAULT_EMAIL]);
+        $this->info('default admin created: holder (must_change_password=true)');
+
+        return self::SUCCESS;
     }
 }

@@ -33,6 +33,14 @@ rm -f /tmp/cool-tunnel/entrypoint-complete
 export COMPOSER_HOME=/tmp/composer
 mkdir -p "$COMPOSER_HOME" storage/framework/{cache,sessions,views} storage/logs bootstrap/cache
 
+sync_app_key_env_from_file() {
+    local file_key
+    file_key=$(sed -n 's/^APP_KEY=//p' .env 2>/dev/null | tail -1 || true)
+    if [[ "$file_key" == base64:* ]]; then
+        export APP_KEY="$file_key"
+    fi
+}
+
 # Hand storage/ + bootstrap/cache/ to www-data. The entrypoint runs
 # as root (so we can write into bind-mounted volumes whose host
 # ownership we don't control). Pre-swap: PHP-FPM workers ran as
@@ -131,9 +139,12 @@ if ! php artisan package:discover --ansi; then
 fi
 
 # Generate APP_KEY if it isn't set.
+rm -f bootstrap/cache/config.php
+sync_app_key_env_from_file
 if ! grep -q '^APP_KEY=base64:' .env 2>/dev/null; then
     echo "[entrypoint] APP_KEY missing — generating"
     php artisan key:generate --force
+    sync_app_key_env_from_file
 fi
 
 # Wait for the database before migrating. We retry up to 60s.

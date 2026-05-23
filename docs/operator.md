@@ -6,9 +6,10 @@ maintenance commands that need richer runtime checks than shell alone
 It is the main VPS operations surface for installing, updating,
 backing up, restoring, and diagnosing the self-hosted proxy server.
 
-The shell scripts remain in `scripts/` as a fallback. The top-level
-`ct` dispatcher prefers `operator/bin/ct-operator-<os>-<arch>` when it
-exists, and otherwise execs the legacy `.sh`. No flag day.
+The top-level `ct` dispatcher fetches and prefers
+`operator/bin/ct-operator-<os>-<arch>` for production commands. Shell
+scripts in `scripts/` are thin bootstraps or maintainer/development
+helpers, not a second production install/update implementation.
 
 ## Install
 
@@ -59,7 +60,7 @@ the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
 | `ct render singbox` | Re-render `/data/config/singbox.json` via the panel renderer. |
 | `ct backup`        | Snapshot DB, `.env`, manifests, and ACME state. |
 | `ct restore <tarball>` | Restore a deployment from a backup tarball. |
-| `ct update`        | Pull, rebuild, render, hot-swap, and verify the deployment. |
+| `ct update`        | Pull, load release images, render, hot-swap, and verify the deployment. |
 | `ct-operator version` | Print the embedded build version.                                   |
 
 Flags:

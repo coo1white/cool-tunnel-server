@@ -20,8 +20,8 @@ build_one() {
     local bun_target binary
 
     case "$suffix" in
-        linux-x64)   bun_target="bun-linux-x64-baseline" ;;
-        linux-arm64) bun_target="bun-linux-arm64" ;;
+        linux-x64)   bun_target="bun-linux-x64-musl-baseline" ;;
+        linux-arm64) bun_target="bun-linux-arm64-musl" ;;
         *)
             echo "unsupported target: $suffix" >&2
             return 2

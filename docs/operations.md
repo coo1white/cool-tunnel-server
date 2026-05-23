@@ -83,7 +83,7 @@ announced (every few days during active development):
 
 ```sh
 ct backup     # always FIRST — protects you if the update goes wrong
-ct update     # pull + rebuild + restart — takes 1-10 minutes
+ct update     # pull + load release images + restart
 ct doctor     # confirm everything still works
 ```
 
@@ -106,16 +106,15 @@ and the panel, not in patched source files.
 
 What `ct update` does, in plain terms:
 
-1. **Pre-flight**: checks network reachability (github.com + Docker
-   registry), runs a safe temp/build-cache cleanup, checks disk
-   headroom, stack is up, working tree is clean.
+1. **Pre-flight**: checks network reachability for release downloads,
+   runs a safe temp/build-cache cleanup, checks disk headroom, stack is
+   up, working tree is clean.
    If your tree has uncommitted edits (e.g. a hand-patched Dockerfile),
    it offers to stash / discard / abort.
 2. **Locks** so no one else can run an update at the same time.
 3. **Pulls** the latest code from GitHub (`git pull --ff-only`).
 4. **Auto-migrates** legacy `.env` shape if needed (idempotent).
-5. **Rebuilds** the Docker images (fast on second run thanks to
-   buildkit caching).
+5. **Loads** the verified Docker image bundle for the release.
 6. **Brings up** the new panel image and waits for the entrypoint
    sentinel.
 7. **Runs migrations** (no-op if nothing pending).
@@ -136,13 +135,13 @@ classes:
 | `auto-stashing local edits before update` | Working tree has local edits | `ct update` stashes them automatically; recover with `git stash pop` |
 | `network: cannot reach ...` | Outbound HTTPS broken from the VPS | Check the diagnostic block's command ladder (ping / dig / curl) |
 | `low disk under repo path: NG free` | The VPS is still too full after auto-clean | Follow the diagnostic block; usually `docker system prune -af` + checking large host directories |
-| `ct-server-core build failed` + `NetworkUnreachable` | VPS cannot reach Rust/crates endpoints over outbound IPv4 | Run the Rust endpoint checks below, prune builder cache, retry |
+| `prebuilt Docker image bundle is required` | Release asset is missing for this CPU architecture | Run `./scripts/fetch_image_bundle.sh`; if it says no entry in `SHA256SUMS`, publish the missing bundle |
 | `post-swap check NG: <component>` | A specific service didn't come up clean | The diagnostic block lists which component + the targeted `docker compose logs ...` to run |
 
-Before install/update builds images, `ct install` and `ct update`
-check disk headroom. If the check is already healthy, they skip
-cleanup to keep cached builds fast. If free space is below the safety
-threshold, they automatically run conservative cleanup:
+Before install/update loads release images, `ct install` and
+`ct update` check disk headroom. If the check is already healthy, they
+skip cleanup. If free space is below the safety threshold, they
+automatically run conservative cleanup:
 
 - removes stale `core/target` only when repo-path free space is below
   the safety threshold
@@ -150,9 +149,8 @@ threshold, they automatically run conservative cleanup:
 - never removes Docker volumes, backups, `.env`, database data, or
   live containers
 
-If a build dies mid-way (panel image's `apk add` step is the most
-expensive), and auto-clean still cannot recover enough room, it's
-usually disk pressure on the docker root, NOT OOM:
+If `docker load` cannot recover enough room, it is disk pressure on the
+Docker root:
 
 ```sh
 docker system prune -af && docker builder prune -af
@@ -160,25 +158,18 @@ df -h /var/lib/docker     # should be >= 4G free
 ct update                  # retry
 ```
 
-If the failing build log mentions `static.rust-lang.org`,
-`index.crates.io`, or `NetworkUnreachable`, check outbound IPv4:
+If the image bundle is missing from the release:
 
 ```sh
-curl -4 -I https://static.rust-lang.org/
-curl -4 -I https://index.crates.io/
-docker builder prune -af
+./scripts/fetch_image_bundle.sh
 ct update
 ```
-
-If those `curl -4` checks fail, fix VPS DNS/outbound HTTPS first. The
-project enforces IPv4-only Docker defaults, but it cannot repair a VPS
-provider route that cannot reach Rust or crates.io over IPv4.
 
 If you need to roll back to the previous known-good release:
 
 ```sh
 git checkout v0.0.<X>      # the prior known-good tag
-./ct update        # rebuilds + redeploys that version
+./ct update        # loads that release's images and redeploys
 ```
 
 ---
@@ -305,7 +296,7 @@ cd /opt/cool-tunnel-server
 NEW=$(openssl rand -base64 32)
 awk -v p="$NEW" '/^REDIS_PASSWORD=/ { print "REDIS_PASSWORD=" p; next } { print }' \
   .env > .env.tmp && mv .env.tmp .env && chmod 0600 .env
-docker compose up -d --force-recreate redis panel
+docker compose up -d --no-build --pull never --force-recreate redis panel
 unset NEW; history -d $((HISTCMD-1)) 2>/dev/null
 sleep 15 && ct doctor   # should be all PASS
 ```
@@ -336,7 +327,7 @@ awk -v db="$NEW_DB" -v dbroot="$NEW_ROOT" \
   .env > .env.tmp && mv .env.tmp .env && chmod 0600 .env
 
 # 3) Restart panel so it picks up the new DB_PASSWORD
-docker compose up -d --force-recreate panel
+docker compose up -d --no-build --pull never --force-recreate panel
 
 # 4) Wipe new values from shell + verify
 unset NEW_DB NEW_ROOT; history -d $((HISTCMD-1)) 2>/dev/null
@@ -415,8 +406,7 @@ For operators who want to understand the exact sequence:
 3. `git pull --ff-only` to the latest tag on `main`.
 4. Auto-migrates legacy `.env` shape (PANEL_DOMAIN placement, APP_URL
    hostname) if needed; idempotent on already-canonical files.
-5. Rebuilds the Rust core + caddy + panel + sing-box images.
-   Subsequent runs hit the BuildKit cache and finish in seconds.
+5. Loads the verified Docker image bundle for the release.
 6. Brings the new panel image up and waits for the entrypoint
    sentinel.
 7. Runs Laravel migrations (no-op if nothing pending).
@@ -437,7 +427,7 @@ The most-used `ct` commands:
 |---------|--------------|
 | `ct doctor` | Health dashboard (PASS / WARN / FAIL + remediation hints) |
 | `ct status` | Quick "are containers up?" check |
-| `ct update` | Pull, rebuild, migrate, render, verify, reload |
+| `ct update` | Pull, load release images, migrate, render, verify, reload |
 | `ct backup` | Snapshot DB + .env + ACME state |
 | `ct install` | First-time bootstrap (idempotent on re-run) |
 | `ct logs` | Tail all container logs |

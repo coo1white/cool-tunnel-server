@@ -60,7 +60,7 @@ async function snapshotCaddyData(volumeName: string, tmpDir: string, destName: s
     try {
         const cwd = process.cwd();
         r = await capture(
-            $`docker run --rm -v ${`${volumeName}:/data:ro`} -v ${`${cwd}/${tmpDir}:/out`} alpine sh -c ${`cd /data && tar czf /out/${destName} .`}`,
+            $`docker run --pull never --rm --entrypoint sh -v ${`${volumeName}:/data:ro`} -v ${`${cwd}/${tmpDir}:/out`} cool-tunnel-server-caddy:latest -c ${`cd /data && tar czf /out/${destName} .`}`,
         );
     } finally {
         if (wasRunning) {

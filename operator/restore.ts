@@ -6,19 +6,20 @@
 // Companion to operator/backup.ts. Stages:
 //   1. Untar into tmp/restore
 //   2. Restore .env + manifests + Caddy template
-//   3. compose up -d db redis; wait for DB healthy
-//   4. mariadb import the dump
-//   5. Restore caddy_data volume from caddy_data.tgz
-//   6. compose up -d panel; wait for entrypoint sentinel
-//   7. compose up -d caddy singbox
-//   8. Best-effort health check
+//   3. Load prebuilt Docker image bundle
+//   4. compose up -d db redis; wait for DB healthy
+//   5. mariadb import the dump
+//   6. Restore caddy_data volume from caddy_data.tgz
+//   7. compose up -d panel; wait for entrypoint sentinel
+//   8. compose up -d caddy singbox
+//   9. Best-effort health check
 //
 // Refuses to run over a populated stack. Single-flight under the
 // same per-project flock as backup/install/update.
 
 import { cpSync, existsSync, mkdirSync, rmSync, chmodSync, mkdtempSync } from "node:fs";
 import { posix as pathPosix } from "node:path";
-import { $, capture } from "./src/util/sh";
+import { $, capture, runStreaming } from "./src/util/sh";
 import { loadDotenv } from "./src/util/env";
 import { composeProjectName } from "./src/util/compose";
 import { die, makeTerm } from "./src/util/term";
@@ -188,12 +189,25 @@ export async function runRestore(backupPath: string): Promise<number> {
     ok(".env restored (mode 0600), manifests + Caddy template in place");
 
     // ---------- Stage 3 ----------
+    step("Load prebuilt Docker image bundle");
+    {
+        const r = await runStreaming($`./scripts/fetch_image_bundle.sh`);
+        if (!r.ok) {
+            die(
+                "prebuilt Docker image bundle is required",
+                "run ./scripts/fetch_image_bundle.sh, then retry ./ct restore <backup.tar.gz>",
+            );
+        }
+    }
+    ok("prebuilt Docker image bundle loaded");
+
+    // ---------- Stage 4 ----------
     const loaded = await loadDotenv([".env"]);
     const env = loaded?.env ?? {};
 
     step("Bring up db + redis (NOT panel/singbox yet)");
     {
-        const r = await capture($`docker compose up -d db redis`);
+        const r = await capture($`docker compose up -d --no-build --pull never db redis`);
         if (!r.ok) die(`compose up -d db redis failed`, r.stderr.split("\n")[0] ?? "");
     }
     const dbOk = await waitFor({
@@ -204,7 +218,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     });
     if (!dbOk) die("MariaDB never reached healthy state", "docker compose logs --tail=80 db");
 
-    // ---------- Stage 4 ----------
+    // ---------- Stage 5 ----------
     step("Import db.sql into MariaDB");
     // Password discipline: MYSQL_PWD via env, never argv. The
     // mariadb client auto-reads MYSQL_PWD when no -p is given —
@@ -222,7 +236,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     }
     ok("db.sql imported");
 
-    // ---------- Stage 5 ----------
+    // ---------- Stage 6 ----------
     step("Restore caddy_data volume from caddy_data.tgz");
     const caddyDataVolume = `${project}_caddy_data`;
     const inspect = await capture($`docker volume inspect ${caddyDataVolume}`);
@@ -232,7 +246,7 @@ export async function runRestore(backupPath: string): Promise<number> {
     const cwd = process.cwd();
     {
         const r = await capture(
-            $`docker run --rm -v ${`${caddyDataVolume}:/data`} -v ${`${cwd}/${restoreDir}:/in:ro`} alpine sh -c ${"cd /data && tar xzf /in/caddy_data.tgz"}`,
+            $`docker run --pull never --rm --entrypoint sh -v ${`${caddyDataVolume}:/data`} -v ${`${cwd}/${restoreDir}:/in:ro`} cool-tunnel-server-caddy:latest -c ${"cd /data && tar xzf /in/caddy_data.tgz"}`,
         );
         if (!r.ok) {
             die(
@@ -243,10 +257,10 @@ export async function runRestore(backupPath: string): Promise<number> {
     }
     ok(`caddy_data restored (ACME certs + private keys, into ${caddyDataVolume})`);
 
-    // ---------- Stage 6 ----------
+    // ---------- Stage 7 ----------
     step("Bring up panel + caddy + singbox");
     {
-        const r = await capture($`docker compose up -d panel`);
+        const r = await capture($`docker compose up -d --no-build --pull never panel`);
         if (!r.ok) die("compose up -d panel failed", r.stderr.split("\n")[0] ?? "");
     }
     // Wait for the entrypoint-complete sentinel — same contract
@@ -266,12 +280,12 @@ export async function runRestore(backupPath: string): Promise<number> {
         );
     }
     {
-        const r = await capture($`docker compose up -d caddy singbox`);
+        const r = await capture($`docker compose up -d --no-build --pull never caddy singbox`);
         if (!r.ok) die("compose up -d caddy singbox failed", r.stderr.split("\n")[0] ?? "");
     }
     await new Promise((r) => setTimeout(r, 5000));
 
-    // ---------- Stage 7: best-effort health check ----------
+    // ---------- Stage 8: best-effort health check ----------
     step("Health check");
     const doctor = await capture($`./ct doctor`);
     if (!doctor.ok) {
@@ -298,7 +312,7 @@ Next:
 If the restored .env differs from the environment the current
 containers booted with, recreate the stack so panel, Caddy, and
 singbox all read the same values:
-  docker compose up -d --force-recreate
+  docker compose up -d --no-build --pull never --force-recreate
 `);
     return 0;
     } finally {

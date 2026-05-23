@@ -7,7 +7,10 @@ declare(strict_types=1);
 namespace App\Filament\Pages\Auth;
 
 use Filament\Http\Responses\Auth\Contracts\LoginResponse;
+use Filament\Forms\Components\Component;
+use Filament\Forms\Components\TextInput;
 use Filament\Pages\Auth\Login as FilamentLogin;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
@@ -30,7 +33,8 @@ class Login extends FilamentLogin
     public function getSubheading(): string | Htmlable | null
     {
         return new HtmlString(
-            'Use the admin account created during <code>./ct install</code>. '.
+            'Initial login: <code>holder</code> / <code>cool-tunnel-server-2026</code>. '.
+            'You will be asked to change the password after first login. '.
             'Locked out? On the VPS run <code>docker compose exec panel php artisan ct:make-admin --force --email=you@example.com</code>.',
         );
     }
@@ -48,5 +52,32 @@ class Login extends FilamentLogin
         $this->rateLimit(5);
 
         return parent::authenticate();
+    }
+
+    protected function getEmailFormComponent(): Component
+    {
+        return TextInput::make('email')
+            ->label('Admin name or email')
+            ->required()
+            ->autocomplete('username')
+            ->autofocus()
+            ->extraInputAttributes(['tabindex' => 1]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function getCredentialsFromFormData(array $data): array
+    {
+        $login = trim((string) ($data['email'] ?? ''));
+
+        return [
+            static function (Builder $query) use ($login): void {
+                $query->where('email', $login)
+                    ->orWhere('name', $login);
+            },
+            'password' => $data['password'],
+        ];
     }
 }

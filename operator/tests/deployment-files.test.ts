@@ -40,25 +40,20 @@ test("release workflow publishes prebuilt core assets with checksums", async () 
     expect(body).toContain("operator/bin/singbox-core-*");
 });
 
-test("prebuilt core fetch path wraps release binary as panel source image", async () => {
-    const script = await Bun.file("../scripts/fetch_core_binary.sh").text();
+test("prebuilt core release path wraps release binary as panel source image", async () => {
     const buildScript = await Bun.file("../scripts/build_release_core_assets.sh").text();
     const dockerfile = await Bun.file("../docker/core/prebuilt.Dockerfile").text();
     const assetDockerfile = await Bun.file("../docker/core/release-asset.Dockerfile").text();
     const install = await Bun.file("./install.ts").text();
     const update = await Bun.file("./update.ts").text();
 
-    expect(script).toContain('TARGET="ct-server-core-${OS}-${ARCH}"');
-    expect(script).toContain('IMAGE="${CT_CORE_IMAGE:-cool-tunnel-server-core:latest}"');
-    expect(script).toContain("docker/core/prebuilt.Dockerfile");
-    expect(script).toContain("exit 2");
     expect(dockerfile).toContain("FROM scratch AS runtime");
     expect(dockerfile).toContain("COPY ct-server-core /usr/local/bin/ct-server-core");
     expect(dockerfile).not.toContain("docker/dockerfile:");
     expect(dockerfile).not.toContain("ENTRYPOINT");
     expect(await Bun.file("../docker/core/Dockerfile").text()).toContain("CT_RUST_BASE_IMAGE");
-    expect(install).toContain("./scripts/fetch_core_binary.sh");
-    expect(update).toContain("./scripts/fetch_core_binary.sh");
+    expect(install).not.toContain("./scripts/fetch_core_binary.sh");
+    expect(update).not.toContain("./scripts/fetch_core_binary.sh");
     expect(buildScript).toContain("docker buildx build");
     expect(buildScript).toContain("docker/core/release-asset.Dockerfile");
     expect(buildScript).toContain("linux/amd64");
@@ -69,8 +64,7 @@ test("prebuilt core fetch path wraps release binary as panel source image", asyn
     expect(assetDockerfile).not.toContain("cargo chef");
 });
 
-test("prebuilt singbox-core fetch path wraps release binary for panel and singbox images", async () => {
-    const script = await Bun.file("../scripts/fetch_singbox_core_binary.sh").text();
+test("prebuilt singbox-core release path wraps release binary for panel and singbox images", async () => {
     const buildScript = await Bun.file("../scripts/build_release_singbox_core_assets.sh").text();
     const dockerfile = await Bun.file("../docker/singbox-core/prebuilt.Dockerfile").text();
     const compose = await Bun.file("../docker-compose.yml").text();
@@ -79,26 +73,65 @@ test("prebuilt singbox-core fetch path wraps release binary for panel and singbo
     const pkg = await Bun.file("../singbox-core/package.json").text();
     const version = await Bun.file("../singbox-core/src/version.ts").text();
 
-    expect(script).toContain('TARGET="singbox-core-${OS}-${ARCH}"');
-    expect(script).toContain('IMAGE="${CT_SINGBOX_CORE_IMAGE:-cool-tunnel-server-singbox-core:latest}"');
-    expect(script).toContain("docker/singbox-core/prebuilt.Dockerfile");
-    expect(script).toContain("exit 2");
-    expect(script).not.toContain("CT_SINGBOX_CORE_BUILD_FROM_SOURCE");
     expect(dockerfile).toContain("FROM scratch AS runtime");
     expect(dockerfile).toContain("COPY singbox-core /usr/local/bin/singbox-core");
     expect(dockerfile).not.toContain("docker/dockerfile:");
     expect(dockerfile).not.toContain("ENTRYPOINT");
     expect(compose).toContain("CT_SINGBOX_CORE_IMAGE: cool-tunnel-server-singbox-core:latest");
-    expect(install).toContain("./scripts/fetch_singbox_core_binary.sh");
-    expect(install).toContain("singbox-core release asset unavailable");
-    expect(update).toContain("./scripts/fetch_singbox_core_binary.sh");
-    expect(update).toContain("singbox-core release asset unavailable");
-    expect(buildScript).toContain("bun-linux-x64-baseline");
-    expect(buildScript).toContain("bun-linux-arm64");
+    expect(install).not.toContain("./scripts/fetch_singbox_core_binary.sh");
+    expect(install).not.toContain("singbox-core release asset unavailable");
+    expect(update).not.toContain("./scripts/fetch_singbox_core_binary.sh");
+    expect(update).not.toContain("singbox-core release asset unavailable");
+    expect(buildScript).toContain("bun-linux-x64-musl-baseline");
+    expect(buildScript).toContain("bun-linux-arm64-musl");
     expect(buildScript).toContain("SHA256SUMS.singbox-core");
-    expect(pkg).toContain("bun-linux-x64-baseline");
+    expect(pkg).toContain("bun-linux-x64-musl-baseline");
+    expect(pkg).toContain("bun-linux-arm64-musl");
     expect(pkg).toContain("build:linux-arm64");
     expect(version).toContain('platform === "linux" && arch === "arm64"');
+});
+
+test("install and update require prebuilt Docker image bundles instead of VPS builds", async () => {
+    const fetchScript = await Bun.file("../scripts/fetch_image_bundle.sh").text();
+    const buildScript = await Bun.file("../scripts/build_release_image_bundle.sh").text();
+    const backup = await Bun.file("./backup.ts").text();
+    const install = await Bun.file("./install.ts").text();
+    const update = await Bun.file("./update.ts").text();
+    const restore = await Bun.file("./restore.ts").text();
+
+    expect(fetchScript).toContain('TARGET="cool-tunnel-server-images-${OS}-${ARCH}.tar.gz"');
+    expect(fetchScript).toContain("docker load -i");
+    expect(fetchScript).toContain("cool-tunnel-server-caddy:latest");
+    expect(fetchScript).toContain("cool-tunnel-server-singbox:latest");
+    expect(fetchScript).toContain("cool-tunnel-server-panel:latest");
+    expect(fetchScript).toContain("mariadb:11.8.6");
+    expect(fetchScript).toContain("redis:7.4.8-alpine");
+    expect(fetchScript).not.toContain("CT_SKIP_IMAGE_BUNDLE_FETCH");
+    expect(buildScript).toContain("docker save");
+    expect(buildScript).toContain("cool-tunnel-server-images-");
+    expect(buildScript).toContain("DOCKER_DEFAULT_PLATFORM");
+    expect(buildScript).toContain("docker compose build caddy singbox panel");
+    expect(buildScript).toContain("SHA256SUMS.images");
+
+    for (const body of [install, update, restore]) {
+        expect(body).toContain("./scripts/fetch_image_bundle.sh");
+        expect(body).toContain("prebuilt Docker image bundle");
+        expect(body).toContain("--no-build");
+        expect(body).toContain("--pull never");
+        expect(body).not.toContain("fetch_core_binary.sh");
+        expect(body).not.toContain("fetch_singbox_core_binary.sh");
+        expect(body).not.toContain("docker compose build");
+    }
+    for (const body of [install, update]) {
+        expect(body).toContain("This VPS install/update path does not compile Docker images locally.");
+    }
+    expect(install).toContain("Load image bundle");
+    expect(update).toContain("Prepare prebuilt Docker image bundle");
+    expect(restore).toContain("Load prebuilt Docker image bundle");
+    expect(backup).toContain("docker run --pull never");
+    expect(restore).toContain("docker run --pull never");
+    expect(backup).not.toContain("docker run --rm");
+    expect(restore).not.toContain("docker run --rm");
 });
 
 test("install and update avoid y/n prompts during deploy preflights", async () => {
@@ -118,4 +151,14 @@ test("install and update avoid y/n prompts during deploy preflights", async () =
     expect(install).toContain("reset to origin/main; previous HEAD saved as");
     expect(update).toContain("auto-stashing local edits before update");
     expect(update).toContain("reset to origin/main; previous HEAD saved as");
+});
+
+test("panel entrypoint exports generated APP_KEY before encrypted seed data", async () => {
+    const body = await Bun.file("../docker/panel/entrypoint.sh").text();
+
+    expect(body).toContain("sync_app_key_env_from_file");
+    expect(body).toContain("export APP_KEY=");
+    expect(body).toContain("rm -f bootstrap/cache/config.php");
+    expect(body.indexOf("sync_app_key_env_from_file")).toBeLessThan(body.indexOf("php artisan db:seed"));
+    expect(body.indexOf("php artisan key:generate --force")).toBeLessThan(body.indexOf("php artisan db:seed"));
 });

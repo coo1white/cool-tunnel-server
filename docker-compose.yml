@@ -85,9 +85,8 @@ x-utf8-env: &utf8-env
   LC_ALL: C.UTF-8
 
 services:
-  # The Rust core builder. Not a long-running service — its image is
-  # used as a build dep by `panel`. `docker compose build` brings it
-  # up to date on each release.
+  # Maintainer/dev-only Rust core builder. Production install/update
+  # loads cool-tunnel-server-core from the release image bundle.
   core-builder:
     build:
       context: .
@@ -100,13 +99,7 @@ services:
       # ct-server-core binary at /usr/local/bin/.
       target: runtime
       # Wire CT_CORE_BUILD_PROFILE through to the Dockerfile's
-      # CARGO_PROFILE ARG (default `release`, override to
-      # `release-small` for low-RAM / faster-build VPS installs —
-      # see core/Cargo.toml profile definitions and .env.example).
-      # Pre-v0.0.38 the env var existed but was never read by any
-      # build path, so flipping it in .env had no effect; operators
-      # had to pass `--build-arg` by hand on every rebuild. This
-      # block makes `make update` honour the .env value end-to-end.
+      # CARGO_PROFILE ARG for maintainer/dev builds.
       args:
         CARGO_PROFILE: ${CT_CORE_BUILD_PROFILE:-release}
     image: cool-tunnel-server-core:latest
@@ -133,12 +126,9 @@ services:
     networks:
       # ct-data: reach `db:3306` for query type-checking against
       #          the live schema.
-      # ct-net:  internet for any rustup / crates.io fallback if
-      #          the cached layers ever go stale. The image
-      #          pre-installs everything it needs (Dockerfile
-      #          stage `sqlx-prepare`) so this is belt-and-braces;
-      #          if you tighten egress, ct-data alone suffices for
-      #          normal prepare runs.
+      # ct-net:  maintainer/dev-only egress for refreshing the
+      #          sqlx-prepare image. Production install/update never
+      #          starts this profile.
       - ct-data
       - ct-net
     depends_on:
@@ -149,6 +139,11 @@ services:
     <<: *svc-hardening
     build:
       context: ./docker/caddy
+      args:
+        CT_CADDY_BUILDER_IMAGE: ${CT_CADDY_BUILDER_IMAGE:-caddy:2.11.3-builder}
+        CT_CADDY_RUNTIME_IMAGE: ${CT_CADDY_RUNTIME_IMAGE:-caddy:2.11.3-alpine}
+        CT_GOPROXY: ${CT_GOPROXY:-https://proxy.golang.org,direct}
+        CT_GOSUMDB: ${CT_GOSUMDB:-sum.golang.org}
     image: cool-tunnel-server-caddy:latest
     container_name: ct-caddy
     restart: unless-stopped
@@ -196,12 +191,14 @@ services:
     <<: *svc-hardening
     build:
       # Context is the repo root so the Dockerfile can COPY from the
-      # local prebuilt singbox-core carrier image prepared by
-      # scripts/fetch_singbox_core_binary.sh.
+      # prebuilt singbox-core carrier image included in the release
+      # image bundle.
       context: .
       dockerfile: docker/singbox/Dockerfile
       args:
         CT_SINGBOX_CORE_IMAGE: cool-tunnel-server-singbox-core:latest
+        CT_ALPINE_RUNTIME_IMAGE: ${CT_ALPINE_RUNTIME_IMAGE:-alpine:3.21}
+        CT_ALPINE_REPOSITORY_BASE: ${CT_ALPINE_REPOSITORY_BASE:-}
     image: cool-tunnel-server-singbox:latest
     container_name: ct-singbox
     restart: unless-stopped
@@ -245,12 +242,16 @@ services:
       # Context is the repo ROOT (not ./docker/panel) so the
       # Dockerfile can copy panel/ plus shared Docker assets. The
       # singbox-core binary is supplied by the prebuilt carrier image
-      # prepared by scripts/fetch_singbox_core_binary.sh.
+      # included in the release image bundle.
       context: .
       dockerfile: docker/panel/Dockerfile
       args:
         CT_CORE_IMAGE: cool-tunnel-server-core:latest
         CT_SINGBOX_CORE_IMAGE: cool-tunnel-server-singbox-core:latest
+        CT_FRANKENPHP_IMAGE: ${CT_FRANKENPHP_IMAGE:-dunglas/frankenphp:1-php8.4-alpine}
+        CT_REDIS_IMAGE: ${CT_REDIS_IMAGE:-redis:7.4.8-alpine}
+        CT_ALPINE_REPOSITORY_BASE: ${CT_ALPINE_REPOSITORY_BASE:-}
+        CT_PHP_EXT_BUILD_JOBS: ${CT_PHP_EXT_BUILD_JOBS:-1}
     image: cool-tunnel-server-panel:latest
     container_name: ct-panel
     restart: unless-stopped
@@ -543,9 +544,8 @@ volumes:
 networks:
   # ct-net: the "front" network. caddy + panel + singbox (v0.4.0+)
   # sit here. Has internet access (caddy needs ACME outbound, panel
-  # needs composer install at build time, sing-box needs to reach
-  # the Reality destination host and the operator-requested target
-  # hosts).
+  # needs app/runtime egress, and sing-box needs to reach the Reality
+  # destination host and the operator-requested target hosts).
   ct-net:
     driver: bridge
 

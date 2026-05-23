@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Panel image — FrankenPHP runtime swap (post-v0.0.57).
@@ -30,6 +29,10 @@
 # that prevents inter-request state leakage.
 
 ARG CT_CORE_IMAGE=cool-tunnel-server-core:latest
+ARG CT_SINGBOX_CORE_IMAGE=cool-tunnel-server-singbox-core:latest
+ARG CT_FRANKENPHP_IMAGE=dunglas/frankenphp:1-php8.4-alpine
+ARG CT_REDIS_IMAGE=redis:7.4.8-alpine
+ARG CT_ALPINE_REPOSITORY_BASE=
 FROM ${CT_CORE_IMAGE} AS ct-core-stage
 
 # ----------------------------------------------------------------------
@@ -41,8 +44,9 @@ FROM ${CT_CORE_IMAGE} AS ct-core-stage
 # signed/checksummed singbox-core binary and wrap it as this tiny local
 # image, so low-resource VPS hosts do not run Bun install/typecheck/
 # compile during `ct install` or `ct update`.
-ARG CT_SINGBOX_CORE_IMAGE=cool-tunnel-server-singbox-core:latest
 FROM ${CT_SINGBOX_CORE_IMAGE} AS singbox-core-stage
+
+FROM ${CT_REDIS_IMAGE} AS redis-cli-stage
 
 # dunglas/frankenphp ships PHP + Caddy + Composer in a single Alpine
 # image. PHP 8.4 over the prior 8.3-fpm-alpine: laravel/octane v2.17
@@ -50,9 +54,14 @@ FROM ${CT_SINGBOX_CORE_IMAGE} AS singbox-core-stage
 # symfony/psr-http-message-bridge v8.0.8 which requires PHP ≥ 8.4.
 # panel/composer.json's "php": "^8.4" constraint matches this runtime
 # and the GitHub Actions PHP job.
-FROM dunglas/frankenphp:1-php8.4-alpine
+FROM ${CT_FRANKENPHP_IMAGE}
+ARG CT_ALPINE_REPOSITORY_BASE=
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
+
+RUN if [ -n "${CT_ALPINE_REPOSITORY_BASE}" ]; then \
+        sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${CT_ALPINE_REPOSITORY_BASE}#g" /etc/apk/repositories; \
+    fi
 
 # Strip the FrankenPHP binary's file capabilities. The dunglas
 # image ships the binary with `cap_net_bind_service+ep` so it
@@ -82,10 +91,16 @@ RUN setcap -r /usr/local/bin/frankenphp \
     && /usr/local/bin/frankenphp version
 
 ARG COMPOSER_VERSION=2.7.7
+ARG CT_PHP_EXT_BUILD_JOBS=1
 
 # Composer is bundled in dunglas/frankenphp (under /usr/bin/composer
 # in recent tags) but we install our pinned version explicitly to
 # match the prior pin and avoid silent upgrades on base-image bumps.
+# Build PHP extensions serially by default. Multi-arch release builds
+# often run linux/amd64 under QEMU on an arm64 maintainer laptop; the
+# autoconf/m4 phase has proven flaky under parallel emulation. Serial
+# jobs are slower for maintainers but deterministic, and VPS installs
+# consume the prebuilt image bundle rather than compiling this layer.
 RUN apk add --no-cache \
         bash \
         curl \
@@ -93,6 +108,7 @@ RUN apk add --no-cache \
         gcompat \
         jq \
         libgcc \
+        libstdc++ \
         socat \
         unzip \
         xz \
@@ -107,7 +123,7 @@ RUN apk add --no-cache \
         supervisor \
         tzdata \
     && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
-    && docker-php-ext-install -j"$(nproc)" \
+    && docker-php-ext-install -j"${CT_PHP_EXT_BUILD_JOBS}" \
         bcmath \
         gd \
         intl \
@@ -168,7 +184,7 @@ RUN apk add --no-cache --virtual .ext-redis-build-deps $PHPIZE_DEPS \
 # guaranteed protocol-version compatibility with the running server,
 # ~2 MiB on disk vs. ~5 MiB for `apk add redis` (which would also
 # pull redis-server, useless in this container).
-COPY --from=redis:7.4.8-alpine /usr/local/bin/redis-cli /usr/local/bin/redis-cli
+COPY --from=redis-cli-stage /usr/local/bin/redis-cli /usr/local/bin/redis-cli
 
 # Drop in the ct-server-core binary the panel shells out to.
 #

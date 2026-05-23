@@ -106,6 +106,7 @@ CT_ALPINE_BASE_IMAGE=public.ecr.aws/docker/library/alpine:3.20 \
 CT_ALPINE_REPOSITORY_BASE=https://mirrors.aliyun.com/alpine \
 ./scripts/build_release_core_assets.sh
 ./scripts/build_release_singbox_core_assets.sh
+./scripts/build_release_image_bundle.sh
 ```
 
 The script writes:
@@ -114,16 +115,21 @@ The script writes:
 - `release-assets/ct-server-core-linux-arm64`
 - `release-assets/singbox-core-linux-x64`
 - `release-assets/singbox-core-linux-arm64`
+- `release-assets/cool-tunnel-server-images-linux-x64.tar.gz`
+- `release-assets/cool-tunnel-server-images-linux-arm64.tar.gz`
 - `release-assets/SHA256SUMS.core`
 - `release-assets/SHA256SUMS.singbox-core`
+- `release-assets/SHA256SUMS.images`
 
 Verify the assets before upload:
 
 ```sh
 file release-assets/ct-server-core-linux-*
 file release-assets/singbox-core-linux-*
+ls -lh release-assets/cool-tunnel-server-images-linux-*.tar.gz
 sha256sum -c release-assets/SHA256SUMS.core
 sha256sum -c release-assets/SHA256SUMS.singbox-core
+sha256sum -c release-assets/SHA256SUMS.images
 ```
 
 ### 9. Create GitHub release
@@ -154,10 +160,16 @@ Upload locally built core assets first, then let GitHub's
 - `ct-server-core-linux-arm64`
 - `singbox-core-linux-x64`
 - `singbox-core-linux-arm64`
+- `cool-tunnel-server-images-linux-x64.tar.gz`
+- `cool-tunnel-server-images-linux-arm64.tar.gz`
 - `SHA256SUMS`
 
 ```sh
-gh release upload vX.Y.Z release-assets/ct-server-core-linux-* release-assets/singbox-core-linux-* --clobber
+gh release upload vX.Y.Z \
+    release-assets/ct-server-core-linux-* \
+    release-assets/singbox-core-linux-* \
+    release-assets/cool-tunnel-server-images-linux-*.tar.gz \
+    --clobber
 gh workflow run "ct-operator release" --ref vX.Y.Z
 gh run watch --exit-status "$(gh run list --workflow "ct-operator release" --limit 1 --json databaseId --jq '.[0].databaseId')"
 gh release download vX.Y.Z --pattern SHA256SUMS --dir /tmp/ct-release-check --clobber
@@ -205,23 +217,22 @@ For a given tag `vX.Y.Z`:
 ```sh
 git checkout vX.Y.Z
 
-# Rust core: deterministic with the lockfile.
-( cd core && cargo build --release --workspace --locked )
+# Build Linux release binaries and runtime images on a maintainer host.
+./scripts/build_release_core_assets.sh
+./scripts/build_release_singbox_core_assets.sh
+./scripts/build_release_image_bundle.sh
 
-# PHP panel: deterministic with composer.lock.
-( cd panel && composer install --no-dev --no-interaction --prefer-dist )
-
-# Docker images: deterministic with digest-pinned base images.
-./scripts/fetch_core_binary.sh
-./scripts/fetch_singbox_core_binary.sh
-docker compose --profile build-only build core-builder
-docker compose build
+# Verify every checksum file before upload.
+sha256sum -c release-assets/SHA256SUMS.core
+sha256sum -c release-assets/SHA256SUMS.singbox-core
+sha256sum -c release-assets/SHA256SUMS.images
 ```
 
-Compare to the SBOM attached to the release. Any divergence is
-either a Cargo.lock / composer.lock change (reproducible:
-deterministic), or a base-image digest change (only reproducible
-if `make pin-images` was run on the original release).
+The uploaded release `SHA256SUMS` must include the image bundle entries
+from `SHA256SUMS.images`. Production `ct install` and `ct update` fail
+early if the bundle is missing; that is intentional so users do not
+compile Rust, Bun, Go, PHP extensions, or Docker images on a low-end
+VPS.
 
 ## Hotfix workflow
 

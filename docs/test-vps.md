@@ -19,7 +19,7 @@ and runs without a VPS.
 
 ## What you need
 
-- A throwaway VPS — Debian 12 or 13, 1 vCPU / 1 GB RAM. Vultr /
+- A throwaway VPS — Debian 12 or newer, 1 vCPU / 1 GB RAM. Vultr /
   RackNerd / Hetzner all work; budget ~$3-5/month, billed hourly.
 - A throwaway DNS zone you control. Two A records:
   `test.<your-zone>` and `panel.test.<your-zone>`, both pointing at
@@ -49,6 +49,8 @@ nothing test-specific:
 
 ```sh
 ssh root@YOUR_VPS_IP
+apt update
+apt install -y ca-certificates curl git gnupg jq openssl apache2-utils ufw dnsutils chrony fail2ban unattended-upgrades
 LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
 BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 cd /opt/cool-tunnel-server && nano .env
@@ -85,7 +87,8 @@ malformed.
 ### 5. Create a test proxy account + import subscription
 
 Browser → `https://panel.test.your-zone.com/admin` → log in with the
-email + password set during `ct install` → **Proxy Accounts** →
+bootstrap admin `holder` / `cool-tunnel-server-2026`, change the
+password when prompted, then go to **Proxy Accounts** →
 **New proxy account** → username `demo-user` → Save.
 
 Copy the **Subscription URL** from the green notification.
@@ -115,8 +118,9 @@ With a working stack, prove that the update flow is intact:
 ```
 
 On a deployment already at `main` HEAD this is mostly a no-op
-(git pull is fast-forward zero, rebuild reuses image layers,
-health gates stay green). It exercises every step in `operator/update.ts`
+(git pull is fast-forward zero, the release image bundle is already
+loaded, health gates stay green). It exercises every step in
+`operator/update.ts`
 against real Docker + the real panel entrypoint, which is the part
 that can't be tested locally.
 

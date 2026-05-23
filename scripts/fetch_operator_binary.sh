@@ -3,9 +3,9 @@
 # fetch_operator_binary.sh — fetch the matching ct-operator binary
 # from the GitHub release for the deployed version.
 #
-# Called by scripts/update.sh as a post-deploy step (non-fatal: a
-# failed fetch leaves the existing binary or the .sh fallbacks in
-# place for implemented operator commands such as `ct doctor`).
+# Called by bootstrap/update as a post-deploy step. A failed refresh
+# leaves the existing binary in place; binary-only commands fail with a
+# clear remediation if no operator binary is available.
 # Can also be invoked directly: `make operator-fetch`.
 #
 # Idempotent. Opt out by exporting CT_SKIP_OPERATOR_FETCH=1.
@@ -62,8 +62,8 @@ curl_fetch() {
 }
 
 # Fetch the manifest first. If the release doesn't exist yet (dev
-# branch ahead of any tag, or a release that hasn't been cut),
-# this is a no-op — the .sh fallbacks keep working.
+# branch ahead of any tag, or a release that hasn't been cut), this is
+# a no-op so a development checkout can keep running from source.
 SUMS=$(curl_fetch "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
 if [[ -z "$SUMS" ]]; then
     echo "fetch_operator_binary: no SHA256SUMS at ${URL_BASE} (release not published?). Skipping."

@@ -63,6 +63,7 @@ class MakeAdminTest extends TestCase
         $this->assertTrue(Hash::check('correcthorsebatterystaple', $u->password));
         $this->assertTrue($u->is_active);
         $this->assertSame(User::ROLE_ADMIN, $u->role);
+        $this->assertFalse($u->must_change_password);
 
         $hits = $this->loggedMatching('admin.created');
         $this->assertCount(1, $hits, 'admin.created must log exactly once');
@@ -146,6 +147,7 @@ class MakeAdminTest extends TestCase
         $u->refresh();
         $this->assertSame(User::ROLE_ADMIN, $u->role);
         $this->assertTrue($u->is_active);
+        $this->assertFalse($u->must_change_password);
     }
 
     #[Test]

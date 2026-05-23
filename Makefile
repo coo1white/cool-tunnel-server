@@ -285,7 +285,7 @@ reinstall: ## rerun install safely; prompts before any data wipe
 	./ct reinstall
 
 .PHONY: update
-update: ## pull, rebuild, run health gates, swap traffic
+update: ## pull, load release images, run health gates, swap traffic
 	./ct update
 
 .PHONY: deploy
@@ -360,7 +360,7 @@ status: ## one-shot health check (safe to run after SSH reconnect)
 		2>/dev/null | (grep -E 'REPOSITORY|cool-tunnel-server' || echo "  no cool-tunnel images yet")
 	@echo ""
 	@echo "=== ct-server-core binary inside panel image ==="
-	@docker run --rm --entrypoint=ls cool-tunnel-server-panel:latest \
+	@docker run --pull never --rm --entrypoint=ls cool-tunnel-server-panel:latest \
 		-la /usr/local/bin/ct-server-core 2>/dev/null \
 		|| echo "  panel image not built / binary missing"
 	@echo ""
@@ -382,17 +382,18 @@ status: ## one-shot health check (safe to run after SSH reconnect)
 	fi
 
 .PHONY: clean-images
-clean-images: ## drop locally-built cool-tunnel-server-* images (forces fresh rebuild)
+clean-images: ## drop local cool-tunnel-server-* images (forces fresh release-bundle load/build)
 	@for img in cool-tunnel-server-core cool-tunnel-server-panel \
 	            cool-tunnel-server-caddy cool-tunnel-server-singbox \
 	            cool-tunnel-server-sqlx-prepare; do \
 		docker image rm -f "$$img:latest" 2>/dev/null && echo "  removed $$img:latest" \
 		    || echo "  $$img:latest not present"; \
 	done
-	@echo "    next step: docker compose --profile build-only build core-builder"
+	@echo "    production next step: ./scripts/fetch_image_bundle.sh"
+	@echo "    maintainer build path: ./scripts/build_release_image_bundle.sh"
 
 .PHONY: build-detached
-build-detached: ## run a long build in tmux so SSH drops don't kill it
+build-detached: ## maintainer/dev only: run a local image build in tmux
 	@if ! command -v tmux >/dev/null 2>&1; then \
 		echo "tmux not installed — apt install -y tmux"; exit 1; \
 	fi

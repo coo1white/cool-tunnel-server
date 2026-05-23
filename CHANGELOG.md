@@ -24,6 +24,44 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.4.21] — 2026-05-23 — Bundle-only VPS installs
+
+### Added
+
+- Added release image bundle tooling so maintainers can publish
+  `cool-tunnel-server-images-linux-x64.tar.gz` and
+  `cool-tunnel-server-images-linux-arm64.tar.gz` with checksum entries.
+- Added `fetch_image_bundle.sh` so VPS installs, updates, and restores load
+  the verified runtime image set with `docker load`.
+
+### Changed
+
+- Made the production VPS path bundle-only: `ct install`, `ct update`, and
+  `ct restore` no longer compile Rust, Bun, Go, PHP extensions, or Docker
+  images locally.
+- Started production services with `docker compose --no-build --pull never`
+  so missing release images fail clearly instead of silently building or
+  pulling from Docker Hub.
+- Included MariaDB and Redis in the release image bundle to avoid public
+  registry pulls on fresh low-resource VPS installs.
+- Updated README, install docs, operations docs, and operator help to describe
+  release bundles as the normal user path and maintainer builds as local
+  release work.
+
+### Removed
+
+- Removed the old per-component VPS fetch/build helpers for `ct-server-core`
+  and `singbox-core`; the release image bundle is now the production unit.
+
+### Fixed
+
+- Fixed backup and restore helper containers so they use the bundled Caddy
+  image with `--pull never` instead of pulling Alpine during disaster
+  recovery.
+- Fixed install/update progress totals after removing the local build phases.
+
+---
+
 ## [0.4.20] — 2026-05-22 — Doctor performance and privacy hardening
 
 ### Changed
@@ -11501,7 +11539,10 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.12...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.21...HEAD
+[0.4.21]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.20...v0.4.21
+[0.4.20]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.19...v0.4.20
+[0.4.19]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.18...v0.4.19
 [0.4.12]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.9...v0.4.10

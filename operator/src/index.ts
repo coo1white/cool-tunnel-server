@@ -23,7 +23,7 @@ Commands:
   render         Re-render caddyfile/singbox config from the DB
   backup         Snapshot db + .env + caddy ACME state into backups/
   restore <p>    Restore a deployment from a backup tarball
-  update         Pull a new release, rebuild, hot-swap
+  update         Pull a new release, load release images, hot-swap
   help [topic]   Operator mini-manual; no args lists topics
   version        Print version and exit
 

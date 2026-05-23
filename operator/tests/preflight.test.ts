@@ -156,14 +156,15 @@ test("checkNetwork: all probes ok → result ok with summary", async () => {
 
 test("checkNetwork: one probe fails → result reports just that host", async () => {
     const r = await checkNetwork(
-        ["github.com", "registry-1.docker.io"],
+        ["github.com", "release-assets.githubusercontent.com"],
         async (h) => h !== "github.com",
     );
     expect(r.ok).toBe(false);
     if (!r.ok) {
         expect(r.failure.summary).toContain("github.com");
-        expect(r.failure.summary).not.toContain("registry-1.docker.io");
+        expect(r.failure.summary).not.toContain("release-assets.githubusercontent.com");
         expect(r.failure.diag).toContain("HTTPS_PROXY");
+        expect(r.failure.diag).toContain("./scripts/fetch_image_bundle.sh");
     }
 });
 

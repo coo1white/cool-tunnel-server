@@ -82,5 +82,6 @@ class UserCanAccessPanelTest extends TestCase
         $this->assertNotContains('password', $u->getFillable());
         $this->assertNotContains('role', $u->getFillable());
         $this->assertNotContains('is_active', $u->getFillable());
+        $this->assertNotContains('must_change_password', $u->getFillable());
     }
 }

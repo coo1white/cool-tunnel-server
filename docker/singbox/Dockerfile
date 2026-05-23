@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # cool-tunnel-server — ct-singbox container (v0.4.0+).
@@ -24,13 +23,19 @@
 # Stage 1 — prebuilt singbox-core carrier
 # ----------------------------------------------------------------------
 ARG CT_SINGBOX_CORE_IMAGE=cool-tunnel-server-singbox-core:latest
+ARG CT_ALPINE_RUNTIME_IMAGE=alpine:3.21
+ARG CT_ALPINE_REPOSITORY_BASE=
 FROM ${CT_SINGBOX_CORE_IMAGE} AS singbox-core-stage
 
 # ----------------------------------------------------------------------
 # Stage 2 — fetch + verify sing-box upstream binary
 # ----------------------------------------------------------------------
-FROM alpine:3.21 AS singbox-fetch
+FROM ${CT_ALPINE_RUNTIME_IMAGE} AS singbox-fetch
+ARG CT_ALPINE_REPOSITORY_BASE=
 
+RUN if [ -n "${CT_ALPINE_REPOSITORY_BASE}" ]; then \
+        sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${CT_ALPINE_REPOSITORY_BASE}#g" /etc/apk/repositories; \
+    fi
 RUN apk add --no-cache curl tar ca-certificates gcompat libstdc++ libgcc
 
 COPY --from=singbox-core-stage /usr/local/bin/singbox-core /usr/local/bin/singbox-core
@@ -46,10 +51,14 @@ RUN /usr/local/bin/singbox-core install --target-dir /out --no-verify \
 # ----------------------------------------------------------------------
 # Stage 3 — runtime
 # ----------------------------------------------------------------------
-FROM alpine:3.21 AS runtime
+FROM ${CT_ALPINE_RUNTIME_IMAGE} AS runtime
+ARG CT_ALPINE_REPOSITORY_BASE=
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
+RUN if [ -n "${CT_ALPINE_REPOSITORY_BASE}" ]; then \
+        sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${CT_ALPINE_REPOSITORY_BASE}#g" /etc/apk/repositories; \
+    fi
 # sing-box is statically-linked Go. singbox-core is a Bun-compiled
 # glibc binary and needs Alpine's gcompat plus libstdc++/libgcc.
 RUN apk add --no-cache ca-certificates libcap gcompat libstdc++ libgcc \

@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # cool-tunnel-server — Caddy front door (v0.4.0+).
@@ -54,7 +53,13 @@
 # ----------------------------------------------------------------------
 # Stage 1 — build Caddy with the layer4 plugin
 # ----------------------------------------------------------------------
-FROM caddy:2.11.3-builder AS build
+ARG CT_CADDY_BUILDER_IMAGE=caddy:2.11.3-builder
+ARG CT_CADDY_RUNTIME_IMAGE=caddy:2.11.3-alpine
+FROM ${CT_CADDY_BUILDER_IMAGE} AS build
+ARG CT_GOPROXY=https://proxy.golang.org,direct
+ARG CT_GOSUMDB=sum.golang.org
+ENV GOPROXY=${CT_GOPROXY} \
+    GOSUMDB=${CT_GOSUMDB}
 
 # xcaddy fetches and links mholt/caddy-l4. The plugin exposes
 # `layer4.matchers.tls` (SNI/ALPN matching), `layer4.handlers.proxy`
@@ -70,7 +75,7 @@ RUN xcaddy build \
 # ----------------------------------------------------------------------
 # Stage 2 — runtime
 # ----------------------------------------------------------------------
-FROM caddy:2.11.3-alpine
+FROM ${CT_CADDY_RUNTIME_IMAGE}
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 

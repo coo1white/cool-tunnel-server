@@ -20,7 +20,9 @@ class LoginPageCopyTest extends TestCase
         $this->assertSame('Log in to Cool Tunnel Server', $page->getHeading());
 
         $copy = (string) $page->getSubheading();
-        $this->assertStringContainsString('./ct install', $copy);
+        $this->assertStringContainsString('holder', $copy);
+        $this->assertStringContainsString('cool-tunnel-server-2026', $copy);
+        $this->assertStringContainsString('change the password', $copy);
         $this->assertStringContainsString('ct:make-admin --force', $copy);
         $this->assertStringContainsString('you@example.com', $copy);
     }

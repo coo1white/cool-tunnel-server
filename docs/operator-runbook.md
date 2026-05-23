@@ -20,6 +20,8 @@ Use `.env`, the panel, and release tags as the control surface.
 ## Install
 
 ```bash
+apt update
+apt install -y ca-certificates curl git gnupg jq openssl apache2-utils ufw dnsutils chrony fail2ban unattended-upgrades
 LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
 BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 cd /opt/cool-tunnel-server
@@ -45,7 +47,7 @@ ct update
 ct doctor
 ```
 
-`ct update` owns the release path: rebuild changed images, run
+`ct update` owns the release path: load release images, run
 migrations, render Caddy and sing-box config, restart affected
 services, verify credential lock, and run the health gates.
 
@@ -109,13 +111,13 @@ docker compose logs --tail=120 db
 docker compose logs --tail=120 redis
 ```
 
-If the Rust core build fails with `NetworkUnreachable`:
+If `ct update` reports a missing image bundle:
 
 ```bash
-curl -4 -I https://static.rust-lang.org/
-curl -4 -I https://index.crates.io/
-docker builder prune -af
+./scripts/fetch_image_bundle.sh
 ct update
 ```
 
-If either `curl -4` command fails, fix VPS outbound HTTPS/DNS first.
+If the bundle is absent from the GitHub release, the release is
+incomplete for that CPU architecture; publish the bundle instead of
+building on the VPS.

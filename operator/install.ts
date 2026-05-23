@@ -12,23 +12,19 @@
 //   2.  IPv4-only routing enforcement
 //   3.  acquireOpLock (per-project flock; re-execs self under flock)
 //   4.  Pre-flight: .env (existence, 0600 mode, bcrypt-hash scan, value sanity)
-//   5.  Pre-flight: clone freshness vs origin/main (interactive)
+//   5.  Pre-flight: clone freshness vs origin/main (automatic reset with backup)
 //   6.  Pre-flight: leftover Docker state from prior attempt (preserve by default)
 //   7.  Disk headroom check + low-space safe temp/build-cache cleanup
-//   8.  Prepare ct-server-core (prebuilt release asset; source build fallback)
-//   9.  Prepare singbox-core (prebuilt release asset)
-//  10.  Build caddy / singbox / panel images
-//  11.  Start db + redis; wait for MariaDB healthcheck
-//  12.  Start panel; wait for entrypoint sentinel; verify migrations + seed
-//  13.  Re-render Caddyfile + singbox.json from the seeded DB
-//  14.  Pre-flight: DNS A-records + port-80 reachability for ACME
-//  15.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
-//  16.  Verify singbox
-//  17.  Create the first Filament admin user (interactive ct:make-admin)
-//  18.  Strict health gates
-//  19.  Print success banner
+//   8.  Load prebuilt Docker image bundle (no VPS image builds)
+//   9.  Start db + redis; wait for MariaDB healthcheck
+//  10.  Start panel; wait for entrypoint sentinel; verify migrations + seed
+//  11.  Re-render Caddyfile + singbox.json from the seeded DB
+//  12.  Pre-flight: DNS A-records + port-80 reachability for ACME
+//  13.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
+//  14.  Verify singbox + strict health gates
+//  15.  Ensure the default first admin exists
+//  16.  Print success banner
 
-import { spawnSync } from "node:child_process";
 import { $, capture, runStreaming, which } from "./src/util/sh";
 import { die, makeArrowProgress, makeTerm, ANSI, type ArrowProgress } from "./src/util/term";
 import { dieWithDiag } from "./src/util/diag";
@@ -44,7 +40,7 @@ import {
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
-const INSTALL_PROGRESS_STEPS = 19;
+const INSTALL_PROGRESS_STEPS = 15;
 let installProgress: ArrowProgress | null = null;
 
 async function installStep(label: string, fn: () => Promise<void>): Promise<void> {
@@ -144,7 +140,6 @@ interface InstallEnv {
     DOMAIN: string;
     PANEL_DOMAIN: string;
     ACME_EMAIL: string;
-    CT_CORE_BUILD_PROFILE: string;
     ACME_DIRECTORY: string;
 }
 
@@ -184,7 +179,6 @@ async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
         DOMAIN: get("DOMAIN"),
         PANEL_DOMAIN: panelDomain,
         ACME_EMAIL: get("ACME_EMAIL"),
-        CT_CORE_BUILD_PROFILE: get("CT_CORE_BUILD_PROFILE") || "release",
         ACME_DIRECTORY: get("ACME_DIRECTORY"),
     };
 }
@@ -315,108 +309,34 @@ async function preflightAutoTempClean(): Promise<void> {
     ok(formatAutoTempCleanSummary(cleanup));
 }
 
-// ---------- step 9: prepare core -------------------------------------------
+// ---------- step 8: load release image bundle ------------------------------
 
-async function buildCore(coreProfile: string): Promise<void> {
-    step("Prepare ct-server-core image");
-    const prebuilt = await runStreaming($`./scripts/fetch_core_binary.sh`);
-    if (prebuilt.ok) {
-        ok("ct-server-core prebuilt release image ready");
+async function prepareImageBundle(): Promise<void> {
+    step("Prepare prebuilt Docker image bundle");
+    const bundle = await runStreaming($`./scripts/fetch_image_bundle.sh`);
+    if (bundle.ok) {
+        ok("prebuilt Docker image bundle loaded");
         return;
     }
-    if (prebuilt.code !== 2) {
-        dieWithDiag(
-            "ct-server-core prebuilt fetch failed",
-            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
-
-Recovery:
-  ./scripts/fetch_core_binary.sh
-  ./ct install
-
-If you intentionally want to compile Rust on this VPS:
-  CT_CORE_BUILD_FROM_SOURCE=1 ./ct install`,
-        );
-    }
-
-    warn("prebuilt ct-server-core asset unavailable; falling back to local Rust build");
-    warn("on a 1-vCPU / 1 GB VPS this can take a long time and may need swap");
-    ok(`core build profile: ${coreProfile}`);
-    const source = await runStreaming(
-        $`docker compose --profile build-only build core-builder --build-arg CARGO_PROFILE=${coreProfile}`,
-    );
-    if (!source.ok) {
-        dieWithDiag(
-            "ct-server-core build failed",
-            `Common causes (in priority order):
-  - Release asset missing ->  ./scripts/fetch_core_binary.sh
-  - Docker cache pressure ->  docker builder prune -af
-  - Network route issue   ->  curl -4 -I https://static.rust-lang.org/
-                              curl -4 -I https://index.crates.io/
-  - Cargo cache rot       ->  rm -rf core/target  then retry
-
-This release pins Rust to the exact rust:1.88.0-alpine image and
-skips already-installed rustup targets. If the log still says
-NetworkUnreachable, it is not an IPv6 drift bug; it means the VPS
-cannot reach the Rust or crates.io endpoints over outbound IPv4.
-
-Recovery:
-  docker builder prune -af
-  ./ct install`,
-        );
-    }
-    ok(`ct-server-core built (profile=${coreProfile})`);
-}
-
-async function prepareSingboxCore(): Promise<void> {
-    step("Prepare singbox-core image");
-    const prebuilt = await runStreaming($`./scripts/fetch_singbox_core_binary.sh`);
-    if (prebuilt.ok) {
-        ok("singbox-core prebuilt release image ready");
-        return;
-    }
-    if (prebuilt.code !== 2) {
-        dieWithDiag(
-            "singbox-core prebuilt fetch failed",
-            `The release binary could not be downloaded, verified, or wrapped as a Docker image.
-
-Recovery:
-  ./scripts/fetch_singbox_core_binary.sh
-  ./ct install
-
-If this is a just-published release, wait for the release assets to finish,
-then retry the same command.`,
-        );
-    }
-
     dieWithDiag(
-        "singbox-core release asset unavailable",
-        `This release is missing the prebuilt ${"singbox-core"} binary for this VPS.
+        "prebuilt Docker image bundle is required",
+        `This VPS install/update path does not compile Docker images locally.
 
 Recovery:
-  ./scripts/fetch_singbox_core_binary.sh
+  ./scripts/fetch_image_bundle.sh
   ./ct install
 
 Maintainer recovery:
-  build and upload singbox-core-linux-x64 / singbox-core-linux-arm64,
-  then re-run ./ct install.`,
+  build and upload cool-tunnel-server-images-linux-x64.tar.gz and
+  cool-tunnel-server-images-linux-arm64.tar.gz for this release.`,
     );
-}
-
-// ---------- steps 10/11/12: build caddy / singbox / panel -----------------
-
-async function buildImage(label: string, service: string, hint?: string[]): Promise<void> {
-    step(`Build ${label}`);
-    if (hint) for (const h of hint) warn(h);
-    const r = await runStreaming($`docker compose build ${service}`);
-    if (!r.ok) dieWithDiag(`${label} build failed`, `docker compose logs --tail=80 ${service}`);
-    ok(`${label.toLowerCase()} built`);
 }
 
 // ---------- step 13: bring up db + redis ----------------------------------
 
 async function bringUpDataLayer(): Promise<void> {
     step("Start db + redis");
-    const up = await capture($`docker compose up -d db redis`);
+    const up = await capture($`docker compose up -d --no-build --pull never db redis`);
     if (!up.ok) dieWithDiag("compose up -d db redis failed", up.stderr.split("\n").slice(0, 5).join("\n"));
     ok("db + redis containers started");
 
@@ -448,11 +368,11 @@ To intentionally wipe a fresh failed install:
 
 async function bringUpPanel(): Promise<void> {
     step("Start panel and run database migrations");
-    const up = await capture($`docker compose up -d panel`);
+    const up = await capture($`docker compose up -d --no-build --pull never panel`);
     if (!up.ok) dieWithDiag("compose up -d panel failed", up.stderr.split("\n").slice(0, 5).join("\n"));
 
-    warn("panel entrypoint is running 'composer install' on first boot;");
-    warn("this takes ~30-90s on a small VPS. Watch progress with:");
+    warn("panel entrypoint is applying app setup, migrations, and renders;");
+    warn("this can take ~30-90s on a small VPS. Watch progress with:");
     warn("    docker compose logs -f --tail=80 panel");
 
     const sentinel = await waitFor({
@@ -600,7 +520,7 @@ async function bringUpCaddy(env: InstallEnv): Promise<void> {
         warn(`removing stale ct-caddy (state=${state}) from prior attempt`);
         await capture($`docker rm -f ct-caddy`);
     }
-    const up = await capture($`docker compose up -d caddy singbox`);
+    const up = await capture($`docker compose up -d --no-build --pull never caddy singbox`);
     if (!up.ok) dieWithDiag("compose up -d caddy singbox failed", up.stderr.split("\n").slice(0, 5).join("\n"));
     ok("caddy running on :80/:443 and singbox starting behind the SNI splitter");
     warn("Caddy will fetch the panel TLS cert from Let's Encrypt now;");
@@ -679,26 +599,16 @@ async function settleInstallDeployment(): Promise<void> {
 // ---------- step 19: create first admin -----------------------------------
 
 async function createAdmin(): Promise<void> {
-    step("Create the first Filament admin user (interactive prompt follows)");
-    if (!process.stdin.isTTY) {
-        warn("non-interactive run - skipping admin creation");
-        warn("create one later with: docker compose exec panel php artisan ct:make-admin");
-        return;
-    }
-    warn("This creates the web panel login account for https://<PANEL_DOMAIN>/admin.");
-    warn("Use a real email and a long password; the password is not printed after entry.");
-    // Pass-through TTY for the interactive artisan prompt. Don't use
-    // Bun.$ here — it captures stdio and the prompt would never appear.
-    const r = spawnSync(
-        "docker",
-        ["compose", "exec", "panel", "php", "artisan", "ct:make-admin"],
-        { stdio: "inherit" },
+    step("Ensure the default Filament admin user exists");
+    const r = await capture(
+        $`docker compose exec -T panel php artisan ct:make-admin --bootstrap-default --no-interaction`,
     );
-    if (r.status !== 0) {
-        warn("could not create admin — re-run later with: docker compose exec panel php artisan ct:make-admin");
+    if (!r.ok) {
+        warn("could not create default admin - recover with:");
+        warn("    docker compose exec panel php artisan ct:make-admin");
         return;
     }
-    ok("admin login created; open https://<PANEL_DOMAIN>/admin, then create Proxy accounts and copy each Subscription URL");
+    ok("admin login ready: holder / cool-tunnel-server-2026 (password change required after first login)");
 }
 
 // ---------- success banner ------------------------------------------------
@@ -723,7 +633,8 @@ What to do next:
 
   2. Create your first proxy account:
        open https://${env.PANEL_DOMAIN}/admin -> ProxyAccounts -> New
-       (cleartext password is shown ONCE - copy it then)
+       login: holder / cool-tunnel-server-2026
+       change the password when prompted
 
   3. Import the subscription URL into the macOS client.
 
@@ -767,8 +678,8 @@ export async function runInstall(): Promise<number> {
         await installStep("Pre-flight tools", async () => {
             await preflightTools();
 
-            // Enforce IPv4-only before the Rust build so Docker/Rust never
-            // drift into broken provider routes for static.rust-lang.org.
+            // Enforce IPv4-only before fetching the release image bundle so
+            // low-end VPSes do not drift into broken provider IPv6 routes.
             const ipv4Only = await checkIpv4OnlyRouting();
             if (ipv4Only.action === "warn") warn(ipv4Only.detail);
             else ok(ipv4Only.detail);
@@ -784,27 +695,7 @@ export async function runInstall(): Promise<number> {
 
         const loadedEnv = env;
         if (loadedEnv === undefined) die("install env was not loaded", "re-run ./ct install");
-        await installStep("Build ct-server-core", () => buildCore(loadedEnv.CT_CORE_BUILD_PROFILE));
-        await installStep("Prepare singbox-core", prepareSingboxCore);
-        await installStep("Build caddy image", () =>
-            buildImage("caddy image (stock Caddy 2 — ACME provider only, no plugins)", "caddy"),
-        );
-        await installStep("Build singbox image", () =>
-            buildImage("singbox image (prebuilt singbox-core + pinned upstream sing-box)", "singbox"),
-        );
-        await installStep("Build panel image", () =>
-            buildImage(
-                "panel image (FrankenPHP + Composer + ct-server-core baked in)",
-                "panel",
-                [
-                    "First panel build takes 8-15 min on a 1-vCPU VPS — most of the time",
-                    "is gd / intl / zip PHP-extension compilation against icu-dev /",
-                    "libzip-dev (no prebuilt wheels in dunglas/frankenphp:alpine). On a",
-                    "4-vCPU box ~3-5 min. Subsequent builds hit the layer cache and",
-                    "drop to ~30 s. Tail: docker compose logs -f --tail=80 panel",
-                ],
-            ),
-        );
+        await installStep("Load image bundle", prepareImageBundle);
 
         await installStep("Start db + redis", bringUpDataLayer);
         await installStep("Start panel + migrations", bringUpPanel);

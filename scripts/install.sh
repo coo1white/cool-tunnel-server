@@ -8,8 +8,7 @@
 #
 #   1. Compiled ct-operator binary (operator/bin/) — preferred
 #      on production VPSes; self-contained, no Bun runtime needed.
-#   2. `bun run operator/install.ts` — fallback for development
-#      workstations or boxes where the binary hasn't been fetched yet.
+#   2. `bun run operator/install.ts` — development fallback only.
 #
 # Same surface, two runtimes. `./ct install` routes here.
 
@@ -45,7 +44,7 @@ if [[ -x "$bin" ]]; then
     exec "$bin" install "$@"
 fi
 
-if command -v bun >/dev/null 2>&1; then
+if [[ "${CT_DEV_ALLOW_BUN_INSTALL_FALLBACK:-}" == "1" ]] && command -v bun >/dev/null 2>&1; then
     exec bun run operator/install.ts "$@"
 fi
 
@@ -57,6 +56,6 @@ echo "" >&2
 echo "Fetch the binary first (idempotent; signed-release verified):" >&2
 echo "    ./scripts/fetch_operator_binary.sh" >&2
 echo "" >&2
-echo "Or install bun for the dev fallback path:" >&2
-echo "    curl -fsSL https://bun.sh/install | bash" >&2
+echo "Development fallback only:" >&2
+echo "    CT_DEV_ALLOW_BUN_INSTALL_FALLBACK=1 bun run operator/install.ts" >&2
 exit 1

@@ -18,7 +18,7 @@ export type PreflightResult =
 
 // ---------- preflight_network ----------
 
-const DEFAULT_NETWORK_HOSTS = ["github.com", "registry-1.docker.io"] as const;
+const DEFAULT_NETWORK_HOSTS = ["github.com"] as const;
 
 // Pure: classify a list of probe results into reachable/unreachable.
 // `probe` is the caller-supplied checker (defaults to a curl HEAD
@@ -44,15 +44,15 @@ export async function checkNetwork(
         ok: false,
         failure: {
             summary: `network: cannot reach ${unreachable.join(" ")}`,
-            diag: `Update needs to git pull (github.com) and pull image layers
-(registry-1.docker.io). One or both is unreachable.
+            diag: `Update needs to git pull and download release assets from
+github.com. It is unreachable from this VPS.
 
 What to check (in priority order):
   ping -c 3 1.1.1.1                  # internet reachable at all?
   dig +short github.com              # DNS resolving?
   curl -v https://github.com/        # outbound 443 not blocked?
   printenv HTTPS_PROXY               # corporate proxy needed?
-  docker info | grep -A3 Registry    # registry mirror configured?
+  ./scripts/fetch_image_bundle.sh     # release asset fetch path
 
 When the network is back, re-run:
   ./ct update`,
@@ -143,8 +143,8 @@ export function classifyDiskSpace(
             ok: false,
             failure: {
                 summary: `low disk under repo path: ${m.repoGb}G free, need >= ${thresholds.minRepoGb}G`,
-                diag: `Compose build, git pull, and composer install all need scratch
-space; running out mid-update corrupts the build cache.
+                diag: `Git pull, release bundle download, and docker load all need
+scratch space; running out mid-update leaves partial image state.
 
 The install/update auto-clean step already attempted safe temp/build
 cache cleanup first and never touches Docker volumes, backups, .env,
@@ -166,10 +166,9 @@ Re-run ./ct install or ./ct update after freeing space.`,
             ok: false,
             failure: {
                 summary: `low disk under docker root (${m.dockerRoot}): ${m.dockerGb}G free, need >= ${thresholds.minDockerGb}G`,
-                diag: `Compose pull + build will store image layers under ${m.dockerRoot}.
-Out-of-space mid-build typically surfaces as 'no space left on
-device' partway through, leaving a half-built panel image and a
-confused stack.
+                diag: `Docker loads release image layers under ${m.dockerRoot}.
+Out-of-space during docker load typically surfaces as 'no space left on
+device', leaving an incomplete local image set.
 
 The install/update auto-clean step already attempted conservative
 Docker cleanup first (no volumes, no backups). This means the VPS
@@ -241,7 +240,8 @@ What to do:
   Stack was running and crashed:
     docker compose ps                # what is the state?
     docker compose logs --tail=80    # what blew up?
-    docker compose up -d             # bring it back up
+    docker compose up -d --no-build --pull never
+                                      # bring it back up from release images
     ./ct update              # then update`,
             },
         };

@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-1c5cdc)](./LICENSE)
 [![LTSC-Heng Draft](https://img.shields.io/badge/license--draft-LTSC--Heng-111111)](./LTSC-HENG-LICENSE-DRAFT.md)
-[![Latest release](https://img.shields.io/badge/release-v0.4.20-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.4.20)
+[![Latest release](https://img.shields.io/badge/release-v0.4.21-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.4.21)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
 
@@ -25,9 +25,11 @@ the VPS, domain, updates, backups, provider terms, and local law.
   and config rendering.
 - **Docker Compose runtime** with Caddy SNI routing, sing-box, panel,
   MariaDB, and Redis.
-- **Release-pinned runtime assets** with `SHA256SUMS` verification.
-- **Prebuilt Rust core for VPS installs** so normal releases do not
-  compile Cargo dependencies on small servers.
+- **Release-pinned Docker image bundles** with `SHA256SUMS`
+  verification.
+- **No local runtime builds on the VPS** during normal install/update:
+  the server downloads verified release images and loads them with
+  Docker.
 - **Privacy-first diagnostics**: project health checks must not log
   per-user destinations or track users.
 
@@ -35,7 +37,7 @@ the VPS, domain, updates, backups, provider terms, and local law.
 
 | Need | Notes |
 | --- | --- |
-| Debian VPS | Debian 12 is the primary target; Debian 11/13 are supported |
+| Debian VPS | Debian 12 or newer; Debian 12 is the primary target |
 | Root SSH or sudo | Required for Docker, firewall, and service setup |
 | Domain name | Point an `A` record at the VPS public IPv4 |
 | Open ports | `80/tcp` for ACME and `443/tcp` for panel/proxy traffic |
@@ -80,10 +82,10 @@ nano .env
 ./ct doctor
 ```
 
-Release installs download and verify the prebuilt Linux
-`ct-server-core` and `singbox-core` binaries, then build tiny local
-wrapper images for Docker. A small VPS should not spend time compiling
-Rust crates or Bun/TypeScript during install.
+Release installs download one verified Docker image bundle for the VPS
+CPU architecture. The VPS uses `docker load`; it does not build Rust,
+Bun, Go, PHP extensions, or Docker images during `ct install` or
+`ct update`.
 
 Set at least these `.env` values before running `./ct install`:
 
@@ -98,17 +100,21 @@ recovery hints, read [GETTING_STARTED.md](./GETTING_STARTED.md).
 
 ## Panel Login and Account Setup
 
-Near the end, `./ct install` asks for the first admin email and
-password. Save them; they are the credentials for the web admin panel.
-
 Open the panel:
 
 ```text
 https://<PANEL_DOMAIN>/admin
 ```
 
-Log in with the admin email and password, then create a device/user
-account:
+Initial admin login:
+
+```text
+admin name: holder
+password: cool-tunnel-server-2026
+```
+
+The panel forces a password change after the first login. After that,
+create a device/user account:
 
 ```text
 Proxy accounts -> New proxy account -> Save
@@ -120,7 +126,7 @@ That URL contains the per-account subscription token, so treat it like a
 password. If you lose the URL, open the same action again; if you rotate
 the UUID, copy the fresh URL after rotation.
 
-If you skipped admin creation during install, or need to recover access:
+If you need to recover access:
 
 ```sh
 cd /opt/cool-tunnel-server
@@ -169,7 +175,7 @@ something fails.
 
 ## Release
 
-Latest stable server release: `v0.4.20`.
+Latest stable server release: `v0.4.21`.
 
 Server releases own the runtime assets used by clients:
 

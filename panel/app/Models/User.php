@@ -28,13 +28,15 @@ class User extends Authenticatable implements FilamentUser
     /**
      * Mass-assignable attributes.
      *
-     * `password`, `role`, and `is_active` are deliberately NOT in
-     * this list. A privilege-bearing field that lands in $fillable
-     * means a stray `User::create($request->all())` (or a future
-     * profile-update endpoint) can promote a viewer to admin or
-     * silently rotate a password. Set `password` via the framework's
+     * `password`, `role`, `is_active`, and `must_change_password`
+     * are deliberately NOT in this list. A privilege-bearing field
+     * that lands in $fillable means a stray
+     * `User::create($request->all())` (or a future profile-update
+     * endpoint) can promote a viewer to admin or silently rotate a
+     * password. Set `password` via the framework's
      * `setPasswordAttribute` (the 'hashed' cast handles the hash);
-     * set `role` / `is_active` from console/seeder code only.
+     * set `role` / `is_active` / password-change flags from
+     * console/seeder code only.
      * (H3-ish hardening from 2026-05-05 audit; H2 below.)
      */
     protected $fillable = ['name', 'email'];
@@ -47,6 +49,7 @@ class User extends Authenticatable implements FilamentUser
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            'must_change_password' => 'boolean',
         ];
     }
 

@@ -258,7 +258,7 @@ async function checkPorts(_c: CheckCtx): Promise<CheckLine> {
         label: "Ports",
         severity: "fail",
         detail: "neither 80 nor 443 listening",
-        hint: "docker compose up -d caddy; check Caddyfile + ACME state",
+        hint: "docker compose up -d --no-build --pull never caddy; check Caddyfile + ACME state",
     };
 }
 
@@ -544,7 +544,7 @@ async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
             label: "Containers",
             severity: "fail",
             detail: `0/${total} running`,
-            hint: "docker compose up -d; docker compose logs --tail=80",
+            hint: "docker compose up -d --no-build --pull never; docker compose logs --tail=80",
         };
     }
     let msg = `${healthy}/${total} running`;

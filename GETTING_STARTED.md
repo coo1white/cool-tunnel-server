@@ -10,11 +10,11 @@ Debian VPS installation reference, use
 
 | Need | Notes |
 | --- | --- |
-| Debian 11, 12, or 13 VPS | Debian 12 is the primary target |
+| Debian 12 or newer VPS | Debian 12 is the primary target |
 | Root SSH or sudo | Needed for Docker and firewall setup |
 | A domain pointed at the VPS | Set an `A` record to the VPS public IPv4 |
 | Ports `80/tcp` and `443/tcp` open | Caddy uses 80 for ACME and 443 for panel/proxy traffic |
-| Docker Engine + Compose v2 | The installer checks this before building |
+| Docker Engine + Compose v2 | The installer checks this before loading release images |
 
 Before installing, confirm DNS from your laptop:
 
@@ -104,17 +104,11 @@ Install:
 ct install
 ```
 
-The installer fetches the prebuilt Rust `ct-server-core` release asset,
-builds the Docker images, migrates the DB, renders Caddy and sing-box
-config, starts the stack, and prompts for the first Filament admin user
-when running interactively. On normal tagged releases, a small VPS does
-not compile Rust crates locally.
-
-If you skip admin creation, create one later:
-
-```sh
-docker compose exec panel php artisan ct:make-admin
-```
+The installer downloads the verified Docker image bundle for your CPU
+architecture, loads it with Docker, migrates the DB, renders Caddy and
+sing-box config, starts the stack, and creates the first admin login.
+On normal tagged releases, a small VPS does not build Rust, Bun, Go,
+PHP extensions, or Docker images locally.
 
 ## Update Later
 
@@ -150,9 +144,15 @@ Open the admin panel:
 https://<PANEL_DOMAIN>/admin
 ```
 
-Log in with the admin email and password you created during
-`./ct install`. If you skipped that prompt, create or recover an admin
-from the VPS:
+Initial admin login:
+
+```text
+admin name: holder
+password: cool-tunnel-server-2026
+```
+
+The panel forces a password change after the first login. If you need
+to recover an admin from the VPS:
 
 ```sh
 cd /opt/cool-tunnel-server
@@ -199,15 +199,13 @@ docker compose logs --tail=120 singbox
 docker compose logs --tail=120 panel
 ```
 
-If `ct-server-core` falls back to a local Rust build and fails with
-`NetworkUnreachable`, the common fix is outbound IPv4/network or Docker
-cache, not app config:
+If `ct install` or `ct update` says the prebuilt Docker image bundle is
+missing, the release is incomplete for that CPU architecture. Fetching
+the bundle manually should either load it or print the exact missing
+asset/checksum:
 
 ```sh
-./scripts/fetch_core_binary.sh
-curl -4 -I https://static.rust-lang.org/
-curl -4 -I https://index.crates.io/
-docker builder prune -af
+./scripts/fetch_image_bundle.sh
 ct update
 ```
 

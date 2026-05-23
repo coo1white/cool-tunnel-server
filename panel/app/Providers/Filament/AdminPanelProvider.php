@@ -6,7 +6,9 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Filament\Pages\Auth\EditProfile;
 use App\Filament\Pages\Auth\Login;
+use App\Http\Middleware\RequireAdminPasswordChange;
 use App\Http\Middleware\SecurityHeaders;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -37,7 +39,7 @@ class AdminPanelProvider extends PanelProvider
             // before delegating to Filament's stock authenticate().
             // (H1 in 2026-05-05 audit.)
             ->login(Login::class)
-            ->profile()
+            ->profile(EditProfile::class)
             ->darkMode()
             ->brandName('cool-tunnel-server')
             ->colors([
@@ -81,6 +83,7 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
+                RequireAdminPasswordChange::class,
             ]);
     }
 }

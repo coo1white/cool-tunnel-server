@@ -60,6 +60,8 @@ caddy/Caddyfile.rendered
 backups/
 diagnostics/
 release-assets/
+*.tar
+*.tar.gz
 
 # Rust build artifacts (the workspace lives in core/)
 core/target/
