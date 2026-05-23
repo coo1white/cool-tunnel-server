@@ -146,6 +146,34 @@ ct backup   # snapshot DB + .env + ACME certs
 ct update   # update to the current release and restart safely
 ```
 
+### Copy-Paste VPS Update
+
+For an already installed VPS, SSH into the server and paste:
+
+```sh
+sudo bash -lc 'set -euo pipefail; cd /opt/cool-tunnel-server; test -f .env || { echo "ERROR: .env is missing. This looks like a fresh or unfinished install, not an update."; echo "Run: cd /opt/cool-tunnel-server && cp .env.example .env && nano .env && ./ct install"; exit 1; }; ./ct backup; ./ct update; ./ct doctor; echo; echo "Panel URL:"; . ./.env; echo "https://${PANEL_DOMAIN}/admin"; echo; echo "Bootstrap admin password, if needed:"; grep "^CT_BOOTSTRAP_ADMIN_PASSWORD=" .env || true'
+```
+
+If the update stops with `git pull failed`, reset the VPS checkout to
+published `main` while preserving the current code position as a backup
+branch, then rerun the update:
+
+```sh
+cd /opt/cool-tunnel-server
+git status -sb
+git fetch origin main
+BACKUP_BRANCH="ct-backup/pre-fix-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
+git branch "$BACKUP_BRANCH" HEAD
+git reset --hard origin/main
+./scripts/fetch_operator_binary.sh || true
+./ct update
+./ct doctor
+```
+
+Do not create a new `.env` on a VPS that was already working before;
+recover the old `.env` from a backup instead. It contains the database,
+Redis, app, and bootstrap-admin secrets for that deployment.
+
 ## What Runs
 
 | Service | Role |
