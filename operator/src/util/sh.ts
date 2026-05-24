@@ -7,6 +7,7 @@
 //   which()      — cached PATH probe
 
 import { $ } from "bun";
+import { redactSensitive } from "./redact";
 
 export class ShellError extends Error {
     constructor(
@@ -15,7 +16,7 @@ export class ShellError extends Error {
         readonly stdout: string,
         readonly stderr: string,
     ) {
-        super(`shell failed (${code}): ${cmdLabel}\n${stderr.slice(0, 2000)}`);
+        super(`shell failed (${code}): ${cmdLabel}\n${redactSensitive(stderr).slice(0, 2000)}`);
         this.name = "ShellError";
     }
 }

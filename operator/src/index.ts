@@ -21,6 +21,7 @@ Commands:
   install        First-time bootstrap on a fresh Debian VPS
   doctor         Run health checks on the running deployment
   render         Re-render caddyfile/singbox config from the DB
+  recover        Diagnose or repair failed install/update settle gates
   backup         Snapshot db + .env + caddy ACME state into backups/
   restore <p>    Restore a deployment from a backup tarball
   update         Pull a new release, load release images, hot-swap
@@ -58,6 +59,10 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "render": {
             const { RenderTask } = await import("./tasks/render");
             return new RenderTask();
+        }
+        case "recover": {
+            const { RecoverTask } = await import("./tasks/recover");
+            return new RecoverTask();
         }
         case "backup": {
             const { BackupTask } = await import("./tasks/backup");

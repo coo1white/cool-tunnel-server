@@ -59,6 +59,7 @@ DEEPER COMMANDS
   backup         snapshot db + .env + caddy data into backups/
   restore <f>    recover from a backup tarball
   render <tgt>   re-render generated config (targets: caddyfile, singbox)
+  recover        diagnose/repair failed install or update settle gates
   auto-update    unattended release-pulling agent (default OFF)
                    `ct auto-update enable`   add daily cron entry
                    `ct auto-update disable`  remove the cron entry
@@ -354,6 +355,188 @@ render_subcommand() {
     exit 2
 }
 
+# ---------- recover subcommand -----------------------------------
+#
+# Shell fallback by design. Operators reach for this command when the
+# compiled ct-operator may be stale, missing, or unable to fetch because
+# install/update failed halfway.
+recover_subcommand() {
+    local mode="${1:-diagnose}"
+    case "$mode" in
+        diagnose|"") recover_diagnose ;;
+        fix-stale-singbox|--fix-stale-singbox) recover_fix_stale_singbox ;;
+        reset-reality|--reset-reality|fix-app-key-drift) recover_reset_reality ;;
+        app-key-drift|decrypt|decrypt-drift) recover_app_key_drift ;;
+        -h|--help|help)
+            cat <<'EOF'
+ct recover — diagnose/repair failed install or update settle gates
+
+USAGE
+  ct recover
+  ct recover diagnose
+  ct recover fix-stale-singbox
+  ct recover reset-reality
+
+WHAT IT CHECKS
+  - docker compose ps
+  - singbox render result
+  - credential-lock result
+  - DB active VLESS account count
+  - rendered VLESS users
+  - recent panel/singbox error lines
+  - APP_KEY / encrypted Reality-key decrypt failures
+
+SAFE REPAIR
+  ct recover fix-stale-singbox
+
+  Stops singbox, deletes /data/config/singbox.json, renders a fresh
+  config from DB state, runs credential-lock, and starts singbox again.
+  Does not touch DB, .env, Caddy, or ACME certs.
+
+APP_KEY DRIFT
+  ct recover reset-reality
+
+  Use when singbox:render says "Could not decrypt the data" and the
+  old APP_KEY is gone. This resets the Reality keypair, renders a fresh
+  singbox config, and restarts panel/singbox. Clients must re-import.
+EOF
+            ;;
+        *)
+            printf 'ct recover: unknown mode: %s\n' "$mode" >&2
+            printf 'try: ct recover --help\n' >&2
+            return 2
+            ;;
+    esac
+}
+
+recover_diagnose() {
+    printf 'cool-tunnel-server — recover diagnose\n\n'
+    docker compose ps || true
+    printf '\n==> singbox healthcheck\n'
+    docker inspect ct-singbox --format '{{range .State.Health.Log}}{{println .ExitCode .Output}}{{end}}' 2>/dev/null \
+        | tail -20 || true
+    printf '\n==> render singbox\n'
+    docker compose exec -T panel php artisan singbox:render --no-interaction || true
+    printf '\n==> app key / decrypt check\n'
+    recover_app_key_summary || true
+    printf '\n==> credential-lock\n'
+    docker compose exec -T panel php artisan credential-lock:check || true
+    printf '\n==> counts\n'
+    printf 'DB active VLESS accounts: '
+    docker compose exec -T panel php artisan tinker --execute='echo App\Models\ProxyAccount::query()->active()->get()->filter(fn($a)=>in_array(App\Support\SingBoxProtocolCatalog::VLESS_REALITY,$a->enabledProtocolKeys(),true))->count();' 2>/dev/null || printf 'unknown'
+    printf '\nRendered VLESS users:\n'
+    docker compose exec -T panel sh -lc \
+        'jq -r ".inbounds[]? | select(.type==\"vless\") | .users[]? | select((.name|startswith(\"__previous_uuid:\"))|not) | .name" /data/config/singbox.json' \
+        || true
+    printf '\n==> recent relevant logs\n'
+    docker compose logs --tail=200 --no-color panel singbox 2>/dev/null \
+        | grep -Ei 'ERROR|CRITICAL|Exception|singbox.render|proxy_account|SQLSTATE|MassAssignment|reality|failed|credential-lock' \
+        | tail -80 || true
+    printf '\nIf DB active VLESS accounts is 0 but rendered users includes a real username, run:\n'
+    printf '  ct recover fix-stale-singbox\n'
+}
+
+recover_app_key_summary() {
+    printf 'APP_KEY fingerprint: '
+    docker compose exec -T panel php -r '$k=getenv("APP_KEY") ?: ""; echo $k==="" ? "missing\n" : substr(hash("sha256",$k),0,16)."\n";' 2>/dev/null || printf 'unknown\n'
+    printf 'APP_PREVIOUS_KEYS set: '
+    docker compose exec -T panel php -r '$k=getenv("APP_PREVIOUS_KEYS") ?: ""; echo trim($k)==="" ? "no\n" : "yes\n";' 2>/dev/null || printf 'unknown\n'
+    printf 'Reality private key decrypt: '
+    docker compose exec -T panel php artisan tinker --execute='try { $c=App\Models\ServerConfig::query()->first(); echo $c && (string) $c->reality_private_key !== "" ? "ok" : "missing"; } catch (Throwable $e) { echo "failed: ".$e->getMessage(); }' 2>/dev/null || printf 'unknown'
+    printf '\n'
+}
+
+recover_app_key_drift() {
+    printf 'cool-tunnel-server — recover app-key-drift\n\n'
+    recover_app_key_summary || true
+    cat <<'EOF'
+
+If Reality private key decrypt says "Could not decrypt the data":
+
+1. Best fix: recover the OLD APP_KEY from a backup .env, then add it
+   to the current .env as APP_PREVIOUS_KEYS.
+
+   Example:
+     nano .env
+     APP_PREVIOUS_KEYS=base64:<old-key-here>
+     docker compose restart panel
+     docker compose exec -T panel php artisan singbox:render --no-interaction
+     docker compose exec -T panel php artisan credential-lock:check
+     docker compose up -d --no-build --pull never singbox
+
+2. If the old APP_KEY is gone, run:
+     ct recover reset-reality
+
+   This changes client import data; users must re-import subscriptions.
+
+Do NOT run php artisan key:generate on an existing VPS unless you are
+intentionally rotating APP_KEY and have configured APP_PREVIOUS_KEYS.
+EOF
+}
+
+recover_reset_reality() {
+    printf 'cool-tunnel-server — recover reset-reality\n\n'
+    printf 'This resets the Reality keypair sealed in the database.\n'
+    printf 'Existing client configs will stop working until users re-import subscriptions.\n\n'
+    set -e
+
+    docker compose stop singbox || true
+    docker compose exec -T panel rm -f /data/config/singbox.json
+    local reset_out
+    if ! reset_out="$(docker compose exec -T panel php artisan recover:reset-reality --no-interaction 2>&1)"; then
+        printf '%s\n' "$reset_out"
+        case "$reset_out" in
+            *'Command "recover:reset-reality" is not defined'*)
+                printf '\nPanel image does not have recover:reset-reality yet; using compatible fallback.\n'
+                docker compose exec -T panel php artisan tinker --execute='
+$cfg = App\Models\ServerConfig::query()->firstOrFail();
+$cfg->forceFill([
+    "reality_private_key" => null,
+    "reality_public_key" => null,
+    "reality_short_ids" => [""],
+])->saveQuietly();
+$cfg->refresh();
+$cfg->ensureRealityKeypair();
+echo "new Reality keypair generated\n";
+'
+                printf 'Clients must re-import subscription URLs.\n'
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    else
+        printf '%s\n' "$reset_out"
+    fi
+    docker compose exec -T panel php artisan singbox:render --no-interaction
+    docker compose exec -T panel php artisan credential-lock:check
+    docker compose up -d --no-build --pull never panel singbox
+
+    printf '\nRecovered. Clients must re-import subscription URLs.\n'
+    printf 'Continue with:\n'
+    printf '  ./ct update\n'
+    printf '  ./ct doctor\n'
+}
+
+recover_fix_stale_singbox() {
+    printf 'cool-tunnel-server — recover fix-stale-singbox\n\n'
+    set -e
+    docker compose stop singbox
+    docker compose exec -T panel rm -f /data/config/singbox.json
+    docker compose exec -T panel php artisan singbox:render --no-interaction
+    printf '\nRendered VLESS users after clean render:\n'
+    docker compose exec -T panel sh -lc \
+        'jq -r ".inbounds[]? | select(.type==\"vless\") | .users[]? | select((.name|startswith(\"__previous_uuid:\"))|not) | .name" /data/config/singbox.json'
+    docker compose exec -T panel php artisan credential-lock:check
+    docker compose up -d --no-build --pull never singbox
+    printf '\nSingbox healthcheck after restart:\n'
+    docker inspect ct-singbox --format '{{range .State.Health.Log}}{{println .ExitCode .Output}}{{end}}' 2>/dev/null \
+        | tail -20 || true
+    printf '\nRecovered. Continue with:\n'
+    printf '  ./ct update\n'
+    printf '  ./ct doctor\n'
+}
+
 # ---------- Dispatch ---------------------------------------------
 
 cmd="${1:-help}"
@@ -367,6 +550,7 @@ case "$cmd" in
     backup)       dispatch_via_operator backup    "" "$@" ;;
     restore)      dispatch_via_operator restore   "" "$@" ;;
     render)       render_subcommand "$@" ;;
+    recover)      recover_subcommand "$@" ;;
     auto-update)  auto_update_subcommand "$@" ;;
     status)       exec make status ;;
     logs)         exec make logs ;;

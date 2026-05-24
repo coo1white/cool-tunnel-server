@@ -3,7 +3,7 @@
 // `auto-update` subcommand.
 
 import { test, expect } from "bun:test";
-import { parseAutoUpdateArgs } from "../auto-update";
+import { ctUpdateFailureHint, gitPullFailureHint, parseAutoUpdateArgs } from "../auto-update";
 
 test("parseAutoUpdateArgs: defaults to interactive + non-dry", () => {
     const r = parseAutoUpdateArgs(["bun", "operator", "auto-update"]);
@@ -43,4 +43,51 @@ test("parseAutoUpdateArgs: rejects unknown flags", () => {
     const r = parseAutoUpdateArgs(["bun", "operator", "auto-update", "--bogus"]);
     expect(typeof r).toBe("string");
     expect(r as string).toContain("unknown flag");
+});
+
+test("gitPullFailureHint: local changes get an actionable status hint", () => {
+    const lines = gitPullFailureHint("error: Your local changes to the following files would be overwritten by merge:\n\t.env");
+    expect(lines.join("\n")).toContain("checkout has local changes");
+    expect(lines.join("\n")).toContain("git status --short");
+    expect(lines.join("\n")).toContain("ct update");
+});
+
+test("gitPullFailureHint: network failures point at GitHub reachability", () => {
+    const lines = gitPullFailureHint("fatal: unable to access 'https://github.com/coo1white/cool-tunnel-server.git/': Could not resolve host: github.com");
+    expect(lines.join("\n")).toContain("GitHub was not reachable");
+    expect(lines.join("\n")).toContain("curl -I https://github.com");
+    expect(lines.join("\n")).toContain("ct auto-update --dry-run");
+});
+
+test("ctUpdateFailureHint: malformed APP_KEY names the env file and recovery command", () => {
+    const lines = ctUpdateFailureHint(1, "Unsupported cipher or incorrect key length. Supported ciphers are: aes-128-cbc");
+    expect(lines.join("\n")).toContain("APP_KEY is malformed");
+    expect(lines.join("\n")).toContain("/opt/cool-tunnel-server/.env");
+    expect(lines.join("\n")).toContain("ct recover diagnose");
+});
+
+test("ctUpdateFailureHint: decrypt failures point at previous keys or Reality reset", () => {
+    const lines = ctUpdateFailureHint(1, "sing-box render failed: Could not decrypt the data.");
+    expect(lines.join("\n")).toContain("cannot be decrypted");
+    expect(lines.join("\n")).toContain("APP_PREVIOUS_KEYS");
+    expect(lines.join("\n")).toContain("ct recover reset-reality");
+});
+
+test("ctUpdateFailureHint: generic failures still suggest recover diagnose", () => {
+    const lines = ctUpdateFailureHint(2, "", "");
+    expect(lines.join("\n")).toContain("partial state");
+    expect(lines.join("\n")).toContain("ct update exited 2");
+    expect(lines.join("\n")).toContain("ct recover diagnose");
+});
+
+test("ctUpdateFailureHint: detail line is redacted before cron logging", () => {
+    const lines = ctUpdateFailureHint(
+        1,
+        "APP_KEY=base64:abcdefghijklmnop1234567890ABCDEFGHIJKLMNOP== https://panel.example.com/api/v1/subscription/abcDEF_123-xyz",
+    );
+    const joined = lines.join("\n");
+
+    expect(joined).toContain("APP_KEY=<redacted>");
+    expect(joined).toContain("/api/v1/subscription/<redacted>");
+    expect(joined).not.toContain("abcDEF_123-xyz");
 });

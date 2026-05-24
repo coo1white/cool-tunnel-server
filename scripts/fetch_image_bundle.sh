@@ -58,9 +58,14 @@ curl_fetch() {
         "$@"
 }
 
+next_step() {
+    echo "fetch_image_bundle: next step: $*" >&2
+}
+
 SUMS=$(curl_fetch "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
 if [[ -z "$SUMS" ]]; then
     echo "fetch_image_bundle: no SHA256SUMS at ${URL_BASE} (release not published?)."
+    next_step "publish release v${VERSION}, or set CT_RELEASE_URL_BASE to the release asset URL and rerun ./scripts/fetch_image_bundle.sh"
     exit 2
 fi
 sha_for() {
@@ -74,6 +79,7 @@ verify_file() {
     actual=$(sha256sum "$file" | awk '{print $1}')
     if [[ "$actual" != "$expected" ]]; then
         echo "fetch_image_bundle: hash mismatch for $(basename "$file") (got $actual, want $expected)" >&2
+        next_step "remove the cached file from ${BUNDLE_DIR}, confirm SHA256SUMS is for v${VERSION}, then rerun ./scripts/fetch_image_bundle.sh"
         return 1
     fi
 }
@@ -102,6 +108,7 @@ download_verified() {
     local new="${dest}.new"
     if ! curl_fetch -o "$new" "${URL_BASE}/${target}"; then
         echo "fetch_image_bundle: download failed for ${URL_BASE}/${target}" >&2
+        next_step "check network/DNS and free disk space under ${BUNDLE_DIR}, then rerun ./scripts/fetch_image_bundle.sh"
         rm -f "$new"
         return 1
     fi
@@ -172,11 +179,13 @@ load_image_bom() {
 
         if [[ "$stream_rc" -ne 0 ]]; then
             echo "fetch_image_bundle: failed while streaming component ${name}" >&2
+            next_step "rerun ./scripts/fetch_image_bundle.sh; if it repeats, check disk space under ${BUNDLE_STREAM_TMPDIR} and ${BUNDLE_DIR}"
             rm -rf "$stream_dir"
             return 1
         fi
         if [[ "$docker_rc" -ne 0 ]]; then
             echo "fetch_image_bundle: docker load failed for component ${name}" >&2
+            next_step "run docker system df, free Docker disk space if needed, then rerun ./scripts/fetch_image_bundle.sh"
             rm -rf "$stream_dir"
             return 1
         fi
@@ -185,6 +194,7 @@ load_image_bom() {
         rm -rf "$stream_dir"
         if [[ "$actual_archive_sha" != "$archive_sha" ]]; then
             echo "fetch_image_bundle: reassembled archive hash mismatch for ${name} (got ${actual_archive_sha}, want ${archive_sha})" >&2
+            next_step "remove cached component parts in ${BUNDLE_DIR}, then rerun ./scripts/fetch_image_bundle.sh"
             return 1
         fi
     done
@@ -198,12 +208,14 @@ load_legacy_bundle() {
     expected=$(sha_for "$LEGACY_TARGET")
     if [[ -z "$expected" ]]; then
         echo "fetch_image_bundle: no BOM or legacy bundle entry for ${OS}-${ARCH} in SHA256SUMS for v${VERSION}."
+        next_step "publish the ${OS}-${ARCH} image BOM/slices for v${VERSION}, or use a supported linux x64/arm64 host"
         return 2
     fi
     bundle=$(download_verified "$LEGACY_TARGET" "$expected") || return 1
     echo "fetch_image_bundle: loading Docker images from ${LEGACY_TARGET}..."
     if ! docker load -i "$bundle"; then
         echo "fetch_image_bundle: docker load failed for ${bundle}" >&2
+        next_step "run docker system df, free Docker disk space if needed, then rerun ./scripts/fetch_image_bundle.sh"
         return 1
     fi
     echo "fetch_image_bundle: legacy full bundle loaded (${OS}-${ARCH})."
@@ -229,6 +241,7 @@ required=(
 for image in "${required[@]}"; do
     if ! docker image inspect "$image" >/dev/null 2>&1; then
         echo "fetch_image_bundle: image missing after load: $image" >&2
+        next_step "rerun ./scripts/fetch_image_bundle.sh; if it repeats, inspect docker load output for missing component archives"
         exit 1
     fi
 done

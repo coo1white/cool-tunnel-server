@@ -41,6 +41,43 @@ log()  { printf '%s==>%s %s\n' "$c_blue" "$c_off" "$*"; }
 warn() { printf '%s!! %s%s\n' "$c_yellow" "$*" "$c_off" >&2; }
 die()  { printf '%s!!! %s%s\n' "$c_red" "$*" "$c_off" >&2; exit 1; }
 
+safe_last_command() {
+    local cmd="${1:-}"
+    case "$cmd" in
+        *openssl*rand*|*sed\ -i*PASSWORD*|*sed\ -i*APP_KEY*|*DB_PASSWORD*|*DB_ROOT_PASSWORD*|*REDIS_PASSWORD*|*CT_BOOTSTRAP_ADMIN_PASSWORD*)
+            printf '<secret-bearing command hidden>'
+            ;;
+        *)
+            printf '%s' "$cmd"
+            ;;
+    esac
+}
+
+bootstrap_failure_hint() {
+    local code="$1" line="$2" cmd="$3"
+    printf '\n%s!!! bootstrap failed%s (exit %s at line %s)\n' "$c_red" "$c_off" "$code" "$line" >&2
+    printf '    command: %s\n' "$(safe_last_command "$cmd")" >&2
+    printf '    next: re-run from a clean shell after checking the failed component above.\n' >&2
+    printf '    diagnostics after clone: cd %s && ct doctor\n' "$INSTALL_DIR" >&2
+
+    case "$cmd" in
+        *apt-get\ update*|*apt-get\ install*)
+            printf '    common fix: apt-get update && apt-get install -y ca-certificates curl gnupg git jq dnsutils apache2-utils openssl\n' >&2
+            ;;
+        *download.docker.com*|*docker.gpg*|*docker-ce*)
+            printf '    common fix: check DNS/TLS to download.docker.com, then re-run bootstrap.\n' >&2
+            ;;
+        *git\ clone*|*git\ -C*fetch*|*git\ -C*reset*)
+            printf '    common fix: check REPO_URL/BRANCH and GitHub reachability with: git ls-remote %s %s\n' "$REPO_URL" "$BRANCH" >&2
+            ;;
+        *systemctl\ restart\ docker*|*docker\ buildx*)
+            printf '    common fix: inspect Docker with: systemctl status docker --no-pager && journalctl -u docker -n 80 --no-pager\n' >&2
+            ;;
+    esac
+}
+
+trap 'code=$?; bootstrap_failure_hint "$code" "$LINENO" "$BASH_COMMAND"; exit "$code"' ERR
+
 explain_and_pause() {
     cat <<EOF
 

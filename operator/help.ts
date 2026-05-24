@@ -184,6 +184,62 @@ Exit codes:
 Next topic:  ./ct help auto-update
 `,
     },
+    "recover": {
+        title: "recover — diagnose failed install/update gates",
+        body: `What it does:
+  Repairs the common post-install/update failures after containers are
+  mostly running.
+
+  Default mode:
+    ct recover
+    ct recover diagnose
+
+  This gathers:
+    - docker compose ps
+    - singbox render result
+    - credential-lock result
+    - DB active VLESS account count
+    - rendered VLESS user names
+    - recent panel/singbox error lines
+
+  Safe repair mode:
+    ct recover fix-stale-singbox
+    ct recover --fix-stale-singbox
+
+  This stops singbox, deletes the rendered /data/config/singbox.json,
+  asks the panel to render a fresh config from DB state, reruns
+  credential-lock, and brings singbox back up. It does not touch the
+  database, .env, Caddy, or ACME certs.
+
+  APP_KEY drift repair:
+    ct recover reset-reality
+
+  Use when singbox:render says "Could not decrypt the data" and the old
+  APP_KEY is gone. This resets only the Reality keypair, renders a fresh
+  singbox config, and starts panel/singbox. Clients must re-import
+  subscription URLs.
+
+When to run:
+  - Update fails with 'credential-lock drift'
+  - Install/update says singbox is running/starting for too long
+  - singbox:render says "Could not decrypt the data"
+  - Panel returns a 500 while creating/deleting proxy accounts
+  - You need a compact evidence bundle before asking for help
+
+Common result:
+  DB active VLESS accounts: 0
+  Rendered VLESS users: 1
+
+  That means the rendered singbox.json is stale. Run:
+    ct recover fix-stale-singbox
+
+After recovery:
+  ./ct update
+  ./ct doctor
+
+Next topic:  ./ct help backup
+`,
+    },
     "auto-update": {
         title: "auto-update — unattended release-pulling agent",
         body: `What it does:
@@ -260,7 +316,7 @@ Exit codes:
   1    upgrade attempted and failed (operator should investigate)
   2    refused (stack unhealthy / no network / not a git checkout)
 
-Next topic:  ./ct help backup
+Next topic:  ./ct help recover
 `,
     },
     "backup": {

@@ -4,6 +4,7 @@
 
 import { test, expect } from "bun:test";
 import {
+    die,
     formatArrowProgress,
     makeArrowProgress,
     makeTerm,
@@ -51,6 +52,47 @@ test("makeTerm({ initialStep }) seeds the counter", () => {
         console.log = origLog;
     }
     expect(logs[0]).toContain("11.");
+});
+
+test("makeTerm warn redacts secret-looking diagnostics", () => {
+    const t = makeTerm();
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = ((m: string) => errors.push(m)) as typeof console.error;
+    try {
+        t.warn("APP_KEY=base64:abcdefghijklmnop1234567890ABCDEFGHIJKLMNOP== https://panel.example.com/api/v1/subscription/abcDEF_123-xyz");
+    } finally {
+        console.error = origError;
+    }
+
+    const output = errors.join("\n");
+    expect(output).toContain("APP_KEY=<redacted>");
+    expect(output).toContain("/api/v1/subscription/<redacted>");
+    expect(output).not.toContain("abcDEF_123-xyz");
+});
+
+test("die redacts failure message and hint", () => {
+    const errors: string[] = [];
+    const origError = console.error;
+    const origExit = process.exit;
+    console.error = ((m: string) => errors.push(m)) as typeof console.error;
+    process.exit = ((code?: number) => {
+        throw new Error(`exit:${code ?? 0}`);
+    }) as typeof process.exit;
+    try {
+        expect(() => die(
+            "APP_KEY=base64:abcdefghijklmnop1234567890ABCDEFGHIJKLMNOP==",
+            "open https://panel.example.com/api/v1/subscription/abcDEF_123-xyz",
+        )).toThrow("exit:1");
+    } finally {
+        console.error = origError;
+        process.exit = origExit;
+    }
+
+    const output = errors.join("\n");
+    expect(output).toContain("APP_KEY=<redacted>");
+    expect(output).toContain("/api/v1/subscription/<redacted>");
+    expect(output).not.toContain("abcDEF_123-xyz");
 });
 
 test("formatArrowProgress renders percent, counts, label, and arrow fill", () => {

@@ -144,6 +144,7 @@ cd /opt/cool-tunnel-server
 ct doctor   # health dashboard with PASS / WARN / FAIL remediation
 ct backup   # snapshot DB + .env + ACME certs
 ct update   # update to the current release and restart safely
+ct recover  # diagnose/repair failed install/update settle gates
 ```
 
 ### Copy-Paste VPS Update

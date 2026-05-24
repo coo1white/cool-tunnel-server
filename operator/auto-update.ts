@@ -29,6 +29,7 @@ import { probeVersions, upgradeAvailable, readCurrentVersion } from "./src/util/
 import { acquireOpLock } from "./src/util/op-lock";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { credentialLockCheck } from "./src/util/credential-control";
+import { redactSensitive } from "./src/util/redact";
 
 // Distinct marker so the inner `./ct update` subprocess (which
 // acquires its own per-project ops flock under the default
@@ -78,6 +79,98 @@ function makeLog(quiet: boolean): { say: (m: string) => void; err: (m: string) =
         },
         err: (m) => process.stderr.write(`[${stamp()}] auto-update: ✗ ${m}\n`),
     };
+}
+
+function firstNonEmptyLine(text: string): string {
+    return redactSensitive(text).split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+export function gitPullFailureHint(stderr: string, stdout = ""): readonly string[] {
+    const combined = `${stderr}\n${stdout}`.toLowerCase();
+    const firstLine = firstNonEmptyLine(stderr) || firstNonEmptyLine(stdout);
+    const detail = firstLine ? `git said: ${firstLine}` : "git exited without a diagnostic line";
+
+    if (combined.includes("would be overwritten by merge") || combined.includes("local changes")) {
+        return [
+            "git pull --ff-only failed — the checkout has local changes",
+            detail,
+            "left at the prior release; run 'git status --short' and either keep, commit, or remove the local edits, then run 'ct update'",
+        ];
+    }
+    if (combined.includes("not possible to fast-forward") || combined.includes("divergent branches")) {
+        return [
+            "git pull --ff-only failed — the VPS checkout diverged from origin/main",
+            detail,
+            "left at the prior release; run 'git status' and reconcile the branch, or reinstall from a clean checkout if this VPS has no intentional local commits",
+        ];
+    }
+    if (combined.includes("could not resolve host") || combined.includes("failed to connect") || combined.includes("network is unreachable")) {
+        return [
+            "git pull --ff-only failed — GitHub was not reachable from this VPS",
+            detail,
+            "left at the prior release; check DNS/network with 'curl -I https://github.com' and rerun 'ct auto-update --dry-run'",
+        ];
+    }
+    if (combined.includes("repository not found") || combined.includes("authentication failed") || combined.includes("permission denied")) {
+        return [
+            "git pull --ff-only failed — origin/main could not be fetched",
+            detail,
+            "left at the prior release; check 'git remote -v' and repository access, then rerun 'ct update'",
+        ];
+    }
+    return [
+        "git pull --ff-only failed — release code was not updated",
+        detail,
+        "left at the prior release; run 'git status' and 'git pull --ff-only origin main' interactively for the full git output",
+    ];
+}
+
+export function ctUpdateFailureHint(code: number, stderr: string, stdout = ""): readonly string[] {
+    const combined = `${stderr}\n${stdout}`;
+    const lower = combined.toLowerCase();
+    const firstLine = firstNonEmptyLine(stderr) || firstNonEmptyLine(stdout);
+    const detail = firstLine ? `ct update said: ${firstLine}` : `ct update exited ${code} without a diagnostic line`;
+
+    if (lower.includes("unsupported cipher or incorrect key length")) {
+        return [
+            "ct update failed — panel APP_KEY is malformed",
+            detail,
+            "fix /opt/cool-tunnel-server/.env so APP_KEY is exactly a Laravel key such as base64:<44 chars>, then run 'ct recover diagnose'",
+        ];
+    }
+    if (lower.includes("could not decrypt the data")) {
+        return [
+            "ct update failed — encrypted panel data cannot be decrypted with the current APP_KEY",
+            detail,
+            "if this happened after changing APP_KEY, restore the old key or set APP_PREVIOUS_KEYS; for Reality key drift run 'ct recover reset-reality'",
+        ];
+    }
+    if (lower.includes("credential-lock")) {
+        return [
+            "ct update failed — credential-lock guard blocked the deploy",
+            detail,
+            "run 'ct recover diagnose' to see the failing config fields and exact repair command",
+        ];
+    }
+    if (lower.includes("no space left on device")) {
+        return [
+            "ct update failed — the VPS ran out of disk space",
+            detail,
+            "run 'df -h' and 'docker system df', free space, then rerun 'ct update'",
+        ];
+    }
+    if (lower.includes("port is already allocated") || lower.includes("bind: address already in use")) {
+        return [
+            "ct update failed — a required port is already in use",
+            detail,
+            "run 'docker compose ps' and 'ss -ltnp | grep -E \":(80|443)\"' before rerunning 'ct update'",
+        ];
+    }
+    return [
+        "ct update failed — stack may be in a partial state",
+        detail,
+        "run 'ct recover diagnose' first; then rerun 'ct update' interactively if the diagnostics are PASS",
+    ];
 }
 
 async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -154,13 +247,12 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
     // ---------- 3. Pull + update ----------
     const pull = await capture($`git pull --ff-only origin main`);
     if (!pull.ok) {
-        log.err("git pull --ff-only failed — working tree may have local changes");
-        log.err("left at the prior release; investigate with 'git status'");
+        for (const line of gitPullFailureHint(pull.stderr, pull.stdout)) log.err(line);
         return 1;
     }
     if (!opts.quiet) {
         for (const line of pull.stdout.split("\n")) {
-            if (line) process.stdout.write(`    ${line}\n`);
+            if (line) process.stdout.write(`    ${redactSensitive(line)}\n`);
         }
     }
 
@@ -174,13 +266,12 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
         ? await capture($`./ct update`.quiet())
         : await capture($`./ct update`);
     if (!update.ok) {
-        log.err("./ct update failed — stack may be in a partial state");
-        log.err("re-run interactively: ct update   (then: ct doctor for diagnostics)");
+        for (const line of ctUpdateFailureHint(update.code, update.stderr, update.stdout)) log.err(line);
         return 1;
     }
     if (!opts.quiet) {
         for (const line of update.stdout.split("\n")) {
-            if (line) process.stdout.write(`    ${line}\n`);
+            if (line) process.stdout.write(`    ${redactSensitive(line)}\n`);
         }
     }
 

@@ -11,6 +11,7 @@ test("TOPIC_SLUGS covers the currently implemented ct help topics", () => {
         "install",
         "update",
         "doctor",
+        "recover",
         "auto-update",
         "backup",
         "restore",

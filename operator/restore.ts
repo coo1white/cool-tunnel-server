@@ -70,6 +70,19 @@ export function staleVolumeNames(existing: readonly string[], project: string): 
     return existing.filter((name) => expected.has(name)).sort();
 }
 
+export function restoreDatabaseImportFailureHint(stderr: string): string {
+    if (/Access denied/i.test(stderr)) {
+        return "MariaDB rejected DB_ROOT_PASSWORD from the restored .env. Confirm the restored .env matches the backup and run: docker compose logs --tail=80 db";
+    }
+    if (/Unknown database/i.test(stderr)) {
+        return "DB_DATABASE from the restored .env does not exist yet. Check DB_DATABASE and run: docker compose logs --tail=80 db";
+    }
+    if (/ERROR 1[0-9]{3}|syntax/i.test(stderr)) {
+        return "MariaDB rejected db.sql while importing. The backup may be corrupt or from an incompatible version. Run: docker compose logs --tail=80 db";
+    }
+    return "Run: docker compose logs --tail=50 db";
+}
+
 async function validateTarballMembers(path: string): Promise<void> {
     const listed = await capture($`tar -tzf ${path}`);
     if (!listed.ok) {
@@ -231,7 +244,10 @@ export async function runRestore(backupPath: string): Promise<number> {
             $`docker compose exec -T -e MYSQL_PWD=${dbPw} db mariadb -u root ${dbName} < ${`${restoreDir}/db.sql`}`,
         );
         if (!r.ok) {
-            die(`db.sql import failed — see ct-db logs`, "docker compose logs --tail=50 db");
+            die(
+                `db.sql import failed (exit ${r.code})`,
+                restoreDatabaseImportFailureHint(`${r.stdout}\n${r.stderr}`),
+            );
         }
     }
     ok("db.sql imported");

@@ -95,6 +95,7 @@ test("prebuilt singbox-core release path wraps release binary for panel and sing
 
 test("install and update require prebuilt Docker image bundles instead of VPS builds", async () => {
     const fetchScript = await Bun.file("../scripts/fetch_image_bundle.sh").text();
+    const operatorFetchScript = await Bun.file("../scripts/fetch_operator_binary.sh").text();
     const buildScript = await Bun.file("../scripts/build_release_image_bundle.sh").text();
     const backup = await Bun.file("./backup.ts").text();
     const install = await Bun.file("./install.ts").text();
@@ -106,6 +107,9 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(fetchScript).toContain("load_image_bom");
     expect(fetchScript).toContain("load_legacy_bundle");
     expect(fetchScript).toContain("docker load");
+    expect(fetchScript).toContain("next_step");
+    expect(fetchScript).toContain("check network/DNS and free disk space");
+    expect(fetchScript).toContain("run docker system df");
     expect(fetchScript).toContain("CT_KEEP_IMAGE_BUNDLE_PARTS");
     expect(fetchScript).toContain("CT_IMAGE_BUNDLE_DIR");
     expect(fetchScript).toContain("CT_IMAGE_BUNDLE_STREAM_TMPDIR");
@@ -116,6 +120,9 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(fetchScript).toContain("mariadb:11.8.6");
     expect(fetchScript).toContain("redis:7.4.8-alpine");
     expect(fetchScript).not.toContain("CT_SKIP_IMAGE_BUNDLE_FETCH");
+    expect(operatorFetchScript).toContain("next_step");
+    expect(operatorFetchScript).toContain("check network/DNS from this host");
+    expect(operatorFetchScript).toContain("GitHub artifact attestation verification failed");
     expect(buildScript).toContain("docker save");
     expect(buildScript).toContain("cool-tunnel-server-images-");
     expect(buildScript).toContain("cool-tunnel-server-image-");
@@ -163,6 +170,37 @@ test("install and update avoid y/n prompts during deploy preflights", async () =
     expect(install).toContain("reset to origin/main; previous HEAD saved as");
     expect(update).toContain("auto-stashing local edits before update");
     expect(update).toContain("reset to origin/main; previous HEAD saved as");
+});
+
+test("ct wrapper has recover shell fallback for broken VPS updates", async () => {
+    const body = await Bun.file("../ct").text();
+
+    expect(body).toContain("recover_subcommand");
+    expect(body).toContain("recover_diagnose");
+    expect(body).toContain("recover_fix_stale_singbox");
+    expect(body).toContain("recover_app_key_drift");
+    expect(body).toContain("recover_reset_reality");
+    expect(body).toContain("APP_PREVIOUS_KEYS");
+    expect(body).toContain("php artisan recover:reset-reality --no-interaction");
+    expect(body).toContain("Panel image does not have recover:reset-reality yet");
+    expect(body).toContain("php artisan tinker --execute");
+    expect(body).toContain("ensureRealityKeypair");
+    expect(body).toContain("docker compose exec -T panel php artisan credential-lock:check");
+    expect(body).toContain("docker inspect ct-singbox --format");
+    expect(body).toContain("docker compose exec -T panel rm -f /data/config/singbox.json");
+    expect(body).toContain("recover)      recover_subcommand");
+});
+
+test("bootstrap unexpected failures print next steps without leaking secrets", async () => {
+    const body = await Bun.file("../scripts/bootstrap.sh").text();
+
+    expect(body).toContain("bootstrap_failure_hint");
+    expect(body).toContain("safe_last_command");
+    expect(body).toContain("secret-bearing command hidden");
+    expect(body).toContain("trap 'code=$?; bootstrap_failure_hint");
+    expect(body).toContain("diagnostics after clone: cd %s && ct doctor");
+    expect(body).toContain("git ls-remote %s %s");
+    expect(body).toContain("systemctl status docker --no-pager");
 });
 
 test("panel entrypoint exports generated APP_KEY before encrypted seed data", async () => {
