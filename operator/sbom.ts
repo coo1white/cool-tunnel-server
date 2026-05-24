@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/sbom.ts — generate CycloneDX SBOMs for cargo + composer + docker.
+// operator/sbom.ts — generate CycloneDX SBOMs for cargo, Bun, and docker.
 //
 // Produce CycloneDX SBOMs for everything that goes into a release
 // artefact. Output lands in `sbom/`. Each release uploads these to
@@ -8,7 +8,7 @@
 //
 // Tools used:
 //   - cargo-cyclonedx for the Rust workspace
-//   - cyclonedx/cdxgen for the Composer panel and Docker images
+//   - cyclonedx/cdxgen for the Bun operator/admin package and Docker images
 //
 // cargo-cyclonedx is auto-installed via `cargo install --locked`
 // when missing. cdxgen is invoked via the first of: cdxgen on PATH,
@@ -30,7 +30,7 @@ const DOCKER_IMAGES = [
 ] as const;
 
 // Pick the first usable cdxgen invocation. Returns null when none
-// is available — the script then warn-skips the PHP and docker
+// is available — the script then warn-skips the Bun and docker
 // SBOM steps (matches the bash original). Exported for tests.
 export function pickCdxgen(opts: {
     hasCdxgen: boolean;
@@ -87,7 +87,7 @@ export function buildCombinedManifest(opts: {
         components: [],
         "x-references": [
             "cargo.cdx.json",
-            "composer.cdx.json",
+            "operator.cdx.json",
             "cool-tunnel-server-core.cdx.json",
             "cool-tunnel-server-caddy.cdx.json",
             "cool-tunnel-server-singbox.cdx.json",
@@ -132,23 +132,23 @@ async function main(): Promise<number> {
     }
     ok("wrote sbom/cargo.cdx.json");
 
-    // ---------- Composer panel ----------
-    step("Generating PHP SBOM (cdxgen)");
+    // ---------- Bun operator/admin ----------
+    step("Generating Bun SBOM (cdxgen)");
     const cdxgen = pickCdxgen({
         hasCdxgen: which("cdxgen"),
         hasBunx: which("bunx"),
         hasNpx: which("npx"),
     });
     if (!cdxgen) {
-        warn("no cdxgen / bunx / npx on PATH; skipping PHP SBOM");
+        warn("no cdxgen / bunx / npx on PATH; skipping Bun SBOM");
     } else {
-        const r = await $`${cdxgen} -t php -o ../sbom/composer.cdx.json --spec-version 1.5 --no-recurse`
-            .cwd("panel")
+        const r = await $`${cdxgen} -t js -o ../sbom/operator.cdx.json --spec-version 1.5 --no-recurse`
+            .cwd("operator")
             .nothrow();
         if (r.exitCode !== 0) {
-            warn("cdxgen failed on panel/ (PHP SBOM skipped)");
+            warn("cdxgen failed on operator/ (Bun SBOM skipped)");
         } else {
-            ok("wrote sbom/composer.cdx.json");
+            ok("wrote sbom/operator.cdx.json");
         }
     }
 

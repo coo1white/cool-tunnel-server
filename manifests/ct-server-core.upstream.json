@@ -1,12 +1,12 @@
 {
     "name": "ct-server-core",
     "kind": "binary",
-    "version": "0.4.22",
+    "version": "0.5.0",
     "upstream": "https://github.com/coo1white/cool-tunnel-server",
     "verify": {
         "command": ["ct-server-core", "version"],
         "expect_stdout_contains": "ct-server-core",
         "expect_zero_exit": true
     },
-    "note": "AGPL-3.0-only (Copyright (C) 2026 coolwhite LLC). The Rust engine that the Filament panel shells out to for sing-box config generation, clash-API hot-reload, metrics scraping, quota enforcement, anti-tracking probes, and burst coalescing. Bumping this is a normal release."
+    "note": "AGPL-3.0-only (Copyright (C) 2026 coolwhite LLC). The Rust engine that the Bun admin/operator layer calls for sing-box config generation, runtime checks, metrics scraping, quota enforcement, anti-tracking probes, and burst coalescing. Bumping this is a normal release."
 }

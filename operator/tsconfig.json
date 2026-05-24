@@ -21,6 +21,6 @@
 
     "types": ["bun-types"]
   },
-  "include": ["src/**/*", "build.ts", "verify-sot.ts", "verify-supervisord.ts", "tests/**/*"],
+  "include": ["src/**/*", "build.ts", "verify-supervisord.ts", "tests/**/*"],
   "exclude": ["node_modules", "bin"]
 }

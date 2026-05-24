@@ -6,9 +6,9 @@
 # resulting cert/key files from the shared caddy_data volume.
 #
 # Equivalent to:
-#   docker compose exec panel ct-server-core --json caddyfile render
+#   ct render caddyfile
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-docker compose exec -T panel ct-server-core --json caddyfile render "$@"
+docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts render caddyfile "$@"

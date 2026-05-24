@@ -11,11 +11,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-VERSION=$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
+VERSION=$(grep -E '^\s*"version"\s*:' operator/package.json 2>/dev/null \
     | head -1 \
-    | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)
 if [[ -z "$VERSION" ]]; then
-    echo "fetch_image_bundle: cannot determine version from panel/config/cool-tunnel.php" >&2
+    echo "fetch_image_bundle: cannot determine version from operator/package.json" >&2
     exit 1
 fi
 

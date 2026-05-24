@@ -48,6 +48,7 @@ test("validateTarEntries accepts normal backup members", () => {
     expect(validateTarEntries([
         ".env",
         "db.sql",
+        "admin_data.tgz",
         "manifests/panel.upstream.json",
         "caddy/Caddyfile.tpl",
     ])).toBeNull();
@@ -62,15 +63,26 @@ test("validateTarEntries rejects traversal and absolute members", () => {
 
 test("staleVolumeNames reports only restore-owned project volumes", () => {
     expect(expectedRestoreVolumes("cool-tunnel-server")).toContain("cool-tunnel-server_db_data");
+    expect(expectedRestoreVolumes("cool-tunnel-server")).toContain("cool-tunnel-server_admin_data");
     expect(staleVolumeNames([
         "cool-tunnel-server_db_data",
+        "cool-tunnel-server_admin_data",
         "cool-tunnel-server_caddy_data",
         "other_db_data",
         "cool-tunnel-server_unrelated",
     ], "cool-tunnel-server")).toEqual([
+        "cool-tunnel-server_admin_data",
         "cool-tunnel-server_caddy_data",
         "cool-tunnel-server_db_data",
     ]);
+});
+
+test("restore task requires and restores Better Auth admin_data volume", async () => {
+    const body = await Bun.file("./restore.ts").text();
+
+    expect(body).toContain('requireRestoredPath(`${restoreDir}/admin_data.tgz`, "admin_data.tgz")');
+    expect(body).toContain("Restore admin_data volume from admin_data.tgz");
+    expect(body).toContain("${project}_admin_data");
 });
 
 test("restoreDatabaseImportFailureHint explains MariaDB auth failures", () => {

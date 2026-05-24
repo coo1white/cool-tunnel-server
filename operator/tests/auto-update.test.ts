@@ -59,30 +59,16 @@ test("gitPullFailureHint: network failures point at GitHub reachability", () => 
     expect(lines.join("\n")).toContain("ct auto-update --dry-run");
 });
 
-test("ctUpdateFailureHint: malformed APP_KEY names the env file and recovery command", () => {
+test("ctUpdateFailureHint: missing Better Auth secret names the env migration", () => {
     const lines = ctUpdateFailureHint(
         1,
-        "Unsupported cipher or incorrect key length. Supported ciphers are: aes-128-cbc",
+        "BETTER_AUTH_SECRET is required",
         "",
-        { APP_KEY: "base64:Zm9v" },
     );
 
-    expect(lines.join("\n")).toContain("APP_KEY is missing or malformed");
-    expect(lines.join("\n")).toContain("Fix APP_KEY in .env");
-    expect(lines.join("\n")).toContain("ct recover diagnose");
-});
-
-test("ctUpdateFailureHint: decrypt failures point at previous keys or Reality reset", () => {
-    const lines = ctUpdateFailureHint(
-        1,
-        "sing-box render failed: Could not decrypt the data.",
-        "",
-        { APP_KEY: "base64:JCsdgKuqbLm9GnIQ6L+8MKf1gfgPYxKCWgVJB8x3qvE=" },
-    );
-
-    expect(lines.join("\n")).toContain("cannot be decrypted");
-    expect(lines.join("\n")).toContain("Restore the old APP_KEY");
-    expect(lines.join("\n")).toContain("ct recover reset-reality");
+    expect(lines.join("\n")).toContain("Better Auth secret");
+    expect(lines.join("\n")).toContain("BETTER_AUTH_SECRET");
+    expect(lines.join("\n")).toContain("openssl rand -base64 32");
 });
 
 test("ctUpdateFailureHint: generic failures still suggest recover diagnose", () => {

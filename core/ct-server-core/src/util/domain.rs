@@ -2,24 +2,20 @@
 //! Cycle 3 / v0.0.55 — Single source of truth for the panel hostname.
 //!
 //! The "panel hostname" (`panel.<base>` per the v0.0.33 SNI router
-//! design) was hardcoded in at least 6 places across panel/ and core/
-//! before Cycle 3, with each callsite re-implementing the
+//! design) was hardcoded in at least 6 places across the legacy panel
+//! and core before Cycle 3, with each callsite re-implementing the
 //! `PANEL_DOMAIN`-or-fallback-to-`panel.<DOMAIN>` derivation. v0.0.51,
-//! v0.0.53, and v0.0.54 each fixed one site; this module collapses
-//! the derivation into a single function that all in-tree Rust
-//! callers (Caddy renderer, CLI helpers) and PHP
-//! callers (via panel/config/cool-tunnel.php::panel_domain, mirrored
-//! shape) read from.
+//! v0.0.53, and v0.0.54 each fixed one site; this module now keeps
+//! the Rust-side derivation centralized for the Caddy renderer and CLI
+//! helpers.
 //!
-//! Cross-language symmetry: the PHP fallback in
-//! panel/config/cool-tunnel.php uses identical logic. CI guard
-//! scripts/verify_sot.sh runs both and asserts byte-equality on
-//! fixture envs.
+//! The Bun admin/operator side uses the same environment contract:
+//! `PANEL_DOMAIN` wins, then `panel.<DOMAIN>`.
 //!
 //! Fail-fast on empty env (per the operator directive): if both
-//! PANEL_DOMAIN and DOMAIN are unset/empty, return an error rather
-//! than silently producing "panel." (which would route to nothing
-//! and surface as a render-time fail).
+//! `PANEL_DOMAIN` and `DOMAIN` are unset/empty, return an error
+//! rather than silently producing "panel." (which would route to
+//! nothing and surface as a render-time fail).
 
 use crate::{Error, Result};
 
@@ -87,7 +83,7 @@ mod tests {
         // Defensive: `PANEL_DOMAIN=    ` (operator set with stray
         // whitespace) is treated as unset rather than as a literal
         // blank-string hostname. trim()-then-empty-check on both
-        // inputs. PHP-side mirrors this discipline.
+        // inputs. Bun-side callers mirror this discipline.
         let r = panel_domain_from("   \n\t", "example.com");
         assert_eq!(r.unwrap_or_default(), "panel.example.com");
     }

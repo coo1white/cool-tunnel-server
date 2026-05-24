@@ -10,7 +10,7 @@
 //! Practical consequences:
 //!   - `render()` no longer reads the `proxy_accounts` table.
 //!   - `active_users` in the JSON outcome is fixed at 0 for
-//!     PHP-side compatibility.
+//!     legacy wire compatibility.
 //!   - Caddy reloads are driven by the host-side operator, where
 //!     Docker access belongs.
 
@@ -31,7 +31,7 @@ pub struct CaddyRenderOutcome {
     pub hash: String,
     pub changed: bool,
     /// The Caddyfile carries no per-account data, so this stays 0.
-    /// The field remains for PHP-side compatibility.
+    /// The field remains for legacy wire compatibility.
     pub active_users: usize,
 }
 
@@ -257,12 +257,12 @@ mod tests {
         assert!(!body.contains("ct-naive"));
     }
 
-    // PHP-side reader is panel/app/Services/CaddyfileGenerator.php:
-    // reads `$out['changed']` + `$out['hash']` with `?? <default>`.
-    // active_users stays in the JSON for PHP-side compatibility, but
-    // is always 0 because Caddy has no per-account data.
+    // Bun-side reader expects stable `changed` + `hash` keys.
+    // active_users stays in the JSON for wire compatibility with
+    // older callers, but is always 0 because Caddy has no per-account
+    // data.
     #[test]
-    fn render_outcome_json_pins_php_visible_keys() {
+    fn render_outcome_json_pins_legacy_visible_keys() {
         let out = CaddyRenderOutcome {
             path: "/etc/caddy/Caddyfile".into(),
             bytes: 512,

@@ -23,20 +23,15 @@ cool-tunnel-server/
 │   ├── singbox.upstream.json        pinned upstream sing-box release
 │   ├── src/config/                  server/client config rendering
 │   └── src/subcommands/             install, render, supervise, version
-├── panel/                           Laravel + Filament admin panel
-│   ├── app/Filament/                admin resources and pages
-│   ├── app/Services/                Caddy, sing-box, Redis, core bridges
-│   ├── app/Console/Commands/        project Artisan commands
-│   ├── database/migrations/         schema
-│   └── config/                      Laravel and project config
 ├── operator/                        Bun operator CLI behind ./ct
+│   ├── src/admin/                   Hono/Better Auth admin panel
 │   ├── src/tasks/                   install, update, doctor, backup, restore
 │   ├── src/util/                    compose/env/preflight helpers
 │   └── tests/                       Bun unit tests
 ├── docker/
 │   ├── caddy/Dockerfile             Caddy with caddy-l4 SNI routing
 │   ├── core/Dockerfile              Rust core build image
-│   ├── panel/                       FrankenPHP panel runtime
+│   ├── panel/                       Bun/Hono admin + Rust daemon runtime
 │   └── singbox/Dockerfile           sing-box runtime + supervisor
 ├── caddy/Caddyfile.tpl              public SNI splitter + panel proxy
 ├── manifests/                       component/version manifests
@@ -61,6 +56,7 @@ caddy
   |
   `-- other SNI ---------> singbox:443
 
+panel  <-->  SQLite admin DB (/data/admin/admin.sqlite)
 panel  <-->  db
 panel  <-->  redis
 panel  -->   ct-server-core daemon / CLI
@@ -74,7 +70,7 @@ The main boundaries are deliberately simple:
   layer-4 SNI routing.
 - `singbox` owns the user proxy path. Its config is rendered by
   `singbox-core` and watched by `singbox-core supervise`.
-- `panel` owns accounts, settings, subscriptions, and operator UI.
+- `panel` owns Better Auth accounts, setup, settings, and operator UI.
 - `ct-server-core` owns Rust-side control-plane helpers and the daemon
   wire protocol used by the panel.
 - `operator` owns host-level workflows exposed through `./ct`.

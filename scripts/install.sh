@@ -27,8 +27,8 @@ esac
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 bin="operator/bin/ct-operator-${os}-${arch}"
 
-deployed_version="$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
-    | head -1 | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)"
+deployed_version="$(grep -E '^\s*"version"\s*:' operator/package.json 2>/dev/null \
+    | head -1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)"
 installed_version=""
 if [[ -x "$bin" ]]; then
     installed_version="$("$bin" version 2>/dev/null | head -1 | tr -d '[:space:]' || true)"

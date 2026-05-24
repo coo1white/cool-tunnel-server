@@ -24,22 +24,11 @@ core/bin/
 **/target/
 core/Cargo.lock        # we want it in the image actually — see negation below
 
-# Composer / Laravel local state.
-panel/vendor/
-panel/node_modules/
+# Bun local state.
+operator/node_modules/
 singbox-core/node_modules/
 singbox-core/bin/
-panel/storage/app/*
-panel/storage/framework/cache/data/*
-panel/storage/framework/sessions/*
-panel/storage/framework/views/*
-panel/storage/logs/*
-panel/bootstrap/cache/*
-panel/public/storage
-panel/public/hot
-
-# Tests + dev fixtures (we don't run them inside the prod images).
-panel/tests/
+operator/bin/
 
 # Generated / one-off documentation outputs.
 *.tar.gz

@@ -1,20 +1,14 @@
 # Cool Tunnel Server Architecture
 
-Cool Tunnel Server is an open-source self-hosted proxy server built as a
-five-service Docker Compose stack. Caddy handles ACME and SNI routing,
-sing-box runs the VLESS + Reality proxy path, the Laravel/Filament panel
-manages users and subscriptions, and MariaDB/Redis hold persistent and
-runtime state.
-
-The live deployment has these services:
+Cool Tunnel Server is a self-hosted proxy server built as a Docker Compose stack. Caddy handles ACME and SNI routing, sing-box runs the VLESS + Reality proxy path, Bun/Hono serves the admin panel, Better Auth owns accounts and sessions, SQLite stores admin/account state by default, and Rust remains the trusted internal core engine.
 
 | Service | Role |
 | --- | --- |
 | `caddy` | Public `:80`/`:443` front door. Handles ACME for `PANEL_DOMAIN` and uses `mholt/caddy-l4` to split TLS by SNI. |
 | `singbox` | VLESS + Reality proxy engine. Reads `/data/config/singbox.json` and is supervised by `singbox-core`. |
-| `panel` | Laravel + Filament admin UI, subscription endpoint, scheduler, queue worker, and `ct-server-core` daemon. |
-| `db` | MariaDB state: config, accounts, admins, and app data. |
-| `redis` | Cache, sessions, and Messenger queues. |
+| `panel` | Bun/Hono/Better Auth admin UI, SQLite auth/admin DB, operator actions, and the Rust core daemon. |
+| `db` | MariaDB only for retained core runtime data that still requires it. |
+| `redis` | Runtime cache/compatibility service where retained functionality still needs it. |
 
 ## Front Door
 
@@ -30,37 +24,29 @@ The live deployment has these services:
     any other SNI       -> ct-singbox:443 -> VLESS + Reality
 ```
 
-Caddy does not decrypt proxy traffic. Reality TLS terminates inside
-sing-box on the proxy path. The panel path terminates in Caddy's inner
-HTTPS listener and reverse-proxies to FrankenPHP on `panel:9000`.
+Caddy does not decrypt proxy traffic. Reality TLS terminates inside sing-box on the proxy path. The panel path terminates in Caddy's inner HTTPS listener and reverse-proxies to the Bun admin server on `panel:9000`.
+
+## Admin/Auth
+
+- Better Auth provides email/password auth, password hashing, sessions, and rate limiting.
+- Login rate limiting keys on `X-Forwarded-For` set by the Caddy panel proxy. Do not publish the panel container port directly.
+- Sessions use httpOnly cookies with SameSite=Lax and Secure cookies in production.
+- Public signup is disabled unless config explicitly enables it.
+- First owner creation uses `ct admin bootstrap`, an expiring one-time token, and no default password.
+- Roles are intentionally simple: owner, admin, operator, viewer.
+- Admin/account data lives in `/data/admin/admin.sqlite` by default, is migrated idempotently, and is included in `ct backup` as the `admin_data` volume snapshot.
+
+## Rust Boundary
+
+Bun/TypeScript validates inputs, owns web/admin/operator workflows, and calls Rust through internal commands or local-only runtime interfaces. Rust owns protocol/config rendering, daemon/runtime logic, and internal operations. Rust internals are not exposed directly to the public internet.
 
 ## Render And Reload
 
-- The panel writes sing-box input from DB state.
-- `singbox-core render-server` renders `/data/config/singbox.json`.
-- `ct-singbox` watches that file and respawns sing-box when it changes.
-- `ct-server-core caddyfile render` renders `/etc/caddy/Caddyfile`.
-- `ct update` reloads Caddy from the host-side operator.
-
-There is no clash API or HAProxy reload path in the current runtime.
+- `ct admin migrate` migrates admin/auth SQLite tables.
+- `ct render caddyfile` renders `/etc/caddy/Caddyfile` through the Rust boundary.
+- `ct render singbox` renders `/data/config/singbox.json` through the Rust boundary.
+- `ct update` reloads affected services after health gates pass.
 
 ## Component Manifests
 
-Every replaceable runtime part is pinned under
-`manifests/*.upstream.json` or the matching deployment source
-(`docker-compose.yml`, Dockerfiles, Composer, Cargo, or
-`singbox-core/singbox.upstream.json`). `ct doctor` and
-`credential-lock:check` are the supported operator health gates.
-
-## Client Contract
-
-Clients consume the subscription manifest from:
-
-```text
-https://<PANEL_DOMAIN>/api/v1/subscription/<token>
-```
-
-The manifest carries the server host, port, VLESS UUID, Reality public
-key, short IDs, and the sing-box version pin. The shared Rust protocol
-crate defines the manifest schema so server and clients agree on the
-wire format.
+Every replaceable runtime part is pinned under `manifests/*.upstream.json` or the matching deployment source. Use `ct doctor` as the broad PASS/WARN/FAIL health gate.

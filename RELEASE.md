@@ -35,8 +35,7 @@ tag is created. Specifically it does:
 - `cargo clippy --release --all-targets -- -D warnings`
 - `cargo fmt   --all -- --check`
 - `shellcheck -x scripts/*.sh docker/panel/entrypoint.sh`
-- `find panel -name '*.php' | xargs -n1 php -l | grep -v 'No syntax errors'`
-- `composer validate panel/composer.json --strict`
+- `cd operator && bun test && bun run typecheck && bun run build`
 - `for f in manifests/*.json; do jq . "$f" >/dev/null; done`
 
 ### 3. Update CHANGELOG.md
@@ -59,9 +58,9 @@ $EDITOR manifests/ct-server-core.upstream.json
 $EDITOR manifests/ct-protocol.upstream.json
 $EDITOR manifests/panel.upstream.json
 
-# Panel runtime version constant — what the `ct:version` artisan
-# command emits. Keep it aligned with manifests/panel.upstream.json.
-$EDITOR panel/config/cool-tunnel.php   # 'version' => 'X.Y.Z'
+# Operator/admin runtime version. Keep it aligned with
+# manifests/panel.upstream.json.
+$EDITOR operator/package.json
 ```
 
 `Makefile` provides `make set-version V=0.0.X` to update all four

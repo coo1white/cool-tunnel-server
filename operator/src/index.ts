@@ -21,10 +21,11 @@ Commands:
   install        First-time bootstrap on a fresh Debian VPS
   doctor         Run health checks on the running deployment
   render         Re-render caddyfile/singbox config from the DB
-  recover        Diagnose or repair failed install/update settle gates
   backup         Snapshot db + .env + caddy ACME state into backups/
   restore <p>    Restore a deployment from a backup tarball
   update         Pull a new release, load release images, hot-swap
+  recover        Diagnose or repair common deployment drift
+  admin          Admin panel bootstrap, server, and user commands
   help [topic]   Operator mini-manual; no args lists topics
   version        Print version and exit
 
@@ -60,10 +61,6 @@ async function loadTask(cmd: string): Promise<Task | null> {
             const { RenderTask } = await import("./tasks/render");
             return new RenderTask();
         }
-        case "recover": {
-            const { RecoverTask } = await import("./tasks/recover");
-            return new RecoverTask();
-        }
         case "backup": {
             const { BackupTask } = await import("./tasks/backup");
             return new BackupTask();
@@ -75,6 +72,14 @@ async function loadTask(cmd: string): Promise<Task | null> {
         case "update": {
             const { UpdateTask } = await import("./tasks/update");
             return new UpdateTask();
+        }
+        case "recover": {
+            const { RecoverTask } = await import("./tasks/recover");
+            return new RecoverTask();
+        }
+        case "admin": {
+            const { AdminTask } = await import("./tasks/admin");
+            return new AdminTask();
         }
         case "help": {
             const { HelpTask } = await import("./tasks/help");
@@ -110,8 +115,7 @@ async function main(): Promise<number> {
     }
     // The compiled binary's BUILD_VERSION is a TS-level constant
     // (set via `bun build --compile --define`). Inject it under a
-    // reserved internal key so tasks can compare themselves against
-    // panel/config/cool-tunnel.php when needed.
+    // reserved internal key for diagnostics and version checks.
     env["_CT_OPERATOR_OWN_VERSION"] = VERSION;
 
     const ctx: RunContext = {

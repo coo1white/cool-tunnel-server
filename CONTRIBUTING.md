@@ -53,8 +53,8 @@ For numeric constants whose choice is non-obvious (timeout
 windows, concurrency caps, retry budgets), the `///` block must
 include the *reason* the value is what it is, not just what the
 value does. Example: `daemon.rs::MAX_CONCURRENT_HANDLERS = 16`
-documents why 16 (`2 × FrankenPHP worker count`), not just that
-it's a cap.
+documents why 16 is enough for the Bun admin runtime plus internal
+maintenance work, not just that it's a cap.
 
 ---
 
@@ -242,7 +242,7 @@ discipline above) and document why.
   `chore/...`, `docs/...` — see recent merged PRs for examples.
 - Run `cargo fmt --all`, `cargo test --workspace --locked`, and
   `cargo doc --no-deps --workspace` locally before pushing.
-- For PHP changes: `cd panel && vendor/bin/pint --test`.
+- For operator/admin changes: `cd operator && bun test && bun run typecheck`.
 - Commit messages: type-scoped subject (`feat(panel): ...`,
   `fix(daemon): ...`), body explaining *why* the change exists,
   not what it does (the diff shows what). Past commits follow

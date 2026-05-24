@@ -19,7 +19,7 @@
 #
 # Reproducibility contract: each test depends ONLY on:
 #   - the live stack as currently brought up by docker compose
-#   - panel-credentials in .env (PANEL_BASIC_AUTH_*)
+#   - an initialized admin database with an owner created via bootstrap
 #   - one stress-test proxy account auto-provisioned on first run
 #     (username "stress-runner", regenerated each invocation)
 # Nothing on the host (no rust, no cargo). All workload generators

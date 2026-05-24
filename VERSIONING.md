@@ -17,7 +17,7 @@ The "public API" we promise SemVer compatibility on:
 | `WireRequestV1` / `WireResponseV1` / `WireEventV1` | Same |
 | `ct-server-core` CLI subcommand surface | Subcommands and flags don't change names within a minor; new ones may be added |
 | `.env` keys | Existing keys keep their semantics; new ones may be added; deprecations get a one-minor warning window |
-| Filament admin URL routes (`/admin`, `/api/v1/...`) | Stable within a minor |
+| Admin URL routes (`/admin`, `/api/admin/...`, `/api/auth/...`) | Stable within a minor |
 
 Anything else is an internal implementation detail and may change
 without notice. Don't write a script that parses the panel's HTML;
@@ -32,7 +32,7 @@ A few things relax in pre-`1.0`:
   no-breaking-change releases and the minor position
   (`0.X.Y` → `0.X+1.Y`) for any breaking change.
 - **The DB schema is migration-managed but unstable.** Every
-  release runs `php artisan migrate` cleanly from any prior
+  release runs `ct admin migrate` cleanly from any prior
   release in the same minor line. Across minors, you may need to
   run a documented migration script.
 - **The wire format is forward-compatible only**, not

@@ -18,18 +18,6 @@ test("parseRecoverArgs accepts stale singbox repair aliases", () => {
     });
 });
 
-test("parseRecoverArgs accepts Reality reset aliases", () => {
-    expect(parseRecoverArgs(["bun", "operator", "recover", "reset-reality"])).toEqual({
-        mode: "reset-reality",
-    });
-    expect(parseRecoverArgs(["bun", "operator", "recover", "--reset-reality"])).toEqual({
-        mode: "reset-reality",
-    });
-    expect(parseRecoverArgs(["bun", "operator", "recover", "fix-app-key-drift"])).toEqual({
-        mode: "reset-reality",
-    });
-});
-
 test("parseRecoverArgs rejects unknown modes", () => {
     const parsed = parseRecoverArgs(["bun", "operator", "recover", "wat"]);
     expect(typeof parsed).toBe("string");
@@ -63,43 +51,15 @@ test("recoveryAdvice exits cleanly when credential-lock is ok", () => {
     })).toContain("./ct update");
 });
 
-test("recoveryAdvice identifies malformed APP_KEY", () => {
+test("recoveryAdvice points config validation failures at REALITY env", () => {
     expect(recoveryAdvice({
         dbVlessCount: null,
         renderedUserCount: null,
         renderedNames: "",
         credentialLockOk: false,
-        renderOutput: "Unsupported cipher or incorrect key length.",
-        env: { APP_KEY: "base64:Zm9v" },
-    })).toContain("APP_KEY is missing or malformed");
-});
-
-test("recoveryAdvice identifies malformed APP_PREVIOUS_KEYS separately", () => {
-    const advice = recoveryAdvice({
-        dbVlessCount: null,
-        renderedUserCount: null,
-        renderedNames: "",
-        credentialLockOk: false,
-        renderOutput: "Unsupported cipher or incorrect key length.",
-        env: {
-            APP_KEY: "base64:JCsdgKuqbLm9GnIQ6L+8MKf1gfgPYxKCWgVJB8x3qvE=",
-            APP_PREVIOUS_KEYS: "base64:Zm9v",
-        },
-    });
-
-    expect(advice).toContain("APP_PREVIOUS_KEYS contains malformed fallback keys");
-    expect(advice).not.toContain("reset-reality");
-});
-
-test("recoveryAdvice identifies unrecoverable Reality decrypt drift", () => {
-    expect(recoveryAdvice({
-        dbVlessCount: null,
-        renderedUserCount: null,
-        renderedNames: "",
-        credentialLockOk: false,
-        renderOutput: "sing-box render failed: Could not decrypt the data.",
-        env: { APP_KEY: "base64:JCsdgKuqbLm9GnIQ6L+8MKf1gfgPYxKCWgVJB8x3qvE=" },
-    })).toContain("ct recover reset-reality");
+        renderOutput: "REALITY_PRIVATE_KEY must be a 43-character base64url X25519 key",
+        env: {},
+    })).toContain("REALITY_* values");
 });
 
 test("recover task sanitizes command output before printing diagnostics", async () => {

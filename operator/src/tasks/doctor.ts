@@ -11,9 +11,9 @@ import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
 import { parseDfAvailableKb } from "../util/preflight";
-import { credentialLockCheck, renderSingboxConfigCommand } from "../util/credential-control";
+import { credentialLockCheck, credentialLockCheckCommand, renderSingboxConfigCommand } from "../util/credential-control";
 import { redactSensitive } from "../util/redact";
-import { describeLaravelKey, splitPreviousKeys } from "../util/laravel-key";
+import { requireSecret } from "../admin/config";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -161,7 +161,7 @@ export function summarizeCredentialLockOutput(stdout: string, stderr: string): s
         .map((line) => line.trim())
         .filter(Boolean);
     if (lines.length === 0) {
-        return "credential-lock exited non-zero with no output; run: docker compose exec -T panel php artisan credential-lock:check";
+        return `credential-lock exited non-zero with no output; run: ${credentialLockCheckCommand().join(" ")}`;
     }
 
     const drift = lines.find((line) => /credential-lock drift/i.test(line));
@@ -214,46 +214,24 @@ async function checkEnvFile(c: CheckCtx): Promise<CheckLine> {
     }
 }
 
-async function checkLaravelEncryptionKeys(c: CheckCtx): Promise<CheckLine> {
-    const current = describeLaravelKey("APP_KEY", c.env["APP_KEY"]);
-    const previous = splitPreviousKeys(c.env["APP_PREVIOUS_KEYS"]);
-    const malformedPrevious = previous.filter((key) => describeLaravelKey("APP_PREVIOUS_KEYS", key).status !== "ok").length;
-
-    if (current.status !== "ok") {
+async function checkBetterAuthSecret(c: CheckCtx): Promise<CheckLine> {
+    try {
+        requireSecret(c.env);
         return {
             group: G_PREREQ,
-            label: "APP_KEY",
-            severity: "fail",
-            detail: current.detail,
-            hint: `${current.hint}; paste it into .env, then run: docker compose restart panel && ct recover diagnose`,
-        };
-    }
-
-    if (malformedPrevious > 0) {
-        return {
-            group: G_PREREQ,
-            label: "Prev keys",
-            severity: "fail",
-            detail: `APP_PREVIOUS_KEYS has ${previous.length} entries, ${malformedPrevious} malformed`,
-            hint: "Fix or remove malformed APP_PREVIOUS_KEYS entries in .env, then run: docker compose restart panel && ct recover diagnose",
-        };
-    }
-
-    if (previous.length > 0) {
-        return {
-            group: G_PREREQ,
-            label: "Prev keys",
+            label: "Auth secret",
             severity: "pass",
-            detail: `APP_KEY valid; APP_PREVIOUS_KEYS has ${previous.length} valid entr${previous.length === 1 ? "y" : "ies"}`,
+            detail: "BETTER_AUTH_SECRET present and long enough",
+        };
+    } catch (error) {
+        return {
+            group: G_PREREQ,
+            label: "Auth secret",
+            severity: "fail",
+            detail: error instanceof Error ? error.message : String(error),
+            hint: "Run: ./ct update  # auto-migrates BETTER_AUTH_SECRET into .env",
         };
     }
-
-    return {
-        group: G_PREREQ,
-        label: "APP_KEY",
-        severity: "pass",
-        detail: "valid Laravel AES-256 key; no previous keys configured",
-    };
 }
 
 async function checkDns(c: CheckCtx): Promise<CheckLine> {
@@ -394,7 +372,7 @@ async function checkUpEndpoint(_c: CheckCtx): Promise<CheckLine> {
     );
     const code = r.stdout.trim() || "000";
     if (code === "200") {
-        return { group: G_APP, label: "/up endpoint", severity: "pass", detail: "HTTP 200 from FrankenPHP" };
+        return { group: G_APP, label: "/up endpoint", severity: "pass", detail: "HTTP 200 from Bun/Hono admin" };
     }
     if (code === "000") {
         return {
@@ -668,7 +646,7 @@ async function checkCredentialLock(_c: CheckCtx): Promise<CheckLine> {
         label: "Cred lock",
         severity: "fail",
         detail: summarizeCredentialLockOutput(r.stdout, r.stderr),
-        hint: `ct recover diagnose; ${renderSingboxConfigCommand().join(" ")}; docker compose exec -T panel php artisan credential-lock:check`,
+        hint: `ct recover diagnose; ${renderSingboxConfigCommand().join(" ")}; ${credentialLockCheckCommand().join(" ")}`,
     };
 }
 
@@ -812,30 +790,22 @@ async function infoReleaseVersion(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function infoActiveUsers(_c: CheckCtx): Promise<CheckLine> {
-    // v0.1.12 unnested the shell layering. Pre-this-fix the snippet
-    // travelled through Bun's $ template → bash -c → tinker
-    // --execute's single-quoted argv → PHP, with eight-deep
-    // backslash escaping for the `\App\Models\ProxyAccount`
-    // namespace path. Reality on a live deploy: PHP received a
-    // string beginning with bare `\` and emitted
-    // `T_NS_SEPARATOR on line 1`. The `tr -d` then folded the
-    // multi-line PHP error onto the info banner. Passing the
-    // PHP snippet as a single argv arg lets Bun shell-escape it
-    // properly; PHP's tinker resolves `App\Models\ProxyAccount`
-    // in the global namespace just fine without a leading
-    // backslash.
-    const snippet = "echo App\\Models\\ProxyAccount::where('enabled', true)->count();";
-    const r = await capture(
-        $`docker compose exec -T panel php artisan tinker --execute=${snippet}`,
-    );
-    const n = r.ok ? r.stdout.replace(/\s+/g, "") : "?";
-    return { group: G_INFO, label: "Active users", severity: "info", detail: `${n || "?"} proxy accounts enabled` };
+    const r = await capture($`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts admin users list --json`);
+    if (!r.ok || !r.stdout.trim()) {
+        return { group: G_INFO, label: "Admins", severity: "info", detail: "unknown" };
+    }
+    try {
+        const parsed = JSON.parse(r.stdout) as { users?: unknown[] };
+        return { group: G_INFO, label: "Admins", severity: "info", detail: `${parsed.users?.length ?? 0} admin accounts` };
+    } catch {
+        return { group: G_INFO, label: "Admins", severity: "info", detail: "unknown" };
+    }
 }
 
-async function infoMessengerDepth(c: CheckCtx): Promise<CheckLine> {
+async function infoRedisQueueDepth(c: CheckCtx): Promise<CheckLine> {
     const pw = c.env["REDIS_PASSWORD"];
     if (!pw) {
-        return { group: G_INFO, label: "Msgr depth", severity: "info", detail: "skipped (REDIS_PASSWORD unset in .env)" };
+        return { group: G_INFO, label: "Redis queue", severity: "info", detail: "skipped (REDIS_PASSWORD unset in .env)" };
     }
     // v0.1.14 hardened against the v0.1.12 bug class. Pre-fix the
     // password was interpolated INTO a `bash -c "..."` quoted string
@@ -847,18 +817,18 @@ async function infoMessengerDepth(c: CheckCtx): Promise<CheckLine> {
     // shell's env, which Bun's $.env() sets cleanly. The secret
     // never appears in argv.
     const r = await capture(
-        $`docker compose exec -T -e REDISCLI_AUTH redis redis-cli XLEN cool_tunnel:messenger`
+        $`docker compose exec -T -e REDISCLI_AUTH redis redis-cli XLEN cool_tunnel:admin`
             .env({ ...process.env, REDISCLI_AUTH: pw })
             .quiet(),
     );
     const depth = r.ok && r.stdout.trim() ? r.stdout.trim() : "?";
-    return { group: G_INFO, label: "Msgr depth", severity: "info", detail: `${depth} (cool_tunnel:messenger stream)` };
+    return { group: G_INFO, label: "Redis queue", severity: "info", detail: `${depth} (cool_tunnel:admin stream)` };
 }
 
 const CHECKS: CheckFn[] = [
     checkComposeAvailable,
     checkEnvFile,
-    checkLaravelEncryptionKeys,
+    checkBetterAuthSecret,
     checkDns,
     checkPorts,
     checkAcmeCert,
@@ -874,7 +844,7 @@ const CHECKS: CheckFn[] = [
     checkRam,
     infoReleaseVersion,
     infoActiveUsers,
-    infoMessengerDepth,
+    infoRedisQueueDepth,
 ];
 
 // ---------- Task ----------------------------------------------------------

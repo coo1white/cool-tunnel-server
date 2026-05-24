@@ -55,7 +55,7 @@ high, **90 days** for medium / low.
 | Category | Examples |
 | --- | --- |
 | **Auth bypass** | Bypassing VLESS UUID auth; bypassing the panel admin login |
-| **Privilege escalation** | A proxy user reaching the Filament admin or DB; a `viewer`-role admin bypassing `User::canAccessPanel()` |
+| **Privilege escalation** | A proxy user reaching the admin panel or DB; a `viewer` role bypassing protected Hono route checks |
 | **Credential disclosure** | Cleartext password leak via tracing, logs, error responses; subscription HMAC tokens persisted in any log file |
 | **Memory safety** | Anything reachable from untrusted input that triggers UB in Rust (we `forbid(unsafe_code)`) |
 | **Cryptographic weakness** | Wrong AEAD nonce reuse, weak HMAC verification, broken cert pinning, weak Reality key handling |
@@ -88,49 +88,34 @@ The server ships with:
 - `forbid(unsafe_code)` and `deny(clippy::unwrap_used,
   clippy::expect_used, clippy::panic, clippy::todo,
   clippy::unimplemented)` workspace-wide.
-- `declare(strict_types=1);` on every panel PHP file.
-- `password_hash`, `password_cleartext_encrypted`, `password`,
-  `role`, and `is_active` removed from `$fillable` so
-  mass-assignment can't poison them. Privileged fields are set via
-  explicit setters or seeders, never `Model::create($request->all())`.
-- Constant-time HMAC verification (`hash_equals` in PHP, byte-wise
-  comparison via `aes-gcm` 0.10's tag check in Rust).
+- Better Auth owns password hashing, signed httpOnly cookie sessions,
+  session storage, and email/password login security.
+- Admin role checks stay close to protected Hono routes and use the
+  small owner/admin/operator/viewer model.
+- Constant-time HMAC verification for bootstrap token hashes and
+  byte-wise comparison via `aes-gcm` 0.10's tag check in Rust.
 - **TLS 1.3 only** on the proxy listener (`min_version =
   max_version = "1.3"` in the rendered sing-box config). No
   legacy-protocol fallback surface.
 - DNS-over-HTTPS for the proxy's outbound resolution.
-- **Cover-site invariant on every public route** (v0.0.14): any
-  unknown URL, rate-limited request, expired token, empty
-  `APP_KEY`, or uncaught panel exception renders byte-identical
-  to `FakeSiteController` (status 200, `Content-Type: text/html`,
-  deterministic `sha256`-derived ETag). The custom Laravel
-  exception handler in `bootstrap/app.php` enforces this for
-  uncaught throwables; the in-controller anti-enumeration limiter
-  in `SubscriptionController` enforces it for rate-limit hits.
-- **Subscription HMAC tokens masked in all panel logs** (v0.0.14).
-  The panel's nginx access log rewrites
-  `/api/v1/subscription/<token>` to
-  `/api/v1/subscription/<masked>` before write. Caddy ships with
-  no access log directive at all.
+- **Secret redaction in diagnostics and logs** masks subscription
+  URLs, bootstrap setup tokens, UUIDs, Better Auth secrets, database
+  passwords, Redis passwords, and secret-looking JSON fields.
 - **No engine-fingerprint headers** in cover-site responses
   (v0.0.14): `Server: Caddy` stripped via `header -Server` in the
-  Caddyfile, `X-Powered-By` disabled via `expose_php = Off` in
-  the panel's PHP hardening drop-in, nginx `server_tokens off`.
-- **Login rate limiter binds across three dimensions**
-  (v0.0.13 + v0.0.14): per-(email|ip), per-ip, and per-email —
-  defeating both single-email IP-rotation and single-IP
-  email-rotation brute-force shapes.
+  Caddyfile; the Bun admin server does not emit framework banners.
+- **Login rate limiting** is enabled in Better Auth. It keys on the
+  `X-Forwarded-For` value set by the Caddy panel proxy; do not expose
+  the panel container port directly to the public internet.
 - **Network isolation**: `ct-net` carries the public-facing Caddy,
   panel, and sing-box traffic; `ct-data` is internal-only for db,
   redis, and panel. A compromised db or redis cannot phone home.
-- **Refuse-to-boot guards** on missing `APP_KEY` (subscription
-  endpoint) — fail-loud with a remediation hint rather than silently
-  falling back to a deterministic default.
-- **`DB::afterCommit` semantics on every `ProxyAccount` save +
-  delete** (v0.0.15). A rolled-back transaction never leaves a
-  phantom queued reload — the dispatch fires only after the outermost
-  transaction commits. Verified by
-  `tests/Feature/ProxyAccountAfterCommitTest`.
+- **Refuse-to-boot guards** on missing `BETTER_AUTH_SECRET` — fail
+  loudly with a remediation hint rather than falling back to a
+  deterministic default.
+- **First-owner bootstrap** uses expiring one-time tokens. Raw tokens
+  are not logged, passwords are never generated or printed, and
+  bootstrap is disabled automatically once an owner exists.
 - **Atomic config write fsyncs the parent directory after rename**
   (`core/ct-server-core/src/singbox/mod.rs`, v0.0.15). Power loss
   between rename and the next implicit sync no longer reverts
@@ -142,44 +127,34 @@ The server ships with:
   before render — closes the class of attack where a hostile
   DOMAIN breaks out of `{{ .Domain }}:8443 { … }` and injects
   a Caddy admin endpoint.
-- **`composer install --no-scripts` on every panel boot**
-  (v0.0.16). Transitive Composer packages cannot execute
-  arbitrary code via `post-install-cmd` / `post-autoload-dump`
-  hooks during `vendor/` bootstrap.
 - **`cap_drop: [ALL]` + `security_opt: no-new-privileges` on
   every container** (v0.0.17). caddy + sing-box add back
   `NET_BIND_SERVICE` for privileged ports; nothing else needs
   any capability. RCE in any container can no longer wield raw
   capabilities even if the exploited binary ran as root.
-- **Browser-side hardening on `/admin`** via
-  `App\Http\Middleware\SecurityHeaders` (v0.0.18) — emits
+- **Browser-side hardening on `/admin`** via Hono middleware emits
   `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Referrer-Policy: same-origin`,
   `Permissions-Policy` (deny camera/microphone/geolocation/
-  payment/usb), `Cache-Control: no-store, must-revalidate`, and
-  two-year HSTS on every panel response.
-- **Scheduled-task failure logging** (v0.0.18). Every active entry in
-  `routes/console.php` registers `->onFailure(...)` that emits
-  `Log::critical('schedule.failed', …)`. Pre-fix, scheduler
-  failures were silently swallowed; now a `singbox:render` crash
-  produces an operator-visible log line instead of quiet drift.
+  payment/usb), and a constrained Content Security Policy.
+- **Admin mutations use CSRF/origin checks** for browser actions
+  outside Better Auth's own `/api/auth/*` handlers.
 
 ## Test coverage
 
 - **`core/ct-server-core` Rust unit tests**: 64 passing across
   workspace as of v0.0.20.
-- **`panel/tests/`**: 13 PHPUnit cases as of v0.0.20:
-  4 in `CoverSiteInvariantTest`, 5 in `UserCanAccessPanelTest`,
-  4 in `ProxyAccountAfterCommitTest`. CI runs `vendor/bin/phpunit`
-  on every PR.
+- **`operator/tests/`**: Bun tests cover admin bootstrap, login,
+  route protection, role authorization, migrations, redaction,
+  deployment file guards, and operator workflows.
 
 ## Audit-ability
 
 - **Reproducible builds**: every release tag pins to specific
-  upstream image tags + Cargo.lock + composer.lock. See `RELEASE.md`
+  upstream image tags, Cargo.lock, and Bun lockfiles. See `RELEASE.md`
   for the bit-for-bit reproduction recipe.
 - **SBOM**: every release ships a CycloneDX SBOM under `sbom/` of
-  the Cargo workspace, Composer dependency graph, and Docker image
+  the Cargo workspace, Bun dependency graph, and Docker image
   layers. Generate locally with `make sbom`.
 - **Manifest verifier**: `ct-server-core component check` walks
   `manifests/*.upstream.json` and prints OK/NG for every component

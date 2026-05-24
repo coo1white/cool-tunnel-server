@@ -1,12 +1,12 @@
 cool-tunnel-server
 Copyright (C) 2026 coolwhite LLC. All Rights Reserved.
 
-The original code in this repository — the Filament/Laravel panel
-under panel/app/, the Rust crates under core/, the Dockerfiles, the
-sing-box config template, the upstream-pin manifests under manifests/,
-the operator-facing scripts under scripts/, and the documentation
-under docs/ — is licensed under the GNU Affero General Public
-License v3.0 only (AGPL-3.0-only). See LICENSE.
+The original code in this repository — the Bun/TypeScript operator
+and admin panel under operator/, the Rust crates under core/, the
+Dockerfiles, the sing-box config template, the upstream-pin manifests
+under manifests/, the helper scripts under scripts/, and the
+documentation under docs/ — is licensed under the GNU Affero General
+Public License v3.0 only (AGPL-3.0-only). See LICENSE.
 
 cool-tunnel-server is operated and maintained by coolwhite LLC.
 This project belongs to the community: coolwhite LLC chooses
@@ -50,20 +50,15 @@ THIRD_PARTY_LICENSES.md.
   Historical client-side runtime from the pre-v0.4 server line. It is
   not bundled in the current VLESS+Reality server image.
 
-* Laravel (https://github.com/laravel/laravel)
-  Copyright Taylor Otwell.
+* Hono (https://github.com/honojs/hono)
+  Copyright the Hono contributors.
   Licensed under the MIT License.
-  Framework underlying the admin panel.
+  HTTP framework for the Bun admin panel.
 
-* Filament (https://github.com/filamentphp/filament)
-  Copyright the Filament contributors.
+* Better Auth (https://github.com/better-auth/better-auth)
+  Copyright the Better Auth contributors.
   Licensed under the MIT License.
-  Admin panel UI.
-
-* predis/predis (https://github.com/predis/predis)
-  Copyright the Predis contributors.
-  Licensed under the MIT License.
-  Redis client used by the panel for cache and Messenger transport.
+  Account and session security for the Bun admin panel.
 
 * Cargo dependencies (see core/Cargo.lock for the full graph): tokio,
   serde, serde_json, sqlx, hyper, hyper-util, hyperlocal, http-body-util,
@@ -79,7 +74,7 @@ THIRD_PARTY_LICENSES.md.
 * Redis (https://redis.io/) — BSD-3-Clause for redis 7.x stable.
   Bundled as the upstream redis:7-alpine OCI image, unmodified.
 
-* Docker base images: alpine:3.20, rust:1.86-alpine, php:8.3-fpm-alpine,
+* Docker base images: alpine:3.20, rust:1.88-alpine, oven/bun:1.3.14-alpine,
   mariadb:11, redis:7-alpine. Each retains its own upstream licence.
 
 ------------------------------------------------------------------------

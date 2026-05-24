@@ -18,7 +18,7 @@
 # at the ~23-minute mark with zero steps run. `tag-version-check`
 # (the per-tag manifest assertion) stays on tag-push because
 # its whole purpose is to catch tags that diverge from the
-# panel/config/cool-tunnel.php version string.
+# operator/package.json version string.
 
 name: ci
 
@@ -82,8 +82,8 @@ jobs:
       # (committed) instead of trying to open a live MariaDB.
       # A schema regression (column dropped / retyped / renamed)
       # that wasn't reflected in .sqlx/ fails the build here with
-      # "no cached data for query"; the operator regenerates with
-      # `make sqlx-prepare` and commits.
+      # "no cached data for query"; maintainers regenerate core/.sqlx
+      # from a trusted dev database and commit it.
       - run: cargo fmt --all -- --check
       - run: cargo build --release --workspace --locked
         env:
@@ -106,73 +106,6 @@ jobs:
       - run: cargo clippy --release --all-targets --locked
         env:
           SQLX_OFFLINE: "true"
-
-  php:
-    name: php (syntax / composer validate)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          tools: composer
-
-      - name: PHP syntax pass on every panel/**/*.php
-        working-directory: panel
-        run: |
-          set -euo pipefail
-          fail=0
-          while IFS= read -r -d '' f; do
-              if ! php -l "$f" >/dev/null 2>&1; then
-                  echo "::error file=panel/$f::syntax error"
-                  php -l "$f" || true
-                  fail=1
-              fi
-          done < <(find app database/migrations database/seeders config bootstrap routes \
-                    -name '*.php' -type f -print0)
-          exit "$fail"
-
-      - name: PHP runtime UTF-8 defaults
-        working-directory: panel
-        run: |
-          test "$(php -r 'echo ini_get("default_charset");')" = "UTF-8"
-          test "$(php -r 'echo mb_internal_encoding();')" = "UTF-8"
-
-      - name: composer validate
-        working-directory: panel
-        run: composer validate composer.json --strict --no-check-publish
-
-      # Run the panel's PHPUnit suite (v0.0.19 added the scaffold;
-      # v0.0.20 wires it into CI). `--no-scripts` matches the
-      # supply-chain hardening pattern from v0.0.16's entrypoint.sh
-      # — a transitive composer package's post-install hook can't
-      # execute as the runner UID and reach the test secrets / build
-      # cache.
-      - name: composer install (panel test deps)
-        working-directory: panel
-        run: |
-          # --ignore-platform-req=ext-redis: the CI runner has
-          # ext-redis 5.3.0 (default for the GitHub-hosted PHP
-          # 8.4 image), but symfony/redis-messenger v7.4.8
-          # requires ext-redis >= 6.1. Production has the right
-          # version via the panel Dockerfile's PECL install; CI
-          # never RUNS the Redis transport (phpunit uses
-          # MessengerServiceProvider's InMemoryTransport in the
-          # testing env), so this is safe.
-          # (v0.0.93 Symfony-Messenger-foundation PR.)
-          composer install \
-              --no-interaction \
-              --prefer-dist \
-              --optimize-autoloader \
-              --no-scripts \
-              --ignore-platform-req=ext-redis
-          php artisan package:discover --ansi
-
-      - name: phpunit (panel)
-        working-directory: panel
-        run: vendor/bin/phpunit --colors=never
 
   shell:
     name: shell (shellcheck)

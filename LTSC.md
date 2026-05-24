@@ -35,7 +35,7 @@ A pinned, reproducible, minor-version-stable stack:
 | Component reload | DB save queues a render; changed `/data/config/singbox.json` is picked up by the sing-box supervisor | PHPUnit render-handler tests; `singbox:render` scheduler |
 | Cert renewal | Caddy renews; sing-box re-reads cert without operator action; ≤60 s upper bound | cert-mtime in render-change SHA-256 hash; `cycle 35` manifest-drift |
 | Schema↔code | A migration that retypes a column without `make sqlx-prepare` fails at `cargo check` | `cycle 43` sqlx-offline-check |
-| Build reproducibility | Same commit + same `.env` → byte-identical images | pinned base images, locked Cargo.lock + composer.lock + .sqlx/ |
+| Build reproducibility | Same commit + same `.env` → byte-identical images | pinned base images, locked Cargo.lock + operator/bun.lock + .sqlx/ |
 | API stability | `WireRequestV1` / `SubscriptionManifestV1` / `ComponentManifestV1` are append-only within a major | type tags `V1` are load-bearing; breaking → `V2` side-by-side |
 | Daemon network boundary | Every Unix-socket request is bounded by max frame bytes, read timeout, and typed error mapping; malformed peers reset the connection, not the process | `core/ct-server-core/src/frame.rs`, `err.rs`, `daemon.rs`; Rust tests |
 | Daemon state truth | One connection follows one FSM branch; invalid predecessor observations hard-reset the connection | `core/ct-server-core/src/daemon_fsm.rs`; `docs/daemon-fsm.md` |
@@ -59,17 +59,19 @@ versions:
 | Version | Axis | Codified into CI | LTSC cycles |
 | --- | --- | --- | --- |
 | v0.0.6 | Initial structural review | one-shot | 1–5 |
-| v0.0.7 | Deep code review | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, dependency-review, stale-docs | 31–37 |
-| v0.0.8 | UI / UX layout | php-style, blade-asset-links | 38–39 |
+| v0.0.7 | Deep code review | cargo-audit, cargo-deny, legacy composer-audit, secret-scan, manifest-drift, dependency-review, stale-docs | 31–37 |
+| v0.0.8 | UI / UX layout | retired php-style, retired blade-asset-links | 38–39 |
 | v0.0.9 | Anti-network-tracking | anti-tracking-config | 40 |
-| v0.0.10 | Code-robustness design | php-psr4, phpstan; `unwrap_used = deny` clippy floor (compile-time, not an audit cycle) | 41–42 |
+| v0.0.10 | Code-robustness design | retired php-psr4, retired phpstan; `unwrap_used = deny` clippy floor (compile-time, not an audit cycle) | 41–42 |
 | v0.0.11 | Compile-time SQL safety | sqlx-offline-check; ci.yml `templates:` job | 43 |
 
 **Post-v0.0.12 the model shifted from per-version hand-passes
 to continuous automation.** `audit.yml` runs cycles 31–43
 weekly (cron `17 8 * * 1`) and on every PR that touches
-relevant paths. No new LTSC cycle indices have been
-codified — 44–50 remain forward placeholders.
+relevant paths. PHP-specific jobs from the old panel era are retired;
+the active surface now focuses on Rust, Bun, manifests, secrets, and
+stale references. No new LTSC cycle indices have been codified —
+44–50 remain forward placeholders.
 
 Three "Cycle N" sub-projects extended the audit surface with
 **independent** numbering (NOT the LTSC 31–50 series):
@@ -84,10 +86,10 @@ Hand-passes still occur — notably the **30-round audit-loop
 hardening** that accompanied the v0.0.58 FrankenPHP runtime
 swap — without claiming a new LTSC cycle index. v0.0.62
 introduced a release-time gate
-(`.github/workflows/tag-version.yml`) that asserts at
+(`.github/workflows/tag-version.yml`) that now asserts at
 tag-push time that the bare `v*` version equals
-`panel/config/cool-tunnel.php::version`, refusing tags whose
-source disagrees. See `AUDIT.md § Release-time gates`.
+`operator/package.json`, refusing tags whose source disagrees.
+See `AUDIT.md § Release-time gates`.
 
 The pattern: cycles 1–30 are hand-audit (real findings, real
 fixes); cycles 31–50 are codified into `audit.yml`; "Cycle N"
@@ -105,11 +107,9 @@ A comment longer than three lines in this codebase is
 **load-bearing**, not removable cruft. The verbose `// Why:`
 blocks in `core/deny.toml::ignore[]` (RUSTSEC-2023-0071 is
 inapplicable because MariaDB 11 defaults to
-`mysql_native_password`), the deferred-fail-fast explanation
-on `panel/config/cool-tunnel.php::$resolvePanelDomain`
-(Laravel bootstrap loads config unconditionally for phpunit
-and larastan), the provenance markers on every related
-declaration (`Cycle 2 / v0.0.39`, `R1-1 / R1-2`,
+`mysql_native_password`), the fail-fast explanation on
+`core/ct-server-core/src/util/domain.rs::panel_domain_from`,
+the provenance markers on every related declaration (`Cycle 2 / v0.0.39`, `R1-1 / R1-2`,
 `low-mem-server pass`) — these encode incident provenance
 and prevent re-debate at the next audit cycle.
 
@@ -221,8 +221,8 @@ The two categories are structurally separable:
   is impossible to slip in without an explicit module edit
   visible at code review.
 
-The audit cycles 40 (anti-tracking config) + 33 (composer audit)
-already cover the wire-format and dependency-side anti-tracking
+The audit cycles 40 (anti-tracking config) plus Bun/Rust dependency
+review cover the wire-format and dependency-side anti-tracking
 floor. The metrics-side carve-out above extends that to the
 operator-observable surface.
 

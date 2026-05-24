@@ -151,9 +151,9 @@ not rely on any tell that contradicts this:
     2. `received_sig := obj.signature`; then `delete obj.signature`
        (NOT `obj.signature = null` — the field must be absent).
     3. `canonical := serialise(obj)` with: UTF-8 unescaped, slashes
-       unescaped (PHP `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE`,
-       Go's default `encoding/json` with `SetEscapeHTML(false)`,
-       Rust's default `serde_json::to_string`); fields emitted in
+       unescaped (Go's default `encoding/json` with
+       `SetEscapeHTML(false)`, Rust's default
+       `serde_json::to_string`); fields emitted in
        struct-declaration order (see
        `core/ct-protocol/src/subscription.rs`); no whitespace
        between tokens; null-valued optional fields omitted.

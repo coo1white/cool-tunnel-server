@@ -12,10 +12,10 @@ Each pre-v0.0.12 pass added cycles to the codified set:
 
 | Pass | Axis | New cycles codified |
 | --- | --- | --- |
-| v0.0.6 / v0.0.7 | Initial structural + deep code review | 31–37 (cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, dependency-review, stale-docs) |
-| v0.0.8 | UI / UX layout | 38 (php-style), 39 (blade-asset-links) |
+| v0.0.6 / v0.0.7 | Initial structural + deep code review | 31–37 (cargo-audit, cargo-deny, legacy composer-audit, secret-scan, manifest-drift, dependency-review, stale-docs) |
+| v0.0.8 | UI / UX layout | 38 (retired php-style), 39 (retired blade-asset-links) |
 | v0.0.9 | Anti-network-tracking | 40 (anti-tracking-config) |
-| v0.0.10 | Code-robustness design | 41 (php-psr4), 42 (phpstan) |
+| v0.0.10 | Code-robustness design | 41 (retired php-psr4), 42 (retired phpstan) |
 | v0.0.11 | Compile-time SQL safety | 43 (sqlx-offline-check) |
 
 The `unwrap_used = "deny"` clippy floor (v0.0.10) is enforced
@@ -53,17 +53,17 @@ numbering; see § Release-time gates below.
 | 21–30 | git history (v0.0.7 commit) | one-shot, on demand |
 | **31** — RustSec advisories | `.github/workflows/audit.yml` job `cargo-audit` | **weekly** + on PR touching Cargo |
 | **32** — Cargo-deny: licences + ban list + source registry | `audit.yml` job `cargo-deny` (config in `core/deny.toml`) | **weekly** + on PR touching Cargo |
-| **33** — Composer audit | `audit.yml` job `composer-audit` | **weekly** + on PR touching composer.lock |
+| **33** — PHP Composer audit | retired with the PHP panel; dependency review now covers Bun lockfile changes | historical |
 | **34** — Secret scan (gitleaks) | `audit.yml` job `secret-scan` | **weekly** |
 | **35** — Manifest version drift (manifests/ ↔ Cargo.toml ↔ Dockerfiles) | `audit.yml` job `manifest-drift` | **weekly** + on every PR |
 | **36** — Dependency review (vuln/licence diff vs base) | `audit.yml` job `dependency-review` | every PR |
 | **37** — Stale-doc grep (forwardproxy, sing-box ACME, AntiTrackingFilter, etc.) | `audit.yml` job `stale-docs` | **weekly** |
-| **38** — PHP style (Laravel Pint) | `audit.yml` job `php-style` | **weekly** + on every PR |
-| **39** — Blade asset-link 404 check (`href="/foo.css"` ⟂ `panel/public/`) | `audit.yml` job `blade-asset-links` | **weekly** + on every PR |
+| **38** — PHP style (Laravel Pint) | retired with the PHP panel | historical |
+| **39** — Blade asset-link 404 check (`href="/foo.css"` ⟂ `panel/public/`) | retired with the PHP panel | historical |
 | **40** — Anti-tracking config smell-test (sing-box TLS 1.3, no TCP clash, no disk cache; Caddy ghost site no recognisable string; no `X-CT-*` headers) | `audit.yml` job `anti-tracking-config` | **weekly** + on every PR |
-| **41** — PHP class-vs-filename PSR-4 lint (catches "file Foo.php declares `class Bar`") | `audit.yml` job `php-psr4` | **weekly** + on every PR touching `panel/app/**` |
-| **42** — PHPStan level-5 (undefined-method, type errors) | `audit.yml` job `phpstan` | **weekly** + on every PR touching `panel/app/**` |
-| **43** — sqlx offline metadata staleness (every `query!()` call has matching `.sqlx/` JSON) | `audit.yml` job `sqlx-offline-check` | **weekly** + on every PR touching `core/` or `panel/database/migrations/` |
+| **41** — PHP class-vs-filename PSR-4 lint (catches "file Foo.php declares `class Bar`") | retired with the PHP panel | historical |
+| **42** — PHPStan level-5 (undefined-method, type errors) | retired with the PHP panel | historical |
+| **43** — sqlx offline metadata staleness (every `query!()` call has matching `.sqlx/` JSON) | retained for Rust/MariaDB query shapes | on PR touching `core/` |
 | 44–50 | placeholders for future codified checks | — |
 
 ## Release-time gates
@@ -73,7 +73,7 @@ fire on tag pushes (`refs/tags/v*`) only:
 
 | Gate | Workflow | What it asserts | First-gated tag |
 | --- | --- | --- | --- |
-| `tag-version-check` | `.github/workflows/tag-version.yml` | The bare tag version (`v0.0.62` → `0.0.62`) equals the `'version' => '...'` line in `panel/config/cool-tunnel.php` (the field `php artisan ct:version` prints and the component-check matcher consumes). Refuses tags whose source disagrees. | v0.0.62 |
+| `tag-version-check` | `.github/workflows/tag-version.yml` | The bare tag version (`v0.0.62` → `0.0.62`) equals `operator/package.json`'s version. Refuses tags whose source disagrees. | v0.0.62 |
 
 Release-time gates fire once per tag (not weekly) and refuse
 the tag (not just flag a regression on main) — intentionally
@@ -83,8 +83,8 @@ outside the LTSC cycle 31–50 numbering.
 
 | Trigger | Jobs |
 | --- | --- |
-| Cron `17 8 * * 1` (Mon 08:17 UTC) | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, stale-docs, php-style, blade-asset-links, anti-tracking-config, php-psr4, phpstan |
-| Pull-request touching dependencies / manifests / Dockerfiles / Blade / templates / panel | cargo-audit, cargo-deny, composer-audit, manifest-drift, dependency-review, php-style, blade-asset-links, anti-tracking-config, php-psr4, phpstan |
+| Cron `17 8 * * 1` (Mon 08:17 UTC) | cargo-audit, cargo-deny, secret-scan, manifest-drift, stale-docs, anti-tracking-config |
+| Pull-request touching dependencies / manifests / Dockerfiles / templates / operator / core | cargo-audit, cargo-deny, manifest-drift, dependency-review, anti-tracking-config |
 | Manual `workflow_dispatch` | every job |
 
 ## Adding a new cycle
@@ -123,8 +123,9 @@ goes red:
   revisit.
 - **`cargo-deny`**: usually a duplicate-version diamond. Resolve
   with `cargo tree --duplicates` and bump the offending dep.
-- **`composer-audit`**: same flow on the PHP side. Run
-  `composer update <package>` locally, commit `composer.lock`.
+- **Bun dependency advisories**: update the package with `bun update`
+  or a targeted package bump, commit `operator/package.json` and
+  `operator/bun.lock`, then rerun `cd operator && bun test`.
 - **`secret-scan`**: a real secret got committed. Rotate the secret
   immediately, then `git filter-repo` or follow GitHub's secret-
   scanning remediation. Revoke the credential before pushing a fix.

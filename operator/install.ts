@@ -17,12 +17,12 @@
 //   7.  Disk headroom check + low-space safe temp/build-cache cleanup
 //   8.  Load prebuilt Docker image bundle (no VPS image builds)
 //   9.  Start db + redis; wait for MariaDB healthcheck
-//  10.  Start panel; wait for entrypoint sentinel; verify migrations + seed
-//  11.  Re-render Caddyfile + singbox.json from the seeded DB
+//  10.  Start panel; wait for Bun admin migrations + initial render
+//  11.  Re-render Caddyfile + singbox.json from admin config
 //  12.  Pre-flight: DNS A-records + port-80 reachability for ACME
 //  13.  Start Caddy + singbox (clear zombie ct-caddy first); wait for panel TLS cert
 //  14.  Verify singbox + strict health gates
-//  15.  Ensure the default first admin exists
+//  15.  Print first-owner bootstrap instructions
 //  16.  Print success banner
 
 import { $, capture, runStreaming, which } from "./src/util/sh";
@@ -33,7 +33,7 @@ import { waitFor } from "./src/util/wait";
 import { checkIpv4OnlyRouting } from "./src/util/preflight";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
-import { ensureBootstrapAdminPassword } from "./src/util/bootstrap-admin";
+import { ensureAdminAuthSecret } from "./src/util/bootstrap-admin";
 import {
     deploymentSettleRecoveryHint,
     settleDeployment,
@@ -103,15 +103,13 @@ async function preflightEnvFile(): Promise<void> {
         warn("edit .env with real DOMAIN, PANEL_DOMAIN, ACME_EMAIL, and passwords, then re-run ./ct install");
         die("missing required .env values", "$EDITOR .env");
     }
-    // Refuse to proceed if .env is world-readable. APP_KEY encrypts
-    // every proxy_accounts.password_cleartext_encrypted row and signs
-    // every subscription manifest; leaking it recovers all tenant
-    // cleartext. (R2-1, docs/audits/2026-05-04T06-31-58Z.md.)
+    // Refuse to proceed if .env is world-readable. It contains
+    // Better Auth, DB, Redis, and Reality secrets.
     const mode = await fileModeOctal(".env");
     if (mode === null) die("could not stat .env", "check .env exists and is readable");
     const otherBits = parseInt(mode.slice(-1), 10);
     if (Number.isFinite(otherBits) && otherBits >= 4) {
-        die(`.env is world-readable (mode ${mode}); APP_KEY + DB credentials would leak`, "chmod 0600 .env");
+        die(`.env is world-readable (mode ${mode}); auth + DB credentials would leak`, "chmod 0600 .env");
     }
     // Bcrypt-hash scan: `set -a; . .env` aborts on `$2y$10$...` if
     // unquoted because bash reads `$2` as positional arg under set -u.
@@ -141,16 +139,15 @@ interface InstallEnv {
     PANEL_DOMAIN: string;
     ACME_EMAIL: string;
     ACME_DIRECTORY: string;
-    BOOTSTRAP_ADMIN_PASSWORD: string;
 }
 
 async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
     let text = await Bun.file(".env").text();
-    const adminPassword = ensureBootstrapAdminPassword(text);
-    if (adminPassword.changed) {
-        await Bun.write(".env", adminPassword.content);
-        text = adminPassword.content;
-        ok("generated VPS-local bootstrap admin password in .env");
+    const authSecret = ensureAdminAuthSecret(text);
+    if (authSecret.changed) {
+        await Bun.write(".env", authSecret.content);
+        text = authSecret.content;
+        ok("generated BETTER_AUTH_SECRET in .env");
     }
     const env = parseSimpleEnv(text);
     const get = (k: string): string => env[k] ?? "";
@@ -187,7 +184,6 @@ async function validateEnvAndDeriveDefaults(): Promise<InstallEnv> {
         PANEL_DOMAIN: panelDomain,
         ACME_EMAIL: get("ACME_EMAIL"),
         ACME_DIRECTORY: get("ACME_DIRECTORY"),
-        BOOTSTRAP_ADMIN_PASSWORD: adminPassword.password,
     };
 }
 
@@ -375,12 +371,12 @@ To intentionally wipe a fresh failed install:
 // ---------- step 14: bring up panel + verify migrations -------------------
 
 async function bringUpPanel(): Promise<void> {
-    step("Start panel and run database migrations");
+    step("Start Bun admin panel and run SQLite migrations");
     const up = await capture($`docker compose up -d --no-build --pull never panel`);
     if (!up.ok) dieWithDiag("compose up -d panel failed", up.stderr.split("\n").slice(0, 5).join("\n"));
 
-    warn("panel entrypoint is applying app setup, migrations, and renders;");
-    warn("this can take ~30-90s on a small VPS. Watch progress with:");
+    warn("panel entrypoint is applying admin migrations and initial renders;");
+    warn("this can take a few seconds on a small VPS. Watch progress with:");
     warn("    docker compose logs -f --tail=80 panel");
 
     const sentinel = await waitFor({
@@ -398,35 +394,20 @@ async function bringUpPanel(): Promise<void> {
         dieWithDiag(
             "panel entrypoint never finished within 7.5 min",
             `docker compose logs --tail=120 panel
-Most common stuck-step on a fresh box: composer install (slow
-network or packagist blocked); on an upgrade: migrate (pending
-schema change failed).`,
+Most common causes: missing BETTER_AUTH_SECRET, invalid domain/env
+values, or a render command failing before the admin server starts.`,
         );
     }
 
-    // Verify migrate:status reports no pending — the entrypoint runs
-    // `migrate --force --no-interaction || true` so we need an
-    // explicit observation of success.
-    const status = await capture(
-        $`docker compose exec -T panel php artisan migrate:status --no-interaction`,
-    );
-    if (/\bPending\b/i.test(status.stdout)) {
-        process.stdout.write(status.stdout.split("\n").slice(-40).join("\n") + "\n");
-        dieWithDiag(
-            "panel has pending migrations — entrypoint migrate failed (|| true swallowed it)",
-            "docker compose logs --tail=80 panel",
-        );
-    }
-    await capture($`docker compose exec -T panel php artisan db:seed --force --no-interaction`);
-    ok("migrations applied + default seed in place");
+    ok("admin migrations applied");
 }
 
 // ---------- step 15: re-render configs after seed -------------------------
 
 async function reRenderCaddyfile(): Promise<void> {
-    step("Re-render Caddyfile from the seeded DB");
+    step("Re-render Caddyfile from admin config");
     const r = await capture(
-        $`docker compose exec -T panel ct-server-core --json caddyfile render`,
+        $`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts render caddyfile`,
     );
     if (!r.ok) {
         warn("Caddyfile re-render failed — Caddy will start with the entrypoint's render");
@@ -436,16 +417,16 @@ async function reRenderCaddyfile(): Promise<void> {
 }
 
 async function reRenderSingbox(): Promise<void> {
-    step("Re-render singbox.json from the seeded DB");
+    step("Re-render singbox.json from admin config");
     const r = await capture(
-        $`docker compose exec -T panel php artisan singbox:render --no-interaction`,
+        $`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts render singbox`,
     );
     if (!r.ok) {
         const output = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n");
         dieWithDiag(
             "singbox.json render failed",
             `${output ? `Render command output:\n${output}\n\n` : ""}docker compose logs --tail=120 panel
-docker compose exec -T panel php artisan singbox:render --no-interaction`,
+docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts render singbox`,
         );
     }
 
@@ -598,30 +579,18 @@ async function settleInstallDeployment(): Promise<void> {
     ok("credential-lock OK");
 }
 
-// ---------- step 19: create first admin -----------------------------------
+// ---------- step 19: first-owner bootstrap instructions -------------------
 
-async function createAdmin(env: InstallEnv): Promise<void> {
-    step("Ensure the default Filament admin user exists");
-    const r = await capture(
-        $`docker compose exec -T panel php artisan ct:make-admin --bootstrap-default --password=${env.BOOTSTRAP_ADMIN_PASSWORD} --no-interaction`,
-    );
+async function printOwnerBootstrap(): Promise<void> {
+    step("Issue first-owner bootstrap token");
+    const r = await capture($`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts admin bootstrap`);
     if (!r.ok) {
-        warn("could not create default admin - recover with:");
-        warn("    docker compose exec panel php artisan ct:make-admin");
+        warn("owner bootstrap token was not issued automatically; run this on the server:");
+        warn("    ./ct admin bootstrap");
         return;
     }
-    const output = `${r.stdout}\n${r.stderr}`;
-    if (output.includes("rotated")) {
-        ok("legacy holder password rotated to .env CT_BOOTSTRAP_ADMIN_PASSWORD (password change required)");
-    } else if (output.includes("created")) {
-        ok("admin login ready: holder / password from .env CT_BOOTSTRAP_ADMIN_PASSWORD (password change required after first login)");
-    } else if (output.includes("already present")) {
-        ok("holder admin already present; existing changed password preserved");
-    } else if (output.includes("active admin already exists")) {
-        ok("custom active admin already exists; holder bootstrap account not created");
-    } else {
-        ok("admin safety check complete");
-    }
+    process.stdout.write(r.stdout);
+    ok("bootstrap token issued; no password was generated or logged");
 }
 
 // ---------- success banner ------------------------------------------------
@@ -644,10 +613,9 @@ What to do next:
   1. Watch ACME finish:
        ${bold}docker compose logs -f --tail=80 caddy${reset}
 
-  2. Create your first proxy account:
-       open https://${env.PANEL_DOMAIN}/admin -> ProxyAccounts -> New
-       login: holder / ${env.BOOTSTRAP_ADMIN_PASSWORD}
-       change the password when prompted
+  2. Create the first owner:
+       ${bold}./ct admin bootstrap${reset}
+       open the printed one-time setup URL and choose your password
 
   3. Import the subscription URL into the macOS client.
 
@@ -718,7 +686,7 @@ export async function runInstall(): Promise<number> {
         await installStep("Start Caddy", () => bringUpCaddy(loadedEnv));
         await installStep("Start singbox", () => bringUpSingbox(loadedEnv));
         await installStep("Settle deployment", settleInstallDeployment);
-        await installStep("Create admin user", () => createAdmin(loadedEnv));
+        await installStep("Issue owner bootstrap", printOwnerBootstrap);
         installProgress.complete("install complete");
         printSuccessBanner(loadedEnv);
     } finally {

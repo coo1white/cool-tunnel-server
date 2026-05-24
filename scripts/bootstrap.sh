@@ -44,7 +44,7 @@ die()  { printf '%s!!! %s%s\n' "$c_red" "$*" "$c_off" >&2; exit 1; }
 safe_last_command() {
     local cmd="${1:-}"
     case "$cmd" in
-        *openssl*rand*|*sed\ -i*PASSWORD*|*sed\ -i*APP_KEY*|*DB_PASSWORD*|*DB_ROOT_PASSWORD*|*REDIS_PASSWORD*|*CT_BOOTSTRAP_ADMIN_PASSWORD*)
+        *openssl*rand*|*sed\ -i*PASSWORD*|*BETTER_AUTH_SECRET*|*DB_PASSWORD*|*DB_ROOT_PASSWORD*|*REDIS_PASSWORD*)
             printf '<secret-bearing command hidden>'
             ;;
         *)
@@ -223,7 +223,7 @@ if [ ! -f .env ]; then
     # Tighten before secrets land in this file. `cp` inherits the
     # operator's umask (0022 on Debian → 0644), but install.sh's
     # R2-1 audit gate refuses to proceed on a world-readable .env
-    # (APP_KEY + DB credentials would leak via the filesystem).
+    # (auth + DB credentials would leak via the filesystem).
     # Without this chmod the very next step blocks the operator
     # with a confusing "world-readable / try: chmod 0600 .env"
     # message on a file THIS script just created.
@@ -282,10 +282,13 @@ NEXT
        cd ${INSTALL_DIR}
        ct install
 
-  4. Open the panel after ct install finishes:
+  4. Create the first owner after ct install finishes:
+       cd ${INSTALL_DIR}
+       ct admin bootstrap
+
+     Open the printed one-time URL, choose an owner password in
+     the browser, then sign in at:
        https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
-       login: holder / CT_BOOTSTRAP_ADMIN_PASSWORD from ${INSTALL_DIR}/.env
-       change the password after first login
 =================================================================
 EOF
 

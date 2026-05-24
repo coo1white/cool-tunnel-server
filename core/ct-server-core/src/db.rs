@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Shared SQLx pool and DB queries.
+//! Shared `SQLx` pool and DB queries.
 //!
 //! COMPILE-TIME SQL TYPE CHECKING (v0.0.11+).
 //!
@@ -12,15 +12,13 @@
 //! production. See `docs/sqlx-offline.md` and the
 //! `make sqlx-prepare` target.
 //!
-//! Type-mapping notes:
-//!   - Laravel `\$table->id()` / `\$table->foreignId()` →
-//!     `BIGINT UNSIGNED` → sqlx returns `u64`. We cast to `i64`
-//!     at the struct boundary; primary-key IDs in any plausible
-//!     deployment are nowhere near 2^63 so the cast is lossless.
-//!   - Laravel `\$table->boolean()` → `TINYINT(1)` → sqlx returns
-//!     `i8`. We compare `!= 0` for the bool field.
-//!   - Laravel `\$table->timestamp()->nullable()` → with chrono
-//!     feature, sqlx returns `Option<chrono::DateTime<chrono::Utc>>`.
+//! Type-mapping notes for the retained `MariaDB` core tables:
+//!   - unsigned integer IDs are cast to `i64` at the struct boundary;
+//!     primary-key IDs in any plausible deployment are nowhere near
+//!     2^63 so the cast is lossless.
+//!   - `TINYINT(1)` values become `i8`; we compare `!= 0` for bools.
+//!   - nullable timestamp columns return
+//!     `Option<chrono::DateTime<chrono::Utc>>` with the chrono feature.
 
 use crate::domain::ServerConfig;
 use crate::Result;
@@ -32,7 +30,7 @@ use std::time::Duration;
 pub async fn connect(database_url: &Option<String>) -> Result<MySqlPool> {
     // Resolve connection options. Prefer URL-style (`--database-url`
     // or `DATABASE_URL`) when present; otherwise build options from
-    // the discrete `DB_*` env vars Laravel hands us.
+    // the discrete `DB_*` env vars supplied by the deployment.
     //
     // The discrete-vars path was previously formatted into a
     // `mysql://user:pass@host:port/db` URL and re-parsed by sqlx,
@@ -64,9 +62,9 @@ pub async fn connect(database_url: &Option<String>) -> Result<MySqlPool> {
 }
 
 /// Build typed sqlx connection options from the discrete `DB_*`
-/// env vars Laravel hands the panel. Pure over an env-var lookup
-/// closure so the v0.0.25 regression test can inject values
-/// without mutating the process environment.
+/// env vars supplied by the deployment. Pure over an env-var lookup
+/// closure so the v0.0.25 regression test can inject values without
+/// mutating the process environment.
 fn options_from_env<F>(get: F) -> MySqlConnectOptions
 where
     F: Fn(&str) -> Option<String>,

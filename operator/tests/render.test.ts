@@ -72,51 +72,6 @@ test("parseArgs errors when render verb missing from argv", () => {
     expect(r as string).toContain("command missing");
 });
 
-test("renderFailureSummary explains malformed APP_KEY", () => {
-    const summary = renderFailureSummary(
-        "singbox",
-        1,
-        "sing-box render failed: Unsupported cipher or incorrect key length.",
-        "",
-        { APP_KEY: "base64:Zm9v" },
-    );
-
-    expect(summary).toContain("APP_KEY is missing or malformed");
-    expect(summary).toContain("docker compose restart panel");
-});
-
-test("renderFailureSummary distinguishes malformed APP_PREVIOUS_KEYS from decrypt drift", () => {
-    const summary = renderFailureSummary(
-        "singbox",
-        1,
-        "sing-box render failed: Unsupported cipher or incorrect key length.",
-        "",
-        {
-            APP_KEY: "base64:JCsdgKuqbLm9GnIQ6L+8MKf1gfgPYxKCWgVJB8x3qvE=",
-            APP_PREVIOUS_KEYS: "base64:Zm9v",
-        },
-    );
-
-    expect(summary).toContain("APP_PREVIOUS_KEYS contains malformed fallback keys");
-    expect(summary).toContain("Fix or remove malformed APP_PREVIOUS_KEYS");
-    expect(summary).not.toContain("reset-reality");
-});
-
-test("renderFailureSummary explains Reality decrypt drift when key formats are valid", () => {
-    const summary = renderFailureSummary(
-        "singbox",
-        1,
-        "sing-box render failed: Could not decrypt the data.",
-        "",
-        {
-            APP_KEY: "base64:JCsdgKuqbLm9GnIQ6L+8MKf1gfgPYxKCWgVJB8x3qvE=",
-        },
-    );
-
-    expect(summary).toContain("APP_KEY format looks valid");
-    expect(summary).toContain("ct recover reset-reality");
-});
-
 test("renderFailureSummary gives a recovery command for unknown render failures", () => {
     const summary = renderFailureSummary("caddyfile", 1, "", "ct-server-core exited 1");
 

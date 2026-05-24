@@ -18,22 +18,21 @@ test("verify finds zero programs in an empty file", () => {
     expect(r.failures).toEqual([]);
 });
 
-test("verify passes a complete frankenphp block", () => {
+test("verify passes a complete Bun admin block", () => {
     const conf = `
-[program:frankenphp]
-command = /usr/local/bin/frankenphp run --config /etc/caddy-panel/Caddyfile
+[program:ct-admin]
+command = bun run /opt/cool-tunnel/operator/src/index.ts admin serve
 ${ALL_FOUR}
-environment = MAX_REQUESTS=500
 `;
     const r = verify(conf);
-    expect(r.programs).toEqual(["frankenphp"]);
+    expect(r.programs).toEqual(["ct-admin"]);
     expect(r.failures).toEqual([]);
 });
 
 test("verify flags a missing required attribute", () => {
     const conf = `
 [program:queue]
-command = php artisan queue:work
+command = bun run worker
 stopsignal = TERM
 stopwaitsecs = 20
 killasgroup = true
@@ -45,22 +44,10 @@ killasgroup = true
     expect(r.failures[0]).toContain("stopasgroup");
 });
 
-test("verify flags a missing program-specific attribute on frankenphp", () => {
-    const conf = `
-[program:frankenphp]
-command = /usr/local/bin/frankenphp run
-${ALL_FOUR}
-`;
-    // no MAX_REQUESTS=500
-    const r = verify(conf);
-    expect(r.failures).toHaveLength(1);
-    expect(r.failures[0]).toContain("MAX_REQUESTS=500");
-});
-
-test("verify does not require MAX_REQUESTS=500 on non-frankenphp programs", () => {
+test("verify does not require program-specific attributes", () => {
     const conf = `
 [program:queue]
-command = php artisan queue:work
+command = bun run worker
 ${ALL_FOUR}
 `;
     const r = verify(conf);
@@ -72,21 +59,16 @@ test("verify discovers all [program:*] blocks without a maintained list", () => 
 [supervisord]
 nodaemon = true
 
-[program:frankenphp]
-command = /usr/local/bin/frankenphp run
+[program:ct-admin]
+command = bun run /opt/cool-tunnel/operator/src/index.ts admin serve
 ${ALL_FOUR}
-environment = MAX_REQUESTS=500
 
 [program:queue]
-command = php artisan queue:work
+command = bun run worker
 ${ALL_FOUR}
 
 [program:scheduler]
-command = php artisan schedule:work
-${ALL_FOUR}
-
-[program:messenger]
-command = php artisan messenger:consume
+command = bun run scheduler
 ${ALL_FOUR}
 
 [program:ct-core-daemon]
@@ -95,10 +77,9 @@ ${ALL_FOUR}
 `;
     const r = verify(conf);
     expect(r.programs).toEqual([
-        "frankenphp",
+        "ct-admin",
         "queue",
         "scheduler",
-        "messenger",
         "ct-core-daemon",
     ]);
     expect(r.failures).toEqual([]);
@@ -107,7 +88,7 @@ ${ALL_FOUR}
 test("verify ignores commented-out attribute lines", () => {
     const conf = `
 [program:queue]
-command = php artisan queue:work
+command = bun run worker
 # stopsignal = TERM
 stopwaitsecs = 20
 killasgroup = true
@@ -121,14 +102,14 @@ stopasgroup = true
 test("verify stops a block at the next [section] header", () => {
     const conf = `
 [program:queue]
-command = php artisan queue:work
+command = bun run worker
 ${ALL_FOUR}
 
 [supervisorctl]
 serverurl = unix:///tmp/supervisor.sock
 
 [program:scheduler]
-command = php artisan schedule:work
+command = bun run scheduler
 stopsignal = TERM
 stopwaitsecs = 20
 killasgroup = true

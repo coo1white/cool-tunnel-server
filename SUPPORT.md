@@ -39,7 +39,7 @@ precedence.
 | Component | Source of truth | Current pin | When we re-pin |
 | --- | --- | --- | --- |
 | Rust | `core/rust-toolchain.toml`, `core/Cargo.toml`, `docker/core/Dockerfile` | `1.88` | When a transitive crate raises the floor |
-| PHP runtime | `docker/panel/Dockerfile`, `panel/composer.json` | `dunglas/frankenphp:1-php8.4-alpine` | At PHP minor releases inside the supported window |
+| Bun/admin runtime | `operator/package.json`, `docker/panel/Dockerfile` | `oven/bun:1.3.14-alpine` | At Bun minor releases inside the supported window |
 | Caddy | `docker/caddy/Dockerfile` | `caddy:2.11.3-alpine` | At Caddy minor releases or Caddy module compatibility bumps |
 | sing-box | `singbox-core/singbox.upstream.json` | `v1.13.12` | At sing-box minor releases |
 | MariaDB | `docker-compose.yml` | `mariadb:11.8.6` | At MariaDB minor releases |

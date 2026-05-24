@@ -1,38 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Helpers for the first admin's VPS-local bootstrap password.
+// Helpers for admin auth secrets in .env. The first owner is created
+// by one-time token, never by a generated default password.
 
-export const BOOTSTRAP_ADMIN_PASSWORD_KEY = "CT_BOOTSTRAP_ADMIN_PASSWORD";
+export const BETTER_AUTH_SECRET_KEY = "BETTER_AUTH_SECRET";
 
-const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-
-export interface BootstrapAdminPasswordResult {
+export interface AdminAuthSecretResult {
     readonly content: string;
-    readonly password: string;
+    readonly secret: string;
     readonly changed: boolean;
 }
 
-export function generateBootstrapAdminPassword(length = 32): string {
-    const bytes = crypto.getRandomValues(new Uint8Array(Math.max(16, length)));
-    let out = "";
-    for (const b of bytes) {
-        out += PASSWORD_ALPHABET[b % PASSWORD_ALPHABET.length];
-    }
-    return out;
+export function generateAdminAuthSecret(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    return Buffer.from(bytes).toString("base64url");
 }
 
-export function ensureBootstrapAdminPassword(
+export function ensureAdminAuthSecret(
     content: string,
-    generate: () => string = generateBootstrapAdminPassword,
-): BootstrapAdminPasswordResult {
-    const existing = envValue(content, BOOTSTRAP_ADMIN_PASSWORD_KEY);
-    if (existing !== null && existing !== "") {
-        return { content, password: existing, changed: false };
+    generate: () => string = generateAdminAuthSecret,
+): AdminAuthSecretResult {
+    const existing = envValue(content, BETTER_AUTH_SECRET_KEY) ?? envValue(content, "AUTH_SECRET");
+    if (existing !== null && existing.length >= 32) {
+        return { content, secret: existing, changed: false };
     }
 
-    const password = generate();
+    const secret = generate();
     return {
-        content: upsertEnvValue(content, BOOTSTRAP_ADMIN_PASSWORD_KEY, password),
-        password,
+        content: upsertEnvValue(content, BETTER_AUTH_SECRET_KEY, secret),
+        secret,
         changed: true,
     };
 }

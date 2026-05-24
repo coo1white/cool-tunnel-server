@@ -13,8 +13,10 @@ import { waitFor } from "./wait";
 import { redactSensitive } from "./redact";
 import {
     credentialLockCheck,
+    credentialLockCheckCommand,
     readSingboxConfigCommand,
     renderSingboxConfig,
+    renderSingboxConfigCommand,
     restartSingbox,
 } from "./credential-control";
 
@@ -224,8 +226,8 @@ export function credentialLockSettleRecoveryHint(result: CredentialLockSettleRes
     const prefix = blocks.length > 0 ? `${blocks.join("\n\n")}\n\n` : "";
     return `${prefix}Run:
   docker compose ps
-  docker compose exec -T panel php artisan singbox:render --no-interaction
-  docker compose exec -T panel php artisan credential-lock:check
+  ${renderSingboxConfigCommand().join(" ")}
+  ${credentialLockCheckCommand().join(" ")}
   docker compose logs --tail=120 --no-color singbox panel caddy
   ${readSingboxConfigCommand().join(" ")}`;
 }

@@ -17,8 +17,8 @@
 #   and image builds.
 #
 # VPS installs then download a verified image BOM and load each
-# component one at a time. This avoids Rust, Bun, Go/xcaddy, Composer,
-# PHP-extension builds, and Docker Hub pulls on low-resource machines
+# component one at a time. This avoids Rust, Bun, Go/xcaddy, and
+# Docker Hub pulls on low-resource machines
 # without requiring one giant archive to fit on disk.
 
 set -euo pipefail
@@ -33,11 +33,10 @@ CT_CADDY_RUNTIME_IMAGE="${CT_CADDY_RUNTIME_IMAGE:-caddy:2.11.3-alpine}"
 CT_GOPROXY="${CT_GOPROXY:-https://proxy.golang.org,direct}"
 CT_GOSUMDB="${CT_GOSUMDB:-sum.golang.org}"
 CT_ALPINE_RUNTIME_IMAGE="${CT_ALPINE_RUNTIME_IMAGE:-alpine:3.21}"
-CT_FRANKENPHP_IMAGE="${CT_FRANKENPHP_IMAGE:-dunglas/frankenphp:1-php8.4-alpine}"
+CT_BUN_IMAGE="${CT_BUN_IMAGE:-oven/bun:1.3.14-alpine}"
 CT_REDIS_IMAGE="${CT_REDIS_IMAGE:-redis:7.4.8-alpine}"
 CT_MARIADB_IMAGE="${CT_MARIADB_IMAGE:-mariadb:11.8.6}"
 CT_ALPINE_REPOSITORY_BASE="${CT_ALPINE_REPOSITORY_BASE:-}"
-CT_PHP_EXT_BUILD_JOBS="${CT_PHP_EXT_BUILD_JOBS:-1}"
 CT_BUILD_FULL_IMAGE_BUNDLE="${CT_BUILD_FULL_IMAGE_BUNDLE:-0}"
 CT_IMAGE_BOM_PART_SIZE_MB="${CT_IMAGE_BOM_PART_SIZE_MB:-95}"
 RUNTIME_IMAGES=(
@@ -101,7 +100,7 @@ require_native_builder() {
 refusing emulated release image build: requested ${platform}, Docker host is ${actual}
 
 Release bundles must be built on a native Linux builder for the target
-architecture. The panel image compiles FrankenPHP/PHP extensions, and
+architecture. The panel image packages the Bun/Hono admin server, and
 QEMU emulation has produced autoconf/m4 crashes for amd64-on-arm64.
 
 Use:
@@ -169,11 +168,11 @@ write_image_bom() {
     local bom="${OUT_DIR}/cool-tunnel-server-images-${suffix}.bom.json"
     local version part_bytes first_image
 
-    version=$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
+    version=$(grep -E '^\s*"version"\s*:' operator/package.json 2>/dev/null \
         | head -1 \
-        | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
+        | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)
     if [[ -z "$version" ]]; then
-        echo "cannot determine version from panel/config/cool-tunnel.php" >&2
+        echo "cannot determine version from operator/package.json" >&2
         return 1
     fi
 
@@ -331,10 +330,9 @@ build_one() {
     CT_GOPROXY="$CT_GOPROXY" \
     CT_GOSUMDB="$CT_GOSUMDB" \
     CT_ALPINE_RUNTIME_IMAGE="$CT_ALPINE_RUNTIME_IMAGE" \
-    CT_FRANKENPHP_IMAGE="$CT_FRANKENPHP_IMAGE" \
+    CT_BUN_IMAGE="$CT_BUN_IMAGE" \
     CT_REDIS_IMAGE="$CT_REDIS_IMAGE" \
     CT_ALPINE_REPOSITORY_BASE="$CT_ALPINE_REPOSITORY_BASE" \
-    CT_PHP_EXT_BUILD_JOBS="$CT_PHP_EXT_BUILD_JOBS" \
         docker compose build caddy singbox panel
 
     echo "==> pulling runtime base service images (${platform})"

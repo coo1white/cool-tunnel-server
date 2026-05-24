@@ -11,19 +11,18 @@
 //      after APP_URL=https://${PANEL_DOMAIN}/admin, leaving compose
 //      with "The PANEL_DOMAIN variable is not set" warnings on
 //      every invocation.
-//   3. Substitute `APP_URL=https?://${DOMAIN}` → `…${PANEL_DOMAIN}`
-//      (the pre-v0.0.68 APP_URL shape causes Livewire 3 419s).
+//   3. Substitute `APP_URL=https?://${DOMAIN}` → `…${PANEL_DOMAIN}`.
 //   4. Backfill sing-box direct outbound dial defaults so old VPSes
 //      pick up the persistent IPv4-only renderer behaviour.
-//   5. Backfill `CT_BOOTSTRAP_ADMIN_PASSWORD` so older installs that
-//      update into the no-public-default-password release have a
-//      VPS-local recovery/bootstrap secret recorded in `.env`.
+//   5. Backfill `BETTER_AUTH_SECRET` for Better Auth cookie/session
+//      signing. First-owner creation uses one-time tokens, not a
+//      default password.
 //
 // Pure: each function takes `.env` text in, returns the new text +
 // a Change descriptor describing what (if anything) was rewritten.
 // I/O happens in the caller (operator/update.ts).
 
-import { ensureBootstrapAdminPassword, generateBootstrapAdminPassword } from "./bootstrap-admin";
+import { ensureAdminAuthSecret, generateAdminAuthSecret } from "./bootstrap-admin";
 
 export interface EnvChange {
     readonly phase:
@@ -31,7 +30,7 @@ export interface EnvChange {
         | "panel-domain-relocate"
         | "app-url-fix"
         | "singbox-direct-defaults"
-        | "bootstrap-admin-password";
+        | "better-auth-secret";
     readonly summary: string;
 }
 
@@ -215,27 +214,27 @@ export function backfillSingboxDirectDefaults(content: string): { content: strin
     };
 }
 
-// ---------- Phase 5: bootstrap admin password ----------
+// ---------- Phase 5: Better Auth secret ----------
 
-export function backfillBootstrapAdminPassword(
+export function backfillBetterAuthSecret(
     content: string,
-    generate: () => string = generateBootstrapAdminPassword,
+    generate: () => string = generateAdminAuthSecret,
 ): { content: string; change: EnvChange | null } {
-    const ensured = ensureBootstrapAdminPassword(content, generate);
+    const ensured = ensureAdminAuthSecret(content, generate);
     if (!ensured.changed) {
         return { content, change: null };
     }
 
     const contentWithNote = ensured.content.replace(
-        /^CT_BOOTSTRAP_ADMIN_PASSWORD=/m,
-        "# v0.4.22 auto-migration — VPS-local first admin bootstrap password\nCT_BOOTSTRAP_ADMIN_PASSWORD=",
+        /^BETTER_AUTH_SECRET=/m,
+        "# Bun/Hono admin auth secret. Keep private; used to sign Better Auth sessions.\nBETTER_AUTH_SECRET=",
     );
 
     return {
         content: contentWithNote,
         change: {
-            phase: "bootstrap-admin-password",
-            summary: "added VPS-local CT_BOOTSTRAP_ADMIN_PASSWORD to .env",
+            phase: "better-auth-secret",
+            summary: "added BETTER_AUTH_SECRET to .env",
         },
     };
 }
@@ -246,7 +245,7 @@ export function backfillBootstrapAdminPassword(
 // idempotent — a no-op on already-canonical input.
 export function migrateEnv(
     content: string,
-    generateBootstrapPassword: () => string = generateBootstrapAdminPassword,
+    generateAuthSecret: () => string = generateAdminAuthSecret,
 ): EnvMigrationResult {
     const changes: EnvChange[] = [];
     let warning: string | undefined;
@@ -269,7 +268,7 @@ export function migrateEnv(
     cur = p4.content;
     if (p4.change) changes.push(p4.change);
 
-    const p5 = backfillBootstrapAdminPassword(cur, generateBootstrapPassword);
+    const p5 = backfillBetterAuthSecret(cur, generateAuthSecret);
     cur = p5.content;
     if (p5.change) changes.push(p5.change);
 
