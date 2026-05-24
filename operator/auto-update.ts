@@ -30,7 +30,6 @@ import { acquireOpLock } from "./src/util/op-lock";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { credentialLockCheck } from "./src/util/credential-control";
 import { redactSensitive } from "./src/util/redact";
-import { encryptionFailureHint, loadLaravelKeyEnv } from "./src/util/laravel-key";
 
 // Distinct marker so the inner `./ct update` subprocess (which
 // acquires its own per-project ops flock under the default
@@ -126,24 +125,17 @@ export function gitPullFailureHint(stderr: string, stdout = ""): readonly string
     ];
 }
 
-export function ctUpdateFailureHint(code: number, stderr: string, stdout = "", env: Record<string, string> = process.env as Record<string, string>): readonly string[] {
+export function ctUpdateFailureHint(code: number, stderr: string, stdout = "", _env: Record<string, string> = process.env as Record<string, string>): readonly string[] {
     const combined = `${stderr}\n${stdout}`;
     const lower = combined.toLowerCase();
     const firstLine = firstNonEmptyLine(stderr) || firstNonEmptyLine(stdout);
     const detail = firstLine ? `ct update said: ${firstLine}` : `ct update exited ${code} without a diagnostic line`;
 
-    if (lower.includes("unsupported cipher or incorrect key length")) {
+    if (lower.includes("better_auth_secret") || lower.includes("auth secret")) {
         return [
-            "ct update failed — panel encryption key configuration is invalid",
+            "ct update failed — Better Auth secret is missing or invalid",
             detail,
-            ...encryptionFailureHint(env, "update"),
-        ];
-    }
-    if (lower.includes("could not decrypt the data")) {
-        return [
-            "ct update failed — encrypted panel data cannot be decrypted with the current APP_KEY",
-            detail,
-            ...encryptionFailureHint(env, "update"),
+            "run 'ct update' interactively once so .env migration can add BETTER_AUTH_SECRET, or set it with: openssl rand -base64 32",
         ];
     }
     if (lower.includes("credential-lock")) {
@@ -188,7 +180,7 @@ async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reas
     if (!guard.ok) {
         return {
             ok: false,
-            reason: "stack pre-flight: credential-lock guard reports NG\nrefusing to auto-upgrade — run 'docker compose exec -T panel php artisan credential-lock:check'",
+            reason: "stack pre-flight: credential-lock guard reports NG\nrefusing to auto-upgrade — run 'ct recover diagnose'",
         };
     }
     return { ok: true };
@@ -267,8 +259,7 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
         ? await capture($`./ct update`.quiet())
         : await capture($`./ct update`);
     if (!update.ok) {
-        const env = await loadLaravelKeyEnv();
-        for (const line of ctUpdateFailureHint(update.code, update.stderr, update.stdout, env)) log.err(line);
+        for (const line of ctUpdateFailureHint(update.code, update.stderr, update.stdout)) log.err(line);
         return 1;
     }
     if (!opts.quiet) {

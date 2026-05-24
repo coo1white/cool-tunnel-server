@@ -2,29 +2,27 @@
 // operator/src/util/release.ts — version-probing helpers shared
 // between the stale_deployment fix recipe and the auto-update task.
 //
-// "Current" version = panel/config/cool-tunnel.php's 'version' field
-// (the single source of truth for `ct version`).
+// "Current" version = operator/package.json's version field.
 // "Latest" version  = git describe --tags --abbrev=0 origin/main
 // after a `git fetch --tags origin`.
 
 import { $, capture, which } from "./sh";
 
-export const VERSION_FILE = "panel/config/cool-tunnel.php";
+export const VERSION_FILE = "operator/package.json";
 
 export interface VersionState {
     readonly latest: string;   // e.g. "v0.1.15"
     readonly current: string;  // e.g. "0.1.15" (no leading "v")
 }
 
-// Match the canonical PHP config line:  'version' => '0.1.14',
-const VERSION_LINE_RE = /^\s*'version'\s*=>\s*'([0-9.]+)'/m;
+const VERSION_LINE_RE = /^\s*"version"\s*:\s*"([0-9.]+)"/m;
 
-export function parseCurrentVersion(phpText: string): string | null {
-    const m = phpText.match(VERSION_LINE_RE);
+export function parseCurrentVersion(packageJsonText: string): string | null {
+    const m = packageJsonText.match(VERSION_LINE_RE);
     return m ? m[1]! : null;
 }
 
-// Read panel/config/cool-tunnel.php from the cwd and extract the
+// Read operator/package.json from the cwd and extract the
 // version line. Returns null on missing file or unparseable line.
 export async function readCurrentVersion(): Promise<string | null> {
     const f = Bun.file(VERSION_FILE);

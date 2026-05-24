@@ -84,8 +84,8 @@ release note. Removal of a marker without replacement is a license
 violation under this draft.
 
 The corresponding source must include build scripts, Dockerfiles,
-Compose files, Caddy/HAProxy/sing-box templates, manifests, migrations,
-Rust crates, PHP source, Blade/Livewire/Filament code, shell scripts,
+Compose files, Caddy/sing-box templates, manifests, migrations,
+Rust crates, Bun/TypeScript admin and operator code, shell scripts,
 and local deployment patches necessary to reproduce the modified
 service.
 

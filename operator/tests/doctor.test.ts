@@ -79,21 +79,20 @@ test("checkDirectDialOutbound warns on missing strategy", () => {
 test("checkSupervisordStatusOutput accepts any all-running program count", () => {
     const checked = checkSupervisordStatusOutput(
         [
-            "frankenphp                       RUNNING   pid 101, uptime 0:01:00",
-            "queue                            RUNNING   pid 102, uptime 0:01:00",
-            "messenger                        RUNNING   pid 103, uptime 0:01:00",
+            "ct-admin                         RUNNING   pid 101, uptime 0:01:00",
+            "ct-core-daemon                   RUNNING   pid 102, uptime 0:01:00",
         ].join("\n"),
     );
 
     expect(checked.severity).toBe("pass");
-    expect(checked.detail).toBe("3/3 programs running");
+    expect(checked.detail).toBe("2/2 programs running");
 });
 
 test("checkSupervisordStatusOutput warns on partial running state", () => {
     const checked = checkSupervisordStatusOutput(
         [
-            "frankenphp                       RUNNING   pid 101, uptime 0:01:00",
-            "queue                            FATAL     Exited too quickly",
+            "ct-admin                         RUNNING   pid 101, uptime 0:01:00",
+            "ct-core-daemon                   FATAL     Exited too quickly",
         ].join("\n"),
     );
 
@@ -141,7 +140,7 @@ test("summarizeCredentialLockOutput preserves drift reason", () => {
 });
 
 test("summarizeCredentialLockOutput handles empty guard output", () => {
-    expect(summarizeCredentialLockOutput("", "")).toContain("php artisan credential-lock:check");
+    expect(summarizeCredentialLockOutput("", "")).toContain("admin doctor");
 });
 
 test("summarizeCredentialLockOutput redacts secret-bearing guard output", () => {
@@ -159,15 +158,15 @@ test("doctor credential-lock hint points at recover diagnose", async () => {
     const body = await Bun.file("./src/tasks/doctor.ts").text();
 
     expect(body).toContain("ct recover diagnose");
-    expect(body).toContain("php artisan credential-lock:check");
+    expect(body).toContain("credentialLockCheckCommand");
 });
 
-test("doctor checks APP_KEY and APP_PREVIOUS_KEYS without printing key material", async () => {
+test("doctor checks Better Auth secret without printing material", async () => {
     const body = await Bun.file("./src/tasks/doctor.ts").text();
 
-    expect(body).toContain("checkLaravelEncryptionKeys");
-    expect(body).toContain("describeLaravelKey");
-    expect(body).toContain("Fix or remove malformed APP_PREVIOUS_KEYS");
+    expect(body).toContain("checkBetterAuthSecret");
+    expect(body).toContain("BETTER_AUTH_SECRET");
+    expect(body).not.toContain("checkLaravelEncryptionKeys");
 });
 
 test("opensslSClientArgs keeps hostile domain inside one argv value", () => {

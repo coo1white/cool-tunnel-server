@@ -61,7 +61,7 @@ test("buildCombinedManifest x-references list covers every per-tool SBOM", () =>
     const m = buildCombinedManifest({ timestamp: "2026-05-15T16-40-00Z", version: "0.1.15" });
     const refs = m["x-references"];
     expect(refs).toContain("cargo.cdx.json");
-    expect(refs).toContain("composer.cdx.json");
+    expect(refs).toContain("operator.cdx.json");
     expect(refs).toContain("cool-tunnel-server-core.cdx.json");
     expect(refs).toContain("cool-tunnel-server-caddy.cdx.json");
     expect(refs).toContain("cool-tunnel-server-singbox.cdx.json");

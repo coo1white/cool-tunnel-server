@@ -10,9 +10,10 @@
 //   4. compose up -d db redis; wait for DB healthy
 //   5. mariadb import the dump
 //   6. Restore caddy_data volume from caddy_data.tgz
-//   7. compose up -d panel; wait for entrypoint sentinel
-//   8. compose up -d caddy singbox
-//   9. Best-effort health check
+//   7. Restore admin_data volume from admin_data.tgz
+//   8. compose up -d panel; wait for entrypoint sentinel
+//   9. compose up -d caddy singbox
+//   10. Best-effort health check
 //
 // Refuses to run over a populated stack. Single-flight under the
 // same per-project flock as backup/install/update.
@@ -62,7 +63,7 @@ export function validateTarEntries(entries: readonly string[]): string | null {
 }
 
 export function expectedRestoreVolumes(project: string): string[] {
-    return [`${project}_db_data`, `${project}_redis_data`, `${project}_caddy_data`, `${project}_caddy_etc`, `${project}_singbox_config`];
+    return [`${project}_db_data`, `${project}_redis_data`, `${project}_caddy_data`, `${project}_caddy_etc`, `${project}_singbox_config`, `${project}_admin_data`];
 }
 
 export function staleVolumeNames(existing: readonly string[], project: string): string[] {
@@ -181,14 +182,16 @@ export async function runRestore(backupPath: string): Promise<number> {
 
     // ---------- Stage 2 ----------
     step("Restore .env, manifests, templates");
-    // .env contains the operator's DOMAIN / *_PASSWORD / APP_KEY edits.
-    // Without it the panel cannot decrypt stored data and subscription
-    // signatures will not verify.
+    // .env contains the operator's DOMAIN, BETTER_AUTH_SECRET, and
+    // *_PASSWORD edits. Without it the admin panel and data services
+    // cannot start with the restored volumes.
     requireRestoredPath(`${restoreDir}/.env`, ".env");
     requireRestoredPath(`${restoreDir}/manifests`, "manifests/");
     requireRestoredPath(`${restoreDir}/db.sql`, "db.sql");
     requireRestoredPath(`${restoreDir}/caddy_data.tgz`, "caddy_data.tgz");
+    requireRestoredPath(`${restoreDir}/admin_data.tgz`, "admin_data.tgz");
     await validateTarballMembers(`${restoreDir}/caddy_data.tgz`);
+    await validateTarballMembers(`${restoreDir}/admin_data.tgz`);
     cpSync(`${restoreDir}/.env`, ".env");
     chmodSync(".env", 0o600);
     rmSync("manifests", { recursive: true, force: true });
@@ -274,6 +277,26 @@ export async function runRestore(backupPath: string): Promise<number> {
     ok(`caddy_data restored (ACME certs + private keys, into ${caddyDataVolume})`);
 
     // ---------- Stage 7 ----------
+    step("Restore admin_data volume from admin_data.tgz");
+    const adminDataVolume = `${project}_admin_data`;
+    const adminInspect = await capture($`docker volume inspect ${adminDataVolume}`);
+    if (!adminInspect.ok) {
+        await capture($`docker volume create ${adminDataVolume}`);
+    }
+    {
+        const r = await capture(
+            $`docker run --pull never --rm --entrypoint sh -v ${`${adminDataVolume}:/data`} -v ${`${cwd}/${restoreDir}:/in:ro`} cool-tunnel-server-caddy:latest -c ${"cd /data && tar xzf /in/admin_data.tgz"}`,
+        );
+        if (!r.ok) {
+            die(
+                `untar of admin_data.tgz failed (exit ${r.code})`,
+                r.stderr.split("\n")[0] ?? "",
+            );
+        }
+    }
+    ok(`admin_data restored (Better Auth/admin SQLite, into ${adminDataVolume})`);
+
+    // ---------- Stage 8 ----------
     step("Bring up panel + caddy + singbox");
     {
         const r = await capture($`docker compose up -d --no-build --pull never panel`);

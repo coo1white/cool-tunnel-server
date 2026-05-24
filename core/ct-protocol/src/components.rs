@@ -60,7 +60,7 @@ pub enum ComponentKindV1 {
     RustCrate,
     /// A Docker / OCI image (the panel container, the caddy container).
     ContainerImage,
-    /// A PHP package / Composer dep (less common; for the panel itself).
+    /// A legacy PHP package / Composer dependency.
     PhpPackage,
     /// External DoH-over-HTTPS endpoint reachability check.
     /// The verifier reads the LIVE `ServerConfig.doh_resolver` URL
@@ -90,8 +90,8 @@ pub struct VerifySpecV1 {
     /// Liveness-probe declaration. True when the verifier
     /// legitimately has no version line to print — TCP-open
     /// (`bash -c 'exec 3<>/dev/tcp/host/port'`), HTTP reachability
-    /// (`curl -sIo /dev/null …`), artisan-boot (`php artisan
-    /// --version > /dev/null`). When true, the soft version
+    /// (`curl -sIo /dev/null …`), or another command with no stable
+    /// version line. When true, the soft version
     /// matcher is skipped; any verify-passed result is OK
     /// regardless of stdout content. False / unset preserves the
     /// pre-v0.0.37 behaviour exactly: a non-empty first stdout
@@ -283,7 +283,7 @@ mod tests {
     // Pin the field-name AND the snake_case enum representation so
     // future status consumers keep seeing the same JSON contract.
     #[test]
-    fn component_status_json_pins_php_visible_keys() {
+    fn component_status_json_pins_legacy_visible_keys() {
         let s = ComponentStatusV1 {
             name: "caddy".into(),
             installed_version: Some("v2.8.4".into()),

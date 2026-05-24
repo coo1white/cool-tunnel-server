@@ -2,31 +2,31 @@
 
 import { expect, test } from "bun:test";
 import {
-    BOOTSTRAP_ADMIN_PASSWORD_KEY,
-    ensureBootstrapAdminPassword,
-    generateBootstrapAdminPassword,
+    BETTER_AUTH_SECRET_KEY,
+    ensureAdminAuthSecret,
+    generateAdminAuthSecret,
 } from "../src/util/bootstrap-admin";
 
-test("bootstrap admin password is generated when missing", () => {
-    const r = ensureBootstrapAdminPassword("DOMAIN=proxy.example.com\n", () => "local-only-secret-2026");
+test("Better Auth secret is generated when missing", () => {
+    const r = ensureAdminAuthSecret("DOMAIN=proxy.example.com\n", () => "x".repeat(43));
 
     expect(r.changed).toBe(true);
-    expect(r.password).toBe("local-only-secret-2026");
-    expect(r.content).toContain(`${BOOTSTRAP_ADMIN_PASSWORD_KEY}=local-only-secret-2026`);
+    expect(r.secret).toBe("x".repeat(43));
+    expect(r.content).toContain(`${BETTER_AUTH_SECRET_KEY}=${"x".repeat(43)}`);
 });
 
-test("bootstrap admin password preserves existing local value", () => {
-    const env = `${BOOTSTRAP_ADMIN_PASSWORD_KEY}=existing-local-secret\n`;
-    const r = ensureBootstrapAdminPassword(env, () => "new-secret");
+test("Better Auth secret preserves existing strong value", () => {
+    const env = `${BETTER_AUTH_SECRET_KEY}=${"y".repeat(43)}\n`;
+    const r = ensureAdminAuthSecret(env, () => "new-secret");
 
     expect(r.changed).toBe(false);
-    expect(r.password).toBe("existing-local-secret");
+    expect(r.secret).toBe("y".repeat(43));
     expect(r.content).toBe(env);
 });
 
-test("generated bootstrap admin password is non-empty and shell-safe", () => {
-    const password = generateBootstrapAdminPassword();
+test("generated Better Auth secret is URL-safe and strong", () => {
+    const secret = generateAdminAuthSecret();
 
-    expect(password.length).toBeGreaterThanOrEqual(32);
-    expect(password).toMatch(/^[A-Za-z0-9]+$/);
+    expect(secret.length).toBeGreaterThanOrEqual(32);
+    expect(secret).toMatch(/^[A-Za-z0-9_-]+$/);
 });

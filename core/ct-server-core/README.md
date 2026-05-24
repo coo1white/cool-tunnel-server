@@ -1,10 +1,10 @@
 # cool-tunnel-server-core
 
-Latency-sensitive Rust engine for the Cool Tunnel Server admin panel.
+Latency-sensitive Rust engine for the Cool Tunnel Server stack.
 
-The PHP/Filament panel handles the UI and persistence; this binary
-owns the parts where strict types, structured errors, and direct
-syscalls matter:
+The Bun/Hono admin panel handles operator UI, auth, and account state;
+this binary owns the parts where strict types, structured errors, and
+direct syscalls matter:
 
 | Subcommand | What it does |
 | --- | --- |
@@ -26,7 +26,7 @@ cargo build --release
 ```
 
 In production the Compose stack ships a precompiled binary, so the
-panel container can `exec` it without a Rust toolchain.
+Bun admin container can `exec` it without a Rust toolchain.
 
 ## Lint and test
 

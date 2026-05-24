@@ -3,7 +3,7 @@
 //
 // v0.4.0+ has two live render targets:
 //   - caddyfile: ct-server-core still owns the Caddyfile renderer.
-//   - singbox: panel-side SingBoxConfigGenerator shells to singbox-core.
+//   - singbox: Bun admin shells to singbox-core.
 // `haproxy` stays retired.
 //
 // Usage:
@@ -15,7 +15,6 @@ import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { redactSensitive } from "../util/redact";
-import { encryptionFailureHint, loadLaravelKeyEnv } from "../util/laravel-key";
 import type { EnvMap } from "../util/env";
 
 const TARGETS = ["caddyfile", "singbox"] as const;
@@ -47,14 +46,8 @@ export function parseArgs(argv: readonly string[]): { target: Target; passthroug
     return { target, passthrough };
 }
 
-export function renderFailureSummary(target: Target, code: number, stdout: string, stderr: string, env: EnvMap = {}): string {
+export function renderFailureSummary(target: Target, code: number, stdout: string, stderr: string, _env: EnvMap = {}): string {
     const output = `${stdout}\n${stderr}`;
-    if (target === "singbox" && output.includes("Unsupported cipher or incorrect key length")) {
-        return `singbox render failed: ${encryptionFailureHint(env, "render").join(" ")}`;
-    }
-    if (target === "singbox" && output.includes("Could not decrypt the data")) {
-        return `singbox render failed: ${encryptionFailureHint(env, "render").join(" ")}`;
-    }
     if (target === "singbox" && output.includes("rendered sing-box config missing")) {
         return "singbox render failed: /data/config/singbox.json was not created. Run: ct recover diagnose";
     }
@@ -79,16 +72,15 @@ export class RenderTask implements Task {
 
         ctx.logger.info(`rendering ${target} config`);
         const r = target === "singbox"
-            ? await capture($`docker compose exec -T panel php artisan singbox:render ${passthrough}`)
-            : await capture($`docker compose exec -T panel ct-server-core --json ${target} render ${passthrough}`);
+            ? await capture($`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts admin render-singbox ${passthrough}`)
+            : await capture($`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts admin render-caddyfile ${passthrough}`);
         if (r.stdout) process.stdout.write(redactSensitive(r.stdout));
         if (r.stderr) process.stderr.write(redactSensitive(r.stderr));
         if (!r.ok) {
-            const env = await loadLaravelKeyEnv(ctx.cwd, ctx.env);
             return {
                 ok: false,
                 code: r.code || 1,
-                summary: renderFailureSummary(target, r.code, r.stdout, r.stderr, env),
+                summary: renderFailureSummary(target, r.code, r.stdout, r.stderr, ctx.env),
             };
         }
         if (target === "singbox") {

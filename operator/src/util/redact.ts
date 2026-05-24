@@ -10,6 +10,10 @@ const SECRET_ENV_KEYS = [
     "MYSQL_PWD",
     "REDISCLI_AUTH",
     "CT_BOOTSTRAP_ADMIN_PASSWORD",
+    "BETTER_AUTH_SECRET",
+    "AUTH_SECRET",
+    "BETTER_AUTH_SECRETS",
+    "CT_ADMIN_BOOTSTRAP_TOKEN",
     "SESSION_COOKIE",
 ];
 
@@ -17,6 +21,10 @@ const SECRET_JSON_KEYS = [
     "password",
     "token",
     "subscription_secret",
+    "bootstrap_token",
+    "bootstrapToken",
+    "tokenHash",
+    "setupUrl",
     "reality_private_key",
     "private_key",
     "uuid",
@@ -31,6 +39,14 @@ export function redactSensitive(text: string): string {
     out = out.replace(
         /(\/api\/v1\/subscription\/)[A-Za-z0-9_-]+/g,
         "$1<redacted>",
+    );
+    out = out.replace(
+        /(\/setup\/bootstrap\?token=)[A-Za-z0-9_-]+/g,
+        "$1<redacted>",
+    );
+    out = out.replace(
+        /\bctbt_[A-Za-z0-9_-]{20,}\b/g,
+        "ctbt_<redacted>",
     );
     out = out.replace(/\bbase64:[A-Za-z0-9+/=]{20,}\b/g, "base64:<redacted>");
     out = out.replace(

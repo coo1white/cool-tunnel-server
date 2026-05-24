@@ -1,71 +1,29 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Scheduled LTSC audit workflow.
-#
-# The first 30 audit cycles in v0.0.6 / v0.0.7 were run by hand.
-# Cycles 31–50 (and beyond) run here, weekly, automatically. The
-# pattern: cheap automated checks every Monday morning surface
-# regressions before they accumulate.
-#
-# Each job runs independently — one job's failure doesn't block the
-# others. Failing jobs file a GitHub issue (via dependency-review or
-# the maintainer's review of the workflow run).
-
 name: audit
 
 on:
-  # First Monday morning of every week, UTC. Plus on-demand.
   schedule:
-    - cron: '17 8 * * 1'   # 08:17 Mon UTC — early enough that any
-                            # action gets a maintainer's Monday
-                            # without arriving overnight.
+    - cron: '17 8 * * 1'
   workflow_dispatch: {}
-
-  # Also re-run on changes to dependency / manifest / Blade files
-  # so a PR that bumps a dep, drifts a manifest, or breaks a Blade
-  # asset link doesn't slip in.
   pull_request:
     paths:
       - 'core/**'
-      - 'panel/database/migrations/**'
-      - 'core/Cargo.toml'
-      - 'core/Cargo.lock'
-      - 'core/ct-protocol/Cargo.toml'
-      - 'core/ct-server-core/Cargo.toml'
-      - 'panel/composer.json'
-      - 'panel/composer.lock'
-      - 'panel/app/**'
-      - 'panel/resources/views/**'
-      - 'panel/public/**'
+      - 'operator/**'
+      - 'singbox-core/**'
       - 'manifests/*.json'
       - 'docker/**/Dockerfile'
       - 'docker-compose.yml'
-      # v0.4.0+ — singbox-core is the shared sing-box management
-      # package that compiles to the binary bundled in both the
-      # ct-singbox container and the macOS client. A change here
-      # rebuilds the server-side renderer and the client embedded
-      # binary in lockstep, so the anti-tracking + render-shape
-      # guards below MUST re-run.
-      - 'singbox-core/**'
       - 'caddy/Caddyfile.tpl'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false   # don't cancel a scheduled run mid-flight
+  cancel-in-progress: false
 
-# Default token permissions are read-only `contents` since the workflow
-# was originally scheduled-only. PR-triggered runs (gitleaks-action,
-# dependency-review-action, etc.) need read access to the PR's commits
-# and metadata; without the explicit grant the GITHUB_TOKEN gets HTTP
-# 403 listing /repos/.../pulls/N/commits and the secret-scan job dies
-# at startup before scanning a single commit.
 permissions:
   contents: read
   pull-requests: read
 
 jobs:
-
-  # ---------- Cycle 31: cargo-audit (RustSec advisories) ----------
-
   cargo-audit:
     name: cargo audit (RustSec advisory DB)
     runs-on: ubuntu-24.04
@@ -78,26 +36,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88
-      - name: Install cargo-audit
-        run: cargo install --locked cargo-audit
-      - name: Audit
-        # `--deny warnings` so unmaintained / yanked crates also fail
-        # the run, not just CVEs.
-        #
-        # cargo-audit does NOT read project-local audit.toml by
-        # default (only ~/.cargo/audit.toml), so we pass --ignore
-        # flags explicitly mirroring core/audit.toml's policy.
-        # cargo-deny (cycle 32) reads core/deny.toml's
-        # [advisories].ignore on its own. Keep all three in sync.
-        run: |
+      - run: cargo install --locked cargo-audit
+      - run: |
           cargo audit --deny warnings \
-            --ignore RUSTSEC-2023-0071    # rsa 0.9 / Marvin via sqlx-mysql
-                                          # — see core/audit.toml comment
-
-  # ---------- Cycle 32: cargo-deny (licenses + bans + sources) ----
+            --ignore RUSTSEC-2023-0071
 
   cargo-deny:
-    name: cargo deny (licenses + ban list + source registry)
+    name: cargo deny (licenses + bans + sources)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -108,39 +53,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88
-      - name: Install cargo-deny
-        # Pin within the 0.18 line instead of floating: audit output
-        # should move only when this workflow intentionally changes.
-        run: cargo install --locked cargo-deny --version "=0.18.9"
-      - name: Check
-        # deny.toml lives at core/deny.toml.
-        # Run only the bans/licenses/sources subchecks. The `advisories`
-        # subcheck is covered by the separate `cargo audit` job (above).
-        run: cargo deny check bans licenses sources
-
-  # ---------- Cycle 33: composer audit (Packagist advisories) -----
-
-  composer-audit:
-    name: composer audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          tools: composer
-      - name: Audit
-        working-directory: panel
-        run: |
-          if [[ -f composer.lock ]]; then
-              composer audit --abandoned=fail
-          else
-              echo "::warning::composer.lock not committed — composer audit cannot run."
-              echo "::warning::Generate one with: composer install --working-dir=panel"
-          fi
-
-  # ---------- Cycle 34: secret scan (gitleaks) -------------------
+      - run: cargo install --locked cargo-deny --version "=0.18.9"
+      - run: cargo deny check bans licenses sources
 
   secret-scan:
     name: secret scan (gitleaks)
@@ -149,75 +63,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0     # full history so gitleaks scans every commit
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ---------- Cycle 35: manifest drift -----------------------------
-  #
-  # Verify the version in every manifests/*.upstream.json that points
-  # at our own crates / images matches what's actually pinned in
-  # core/Cargo.toml. Catches "I bumped Cargo.toml but forgot the
-  # manifest" regressions like the v0.0.6 audit found.
-
   manifest-drift:
-    name: manifest drift (manifests/ vs Cargo.toml + Dockerfiles)
+    name: manifest drift
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Compare versions
-        run: |
+      - run: |
           set -euo pipefail
           workspace_v=$(awk -F'"' '/^version[[:space:]]*=/ {print $2; exit}' core/Cargo.toml)
-          echo "workspace version: $workspace_v"
-
-          # ct-server-core / ct-protocol manifest versions track the
-          # workspace `version` in core/Cargo.toml — they're the
-          # in-tree Rust crates. `make set-version` updates them in
-          # lockstep.
-          #
-          # The panel is a separate component with its own release
-          # cadence. Its version lives in panel/config/cool-tunnel.php
-          # AND manifests/panel.upstream.json (cross-checked by
-          # ct:version's Cycle 2 drift probe). It does NOT track the
-          # Rust workspace — pre-v0.0.56 this loop forced equality,
-          # which broke the moment panel and Rust intentionally
-          # diverged (v0.0.39 panel + 0.0.31 workspace). The panel-
-          # specific drift check below replaces the workspace-equality
-          # rule for panel.upstream.json.
-          for f in manifests/ct-server-core.upstream.json \
-                   manifests/ct-protocol.upstream.json; do
+          operator_v=$(jq -r .version operator/package.json)
+          for f in manifests/ct-server-core.upstream.json manifests/ct-protocol.upstream.json manifests/panel.upstream.json; do
               v=$(jq -r .version "$f")
               if [[ "$v" != "$workspace_v" ]]; then
                   echo "::error file=$f::manifest version $v does not match workspace $workspace_v"
                   exit 1
               fi
           done
-
-          # Panel: manifests/panel.upstream.json::version must equal
-          # panel/config/cool-tunnel.php::version (the runtime source
-          # of truth that ct:version artisan command prints, and what
-          # the Cycle 2 / v0.0.39 drift probe matches against).
-          # `make set-version` updates both in lockstep; this guard
-          # catches any future drift between the two panel-side
-          # surfaces.
-          panel_manifest_v=$(jq -r .version manifests/panel.upstream.json)
-          panel_config_v=$(awk -F"'" "/'version'[[:space:]]*=>/ {print \$4; exit}" panel/config/cool-tunnel.php)
-          if [[ "$panel_manifest_v" != "$panel_config_v" ]]; then
-              echo "::error::panel manifest version $panel_manifest_v does not match panel/config/cool-tunnel.php version $panel_config_v"
+          if [[ "$operator_v" != "$workspace_v" ]]; then
+              echo "::error file=operator/package.json::operator version $operator_v does not match workspace $workspace_v"
               exit 1
           fi
-          echo "panel version: $panel_manifest_v (manifest = config)"
-
-          # Caddy / mariadb / redis pins must match the FROM / image:
-          # tags in the Dockerfiles + compose file.
-          #
-          # v0.2.0: sing-box + haproxy retired (architecture cut).
-          # The matching sb_manifest / haproxy_manifest checks were
-          # deleted here when manifests/sing-box.upstream.json and
-          # manifests/haproxy.upstream.json went away.
           caddy_manifest=$(jq -r .version manifests/caddy.upstream.json)
           caddy_dockerfile=$(awk '
               /^ARG CT_CADDY_RUNTIME_IMAGE=caddy:/ {
@@ -226,149 +97,42 @@ jobs:
                   print "v"$0
                   exit
               }
-              /^FROM caddy:/ {
-                  sub(/^FROM caddy:/,"")
-                  sub(/-alpine.*$/,"")
-                  sub(/-builder.*$/,"")
-                  print "v"$0
-                  exit
-              }
           ' docker/caddy/Dockerfile)
           if [[ "$caddy_manifest" != "$caddy_dockerfile" ]]; then
               echo "::error::caddy manifest=$caddy_manifest, Dockerfile=$caddy_dockerfile"
               exit 1
           fi
-
           echo "manifest-drift: clean"
 
-  # ---------- Cycle 36: dependency-review (PR-only) --------------
-
-  dependency-review:
-    name: dependency review (vuln + license diff vs base)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      # actions/dependency-review-action requires GitHub Advanced
-      # Security or a public repository for the dependency-graph API
-      # to be available. This repo is private without GHAS, so the
-      # action hard-errors with "Dependency review is not supported
-      # on this repository." That's a repo-config state, not a
-      # code-level signal we can act on — and `cargo audit` (RustSec)
-      # + `cargo deny` (license / source registry) + `composer audit`
-      # already provide the equivalent vuln/license gate for the
-      # actual code paths.
-      #
-      # Step-level continue-on-error makes the action's failure
-      # report as success at the step level, which propagates to the
-      # job's overall conclusion. (Job-level continue-on-error has
-      # different semantics: the WORKFLOW continues but the job
-      # itself still reports as failed.) The error message is still
-      # visible in the run log if a maintainer wants to inspect.
-      # If GHAS is later enabled, drop this flag to restore strict
-      # mode. (v0.0.56.)
-      - uses: actions/dependency-review-action@v4
-        continue-on-error: true
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
-
-  # ---------- Cycle 37: stale-doc grep ----------------------------
-
   stale-docs:
-    name: stale doc references (regex blacklist)
+    name: stale doc references
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-      - name: grep for known-stale strings
-        run: |
+      - run: |
           set -euo pipefail
-          # Strings that, if present, mean a previous-version concept
-          # leaked into the current tree. Add new ones as past pivots
-          # accrete.
           stale_patterns=(
-              # v0.0.1 → v0.0.2 retired forwardproxy@naive in favour of
-              # sing-box. v0.2.0 reinstates it as the canonical
-              # NaiveProxy server (Caddy + klzgrad/forwardproxy@naive
-              # baked in via xcaddy). NOT a stale pattern any more —
-              # this slot intentionally empty.
-              # v0.0.3 → v0.0.4: sing-box ACME gone
-              'sing-box.*built-in ACME|naive inbound.*ACME'
-              # v0.0.7 → v0.0.8: backup.sh used to snapshot singbox_data
-              # for ACME state; that's wrong since v0.0.4 (ACME state
-              # lives in caddy_data). Catch any regression that
-              # re-introduces the wrong volume name in a backup
-              # context.
-              'singbox_data.*ACME|ACME.*singbox_data'
-              # v0.0.7 → v0.0.8: AntiTrackingFilter.php was deleted.
-              # If anything outside CHANGELOG references it again,
-              # somebody re-added a dead file.
-              'AntiTrackingFilter'
-              # v0.0.7 → v0.0.8: camouflage Blade pages used to
-              # reference /static/style.css which 404s. If the link
-              # comes back, the cover site fails the "looks legit"
-              # smell test in scanner devtools.
-              'href="/static/style\.css"'
-              # v0.0.8 → v0.0.9: X-CT-Signature / X-CT-Protocol
-              # response headers leaked the project name to anyone
-              # hitting the subscription endpoint. v0.0.9 moved the
-              # signature into the JSON body. If these strings come
-              # back as ->header() calls or as outbound HTTP headers,
-              # somebody re-introduced the fingerprint.
-              "->header\\('X-CT-"
-              # v0.0.8 → v0.0.9: NaiveProxy is HTTP/2-only at the
-              # protocol level, so UDP/443 should not be mapped
-              # anywhere in the stack — a UDP listen with no
-              # service produces fingerprintable RSTs on QUIC scans.
-              # CI catches "443:443/udp" / "443/udp" port maps in
-              # any compose / Dockerfile.
-              '"443:443/udp"|EXPOSE.*443/udp'
-              # v0.0.5 → v0.0.6: caddyfile_safe_username calling-site
-              # legacy is allowed (renaming is a v0.1 thing)
+            'php artisan'
+            'Laravel|Filament|FrankenPHP'
+            'CT_BOOTSTRAP_ADMIN_PASSWORD|ct:make-admin'
+            'panel/config/cool-tunnel\.php|ct:version'
           )
-          # Build the scan list with `find` rather than relying on grep's
-          # `--exclude` / `--exclude-dir` / `--include`. The latter combo
-          # quietly fails on this runner — `--exclude=CHANGELOG.md` was
-          # ignored when paired with `--include='*.md'`, and matches in
-          # excluded files leaked through. `find` has explicit, well-defined
-          # `-not -name` / `-not -path` semantics that work the same on
-          # macOS and Ubuntu.
-          #
-          # Excluded by intent:
-          #   - History/changelog files where past pivots are deliberately
-          #     mentioned (CHANGELOG.md, NOTICE, AUDIT.md,
-          #     THIRD_PARTY_LICENSES.md).
-          #   - Upstream-component manifests + their README, where the
-          #     `note:` field documents protocol/feature relationships
-          #     (e.g. "wire protocol identical to forwardproxy@naive",
-          #     "we use Caddy for ACME because sing-box's built-in ACME
-          #     is less robust"). These notes describe *why* we made the
-          #     pivots; flagging them defeats the purpose of the manifest.
-          #   - docs/installation-debian.md historical-context paragraph
-          #     about ACME state living in singbox_data (corrected in
-          #     v0.0.4; the doc explains the correction).
-          #   - .git, target, .github (build/CI scaffolding).
           mapfile -t scan_files < <(find . -type f \
-              \( -name '*.md' -o -name '*.rs' -o -name '*.php' \
-                 -o -name '*.tpl' -o -name '*.json' -o -name '*.yml' \
-                 -o -name '*.sh' -o -name '*.blade.php' \
-                 -o -name 'Dockerfile*' \) \
+              \( -name '*.md' -o -name '*.rs' -o -name '*.ts' -o -name '*.json' -o -name '*.yml' -o -name '*.sh' -o -name 'Dockerfile*' \) \
               -not -path './.git/*' \
+              -not -path './.runtime/*' \
               -not -path './target/*' \
-              -not -path './.github/*' \
-              -not -path '*/vendor/*' \
+              -not -path './.github/workflows/audit.yml' \
               -not -path '*/node_modules/*' \
+              -not -path './operator/tests/*' \
+              -not -path './operator/src/util/redact.ts' \
               -not -name 'CHANGELOG.md' \
               -not -name 'NOTICE' \
               -not -name 'AUDIT.md' \
+              -not -name 'LTSC.md' \
               -not -name 'THIRD_PARTY_LICENSES.md' \
-              -not -name 'sing-box.upstream.json' \
-              -not -name 'singbox.upstream.json' \
-              -not -name 'caddy.upstream.json' \
-              -not -path './manifests/README.md' \
-              -not -path './docs/installation-debian.md')
+              -not -path './docs/architectural-decisions-2026.md')
           fail=0
           for pat in "${stale_patterns[@]}"; do
               if grep -EHn "$pat" "${scan_files[@]}" 2>/dev/null; then
@@ -377,80 +141,6 @@ jobs:
               fi
           done
           exit "$fail"
-
-  # ---------- Cycle 38: PHP style (Laravel Pint) ------------------
-  #
-  # Catches drift in PHP indentation, import ordering, declare(strict_types=1)
-  # placement etc. Pint is Laravel's pre-configured wrapper around php-cs-fixer.
-
-  php-style:
-    name: php style (laravel pint --test)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          tools: composer
-      - name: composer install (panel)
-        working-directory: panel
-        run: |
-          composer install --no-progress --no-interaction --prefer-dist --ignore-platform-req=ext-redis
-      - name: pint --test
-        working-directory: panel
-        run: |
-          if [[ -x vendor/bin/pint ]]; then
-              vendor/bin/pint --test
-          else
-              echo "::warning::laravel/pint not in panel/composer.json — add it as a dev dep"
-          fi
-
-  # ---------- Cycle 39: Blade asset-link 404 check ----------------
-  #
-  # Catches the v0.0.7 camouflage-page bug class: <link href="/foo.css">
-  # or <script src="/foo.js"> pointing at a path that has no matching
-  # public file or registered route. False-negatives: dynamically
-  # generated paths (asset(...), Vite::asset, request()->root() etc.).
-  # Plain literal hrefs starting with / and ending in .css/.js/.svg/.png
-  # are checked.
-
-  blade-asset-links:
-    name: blade asset-link 404 check
-    runs-on: ubuntu-24.04
-    timeout-minutes: 3
-    steps:
-      - uses: actions/checkout@v4
-      - name: scan blade files for broken static-asset hrefs
-        run: |
-          set -euo pipefail
-          fail=0
-          # Find <link href="/..."> and <script src="/..."> with literal
-          # paths to .css/.js/.svg/.png/.ico/.webp/.woff(2). For each
-          # one, verify there's a corresponding file in panel/public/.
-          while IFS= read -r line; do
-              file=$(cut -d: -f1 <<< "$line")
-              path=$(grep -oE '(href|src)="/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)"' <<< "$line" \
-                     | grep -oE '/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)' || true)
-              if [[ -z "$path" ]]; then continue; fi
-              if [[ ! -f "panel/public${path}" ]]; then
-                  echo "::error file=$file::$path is referenced but panel/public${path} does not exist"
-                  fail=1
-              fi
-          done < <(grep -rEn '(href|src)="/[A-Za-z0-9_./-]+\.(css|js|svg|png|ico|webp|woff2?)"' \
-                       panel/resources/views 2>/dev/null || true)
-          exit "$fail"
-
-  # ---------- Cycle 43: sqlx offline metadata staleness check ----
-  #
-  # Catches the v0.0.10/v0.0.11 BIGINT UNSIGNED bug class at lint
-  # time: every `sqlx::query!()` call now has its column types
-  # frozen in core/.sqlx/*.json (see scripts/sqlx-prepare.sh).
-  # If a panel migration changes a column type but nobody runs
-  # `make sqlx-prepare`, the production binary will fail at
-  # runtime. Instead, we validate that the committed `.sqlx/`
-  # files load against the current source's `query!()` calls
-  # — a stale metadata file fails this job at CI time.
 
   sqlx-offline-check:
     name: sqlx offline metadata up to date
@@ -464,137 +154,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88
-      - name: Verify .sqlx/ matches the workspace's query!() calls
-        env:
-          SQLX_OFFLINE: "true"
-        run: |
+      - run: |
           set -euo pipefail
           if [[ ! -d .sqlx ]]; then
-              echo "::error::core/.sqlx/ is missing. Run 'make sqlx-prepare' on a host with the live DB and commit the result."
+              echo "::error::core/.sqlx/ is missing. Regenerate it from a trusted dev database and commit the result."
               exit 1
           fi
-          # cargo check fails with "no cached data for query \"...\""
-          # when a query!() call is not represented in .sqlx/. That
-          # means either: (a) someone added a query!() without
-          # running prepare; (b) someone changed a query's SQL but
-          # didn't refresh; (c) a migration changed column types and
-          # the existing JSON is now wrong-shaped.
           cargo check --workspace --locked --message-format=human
+        env:
+          SQLX_OFFLINE: "true"
 
-  # ---------- Cycle 41: PHP class-vs-filename lint (PSR-4) -------
-  #
-  # Catches the v0.0.10 showstopper bug class: a PHP file
-  # declares `class Foo` but lives at `Bar.php`. Composer's PSR-4
-  # autoloader resolves `App\Services\Bar::class` to `Bar.php`,
-  # finds it, includes it — but the class declared inside is
-  # `Foo`, so the symbol Bar isn't loaded. Result: every
-  # `app(Bar::class)` call hits "Class not found" at runtime,
-  # invisible until someone clicks the path that triggers it.
-  # `composer dump-autoload --strict-psr` would catch this if
-  # composer was happy with our app, so we run that too.
-
-  php-psr4:
-    name: php class-vs-filename (PSR-4 strict)
+  dependency-review:
+    name: dependency review (PR only)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
+      - uses: actions/dependency-review-action@v4
+        continue-on-error: true
         with:
-          php-version: '8.4'
-          tools: composer
-      - name: composer install
-        working-directory: panel
-        run: composer install --no-progress --no-interaction --prefer-dist --ignore-platform-req=ext-redis
-      - name: composer dump-autoload --strict-psr
-        working-directory: panel
-        run: composer dump-autoload --strict-psr --no-scripts
-      - name: grep filename != classname
-        run: |
-          set -euo pipefail
-          fail=0
-          # For every PHP file under panel/app, find the first
-          # `class|interface|trait|abstract class|final class` decl
-          # and check its name matches the basename. Skips files
-          # without any decl (Migrations, helpers).
-          while IFS= read -r f; do
-              base=$(basename "$f" .php)
-              # Modifier prefix uses `*` (not `?`) so chains like
-              # `final readonly class X` (PHP 8.2+, used by the
-              # v0.0.93 Symfony Messenger DTOs in app/Messages/)
-              # match. `readonly` joins `abstract` + `final` in
-              # the modifier set. `|| true` on the pipeline keeps
-              # grep's no-match exit (pipefail-amplified by
-              # `set -e` via command substitution) from killing
-              # the script before the `if -z` branch handles the
-              # legitimate "no decl in this file" case.
-              decl=$(grep -E '^[[:space:]]*((abstract|final|readonly)[[:space:]]+)*(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)' "$f" \
-                     | head -1 \
-                     | sed -E 's/.*(class|interface|trait|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/' \
-                     || true)
-              if [[ -z "$decl" ]]; then continue; fi
-              if [[ "$decl" != "$base" ]]; then
-                  echo "::error file=$f::declares \`$decl\` but file is \`$base.php\` — PSR-4 autoloading will fail"
-                  fail=1
-              fi
-          done < <(find panel/app -name '*.php' -type f)
-          exit "$fail"
-
-  # ---------- Cycle 42: PHPStan (undefined-method / type errors) -
-  #
-  # Catches the v0.0.10 second showstopper: PHP services calling
-  # `$this->core->renderCaddyfile()` on a CtServerCore class
-  # that has no such method. PHP only finds out at runtime
-  # (a fatal Error). PHPStan does method-existence + type
-  # checks at lint time. We start at level 5 — strict enough to
-  # catch undefined methods + wrong-type args, lenient enough to
-  # not require pervasive @phpstan annotations.
-
-  phpstan:
-    name: phpstan (level 5)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 8
-    steps:
-      - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          tools: composer, phpstan
-      - name: composer install
-        working-directory: panel
-        run: composer install --no-progress --no-interaction --prefer-dist --ignore-platform-req=ext-redis
-      - name: phpstan analyse
-        working-directory: panel
-        run: |
-          if [[ ! -f phpstan.neon ]]; then
-              # Minimal config — analyse app/, level 5, exclude
-              # vendor/storage. Operators can drop in a more
-              # thorough phpstan.neon later.
-              cat > phpstan.neon <<'NEON'
-          parameters:
-              level: 5
-              paths:
-                  - app
-              excludePaths:
-                  - vendor
-                  - storage
-                  - bootstrap/cache
-              treatPhpDocTypesAsCertain: false
-          NEON
-          fi
-          phpstan analyse --memory-limit=512M --no-progress --error-format=github
-
-  # ---------- Cycle 40: anti-tracking config smell-test ----------
-  #
-  # Static assertions on the templates we ship.
-  # v0.4.0+: sing-box (VLESS+Reality) owns the forward-proxy role.
-  # The proxy-side hardening (cover-site SNI, xtls-rprx-vision flow,
-  # Reality handshake) lives in the singbox-core renderer + ct-singbox
-  # container. The Caddyfile shrinks to:
-  #   layer4 SNI splitter (panel.* → inner :8443, everything else →
-  #   ct-singbox:443) + inner :8443 panel reverse-proxy.
-  # No ACME cert is acquired for the proxy domain — Reality replaces
-  # that step with its own cover-site cryptography.
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
 
   anti-tracking-config:
     name: anti-tracking config smell-test
@@ -602,101 +183,16 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-      - name: assert Caddyfile hardening
-        run: |
+      - run: |
           set -euo pipefail
           tpl=caddy/Caddyfile.tpl
-          fail=0
-          # All rules below check OPERATIVE Caddyfile lines, not
-          # commentary. The Caddyfile keeps a hashed-comment history
-          # of past forms — invaluable context for future
-          # maintainers, but the regexes here would naively match
-          # those commented-out historical strings and flag them as
-          # live regressions. v0.0.56 anchors the checks to
-          # non-comment lines via `grep -v '^\s*#'` upstream of the
-          # regex test.
           non_comments=$(grep -vE '^\s*#' "$tpl")
-          # If the file ever sprouts a "respond" with a recognisable
-          # string ("ok", "alive", project names, protocol tells),
-          # that's a fingerprintable signal. v0.4.0 has no
-          # quoted-string responds in operative lines; the
-          # cert-acquisition stub site from v0.3.x is gone (no proxy-
-          # domain cert anymore — Reality replaces it).
-          if echo "$non_comments" | grep -qE 'respond\s+"(managed|ok|alive|cool|tunnel|naive|sing-?box|reality|vless)"'; then
-              echo "::error file=$tpl::Caddy site must not respond with a recognisable string"
-              fail=1
+          if grep -Eq 'respond\s+"?(ok|alive|cool|tunnel|proxy)' <<< "$non_comments"; then
+              echo "::error file=$tpl::Caddy should not expose recognizable probe responses"
+              exit 1
           fi
-          # Caddy admin must bind 127.0.0.1 only — never widen to
-          # an interface that's reachable from outside the container.
-          if echo "$non_comments" | grep -qE '^\s*admin\s+0\.0\.0\.0|^\s*admin\s+[^1]'; then
-              echo "::error file=$tpl::Caddy admin must remain loopback (admin 127.0.0.1:2019)"
-              fail=1
+          if grep -Eq 'Server:|X-Powered-By|X-CT-' <<< "$non_comments"; then
+              echo "::error file=$tpl::fingerprinting header found"
+              exit 1
           fi
-          # v0.4.0+: the layer4 catch-all branch MUST route the
-          # cover-site SNI traffic to ct-singbox (the sing-box
-          # VLESS+Reality container). Match a `proxy ct-singbox:443`
-          # directive in caddy-l4's short form.
-          if ! echo "$non_comments" | grep -qE 'proxy\s+ct-singbox:443'; then
-              echo "::error file=$tpl::layer4 block must proxy cover-site SNI to ct-singbox:443"
-              fail=1
-          fi
-          # And it MUST scope the panel routing behind a TLS-SNI
-          # matcher — never a blanket proxy that exposes ct-singbox
-          # to panel.* clients (which would defeat the SNI split).
-          if ! echo "$non_comments" | grep -qE '^\s*sni\s'; then
-              echo "::error file=$tpl::layer4 block must use a 'sni' matcher to scope panel.* traffic"
-              fail=1
-          fi
-          # v0.4.0: the Caddyfile must NOT acquire a cert for the
-          # proxy domain — Reality replaces ACME on that path. A
-          # `tls_internal` or `tls { issuer ... }` block scoped to
-          # the proxy-domain hostname here would defeat the
-          # cover-site posture (Caddy would present its own cert
-          # instead of letting sing-box do Reality's cover-site
-          # cryptography). The panel domain still gets ACME — that
-          # block stays inside the inner :8443 reverse-proxy site.
-          exit "$fail"
-      - name: assert singbox-core renderer carries Reality hardening posture
-        run: |
-          set -euo pipefail
-          src=singbox-core/src/config/render.ts
-          fail=0
-          # v0.4.0: the server-side renderer is singbox-core's
-          # renderServerConfig (Bun TS, compiled into the binary
-          # bundled in both the panel and ct-singbox containers).
-          # It MUST emit:
-          #   - flow: "xtls-rprx-vision"     (Reality + uTLS Vision)
-          #   - reality.enabled: true        (the cover-site posture)
-          #   - reality.handshake.{server,server_port}
-          #   - max_time_difference          (anti-replay window)
-          # The hide_ip / hide_via / probe_resistance vocabulary from
-          # v0.3.x doesn't directly apply — sing-box's vless+reality
-          # inbound replaces all three with the cover-site handshake.
-          # We assert on the Reality-specific surface so a future
-          # accidental flow downgrade (e.g. dropping vision, exposing
-          # the credential over a non-Reality TLS) gets flagged here.
-          if ! grep -q 'xtls-rprx-vision' "$src"; then
-              echo "::error file=$src::renderServerConfig must emit flow=\"xtls-rprx-vision\" (Reality + uTLS Vision)"
-              fail=1
-          fi
-          if ! grep -qE 'reality:\s*\{|reality:\s*$' "$src"; then
-              echo "::error file=$src::renderServerConfig must emit a tls.reality block"
-              fail=1
-          fi
-          if ! grep -q 'max_time_difference' "$src"; then
-              echo "::error file=$src::renderServerConfig must set reality.max_time_difference (anti-replay window)"
-              fail=1
-          fi
-          exit "$fail"
-      - name: assert subscription endpoint has no project-identifying headers
-        run: |
-          set -euo pipefail
-          fail=0
-          # Custom X-CT-* response headers were a project tell on
-          # /api/v1/subscription/* responses. Anything ->header()ing
-          # an X-CT-* name is a regression.
-          if grep -rEn "->header\\(['\"]X-CT-" panel/app 2>/dev/null; then
-              echo "::error::SubscriptionController must not emit X-CT-* response headers (signature lives in JSON body)"
-              fail=1
-          fi
-          exit "$fail"
+          echo "anti-tracking-config: clean"

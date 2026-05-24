@@ -2,16 +2,16 @@
 # Tag/source version-sync gate.
 #
 # Fires ONLY on tag pushes matching `v*`. Strips the leading `v`
-# from the tag (v0.0.61 → 0.0.61) and asserts the panel's source-
-# of-record version line in panel/config/cool-tunnel.php matches.
-# That field is what `php artisan ct:version` prints and what the
-# component-check matcher consumes, so a tag whose source disagrees
+# from the tag (v0.0.61 → 0.0.61) and asserts the Bun operator
+# package version in operator/package.json matches. That field is
+# what `ct version` prints and what the component-check matcher
+# consumes, so a tag whose source disagrees
 # is the upstream half of the drift class that bit us at v0.0.61
 # (the source was correct that time; this gate would still have
 # fired loudly if a future release-cut skipped `make set-version`
 # or a history rewrite dropped the bump).
 #
-# Scope: panel config only — manifests/*.upstream.json are bumped
+# Scope: operator package only — manifests/*.upstream.json are bumped
 # atomically by `make set-version` and verified at runtime by the
 # component-check probes themselves, so adding them here would be
 # belt-and-braces. Extend if a future incident shows otherwise.
@@ -30,14 +30,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  panel-config-matches-tag:
-    name: panel/config/cool-tunnel.php matches tag
+  operator-package-matches-tag:
+    name: operator/package.json matches tag
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4
 
-      - name: Assert panel config version equals tag version
+      - name: Assert operator package version equals tag version
         run: |
           set -euo pipefail
 
@@ -47,23 +47,19 @@ jobs:
           # and must still match whatever the source records.
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
-          file="panel/config/cool-tunnel.php"
+          file="operator/package.json"
 
           if [ ! -f "$file" ]; then
             echo "::error file=${file}::expected file does not exist at tag ${tag}"
             exit 1
           fi
 
-          # Tolerate whitespace drift around the key/operator but
-          # demand an exact match on the version literal and the
-          # trailing comma. Anchored at column 0 so a stray version
-          # string in a comment or docblock can't satisfy the gate.
-          pattern="^[[:space:]]*'version'[[:space:]]*=>[[:space:]]*'${version}',"
+          pattern="^[[:space:]]*\"version\"[[:space:]]*:[[:space:]]*\"${version}\""
 
           if ! grep -Eq "$pattern" "$file"; then
             echo "::error file=${file}::tag ${tag} implies version ${version}, but ${file} does not declare it."
             echo "--- 'version' lines actually present in ${file} ---"
-            grep -nE "^[[:space:]]*'version'[[:space:]]*=>" "$file" || echo "(none)"
+            grep -nE "^[[:space:]]*\"version\"[[:space:]]*:" "$file" || echo "(none)"
             echo "--- expected pattern ---"
             echo "${pattern}"
             echo "--- fix ---"

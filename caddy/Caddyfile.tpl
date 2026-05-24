@@ -107,5 +107,7 @@ https://{{ .PanelDomain }}:8443 {
     log {
         output discard
     }
-    reverse_proxy panel:9000
+    reverse_proxy panel:9000 {
+        header_up X-Forwarded-For {remote_host}
+    }
 }

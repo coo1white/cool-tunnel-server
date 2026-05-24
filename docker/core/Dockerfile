@@ -210,7 +210,7 @@ CMD ["--help"]
 # Why a stage in this Dockerfile rather than a pull from
 # Docker Hub: anonymous Docker Hub pulls are rate-limited
 # (100/6h per IP). On a fresh VPS that just pulled
-# rust:1.86-alpine + alpine:3.20 + caddy + sing-box + php:8.3-fpm
+# rust + alpine + caddy + sing-box + Bun runtime images
 # + mariadb + redis to bring the stack up, the limit is already
 # half-consumed; one extra `docker run rust:1.86-alpine` at
 # prepare time can tip over. Building this stage as part of the

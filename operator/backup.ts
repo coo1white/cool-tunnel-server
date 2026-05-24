@@ -6,11 +6,12 @@
 // under ./backups/. Contents:
 //   - db.sql                 mariadb-dump (consistent, single-tx)
 //   - caddy_data.tgz         caddy ACME state (cert + private keys)
+//   - admin_data.tgz         Better Auth/admin SQLite state
 //   - .env                   secrets + tenant config
 //   - manifests/             release manifest set
 //
 // File mode is 0600 (operator-only) per the round-9 DR audit; the
-// tarball contains both APP_KEY and the encrypted password blobs —
+// tarball contains auth/database secrets and persisted state —
 // world-readable mode is a confidentiality bug.
 //
 // Single-flight: re-execs itself under `flock -n` so two concurrent
@@ -62,17 +63,17 @@ async function dumpDatabase(env: Record<string, string>, dest: string): Promise<
     ok("db.sql written");
 }
 
-async function snapshotCaddyData(volumeName: string, tmpDir: string, destName: string): Promise<void> {
-    step("Snapshot caddy_data volume (ACME certificates + private keys)");
-    // Quiesce caddy first — a cert renewal completing mid-tar would
-    // land a half-written *.crt or *.key in the archive.
-    const wasRunning = await serviceRunning("caddy");
+async function snapshotVolume(volumeName: string, tmpDir: string, destName: string, label: string, serviceToQuiesce: "caddy" | "panel"): Promise<void> {
+    step(`Snapshot ${volumeName} volume (${label})`);
+    // Quiesce the writer first: Caddy may be renewing cert files,
+    // and panel owns the SQLite WAL under admin_data.
+    const wasRunning = await serviceRunning(serviceToQuiesce);
     if (wasRunning) {
-        const stopped = await capture($`docker compose stop caddy`);
+        const stopped = await capture($`docker compose stop ${serviceToQuiesce}`);
         if (!stopped.ok) {
             die(
-                "could not stop caddy before backing up ACME data",
-                stopped.stderr.split("\n")[0] || "Run: docker compose logs --tail=80 caddy",
+                `could not stop ${serviceToQuiesce} before backing up ${volumeName}`,
+                stopped.stderr.split("\n")[0] || `Run: docker compose logs --tail=80 ${serviceToQuiesce}`,
             );
         }
     }
@@ -84,23 +85,23 @@ async function snapshotCaddyData(volumeName: string, tmpDir: string, destName: s
         );
     } finally {
         if (wasRunning) {
-            const started = await capture($`docker compose start caddy`);
+            const started = await capture($`docker compose start ${serviceToQuiesce}`);
             if (!started.ok) {
-                warn(`caddy did not restart after backup snapshot: ${started.stderr.split("\n")[0] || `exit ${started.code}`}`);
-                warn("run: docker compose start caddy && docker compose logs --tail=80 caddy");
+                warn(`${serviceToQuiesce} did not restart after backup snapshot: ${started.stderr.split("\n")[0] || `exit ${started.code}`}`);
+                warn(`run: docker compose start ${serviceToQuiesce} && docker compose logs --tail=80 ${serviceToQuiesce}`);
             }
         }
     }
     if (!r.ok) {
-        die(`tar of caddy_data volume failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
+        die(`tar of ${volumeName} volume failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
     }
-    ok(`caddy_data.tgz written (from volume ${volumeName})`);
+    ok(`${destName} written (from volume ${volumeName})`);
 }
 
 async function bundleTarball(outPath: string, tmpDir: string): Promise<void> {
     step(`Bundle into ${outPath}`);
     const r = await capture(
-        $`tar -czf ${outPath} -C ${tmpDir} db.sql caddy_data.tgz -C .. .env manifests caddy/Caddyfile.tpl`,
+        $`tar -czf ${outPath} -C ${tmpDir} db.sql caddy_data.tgz admin_data.tgz -C .. .env manifests caddy/Caddyfile.tpl`,
     );
     if (!r.ok) {
         die(`tar bundle failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
@@ -111,11 +112,10 @@ async function bundleTarball(outPath: string, tmpDir: string): Promise<void> {
 // Exported entrypoint so the standalone CLI here and the
 // operator/src/tasks/backup.ts wrapper share one implementation.
 export async function runBackup(): Promise<number> {
-    // Round-9 DR audit fix: the tarball contains .env (APP_KEY,
-    // DB_ROOT_PASSWORD, REDIS_PASSWORD) AND the encrypted password
-    // blobs. World-readable would let any other user on the host
-    // recover all tenant cleartext. Mode 0600 on the tarball + the
-    // intermediate tmp/* files.
+    // The tarball contains .env (BETTER_AUTH_SECRET, DB_ROOT_PASSWORD,
+    // REDIS_PASSWORD) and persisted runtime state. World-readable would
+    // let any other user on the host recover secrets. Mode 0600 on the
+    // tarball + intermediate tmp/* files.
     process.umask(0o077);
 
     // Resolve cwd to repo root so relative paths (.env, manifests,
@@ -157,7 +157,10 @@ export async function runBackup(): Promise<number> {
 
         const project = await composeProjectName();
         const caddyDataVolume = `${project}_caddy_data`;
-        await snapshotCaddyData(caddyDataVolume, tmpDir, "caddy_data.tgz");
+        await snapshotVolume(caddyDataVolume, tmpDir, "caddy_data.tgz", "ACME certificates + private keys", "caddy");
+
+        const adminDataVolume = `${project}_admin_data`;
+        await snapshotVolume(adminDataVolume, tmpDir, "admin_data.tgz", "Better Auth/admin SQLite state", "panel");
 
         await bundleTarball(out, tmpDir);
 

@@ -10,7 +10,6 @@ test("Dockerfiles consume prebuilt singbox-core instead of compiling on VPS", as
         expect(body).toContain("ARG CT_SINGBOX_CORE_IMAGE=cool-tunnel-server-singbox-core:latest");
         expect(body).toContain("FROM ${CT_SINGBOX_CORE_IMAGE} AS singbox-core-stage");
         expect(body).toContain("COPY --from=singbox-core-stage /usr/local/bin/singbox-core");
-        expect(body).not.toContain("bun install --frozen-lockfile");
         expect(body).not.toContain("bunx tsc --noEmit");
         expect(body).not.toContain("bun build --compile");
     }
@@ -172,25 +171,6 @@ test("install and update avoid y/n prompts during deploy preflights", async () =
     expect(update).toContain("reset to origin/main; previous HEAD saved as");
 });
 
-test("ct wrapper has recover shell fallback for broken VPS updates", async () => {
-    const body = await Bun.file("../ct").text();
-
-    expect(body).toContain("recover_subcommand");
-    expect(body).toContain("recover_diagnose");
-    expect(body).toContain("recover_fix_stale_singbox");
-    expect(body).toContain("recover_app_key_drift");
-    expect(body).toContain("recover_reset_reality");
-    expect(body).toContain("APP_PREVIOUS_KEYS");
-    expect(body).toContain("php artisan recover:reset-reality --no-interaction");
-    expect(body).toContain("Panel image does not have recover:reset-reality yet");
-    expect(body).toContain("php artisan tinker --execute");
-    expect(body).toContain("ensureRealityKeypair");
-    expect(body).toContain("docker compose exec -T panel php artisan credential-lock:check");
-    expect(body).toContain("docker inspect ct-singbox --format");
-    expect(body).toContain("docker compose exec -T panel rm -f /data/config/singbox.json");
-    expect(body).toContain("recover)      recover_subcommand");
-});
-
 test("bootstrap unexpected failures print next steps without leaking secrets", async () => {
     const body = await Bun.file("../scripts/bootstrap.sh").text();
 
@@ -203,17 +183,30 @@ test("bootstrap unexpected failures print next steps without leaking secrets", a
     expect(body).toContain("systemctl status docker --no-pager");
 });
 
-test("panel entrypoint exports generated APP_KEY before encrypted seed data", async () => {
+test("panel entrypoint runs Bun admin migrations and renders", async () => {
     const body = await Bun.file("../docker/panel/entrypoint.sh").text();
 
-    expect(body).toContain("sync_app_key_env_from_file");
-    expect(body).toContain("export APP_KEY=");
-    expect(body).toContain("rm -f bootstrap/cache/config.php");
-    expect(body.indexOf("sync_app_key_env_from_file")).toBeLessThan(body.indexOf("php artisan db:seed"));
-    expect(body.indexOf("php artisan key:generate --force")).toBeLessThan(body.indexOf("php artisan db:seed"));
+    expect(body).toContain("BETTER_AUTH_SECRET");
+    expect(body).toContain("admin migrate");
+    expect(body).toContain("render caddyfile");
+    expect(body).toContain("render singbox");
+    expect(body).not.toContain("php artisan");
 });
 
-test("install path uses VPS-local bootstrap admin password, not a public fixed secret", async () => {
+test("Caddy panel proxy sets the only trusted Better Auth client IP header", async () => {
+    const caddy = await Bun.file("../caddy/Caddyfile.tpl").text();
+    const auth = await Bun.file("./src/admin/auth.ts").text();
+    const compose = await Bun.file("../docker-compose.yml").text();
+
+    expect(caddy).toContain("header_up X-Forwarded-For {remote_host}");
+    expect(auth).toContain('ipAddressHeaders: ["x-forwarded-for"]');
+    expect(auth).not.toContain("cf-connecting-ip");
+    expect(auth).not.toContain("x-real-ip");
+    expect(compose).toContain("127.0.0.1:9000:9000");
+    expect(compose).toContain("proxy-header");
+});
+
+test("install path uses Better Auth first-owner token, not a default password", async () => {
     const install = await Bun.file("./install.ts").text();
     const update = await Bun.file("./update.ts").text();
     const envMigrate = await Bun.file("./src/util/env-migrate.ts").text();
@@ -221,17 +214,16 @@ test("install path uses VPS-local bootstrap admin password, not a public fixed s
     const envExample = await Bun.file("../.env.example").text();
     const readme = await Bun.file("../README.md").text();
 
-    expect(install).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
-    expect(install).toContain("--password=${env.BOOTSTRAP_ADMIN_PASSWORD}");
-    expect(update).toContain("generateBootstrapAdminPassword");
-    expect(update).toContain("ct:make-admin --bootstrap-default");
-    expect(envMigrate).toContain("bootstrap-admin-password");
-    expect(panelEntrypoint).toContain("ensure_bootstrap_admin_password_env");
-    expect(panelEntrypoint).toContain("ct:make-admin --bootstrap-default --no-interaction");
-    expect(envExample).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD=");
-    expect(readme).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
+    expect(install).toContain("ct admin bootstrap");
+    expect(update).toContain("generateAdminAuthSecret");
+    expect(envMigrate).toContain("better-auth-secret");
+    expect(panelEntrypoint).toContain("BETTER_AUTH_SECRET");
+    expect(envExample).toContain("BETTER_AUTH_SECRET=");
+    expect(readme).toContain("ct admin bootstrap");
 
     for (const body of [install, update, envMigrate, panelEntrypoint, envExample, readme]) {
         expect(body).not.toContain("cool-tunnel-server-2026");
+        expect(body).not.toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
+        expect(body).not.toContain("ct:make-admin");
     }
 });

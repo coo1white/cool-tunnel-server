@@ -4,8 +4,8 @@
 //!
 //! Why a daemon at all (vs. one-shot CLI invocations)? The DB pool
 //! stays warm, which makes per-request latency roughly 5x lower —
-//! that matters for the "save in Filament → reload visible" cycle the
-//! admin clicks through dozens of times.
+//! that matters for the "admin action → rendered config/reload
+//! visible" cycle operators click through repeatedly.
 //!
 //! Pool lifecycle (post-perf/share-db-pool refactor): `serve()`
 //! constructs ONE `MySqlPool` at startup and holds it for the
@@ -53,11 +53,10 @@ const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
 /// fair under contention.
 const MAX_REQUEST_READ_CHUNK_BYTES: usize = 8 * 1024;
 
-/// Concurrent-handler cap. The panel is the only legitimate client of
-/// this socket and runs `FrankenPHP` with `worker num 4` (default in
-/// docker/panel/Caddyfile). 16 leaves headroom for queue + scheduler
-/// + the components.md probe also shelling out, while preventing a
-/// misbehaving client from driving unbounded handler-task spawn.
+/// Concurrent-handler cap. The Bun admin runtime is the only legitimate
+/// client of this socket. 16 leaves headroom for parallel browser
+/// actions, doctor/update work, and internal probes while preventing a
+/// misbehaving local client from driving unbounded handler-task spawn.
 /// `main.rs` reads this when constructing the shared `Arc<Semaphore>`
 /// it passes into both `serve` and the `internal_metrics` registry
 /// (so the metrics endpoint can publish

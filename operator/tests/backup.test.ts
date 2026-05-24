@@ -30,3 +30,11 @@ test("backupDatabaseFailureHint preserves unknown stderr context", () => {
 
     expect(hint).toBe("first line / second line / third line");
 });
+
+test("backup task archives Better Auth admin_data volume", async () => {
+    const body = await Bun.file("./backup.ts").text();
+
+    expect(body).toContain("admin_data.tgz");
+    expect(body).toContain("Better Auth/admin SQLite state");
+    expect(body).toContain("${project}_admin_data");
+});

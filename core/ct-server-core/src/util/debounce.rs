@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Per-key fixed-window debouncer + leading-edge throttle with
 //! trailing flush. Used by [`crate::redis_bridge`] to collapse a
-//! burst of revocation messages — bulk Filament saves can fire
-//! dozens per second — down to one rendered config update per
-//! window.
+//! burst of revocation messages — bulk admin updates can fire dozens
+//! per second — down to one rendered config update per window.
 //!
 //! Two primitives, both single-threaded by design (wrap in
 //! `tokio::sync::Mutex` to share across tasks):
@@ -21,7 +20,7 @@
 //!    This is the right shape for "render the latest config" — the
 //!    operator gets an immediate write AND the final write reflects
 //!    the last save in the burst. Without the trailing flush, the
-//!    last Filament save could be silently held back for `window` ms;
+//!    last admin update could be silently held back for `window` ms;
 //!    with only the trailing flush, every burst pays one window of
 //!    latency before the user sees anything.
 //!
@@ -30,7 +29,7 @@
 //! `100ms` is the default — same as the client's anomaly debouncer.
 //! The Caddy admin-socket reload itself takes ~30 ms, so anything
 //! shorter than ~50ms means consecutive reload calls overlap; anything
-//! longer than ~250ms makes bulk Filament saves feel laggy in the UI.
+//! longer than ~250ms makes bulk admin updates feel laggy in the UI.
 //! 100 ms hits the right middle.
 
 use std::collections::HashMap;

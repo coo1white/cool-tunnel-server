@@ -10,12 +10,6 @@
 #     target.
 #   - One target per logical action; compose them via deps.
 
-# GNU make's shell-selection variable is `SHELL` (no leading dot);
-# `.SHELLFLAGS` IS dotted but `.SHELL` was a typo. With `.SHELL`,
-# make falls back to /bin/sh which doesn't support bash-only
-# constructs like `< <(...)` process substitution used in the
-# `php-syntax` target. (v0.0.55 — fixed during the Cycle 3 CI
-# bring-up.)
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
@@ -37,10 +31,10 @@ help: ## list available targets
 # ---------- CI gate ------------------------------------------------
 
 .PHONY: ci
-ci: utf8-check compose-utf8-runtime rust-fmt-check rust-clippy rust-test php-syntax php-utf8-runtime php-composer-validate php-test composer-audit shellcheck manifests-jq manifest-lockstep verify-sot verify-supervisord secrets-argv operator-typecheck operator-test singbox-typecheck singbox-test ## full local CI gate
+ci: utf8-check compose-utf8-runtime rust-fmt-check rust-clippy rust-test shellcheck manifests-jq manifest-lockstep verify-supervisord secrets-argv operator-typecheck operator-test singbox-typecheck singbox-test ## full local CI gate
 
 .PHONY: utf8-check
-utf8-check: ## verify every tracked Rust/Bun/PHP/Shell/Docker/config/doc text file is valid UTF-8
+utf8-check: ## verify every tracked Rust/Bun/Shell/Docker/config/doc text file is valid UTF-8
 	./scripts/check-utf8.sh
 
 .PHONY: compose-utf8-runtime
@@ -49,42 +43,9 @@ compose-utf8-runtime: ## verify compose services inherit the UTF-8 runtime local
 	@grep -q 'LANG: C.UTF-8' docker-compose.yml
 	@grep -q 'LC_ALL: C.UTF-8' docker-compose.yml
 
-# Cycle 3 / v0.0.55 — cross-language SoT parity guard. Runs both
-# the PHP and Rust panel-hostname resolvers against fixture envs and
-# asserts equivalent output (or equivalent fail-mode on the all-empty
-# fixture). Catches future drift between the two implementations of
-# the same logic. Wired into `ci` above so every local + GitHub
-# Actions CI run exercises it. Requires the panel's composer
-# dependencies installed (vendor/autoload.php) and a working cargo
-# toolchain — both are already required by the surrounding ci
-# steps.
-#
-# v0.0.56 — verify_sot.sh now gracefully skips (with a pointer to
-# verify-sot-vps below) when php/cargo are missing on the host.
-# That lets `make ci` pass on docker-only VPS hosts without
-# silently masking the SoT contract.
-.PHONY: verify-sot
-verify-sot: ## cross-language SoT parity check (Cycle 3 / v0.0.55; skips when host lacks php/cargo — see verify-sot-vps)
-	cd operator && bun run verify-sot.ts --mode=host
-
-# v0.0.56 — VPS-side counterpart to verify-sot. Exercises the same
-# five fixtures via `docker compose exec` against the running panel
-# container, so it works on docker-only hosts where PHP and cargo
-# aren't installed. NOT wired into `make ci` — it requires a
-# running stack, which CI doesn't have. Operator surface for
-# confirming a deployed release honours the v0.0.55 SoT contract.
-.PHONY: verify-sot-vps
-verify-sot-vps: ## VPS-side SoT parity check via docker compose exec (v0.0.56)
-	cd operator && bun run verify-sot.ts --mode=vps
-
-# Round-22 process-lifecycle audit — pin the round-6 supervisord
-# graceful-shutdown invariants (stopsignal=TERM, stopwaitsecs=20,
-# killasgroup, stopasgroup) on every [program:*] block, plus the
-# frankenphp MAX_REQUESTS=500 worker-recycle ceiling. A future
-# edit that drops one of these wouldn't break any test —
-# supervisord still works — but `docker compose stop` would
-# SIGKILL in-flight requests on the affected program. Wired into
-# `make ci` so drift surfaces on every PR.
+# Process-lifecycle audit: pin supervisord graceful-shutdown invariants
+# on every [program:*] block so `docker compose stop` gives the admin
+# and core daemon time to finish cleanly.
 .PHONY: verify-supervisord
 verify-supervisord: ## supervisord.conf lifecycle-invariants drift detector (round-22)
 	cd operator && bun run verify-supervisord.ts
@@ -169,61 +130,13 @@ rust-clippy: ## cargo clippy --all-targets (offline sqlx; deny rules in workspac
 	@# good Cycle-N follow-up; not blocking SoT / drift work.
 	cd core && SQLX_OFFLINE=true cargo clippy --release --all-targets --locked
 
-.PHONY: sqlx-prepare
-sqlx-prepare: ## regenerate core/.sqlx/ from live schema (run after migrations or query!() edits)
-	cd operator && bun run sqlx-prepare.ts
-
 .PHONY: sqlx-check
 sqlx-check: ## verify core/.sqlx/ matches the live schema (CI lint)
 	@cd core && SQLX_OFFLINE=true cargo check --workspace --locked \
 		|| { echo ""; \
 		     echo "  ↳ if this failed with 'no cached data for query',"; \
-		     echo "    .sqlx/ is stale — run: make sqlx-prepare && git add core/.sqlx"; \
+		     echo "    .sqlx/ is stale — regenerate core/.sqlx from a trusted dev database and commit it"; \
 		     exit 1; }
-
-.PHONY: php-test
-php-test: ## phpunit on the panel test suite (requires composer install in panel/)
-	@if [ ! -f panel/vendor/autoload.php ]; then \
-	    echo "panel/vendor/ missing — run \`cd panel && composer install\` first" >&2; \
-	    exit 1; \
-	fi
-	cd panel && vendor/bin/phpunit
-
-.PHONY: php-composer-validate
-php-composer-validate: ## composer validate on the panel package
-	cd panel && composer validate composer.json --strict --no-check-publish
-
-.PHONY: php-syntax
-php-syntax: ## php -l on every panel/**/*.php
-	@cd panel && set -e ; \
-	while IFS= read -r -d '' f; do \
-		php -l "$$f" >/dev/null || { echo "syntax error in panel/$$f"; exit 1; }; \
-	done < <(find app database/migrations database/seeders config bootstrap routes \
-		-name '*.php' -type f -print0)
-	@echo "    php-syntax: clean"
-
-.PHONY: php-utf8-runtime
-php-utf8-runtime: ## verify PHP runtime text defaults are UTF-8
-	@test "$$(cd panel && php -r 'echo ini_get("default_charset");')" = "UTF-8"
-	@test "$$(cd panel && php -r 'echo mb_internal_encoding();')" = "UTF-8"
-
-# Round 23 — match the GitHub Actions audit workflow's `composer
-# audit` job so an operator running `make ci` locally sees the
-# same vuln check (was a silent gap pre-this; the workflow caught
-# CVEs that local make ci would have missed). Skips gracefully if
-# composer / vendor isn't present so docker-only hosts still get
-# `make ci` exit 0.
-.PHONY: composer-audit
-composer-audit: ## composer security audit on the panel deps (matches GH Actions audit.yml)
-	@if ! command -v composer >/dev/null 2>&1; then \
-		echo "    composer-audit: SKIP (composer not on PATH; run on a host with composer to enable)"; \
-		exit 0; \
-	fi; \
-	if [ ! -f panel/composer.lock ]; then \
-		echo "    composer-audit: SKIP (panel/composer.lock missing)"; \
-		exit 0; \
-	fi; \
-	cd panel && composer audit --no-interaction --no-cache
 
 .PHONY: shellcheck
 shellcheck: ## shellcheck all scripts and entrypoints (severity=warning — style/info are non-blocking)
@@ -256,7 +169,6 @@ manifest-lockstep: client-runtime-manifest ## verify manifest pins match local d
 	fi
 	@core_v=$$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' core/Cargo.toml | head -1); \
 	operator_v=$$(jq -r '.version' operator/package.json); \
-	panel_v=$$(sed -n "s/.*'version'[[:space:]]*=>[[:space:]]*'\([^']*\)'.*/\1/p" panel/config/cool-tunnel.php | head -1); \
 	for f in manifests/ct-protocol.upstream.json manifests/ct-server-core.upstream.json manifests/panel.upstream.json; do \
 	    v=$$(jq -r '.version' "$$f"); \
 	    if [ "$$v" != "$$core_v" ]; then \
@@ -266,10 +178,6 @@ manifest-lockstep: client-runtime-manifest ## verify manifest pins match local d
 	done; \
 	if [ "$$operator_v" != "$$core_v" ]; then \
 	    echo "operator/package.json version drift: $$operator_v != $$core_v" >&2; \
-	    exit 1; \
-	fi; \
-	if [ "$$panel_v" != "$$core_v" ]; then \
-	    echo "panel/config/cool-tunnel.php version drift: $$panel_v != $$core_v" >&2; \
 	    exit 1; \
 	fi
 	@echo "    manifest-lockstep: clean"
@@ -384,8 +292,7 @@ status: ## one-shot health check (safe to run after SSH reconnect)
 .PHONY: clean-images
 clean-images: ## drop local cool-tunnel-server-* images (forces fresh release-bundle load/build)
 	@for img in cool-tunnel-server-core cool-tunnel-server-panel \
-	            cool-tunnel-server-caddy cool-tunnel-server-singbox \
-	            cool-tunnel-server-sqlx-prepare; do \
+	            cool-tunnel-server-caddy cool-tunnel-server-singbox; do \
 		docker image rm -f "$$img:latest" 2>/dev/null && echo "  removed $$img:latest" \
 		    || echo "  $$img:latest not present"; \
 	done
@@ -418,7 +325,7 @@ build-detached: ## maintainer/dev only: run a local image build in tmux
 # ---------- Release plumbing -------------------------------------
 
 .PHONY: set-version
-set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel config; pass V=X.Y.Z
+set-version: ## bump the version in Cargo.toml + manifests + operator package; pass V=X.Y.Z
 	@if [ -z "$(V)" ]; then echo 'usage: make set-version V=0.0.7'; exit 1; fi
 	@sed -i.bak 's/^version       = ".*"/version       = "$(V)"/' core/Cargo.toml
 	@sed -i.bak -E 's/"version": "[0-9]+\.[0-9]+\.[0-9]+"/"version": "$(V)"/' \
@@ -433,11 +340,6 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 	     | .plugins["cool-tunnel-core"].assets["darwin-universal"].url = ("https://github.com/coo1white/cool-tunnel-server/releases/download/v" + $$v + "/cool-tunnel-core-v" + $$v)' \
 	    manifests/client-runtime.upstream.json > manifests/client-runtime.upstream.json.tmp
 	@mv manifests/client-runtime.upstream.json.tmp manifests/client-runtime.upstream.json
-	@# panel/config/cool-tunnel.php::version is the runtime source of
-	@# truth for the `ct:version` artisan command. Keep it aligned
-	@# with manifests/panel.upstream.json.
-	@sed -i.bak -E "s/'version' => '[0-9]+\.[0-9]+\.[0-9]+'/'version' => '$(V)'/" \
-		panel/config/cool-tunnel.php
 	@# operator/package.json::version — read at build time by build.ts
 	@# and baked into the binary via --define BUILD_VERSION=. Without
 	@# bumping this, the compiled binary's `--version` stays stale.
@@ -471,7 +373,7 @@ set-version: ## bump the version in Cargo.toml + manifests + lockfile + panel co
 	        echo ""; \
 	        exit 1; \
 	    }
-	@echo "    bumped to $(V) in: core/Cargo.toml, core/Cargo.lock, manifests/{ct-server-core,ct-protocol,panel,client-runtime}.upstream.json"
+	@echo "    bumped to $(V) in: core/Cargo.toml, core/Cargo.lock, operator/package.json, manifests/{ct-server-core,ct-protocol,panel,client-runtime}.upstream.json"
 
 .PHONY: set-component-version
 set-component-version: ## bump component version across compose + Dockerfile + manifest in lockstep; pass COMPONENT=<slug> V=X.Y.Z
@@ -544,14 +446,14 @@ pin-images: ## resolve current docker base-image tags to digests; updates Docker
 	cd operator && bun run pin-images.ts
 
 .PHONY: sbom
-sbom: ## generate CycloneDX SBOMs for cargo + composer + docker
+sbom: ## generate CycloneDX SBOMs for cargo + Bun + docker
 	cd operator && bun run sbom.ts
 
 # ---------- Cleaning ---------------------------------------------
 
 .PHONY: clean
-clean: ## remove cargo target, composer vendor, php caches
-	rm -rf core/target panel/vendor panel/storage/framework/{cache/data,sessions,views}/* panel/storage/logs/*
+clean: ## remove local Rust/Bun build artifacts
+	rm -rf core/target operator/dist singbox-core/dist
 
 .PHONY: dist-clean
 dist-clean: clean ## clean + drop docker volumes (DESTRUCTIVE — confirms first)

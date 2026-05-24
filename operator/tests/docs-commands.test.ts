@@ -46,11 +46,31 @@ test("core Dockerfile uses the baked Rust toolchain without network rustup sync"
 
 test("README current release badge and text match the panel version", async () => {
     const readme = await Bun.file("../README.md").text();
-    const panelConfig = await Bun.file("../panel/config/cool-tunnel.php").text();
-    const version = panelConfig.match(/'version'\s*=>\s*'([^']+)'/)?.[1];
+    const pkg = await Bun.file("./package.json").json() as { version: string };
+    const version = pkg.version;
 
     expect(version).toBeTruthy();
     expect(readme).toContain(`release-v${version}-1c5cdc`);
     expect(readme).toContain(`releases/tag/v${version}`);
     expect(readme).toContain(`Latest stable server release: \`v${version}\`.`);
+});
+
+test("root docs no longer describe the retired PHP admin stack", async () => {
+    const paths = [
+        "STRUCTURE.md",
+        "RELEASE.md",
+        "VERSIONING.md",
+        "SECURITY.md",
+        "SUPPORT.md",
+        "docs/release-stress-test.md",
+        ".gitignore",
+        ".dockerignore",
+        "renovate.json",
+        "operator/help.ts",
+    ];
+    const forbidden = /Laravel|Filament|FrankenPHP|php artisan|composer|panel\/config\/cool-tunnel\.php|ct:version|one-time admin password|stress:provision/;
+    for (const path of paths) {
+        const text = await Bun.file(`../${path}`).text();
+        expect(text, path).not.toMatch(forbidden);
+    }
 });

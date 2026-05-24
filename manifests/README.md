@@ -15,12 +15,12 @@ desktop client.
 | File | Component | Why pinned |
 | --- | --- | --- |
 | `caddy.upstream.json` | Stock Caddy 2 + `mholt/caddy-l4` (xcaddy build) | ACME + SNI router; reads cert from shared volume |
-| `ct-server-core.upstream.json` | The Rust engine binary | Versioned alongside the panel |
+| `ct-server-core.upstream.json` | The Rust engine binary | Versioned alongside the operator/admin layer |
 | `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform contract |
-| `panel.upstream.json` | The Filament + Laravel container | Boot-check via artisan |
+| `panel.upstream.json` | The Bun/Hono admin panel container | Boot-check via Bun admin doctor |
 | `client-runtime.upstream.json` | Portable client runtime catalog | Server-owned `sing-box` + `cool-tunnel-core` package for macOS today and future Android / Windows / iOS / Linux clients |
 | `mariadb.upstream.json` | The DB container | Major-version drift is a flag |
-| `redis.upstream.json` | Cache, sessions, and Messenger queues | Same |
+| `redis.upstream.json` | Runtime cache/compatibility container | Same |
 | `credential-lock.upstream.json` | Credential-lock guard | Deployment invariant |
 | `doh-resolver.upstream.json` | DoH resolver reachability | Captive-portal / poisoner catch |
 
@@ -37,7 +37,7 @@ Output is a one-line-per-component status table:
  OK  ct-protocol             pinned=0.0.1                installed=0.0.1
  OK  ct-server-core          pinned=0.0.1                installed=0.0.1
  OK  mariadb                 pinned=11                   installed=11.4.2
- OK  panel                   pinned=0.0.1                installed=Laravel 11
+ OK  panel                   pinned=0.0.1                installed=ct-admin
  OK  redis                   pinned=7-alpine             installed=redis-cli 7.2
 ```
 
@@ -60,7 +60,8 @@ back the image and surfaces the diagnostic.
 ## Why JSON, not TOML / YAML?
 
 Because the same files are read by Rust (server + every client) and
-PHP (Filament panel widget). JSON is the lowest common denominator.
+Bun/TypeScript (operator/admin tooling). JSON is the lowest common
+denominator.
 
 ## Portable Runtime Catalog
 

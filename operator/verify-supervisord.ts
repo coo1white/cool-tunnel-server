@@ -12,8 +12,6 @@
 //   killasgroup  = true
 //   stopasgroup  = true
 //
-// Plus per-program literals (frankenphp carries MAX_REQUESTS=500).
-//
 // Run from `make verify-supervisord` and the `make ci` gate.
 //
 // Behaviour notes preserved from the bash original:
@@ -51,7 +49,7 @@ export const DEFAULT_OPTIONS: VerifyOptions = {
         { re: /killasgroup\s*=\s*true/, label: "killasgroup = true" },
         { re: /stopasgroup\s*=\s*true/, label: "stopasgroup = true" },
     ],
-    programSpecific: [{ program: "frankenphp", literal: "MAX_REQUESTS=500" }],
+    programSpecific: [],
 };
 
 export interface VerifyResult {

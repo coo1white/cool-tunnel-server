@@ -86,7 +86,7 @@ The stress harness assumes:
 - The full stack is up: `docker compose ps` shows all 5
   containers `Up`.
 - `.env` is populated (DOMAIN, DB_*, REDIS_*).
-- A panel artisan command `stress:provision` exists that
+- A Bun admin/operator command for stress provisioning exists that
   idempotently creates a `stress-runner` proxy account and
   prints `{"id": …, "uuid": …}` JSON.
 

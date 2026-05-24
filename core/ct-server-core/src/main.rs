@@ -93,9 +93,8 @@ enum Cmd {
 enum AdminOp {
     /// Print the resolved panel hostname to stdout. The Cycle 3
     /// `SoT` (v0.0.55) anchor — single source of truth for
-    /// `panel.<base>` derivation, mirrored byte-for-byte by
-    /// `panel/config/cool-tunnel.php::panel_domain`. Used by
-    /// `scripts/verify_sot.sh` to assert PHP/Rust parity.
+    /// `panel.<base>` derivation, now shared by Rust and the
+    /// Bun/TypeScript operator through the same env contract.
     /// Resolution: `PANEL_DOMAIN` env > `panel.<DOMAIN>` env >
     /// fail-fast. Whitespace in either is trimmed; both empty
     /// errors loudly rather than producing `panel.` with no base.
@@ -200,10 +199,9 @@ fn format_error_chain(e: &crate::Error) -> String {
 /// did has been retired — env is the single source of truth, and
 /// the panel renderer is no longer responsible for reconciling
 /// post-install ServerConfig.domain edits with the panel hostname
-/// (operators who change ServerConfig.domain via the UI now have
-/// to also rotate their `.env`'s `PANEL_DOMAIN`; the v0.0.54
-/// auto-heal in update.sh + the Filament UI making both fields
-/// editable side-by-side cover this discipline).
+/// (operators who change ServerConfig.domain now also rotate their
+/// `.env`'s `PANEL_DOMAIN`; update/install env migration keeps older
+/// deployments on the canonical shape).
 fn resolve_panel_domain(cli_value: &str) -> Result<String> {
     if !cli_value.trim().is_empty() {
         return Ok(cli_value.trim().to_owned());

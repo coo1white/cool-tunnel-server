@@ -20,10 +20,10 @@ test("credential control owns current service and config path names", () => {
 
 test("credential control uses panel-owned guard and render commands", () => {
     expect(credentialLockCheckCommand()).toEqual([
-        "docker", "compose", "exec", "-T", "panel", "php", "artisan", "credential-lock:check",
+        "docker", "compose", "exec", "-T", "panel", "bun", "run", "/opt/cool-tunnel/operator/src/index.ts", "admin", "doctor",
     ]);
     expect(renderSingboxConfigCommand()).toEqual([
-        "docker", "compose", "exec", "-T", "panel", "php", "artisan", "singbox:render", "--if-changed",
+        "docker", "compose", "exec", "-T", "panel", "bun", "run", "/opt/cool-tunnel/operator/src/index.ts", "admin", "render-singbox",
     ]);
 });
 

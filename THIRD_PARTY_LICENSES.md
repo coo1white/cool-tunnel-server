@@ -36,12 +36,11 @@ directories that come pre-populated by Debian / Alpine.
 | Caddy (ACME provider) | https://github.com/caddyserver/caddy | Apache-2.0 |
 | sing-box (proxy) | https://github.com/SagerNet/sing-box | **GPL-3.0** |
 | NaiveProxy (client) | https://github.com/klzgrad/naiveproxy | BSD-3-Clause |
-| Laravel | https://github.com/laravel/laravel | MIT |
-| Filament | https://github.com/filamentphp/filament | MIT |
-| predis/predis | https://github.com/predis/predis | MIT |
+| Bun | https://github.com/oven-sh/bun | MIT |
+| Hono | https://github.com/honojs/hono | MIT |
+| Better Auth | https://github.com/better-auth/better-auth | MIT |
 | MariaDB server | https://mariadb.org | GPL-2.0 |
 | Redis | https://redis.io | BSD-3-Clause (≤ 7.2.x stable line we pin) |
-| Composer (build-time) | https://getcomposer.org | MIT |
 
 ## Cargo crates (Rust workspace)
 
@@ -58,8 +57,6 @@ Direct deps and their licences:
 | reqwest | ct-server-core (probe HTTP) | MIT OR Apache-2.0 |
 | redis | ct-server-core (revocation pub/sub) | BSD-3-Clause |
 | futures-core | ct-server-core (Stream poll helper) | MIT OR Apache-2.0 |
-| aes-gcm | ct-server-core (Laravel-Crypt decrypt) | Apache-2.0 OR MIT |
-| base64 | ct-server-core (Laravel-Crypt envelope) | MIT OR Apache-2.0 |
 | chrono | both crates (time) | MIT OR Apache-2.0 |
 | tracing, tracing-subscriber | ct-server-core (logging) | MIT |
 | sha2, hex, hmac | both crates (digests + signing) | MIT OR Apache-2.0 |
@@ -68,21 +65,19 @@ Direct deps and their licences:
 `MIT OR Apache-2.0` means upstream offers either; we honour both
 notice requirements.
 
-## Composer packages (PHP panel)
+## Bun packages (operator/admin)
 
-Direct deps from `panel/composer.json`:
+Direct deps from `operator/package.json`:
 
 | Package | Licence |
 | --- | --- |
-| laravel/framework | MIT |
-| laravel/tinker | MIT |
-| filament/filament | MIT |
-| guzzlehttp/guzzle | MIT |
-| predis/predis | MIT |
-| symfony/process | MIT |
+| better-auth | MIT |
+| hono | MIT |
+| typescript | Apache-2.0 |
+| @types/bun | MIT |
 
-Transitive deps are in `panel/composer.lock` after `composer install`,
-predominantly MIT.
+Transitive deps are in `operator/bun.lock` after `bun install`,
+predominantly MIT or Apache-2.0.
 
 ## Docker base images
 
@@ -90,8 +85,8 @@ predominantly MIT.
 | --- | --- | --- |
 | `caddy:2.8.4-alpine` | ACME provider | Apache-2.0 + Alpine |
 | `alpine:3.20` | sing-box runtime + builder stage | Alpine licence collection |
-| `rust:1.86-alpine` | Rust core build env | MIT/Apache-2.0 + Alpine |
-| `dunglas/frankenphp:1-php8.4-alpine` | Panel runtime (Caddy + PHP in-process) | Apache-2.0 (Caddy) + PHP licence + Alpine |
+| `rust:1.88-alpine` | Rust core build env | MIT/Apache-2.0 + Alpine |
+| `oven/bun:1.3.14-alpine` | Bun admin runtime | MIT + Alpine |
 | `mariadb:11` | DB | GPL-2.0 |
 | `redis:7-alpine` | Cache + queue + revocation bus | BSD-3-Clause + Alpine |
 

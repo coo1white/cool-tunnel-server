@@ -53,7 +53,8 @@ Next topic:  ./ct help install
     migration + initial Caddyfile/sing-box render
   - Waits for ACME (Let's Encrypt) to acquire the cert
   - Runs health gates and reports PASS / WARN / FAIL
-  - Drops a one-time admin password to stdout; save it
+  - Prints the next command for first-owner setup:
+    ct admin bootstrap
 
 When to run:
   - Fresh box, never deployed before
@@ -134,8 +135,8 @@ Common failure modes:
 
 If something goes sideways and the panel container restart-
 loops: 'docker compose logs panel' is the first place to look.
-Most restart loops are composer install / migration failures
-in the entrypoint.
+Most restart loops are missing BETTER_AUTH_SECRET, invalid .env
+values, or a failed initial render before the Bun admin starts.
 
 Roll back if needed:
   git checkout v0.0.96  # (or the prior known-good tag)
@@ -154,10 +155,10 @@ Next topic:  ./ct help doctor
                            Reality clock window
     Structural             DNS, ports 80/443, ACME cert expiry
     Application            /up endpoint, direct-dial config
-    Compose stack          5 services up, supervisord progs
+    Compose stack          5 services up, supervisord programs
     Resources              disk + RAM headroom
-    Info                   release version, active users,
-                           Messenger queue depth
+    Info                   release version, admin users,
+                           retained Redis queue depth
 
 When to run:
   - First thing when SSHing in to check a deployment
@@ -198,7 +199,7 @@ Next topic:  ./ct help auto-update
     - docker compose ps
     - singbox render result
     - credential-lock result
-    - DB active VLESS account count
+    - admin/user count
     - rendered VLESS user names
     - recent panel/singbox error lines
 
@@ -207,23 +208,15 @@ Next topic:  ./ct help auto-update
     ct recover --fix-stale-singbox
 
   This stops singbox, deletes the rendered /data/config/singbox.json,
-  asks the panel to render a fresh config from DB state, reruns
+  asks the panel to render a fresh config from admin state, reruns
   credential-lock, and brings singbox back up. It does not touch the
   database, .env, Caddy, or ACME certs.
-
-  APP_KEY drift repair:
-    ct recover reset-reality
-
-  Use when singbox:render says "Could not decrypt the data" and the old
-  APP_KEY is gone. This resets only the Reality keypair, renders a fresh
-  singbox config, and starts panel/singbox. Clients must re-import
-  subscription URLs.
 
 When to run:
   - Update fails with 'credential-lock drift'
   - Install/update says singbox is running/starting for too long
-  - singbox:render says "Could not decrypt the data"
-  - Panel returns a 500 while creating/deleting proxy accounts
+  - panel render actions fail
+  - Panel returns a 500 while managing admin users
   - You need a compact evidence bundle before asking for help
 
 Common result:
@@ -325,6 +318,7 @@ Next topic:  ./ct help recover
   Creates a single tarball containing:
     - mariadb mysqldump (full schema + data)
     - caddy_data volume (ACME certs + private keys)
+    - admin_data volume (Better Auth/admin SQLite state)
     - The current .env file
     - The manifest set
     - The current Caddyfile template
@@ -347,8 +341,8 @@ Use the canonical mode-0600 .env / db credentials, not -a /
 secrets-argv make target for the policy check.
 
 Idempotent: safe to run while the stack is live (uses
-mysqldump --single-transaction; brief I/O spike but no
-service interruption).
+mysqldump --single-transaction and briefly stops the Caddy/panel
+writers while their volumes are archived).
 
 To list existing backups:
   ls -lh backups/
@@ -364,6 +358,7 @@ Next topic:  ./ct help restore
     - Imports the mysqldump into mariadb (replacing current
       schema; existing data is lost)
     - Restores the caddy_data volume (ACME certs)
+    - Restores the admin_data volume (Better Auth/admin SQLite)
     - Restores .env, manifests, and Caddyfile template
     - Restarts the stack
     - Health check
@@ -406,10 +401,8 @@ Next topic:  ./ct help troubleshooting
 
 1. Panel container restart-loops
    - 'docker compose logs --tail=120 panel | head -60'
-   - Look for: "composer install" errors, migration errors,
-     APP_KEY missing, Octane worker crash.
-   - Recent class of bug (v0.0.94 era): ext-redis version
-     mismatch with symfony/redis-messenger. Fixed in v0.0.95+.
+   - Look for: BETTER_AUTH_SECRET, invalid DOMAIN/PANEL_DOMAIN,
+     SQLite path/permission errors, or render failures.
 
 2. Caddy fails to acquire ACME cert
    - 'docker compose logs --tail=80 caddy | grep -iE "acme|cert"'
@@ -430,7 +423,7 @@ Next topic:  ./ct help troubleshooting
 
 5. /up endpoint returns non-200 or connection-refused
    - 'docker compose ps panel' -- is it running?
-   - 'docker compose logs --tail=80 panel' -- did Octane crash?
+   - 'docker compose logs --tail=80 panel' -- did the Bun admin server crash?
 
 6. Doctor shows FAIL
    - Rerun and read the Remediation block.
@@ -441,13 +434,12 @@ Next topic:  ./ct help troubleshooting
      (stash with label / discard / abort).
    - Stash with label is recoverable: 'git stash pop'.
 
-8. Messenger queue depth growing (cool_tunnel:messenger)
+8. Retained Redis queue depth growing
    - 'doctor' shows this in the Info section.
-   - Means the messenger:consume worker is stuck or
-     overloaded. Restart with:
+   - Means a retained background worker is stuck or overloaded.
+     Restart with:
        docker compose restart panel
-     The supervisord messenger program will re-spawn the
-     worker on container restart.
+     supervisord will re-spawn managed programs on container restart.
 
 When asking for help, paste:
   - The last 40 lines of the script's output

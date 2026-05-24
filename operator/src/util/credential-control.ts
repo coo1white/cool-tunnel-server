@@ -38,11 +38,11 @@ export function recreateSingbox(): Promise<ShResult> {
 }
 
 export function credentialLockCheckCommand(): string[] {
-    return ["docker", "compose", "exec", "-T", PANEL_SERVICE, "php", "artisan", "credential-lock:check"];
+    return ["docker", "compose", "exec", "-T", PANEL_SERVICE, "bun", "run", "/opt/cool-tunnel/operator/src/index.ts", "admin", "doctor"];
 }
 
 export function renderSingboxConfigCommand(): string[] {
-    return ["docker", "compose", "exec", "-T", PANEL_SERVICE, "php", "artisan", "singbox:render", "--if-changed"];
+    return ["docker", "compose", "exec", "-T", PANEL_SERVICE, "bun", "run", "/opt/cool-tunnel/operator/src/index.ts", "admin", "render-singbox"];
 }
 
 export function readSingboxConfigCommand(): string[] {
