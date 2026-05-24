@@ -65,6 +65,7 @@ return [
         'https://acme-v02.api.letsencrypt.org/directory'
     ),
     'version' => '0.4.22',
+    'bootstrap_admin_password' => env('CT_BOOTSTRAP_ADMIN_PASSWORD', ''),
     'singbox_direct_domain_strategy' => env('SINGBOX_DIRECT_DOMAIN_STRATEGY', 'ipv4_only'),
     'singbox_direct_connect_timeout' => env('SINGBOX_DIRECT_CONNECT_TIMEOUT', '2s'),
     'singbox_direct_fallback_delay' => env('SINGBOX_DIRECT_FALLBACK_DELAY', '100ms'),

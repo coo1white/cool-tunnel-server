@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use Livewire\Features\SupportAutoInjectedAssets\SupportAutoInjectedAssets;
 
 // Catch-all controller for any non-/admin request that comes through
 // Caddy's fall-through. We render whichever fake site is currently
@@ -41,6 +42,8 @@ class FakeSiteController extends Controller
 
     public function show(Request $request): Response
     {
+        self::disableLivewireAssetInjectionForCoverSite();
+
         $this->maybeAlarmOnRapidFallThrough($request);
 
         $site = FakeWebsite::active() ?? FakeWebsite::orderBy('id')->first();
@@ -83,6 +86,12 @@ class FakeSiteController extends Controller
             ->header('Cache-Control', 'public, max-age=3600')
             ->header('Content-Type', 'text/html; charset=utf-8')
             ->header('ETag', $etag);
+    }
+
+    private static function disableLivewireAssetInjectionForCoverSite(): void
+    {
+        SupportAutoInjectedAssets::$hasRenderedAComponentThisRequest = false;
+        SupportAutoInjectedAssets::$forceAssetInjection = false;
     }
 
     /**
