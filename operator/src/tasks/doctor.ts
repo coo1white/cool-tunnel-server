@@ -11,6 +11,8 @@ import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
 import { parseDfAvailableKb } from "../util/preflight";
+import { credentialLockCheck, renderSingboxConfigCommand } from "../util/credential-control";
+import { redactSensitive } from "../util/redact";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -150,6 +152,20 @@ export function checkRecentRealityInvalidOutput(output: string): RealityInvalidC
         severity: "warn",
         detail: `${count} invalid handshakes in last 10m`,
     };
+}
+
+export function summarizeCredentialLockOutput(stdout: string, stderr: string): string {
+    const lines = [stdout, stderr].join("\n")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length === 0) {
+        return "credential-lock exited non-zero with no output; run: docker compose exec -T panel php artisan credential-lock:check";
+    }
+
+    const drift = lines.find((line) => /credential-lock drift/i.test(line));
+    const detail = redactSensitive(drift ?? lines.find((line) => !/^\[/.test(line)) ?? lines[0]!);
+    return detail.length > 180 ? `${detail.slice(0, 177)}...` : detail;
 }
 
 // ---------- individual checks (port of doctor.sh) -------------------------
@@ -593,6 +609,26 @@ async function checkSupervisord(_c: CheckCtx): Promise<CheckLine> {
     };
 }
 
+async function checkCredentialLock(_c: CheckCtx): Promise<CheckLine> {
+    const r = await credentialLockCheck();
+    if (r.ok) {
+        return {
+            group: G_COMPOSE,
+            label: "Cred lock",
+            severity: "pass",
+            detail: "DB credentials match rendered singbox.json",
+        };
+    }
+
+    return {
+        group: G_COMPOSE,
+        label: "Cred lock",
+        severity: "fail",
+        detail: summarizeCredentialLockOutput(r.stdout, r.stderr),
+        hint: `ct recover diagnose; ${renderSingboxConfigCommand().join(" ")}; docker compose exec -T panel php artisan credential-lock:check`,
+    };
+}
+
 async function checkRecentRealityInvalid(_c: CheckCtx): Promise<CheckLine> {
     const logs = await probeRecentRealityInvalidLogs();
     if (!logs.ok) {
@@ -788,6 +824,7 @@ const CHECKS: CheckFn[] = [
     checkPanelPublicLatency,
     checkContainerHealth,
     checkSupervisord,
+    checkCredentialLock,
     checkRecentRealityInvalid,
     checkDisk,
     checkRam,

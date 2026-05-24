@@ -8,6 +8,8 @@
 // Used by operator/pin-images.ts, operator/sbom.ts, and any future
 // script-style port that wants the green-arrow "==>" step header.
 
+import { redactSensitive } from "./redact";
+
 const isTty = process.stdout.isTTY === true;
 
 export const ANSI = {
@@ -55,10 +57,10 @@ export function makeTerm(opts?: { initialStep?: number }): Term {
             );
         },
         ok(msg: string) {
-            console.log(`    ${ANSI.green}✓${ANSI.reset} ${msg}`);
+            console.log(`    ${ANSI.green}✓${ANSI.reset} ${redactSensitive(msg)}`);
         },
         warn(msg: string) {
-            console.error(`    ${ANSI.yellow}!${ANSI.reset} ${msg}`);
+            console.error(`    ${ANSI.yellow}!${ANSI.reset} ${redactSensitive(msg)}`);
         },
     };
 }
@@ -201,7 +203,7 @@ export function makeArrowProgress(opts: {
 // the same narrowing in TS's analyser, so importers get the
 // narrowing-friendly version by importing the named export.
 export function die(msg: string, hint?: string): never {
-    console.error(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${msg}`);
-    if (hint) console.error(`  ${ANSI.bold}↳ try:${ANSI.reset} ${hint}`);
+    console.error(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(msg)}`);
+    if (hint) console.error(`  ${ANSI.bold}↳ try:${ANSI.reset} ${redactSensitive(hint)}`);
     process.exit(1);
 }

@@ -14,6 +14,7 @@
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
+import { redactSensitive } from "../util/redact";
 
 const TARGETS = ["caddyfile", "singbox"] as const;
 type Target = typeof TARGETS[number];
@@ -44,6 +45,20 @@ export function parseArgs(argv: readonly string[]): { target: Target; passthroug
     return { target, passthrough };
 }
 
+export function renderFailureSummary(target: Target, code: number, stdout: string, stderr: string): string {
+    const output = `${stdout}\n${stderr}`;
+    if (target === "singbox" && output.includes("Unsupported cipher or incorrect key length")) {
+        return "singbox render failed: APP_KEY is malformed. Fix .env so APP_KEY is a valid Laravel base64 key, then run: docker compose restart panel && ct render singbox";
+    }
+    if (target === "singbox" && output.includes("Could not decrypt the data")) {
+        return "singbox render failed: APP_KEY cannot decrypt the stored Reality key. Restore the old APP_KEY from backup, or run: ct recover reset-reality";
+    }
+    if (target === "singbox" && output.includes("rendered sing-box config missing")) {
+        return "singbox render failed: /data/config/singbox.json was not created. Run: ct recover diagnose";
+    }
+    return `${target} render failed (exit ${code}). Run: ct recover diagnose`;
+}
+
 export class RenderTask implements Task {
     readonly name = "render";
 
@@ -64,13 +79,13 @@ export class RenderTask implements Task {
         const r = target === "singbox"
             ? await capture($`docker compose exec -T panel php artisan singbox:render ${passthrough}`)
             : await capture($`docker compose exec -T panel ct-server-core --json ${target} render ${passthrough}`);
-        if (r.stdout) process.stdout.write(r.stdout);
-        if (r.stderr) process.stderr.write(r.stderr);
+        if (r.stdout) process.stdout.write(redactSensitive(r.stdout));
+        if (r.stderr) process.stderr.write(redactSensitive(r.stderr));
         if (!r.ok) {
             return {
                 ok: false,
                 code: r.code || 1,
-                summary: `${target} render failed (exit ${r.code})`,
+                summary: renderFailureSummary(target, r.code, r.stdout, r.stderr),
             };
         }
         if (target === "singbox") {
@@ -79,7 +94,7 @@ export class RenderTask implements Task {
                 return {
                     ok: false,
                     code: 1,
-                    summary: "singbox render did not write /data/config/singbox.json",
+                    summary: "singbox render command exited 0 but /data/config/singbox.json is missing or empty. Run: ct recover diagnose",
                 };
             }
         }

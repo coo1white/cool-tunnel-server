@@ -59,6 +59,9 @@ class CredentialLockCheck extends Command
 
         if ($failures !== []) {
             $this->error('credential-lock drift: '.implode('; ', $failures));
+            foreach ($this->driftAdvice($failures) as $line) {
+                $this->line($line);
+            }
 
             return self::FAILURE;
         }
@@ -321,5 +324,34 @@ class CredentialLockCheck extends Command
         }
 
         return $failures;
+    }
+
+    /**
+     * @param  list<string>  $failures
+     * @return list<string>
+     */
+    private function driftAdvice(array $failures): array
+    {
+        $joined = implode('; ', $failures);
+        $advice = [
+            'What happened: active DB accounts, rendered sing-box users, and subscription manifests do not agree.',
+        ];
+
+        if (str_contains($joined, 'extra_in_rendered=')) {
+            $advice[] = 'Likely cause: singbox.json still contains users from a prior render.';
+            $advice[] = 'Try: ct recover fix-stale-singbox';
+        } elseif (str_contains($joined, 'missing_in_rendered=')) {
+            $advice[] = 'Likely cause: singbox.json was not regenerated after account changes.';
+            $advice[] = 'Try: docker compose exec -T panel php artisan singbox:render --if-changed && ct recover diagnose';
+        } elseif (str_contains($joined, 'uuid_mismatch=')) {
+            $advice[] = 'Likely cause: an account UUID changed without a matching sing-box render.';
+            $advice[] = 'Try: ct recover fix-stale-singbox';
+        } else {
+            $advice[] = 'Try: ct recover diagnose';
+        }
+
+        $advice[] = 'Logs: docker compose logs --tail=120 --no-color panel singbox';
+
+        return $advice;
     }
 }

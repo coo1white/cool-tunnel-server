@@ -13,6 +13,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
+use Livewire\Features\SupportAutoInjectedAssets\SupportAutoInjectedAssets;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -162,6 +163,23 @@ class CoverSiteInvariantTest extends TestCase
         $this->assertArrayHasKey('path_length', $hits[0]['context']);
         $this->assertArrayNotHasKey('path', $hits[0]['context']);
         $this->assertArrayNotHasKey('err', $hits[0]['context']);
+    }
+
+    #[Test]
+    public function cover_site_never_inherits_livewire_assets_from_previous_admin_page(): void
+    {
+        $this->seedActiveCover();
+
+        SupportAutoInjectedAssets::$hasRenderedAComponentThisRequest = true;
+        SupportAutoInjectedAssets::$forceAssetInjection = true;
+
+        $cover = $this->coverSite();
+
+        $cover->assertOk();
+        $this->assertStringNotContainsString('Livewire Styles', (string) $cover->getContent());
+        $this->assertStringNotContainsString('/livewire/livewire', (string) $cover->getContent());
+        $this->assertFalse(SupportAutoInjectedAssets::$hasRenderedAComponentThisRequest);
+        $this->assertFalse(SupportAutoInjectedAssets::$forceAssetInjection);
     }
 
     /**

@@ -381,6 +381,8 @@ a one-command fix:
 | `doctor` shows `/up endpoint connection failed` | Panel container down or FrankenPHP crashed | `docker compose ps panel` + `docker compose logs --tail=80 panel` |
 | `doctor` shows `Containers <N>/6 running` with one missing | One container failed | The diagnostic block lists which one + its log-tail command |
 | `readiness` check 8 NG with `Redis URL did not parse` | You rotated `REDIS_PASSWORD` to a value with `/`, `+`, or `=` on a pre-v0.0.88 install | Upgrade to v0.0.88+ (`ct update`) or rotate to a hex-only value (`openssl rand -hex 32`) |
+| `singbox:render` says `Could not decrypt the data` | Current `APP_KEY` cannot decrypt the stored Reality private key | Restore the old `.env`/`APP_KEY` from backup, or run `ct recover reset-reality` and have clients re-import subscription URLs |
+| `singbox` waits for `/data/config/singbox.json` after failed install/update | Panel could not render config or the rendered file is stale | Run `ct recover diagnose`; if it reports stale rendered users, run `ct recover fix-stale-singbox` |
 | Filament login returns `419 PAGE EXPIRED` on every form submit | Pre-v0.0.68 `.env` issue with `APP_URL` | `ct update` — auto-migration fixes it |
 | Browser shows `ERR_SSL_PROTOCOL_ERROR` | Certificate hasn't been issued or expired | `docker compose logs caddy \| tail -40` shows the ACME error; usually DNS or port-80 reachability |
 | Component drift (e.g. `mariadb` reports VersionMismatch) | Pinned version bumped in code | `ct update` brings everything in lockstep |

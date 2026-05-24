@@ -7,6 +7,7 @@ import { test, expect } from "bun:test";
 import {
     expectedRestoreVolumes,
     parseRestoreArgs,
+    restoreDatabaseImportFailureHint,
     staleVolumeNames,
     validateTarEntries,
 } from "../restore";
@@ -70,4 +71,25 @@ test("staleVolumeNames reports only restore-owned project volumes", () => {
         "cool-tunnel-server_caddy_data",
         "cool-tunnel-server_db_data",
     ]);
+});
+
+test("restoreDatabaseImportFailureHint explains MariaDB auth failures", () => {
+    const hint = restoreDatabaseImportFailureHint("ERROR 1045 (28000): Access denied for user 'root'");
+
+    expect(hint).toContain("DB_ROOT_PASSWORD");
+    expect(hint).toContain("restored .env");
+});
+
+test("restoreDatabaseImportFailureHint explains missing restored database", () => {
+    const hint = restoreDatabaseImportFailureHint("ERROR 1049 (42000): Unknown database 'cooltunnel'");
+
+    expect(hint).toContain("DB_DATABASE");
+    expect(hint).toContain("docker compose logs --tail=80 db");
+});
+
+test("restoreDatabaseImportFailureHint explains rejected SQL dump", () => {
+    const hint = restoreDatabaseImportFailureHint("ERROR 1064 (42000): You have an error in your SQL syntax");
+
+    expect(hint).toContain("db.sql");
+    expect(hint).toContain("corrupt");
 });

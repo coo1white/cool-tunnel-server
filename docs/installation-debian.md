@@ -529,6 +529,28 @@ cd /opt/cool-tunnel-server
 image bundle, runs new migrations, re-renders the sing-box config, and
 starts the updated containers.
 
+If an install or update stops after containers are mostly up, run:
+
+```bash
+./ct recover diagnose
+```
+
+For the common stale rendered-config case, use:
+
+```bash
+./ct recover fix-stale-singbox
+```
+
+If `singbox:render` reports `Could not decrypt the data` and the old
+`APP_KEY` is gone, use:
+
+```bash
+./ct recover reset-reality
+```
+
+That resets only the Reality keypair; clients must re-import their
+subscription URLs afterward.
+
 ### Back up
 
 ```bash

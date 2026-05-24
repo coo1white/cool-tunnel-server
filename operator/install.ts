@@ -35,9 +35,8 @@ import { ensureRepoRoot } from "./src/util/repo-root";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
 import { ensureBootstrapAdminPassword } from "./src/util/bootstrap-admin";
 import {
-    credentialLockRecoveryHint,
-    settleCredentialLock,
-    waitForServicesReady,
+    deploymentSettleRecoveryHint,
+    settleDeployment,
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
@@ -582,26 +581,19 @@ docker compose logs --tail=80 singbox`,
 
 async function settleInstallDeployment(): Promise<void> {
     step("Post-install settle gate (containers + credential lock)");
-    const ready = await waitForServicesReady({
+    const settled = await settleDeployment({
         services: ["panel", "caddy", "singbox", "db", "redis"],
         log: (message) => warn(message),
     });
-    if (!ready) {
+    if (!settled.services.ok) {
         dieWithDiag(
             "containers did not become healthy after install",
-            "docker compose ps\ndocker compose logs --tail=80 caddy singbox panel",
+            deploymentSettleRecoveryHint(settled),
         );
     }
     ok("containers healthy");
-
-    const guard = await settleCredentialLock({
-        log: (message) => warn(message),
-    });
-    if (!guard.ok) {
-        dieWithDiag(
-            "credential-lock guard failed after install",
-            credentialLockRecoveryHint(guard.guard),
-        );
+    if (!settled.credentialLock?.ok) {
+        dieWithDiag("credential-lock guard failed after install", deploymentSettleRecoveryHint(settled));
     }
     ok("credential-lock OK");
 }

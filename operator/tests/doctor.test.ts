@@ -9,6 +9,7 @@ import {
     indexComposeRowsByService,
     opensslSClientArgs,
     recentRealityLogArgs,
+    summarizeCredentialLockOutput,
 } from "../src/tasks/doctor";
 
 test("indexComposeRowsByService indexes valid compose rows by service", () => {
@@ -130,6 +131,35 @@ test("checkRecentRealityInvalidOutput warns with count only", () => {
     expect(checked.detail).toContain("2 invalid handshakes");
     expect(checked.detail).not.toContain("REALITY");
     expect(checked.detail).not.toContain("ct-singbox");
+});
+
+test("summarizeCredentialLockOutput preserves drift reason", () => {
+    expect(summarizeCredentialLockOutput(
+        "credential-lock drift: db<->rendered extra_in_rendered=1\nmore details",
+        "",
+    )).toBe("credential-lock drift: db<->rendered extra_in_rendered=1");
+});
+
+test("summarizeCredentialLockOutput handles empty guard output", () => {
+    expect(summarizeCredentialLockOutput("", "")).toContain("php artisan credential-lock:check");
+});
+
+test("summarizeCredentialLockOutput redacts secret-bearing guard output", () => {
+    const summary = summarizeCredentialLockOutput(
+        "APP_KEY=base64:abcdefghijklmnop1234567890ABCDEFGHIJKLMNOP== https://panel.example.com/api/v1/subscription/abcDEF_123-xyz",
+        "",
+    );
+
+    expect(summary).toContain("APP_KEY=<redacted>");
+    expect(summary).toContain("/api/v1/subscription/<redacted>");
+    expect(summary).not.toContain("abcDEF_123-xyz");
+});
+
+test("doctor credential-lock hint points at recover diagnose", async () => {
+    const body = await Bun.file("./src/tasks/doctor.ts").text();
+
+    expect(body).toContain("ct recover diagnose");
+    expect(body).toContain("php artisan credential-lock:check");
 });
 
 test("opensslSClientArgs keeps hostile domain inside one argv value", () => {

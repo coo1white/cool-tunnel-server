@@ -27,7 +27,21 @@ import { die, makeTerm } from "./src/util/term";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { ensureRepoRoot } from "./src/util/repo-root";
 
-const { step, ok } = makeTerm();
+const { step, ok, warn } = makeTerm();
+
+export function backupDatabaseFailureHint(stderr: string): string {
+    const detail = stderr.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 3).join(" / ");
+    if (/Access denied/i.test(stderr)) {
+        return "MariaDB rejected DB_ROOT_PASSWORD from .env. Check DB_ROOT_PASSWORD matches the running ct-db container, then run: docker compose logs --tail=80 db";
+    }
+    if (/Unknown database/i.test(stderr)) {
+        return "DB_DATABASE from .env does not exist in MariaDB. Check DB_DATABASE in .env and run: docker compose exec -T db mariadb -u root -e 'SHOW DATABASES;'";
+    }
+    if (/Can't connect|Connection refused|Name or service not known|Temporary failure/i.test(stderr)) {
+        return "ct-db is not reachable. Run: docker compose ps db && docker compose logs --tail=80 db";
+    }
+    return detail || "Run: docker compose ps db && docker compose logs --tail=80 db";
+}
 
 async function dumpDatabase(env: Record<string, string>, dest: string): Promise<void> {
     const dbPw = env["DB_ROOT_PASSWORD"] ?? "";
@@ -42,7 +56,7 @@ async function dumpDatabase(env: Record<string, string>, dest: string): Promise<
     if (!r.ok) {
         die(
             `mariadb-dump failed (exit ${r.code})`,
-            r.stderr.split("\n").slice(0, 3).join(" / ") || "check db container status",
+            backupDatabaseFailureHint(r.stderr),
         );
     }
     ok("db.sql written");
@@ -54,7 +68,13 @@ async function snapshotCaddyData(volumeName: string, tmpDir: string, destName: s
     // land a half-written *.crt or *.key in the archive.
     const wasRunning = await serviceRunning("caddy");
     if (wasRunning) {
-        await capture($`docker compose stop caddy`);
+        const stopped = await capture($`docker compose stop caddy`);
+        if (!stopped.ok) {
+            die(
+                "could not stop caddy before backing up ACME data",
+                stopped.stderr.split("\n")[0] || "Run: docker compose logs --tail=80 caddy",
+            );
+        }
     }
     let r;
     try {
@@ -64,7 +84,11 @@ async function snapshotCaddyData(volumeName: string, tmpDir: string, destName: s
         );
     } finally {
         if (wasRunning) {
-            await capture($`docker compose start caddy`);
+            const started = await capture($`docker compose start caddy`);
+            if (!started.ok) {
+                warn(`caddy did not restart after backup snapshot: ${started.stderr.split("\n")[0] || `exit ${started.code}`}`);
+                warn("run: docker compose start caddy && docker compose logs --tail=80 caddy");
+            }
         }
     }
     if (!r.ok) {

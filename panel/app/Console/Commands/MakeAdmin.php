@@ -9,8 +9,8 @@ namespace App\Console\Commands;
 use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 // Project-specific admin creator. Replaces Filament's stock
@@ -219,7 +219,7 @@ class MakeAdmin extends Command
 
     private function validatedBootstrapPassword(): ?string
     {
-        $password = (string) ($this->option('password') ?: env('CT_BOOTSTRAP_ADMIN_PASSWORD', ''));
+        $password = (string) ($this->option('password') ?: config('cool-tunnel.bootstrap_admin_password', ''));
         if ($password === '') {
             $this->error('Bootstrap admin password missing. Pass --password or set CT_BOOTSTRAP_ADMIN_PASSWORD in .env.');
 

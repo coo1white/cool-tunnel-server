@@ -6,12 +6,12 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages\Auth;
 
-use Filament\Http\Responses\Auth\Contracts\LoginResponse;
 use Filament\Forms\Components\Component;
 use Filament\Forms\Components\TextInput;
+use Filament\Http\Responses\Auth\Contracts\LoginResponse;
 use Filament\Pages\Auth\Login as FilamentLogin;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Contracts\Support\Htmlable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 
 // H1 (2026-05-05 audit) — Filament 3's stock Login page does not
@@ -24,12 +24,12 @@ use Illuminate\Validation\ValidationException;
 
 class Login extends FilamentLogin
 {
-    public function getHeading(): string | Htmlable
+    public function getHeading(): string|Htmlable
     {
         return 'Log in to Cool Tunnel Server';
     }
 
-    public function getSubheading(): string | Htmlable | null
+    public function getSubheading(): string|Htmlable|null
     {
         return null;
     }
@@ -68,7 +68,7 @@ class Login extends FilamentLogin
         $login = trim((string) ($data['email'] ?? ''));
 
         return [
-            static function (Builder $query) use ($login): void {
+            'login' => static function (Builder $query) use ($login): void {
                 $query->where('email', $login)
                     ->orWhere('name', $login);
             },

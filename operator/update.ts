@@ -35,9 +35,8 @@ import { BOOTSTRAP_ADMIN_PASSWORD_KEY, generateBootstrapAdminPassword } from "./
 import { parseDotenv } from "./src/util/env";
 import { formatAutoTempCleanSummary, runAutoTempClean } from "./src/util/disk-cleanup";
 import {
-    credentialLockRecoveryHint,
-    settleCredentialLock,
-    waitForServicesReady,
+    deploymentSettleRecoveryHint,
+    settleDeployment,
 } from "./src/util/deploy-settle";
 
 const { step, ok, warn } = makeTerm();
@@ -364,26 +363,19 @@ async function reloadCaddy(): Promise<void> {
 
 async function runPostUpdateHealthGates(): Promise<void> {
     phase("Post-update settle gate");
-    const ready = await waitForServicesReady({
+    const settled = await settleDeployment({
         services: ["panel", "caddy", "singbox", "db", "redis"],
         log: (message) => warn(message),
     });
-    if (!ready) {
+    if (!settled.services.ok) {
         dieWithDiag(
             "containers did not become healthy after update",
-            "docker compose ps\ndocker compose logs --tail=80 caddy singbox panel",
+            deploymentSettleRecoveryHint(settled),
         );
     }
     ok("containers healthy");
-
-    const guard = await settleCredentialLock({
-        log: (message) => warn(message),
-    });
-    if (!guard.ok) {
-        dieWithDiag(
-            "credential-lock guard failed after update",
-            credentialLockRecoveryHint(guard.guard),
-        );
+    if (!settled.credentialLock?.ok) {
+        dieWithDiag("credential-lock guard failed after update", deploymentSettleRecoveryHint(settled));
     }
     ok("credential-lock OK");
 }
