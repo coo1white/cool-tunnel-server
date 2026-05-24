@@ -219,7 +219,21 @@ jobs:
           # deleted here when manifests/sing-box.upstream.json and
           # manifests/haproxy.upstream.json went away.
           caddy_manifest=$(jq -r .version manifests/caddy.upstream.json)
-          caddy_dockerfile=$(awk '/^FROM caddy:/ {sub(/^FROM caddy:/,""); sub(/-alpine.*$/,""); sub(/-builder.*$/,""); print "v"$0; exit}' docker/caddy/Dockerfile)
+          caddy_dockerfile=$(awk '
+              /^ARG CT_CADDY_RUNTIME_IMAGE=caddy:/ {
+                  sub(/^ARG CT_CADDY_RUNTIME_IMAGE=caddy:/,"")
+                  sub(/-alpine.*$/,"")
+                  print "v"$0
+                  exit
+              }
+              /^FROM caddy:/ {
+                  sub(/^FROM caddy:/,"")
+                  sub(/-alpine.*$/,"")
+                  sub(/-builder.*$/,"")
+                  print "v"$0
+                  exit
+              }
+          ' docker/caddy/Dockerfile)
           if [[ "$caddy_manifest" != "$caddy_dockerfile" ]]; then
               echo "::error::caddy manifest=$caddy_manifest, Dockerfile=$caddy_dockerfile"
               exit 1
