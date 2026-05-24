@@ -15,6 +15,8 @@ import {
     SINGBOX_CONFIG_PATH,
 } from "../util/credential-control";
 import { redactSensitive } from "../util/redact";
+import { encryptionFailureHint, loadLaravelKeyEnv } from "../util/laravel-key";
+import type { EnvMap } from "../util/env";
 
 type Mode = "diagnose" | "fix-stale-singbox" | "reset-reality";
 
@@ -52,13 +54,14 @@ export function recoveryAdvice(input: {
     readonly renderedNames: string;
     readonly credentialLockOk: boolean;
     readonly renderOutput?: string;
+    readonly env?: EnvMap;
 }): string {
     const renderOutput = input.renderOutput ?? "";
     if (renderOutput.includes("Unsupported cipher or incorrect key length")) {
-        return "APP_KEY is malformed. Fix .env so APP_KEY is a valid Laravel base64 key, then run: docker compose restart panel && ct recover diagnose";
+        return encryptionFailureHint(input.env ?? {}, "recover").join(" ");
     }
     if (renderOutput.includes("Could not decrypt the data")) {
-        return "APP_KEY cannot decrypt the stored Reality key. If the old APP_KEY is gone, run: ct recover reset-reality. Clients must re-import subscription URLs.";
+        return encryptionFailureHint(input.env ?? {}, "recover").join(" ");
     }
     if (input.credentialLockOk) {
         return "credential-lock OK. Continue with: ./ct update";
@@ -117,6 +120,7 @@ class RecoverTaskImpl {
         if (renderedNames.ok) {
             process.stdout.write(`  Rendered names: ${summarizeRenderNames(renderedNames.stdout)}\n`);
         }
+        const env = await loadLaravelKeyEnv();
         process.stdout.write(`  Render command: ${render.ok ? "OK" : "FAILED"}\n`);
         process.stdout.write(`  Credential lock: ${lock.ok ? "OK" : "FAILED"}\n`);
         process.stdout.write(`\nNext: ${recoveryAdvice({
@@ -125,6 +129,7 @@ class RecoverTaskImpl {
             renderedNames: renderedNames.stdout,
             credentialLockOk: lock.ok,
             renderOutput: `${render.stdout}\n${render.stderr}`,
+            env,
         })}\n`);
 
         await this.printFilteredPanelLogs();

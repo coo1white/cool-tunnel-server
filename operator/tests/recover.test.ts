@@ -70,7 +70,25 @@ test("recoveryAdvice identifies malformed APP_KEY", () => {
         renderedNames: "",
         credentialLockOk: false,
         renderOutput: "Unsupported cipher or incorrect key length.",
-    })).toContain("APP_KEY is malformed");
+        env: { APP_KEY: "base64:Zm9v" },
+    })).toContain("APP_KEY is missing or malformed");
+});
+
+test("recoveryAdvice identifies malformed APP_PREVIOUS_KEYS separately", () => {
+    const advice = recoveryAdvice({
+        dbVlessCount: null,
+        renderedUserCount: null,
+        renderedNames: "",
+        credentialLockOk: false,
+        renderOutput: "Unsupported cipher or incorrect key length.",
+        env: {
+            APP_KEY: "base64:JCsdgKuqbLm9GnIQ6L+8MKf1gfgPYxKCWgVJB8x3qvE=",
+            APP_PREVIOUS_KEYS: "base64:Zm9v",
+        },
+    });
+
+    expect(advice).toContain("APP_PREVIOUS_KEYS contains malformed fallback keys");
+    expect(advice).not.toContain("reset-reality");
 });
 
 test("recoveryAdvice identifies unrecoverable Reality decrypt drift", () => {
@@ -80,6 +98,7 @@ test("recoveryAdvice identifies unrecoverable Reality decrypt drift", () => {
         renderedNames: "",
         credentialLockOk: false,
         renderOutput: "sing-box render failed: Could not decrypt the data.",
+        env: { APP_KEY: "base64:JCsdgKuqbLm9GnIQ6L+8MKf1gfgPYxKCWgVJB8x3qvE=" },
     })).toContain("ct recover reset-reality");
 });
 
