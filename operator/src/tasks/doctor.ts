@@ -13,6 +13,7 @@ import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
 import { parseDfAvailableKb } from "../util/preflight";
 import { credentialLockCheck, renderSingboxConfigCommand } from "../util/credential-control";
 import { redactSensitive } from "../util/redact";
+import { describeLaravelKey, splitPreviousKeys } from "../util/laravel-key";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -211,6 +212,48 @@ async function checkEnvFile(c: CheckCtx): Promise<CheckLine> {
             hint: "cp .env.example .env && $EDITOR .env",
         };
     }
+}
+
+async function checkLaravelEncryptionKeys(c: CheckCtx): Promise<CheckLine> {
+    const current = describeLaravelKey("APP_KEY", c.env["APP_KEY"]);
+    const previous = splitPreviousKeys(c.env["APP_PREVIOUS_KEYS"]);
+    const malformedPrevious = previous.filter((key) => describeLaravelKey("APP_PREVIOUS_KEYS", key).status !== "ok").length;
+
+    if (current.status !== "ok") {
+        return {
+            group: G_PREREQ,
+            label: "APP_KEY",
+            severity: "fail",
+            detail: current.detail,
+            hint: `${current.hint}; paste it into .env, then run: docker compose restart panel && ct recover diagnose`,
+        };
+    }
+
+    if (malformedPrevious > 0) {
+        return {
+            group: G_PREREQ,
+            label: "Prev keys",
+            severity: "fail",
+            detail: `APP_PREVIOUS_KEYS has ${previous.length} entries, ${malformedPrevious} malformed`,
+            hint: "Fix or remove malformed APP_PREVIOUS_KEYS entries in .env, then run: docker compose restart panel && ct recover diagnose",
+        };
+    }
+
+    if (previous.length > 0) {
+        return {
+            group: G_PREREQ,
+            label: "Prev keys",
+            severity: "pass",
+            detail: `APP_KEY valid; APP_PREVIOUS_KEYS has ${previous.length} valid entr${previous.length === 1 ? "y" : "ies"}`,
+        };
+    }
+
+    return {
+        group: G_PREREQ,
+        label: "APP_KEY",
+        severity: "pass",
+        detail: "valid Laravel AES-256 key; no previous keys configured",
+    };
 }
 
 async function checkDns(c: CheckCtx): Promise<CheckLine> {
@@ -815,6 +858,7 @@ async function infoMessengerDepth(c: CheckCtx): Promise<CheckLine> {
 const CHECKS: CheckFn[] = [
     checkComposeAvailable,
     checkEnvFile,
+    checkLaravelEncryptionKeys,
     checkDns,
     checkPorts,
     checkAcmeCert,

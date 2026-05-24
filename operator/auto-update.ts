@@ -30,6 +30,7 @@ import { acquireOpLock } from "./src/util/op-lock";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { credentialLockCheck } from "./src/util/credential-control";
 import { redactSensitive } from "./src/util/redact";
+import { encryptionFailureHint, loadLaravelKeyEnv } from "./src/util/laravel-key";
 
 // Distinct marker so the inner `./ct update` subprocess (which
 // acquires its own per-project ops flock under the default
@@ -125,7 +126,7 @@ export function gitPullFailureHint(stderr: string, stdout = ""): readonly string
     ];
 }
 
-export function ctUpdateFailureHint(code: number, stderr: string, stdout = ""): readonly string[] {
+export function ctUpdateFailureHint(code: number, stderr: string, stdout = "", env: Record<string, string> = process.env as Record<string, string>): readonly string[] {
     const combined = `${stderr}\n${stdout}`;
     const lower = combined.toLowerCase();
     const firstLine = firstNonEmptyLine(stderr) || firstNonEmptyLine(stdout);
@@ -133,16 +134,16 @@ export function ctUpdateFailureHint(code: number, stderr: string, stdout = ""): 
 
     if (lower.includes("unsupported cipher or incorrect key length")) {
         return [
-            "ct update failed — panel APP_KEY is malformed",
+            "ct update failed — panel encryption key configuration is invalid",
             detail,
-            "fix /opt/cool-tunnel-server/.env so APP_KEY is exactly a Laravel key such as base64:<44 chars>, then run 'ct recover diagnose'",
+            ...encryptionFailureHint(env, "update"),
         ];
     }
     if (lower.includes("could not decrypt the data")) {
         return [
             "ct update failed — encrypted panel data cannot be decrypted with the current APP_KEY",
             detail,
-            "if this happened after changing APP_KEY, restore the old key or set APP_PREVIOUS_KEYS; for Reality key drift run 'ct recover reset-reality'",
+            ...encryptionFailureHint(env, "update"),
         ];
     }
     if (lower.includes("credential-lock")) {
@@ -266,7 +267,8 @@ export async function runAutoUpdate(opts: AutoUpdateOptions): Promise<number> {
         ? await capture($`./ct update`.quiet())
         : await capture($`./ct update`);
     if (!update.ok) {
-        for (const line of ctUpdateFailureHint(update.code, update.stderr, update.stdout)) log.err(line);
+        const env = await loadLaravelKeyEnv();
+        for (const line of ctUpdateFailureHint(update.code, update.stderr, update.stdout, env)) log.err(line);
         return 1;
     }
     if (!opts.quiet) {

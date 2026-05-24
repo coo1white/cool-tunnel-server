@@ -15,6 +15,8 @@ import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { redactSensitive } from "../util/redact";
+import { encryptionFailureHint, loadLaravelKeyEnv } from "../util/laravel-key";
+import type { EnvMap } from "../util/env";
 
 const TARGETS = ["caddyfile", "singbox"] as const;
 type Target = typeof TARGETS[number];
@@ -45,13 +47,13 @@ export function parseArgs(argv: readonly string[]): { target: Target; passthroug
     return { target, passthrough };
 }
 
-export function renderFailureSummary(target: Target, code: number, stdout: string, stderr: string): string {
+export function renderFailureSummary(target: Target, code: number, stdout: string, stderr: string, env: EnvMap = {}): string {
     const output = `${stdout}\n${stderr}`;
     if (target === "singbox" && output.includes("Unsupported cipher or incorrect key length")) {
-        return "singbox render failed: APP_KEY is malformed. Fix .env so APP_KEY is a valid Laravel base64 key, then run: docker compose restart panel && ct render singbox";
+        return `singbox render failed: ${encryptionFailureHint(env, "render").join(" ")}`;
     }
     if (target === "singbox" && output.includes("Could not decrypt the data")) {
-        return "singbox render failed: APP_KEY cannot decrypt the stored Reality key. Restore the old APP_KEY from backup, or run: ct recover reset-reality";
+        return `singbox render failed: ${encryptionFailureHint(env, "render").join(" ")}`;
     }
     if (target === "singbox" && output.includes("rendered sing-box config missing")) {
         return "singbox render failed: /data/config/singbox.json was not created. Run: ct recover diagnose";
@@ -82,10 +84,11 @@ export class RenderTask implements Task {
         if (r.stdout) process.stdout.write(redactSensitive(r.stdout));
         if (r.stderr) process.stderr.write(redactSensitive(r.stderr));
         if (!r.ok) {
+            const env = await loadLaravelKeyEnv(ctx.cwd, ctx.env);
             return {
                 ok: false,
                 code: r.code || 1,
-                summary: renderFailureSummary(target, r.code, r.stdout, r.stderr),
+                summary: renderFailureSummary(target, r.code, r.stdout, r.stderr, env),
             };
         }
         if (target === "singbox") {

@@ -162,6 +162,14 @@ test("doctor credential-lock hint points at recover diagnose", async () => {
     expect(body).toContain("php artisan credential-lock:check");
 });
 
+test("doctor checks APP_KEY and APP_PREVIOUS_KEYS without printing key material", async () => {
+    const body = await Bun.file("./src/tasks/doctor.ts").text();
+
+    expect(body).toContain("checkLaravelEncryptionKeys");
+    expect(body).toContain("describeLaravelKey");
+    expect(body).toContain("Fix or remove malformed APP_PREVIOUS_KEYS");
+});
+
 test("opensslSClientArgs keeps hostile domain inside one argv value", () => {
     const hostile = "panel.example.com; touch /tmp/ct-pwn #";
     expect(opensslSClientArgs(hostile)).toEqual([
