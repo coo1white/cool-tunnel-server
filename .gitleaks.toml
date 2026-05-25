@@ -29,4 +29,8 @@ regexes = [
   # onwards); the regex below pins the historical commit's value so
   # the gitleaks scan over the PR's diff range stops flagging it.
   '''EFOpHzZ8eSPQjGr5Tg2cFGSXgC7y5sN3yMpZJ_TT-Eo''',
+  # operator/src/util/bootstrap-admin.ts (commit 53db77e01c99):
+  # historical password alphabet used by the retired generated
+  # bootstrap-password helper. It is an alphabet, not a credential.
+  '''ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789''',
 ]
