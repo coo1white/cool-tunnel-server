@@ -5,6 +5,7 @@
 // in a try/catch so individual tasks can stay focused on their command.
 
 import type { RunContext } from "./context";
+import { redactSensitive } from "../util/redact";
 
 export interface TaskResult {
     readonly ok: boolean;
@@ -41,7 +42,7 @@ export class TaskRunner {
         this.ctx.logger.info(`[${task.name}] ${tag} (${dur}ms${tail})`);
 
         if (this.ctx.json && result.json !== undefined) {
-            process.stdout.write(JSON.stringify(result.json, null, 2) + "\n");
+            process.stdout.write(redactSensitive(JSON.stringify(result.json, null, 2)) + "\n");
         }
 
         return result;

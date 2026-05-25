@@ -41,11 +41,11 @@
             ]
         },
         {
-            "description": "Composer updates — same idea for the panel.",
+            "description": "Bun/npm package updates — group operator and singbox-core together.",
             "matchManagers": [
-                "composer"
+                "npm"
             ],
-            "groupName": "composer deps",
+            "groupName": "bun deps",
             "schedule": [
                 "before 8am on monday"
             ]
@@ -89,7 +89,6 @@
                 "sing-box",
                 "alpine",
                 "rust",
-                "php",
                 "mariadb",
                 "redis"
             ],

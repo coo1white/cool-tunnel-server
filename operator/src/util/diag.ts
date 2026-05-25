@@ -7,6 +7,7 @@
 // body, indentation) and only update / restore / install need it.
 
 import { ANSI } from "./term";
+import { redactSensitive } from "./redact";
 
 export interface DiagFailure {
     readonly summary: string;
@@ -17,10 +18,10 @@ export interface DiagFailure {
 // to stderr, then exit 1. Returns `never` so TS narrows control
 // flow after the call.
 export function dieWithDiag(summary: string, diag: string): never {
-    process.stderr.write(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${summary}\n`);
+    process.stderr.write(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(summary)}\n`);
     if (diag) {
         process.stderr.write(`\n${ANSI.bold}Diagnostic:${ANSI.reset}\n`);
-        for (const line of diag.split("\n")) {
+        for (const line of redactSensitive(diag).split("\n")) {
             process.stderr.write(`  ${line}\n`);
         }
         process.stderr.write("\n");
@@ -33,11 +34,11 @@ export function dieWithDiag(summary: string, diag: string): never {
 // failures before deciding whether to die.
 export function formatDiagFailure(f: DiagFailure): string {
     const lines: string[] = [];
-    lines.push(`${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${f.summary}`);
+    lines.push(`${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(f.summary)}`);
     if (f.diag) {
         lines.push("");
         lines.push(`${ANSI.bold}Diagnostic:${ANSI.reset}`);
-        for (const line of f.diag.split("\n")) {
+        for (const line of redactSensitive(f.diag).split("\n")) {
             lines.push(`  ${line}`);
         }
     }
