@@ -5,8 +5,8 @@ import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import type { AdminConfig } from "./config";
 import { loadAdminConfig, validateEmail, validateUserId } from "./config";
-import { AdminStorage, ensureServerConfig } from "./storage";
-import { createAuth, createAdminUserWithPassword, createFirstOwnerWithBootstrapToken, getCurrentSession, type CurrentSession } from "./auth";
+import { AdminStorage, ensureServerConfig, type AdminUserRow, type AuditRow } from "./storage";
+import { createAuth, createAdminUserWithPassword, createFirstOwnerWithBootstrapToken, getCurrentSession, hashAdminPassword, type CurrentSession } from "./auth";
 import { bootstrapFailureMessage, hashValidBootstrapToken, validateOwnerInput } from "./bootstrap";
 import { canCreateRole, canDeleteRole, canManageUsers, canRunAction, requireRole, roleAtLeast, type AdminRole } from "./roles";
 import { isCoreAction, runCoreAction } from "./core-boundary";
@@ -56,6 +56,16 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
     app.use("*", securityHeaders());
     app.use("*", csrfProtection(config));
 
+    app.post("/api/auth/sign-in/email", async (c) => {
+        const body = await c.req.raw.clone().json().catch(() => null) as Record<string, unknown> | null;
+        const email = typeof body?.["email"] === "string" ? body["email"] : "";
+        const user = safeUserByEmail(storage, email);
+        if (user?.status === "disabled") {
+            return c.json({ code: "INVALID_EMAIL_OR_PASSWORD", message: "Invalid email or password" }, 401);
+        }
+        return auth.handler(c.req.raw);
+    });
+
     // Official Better Auth Hono shape: mount both GET and POST and
     // pass Hono's raw Request to auth.handler.
     app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
@@ -70,15 +80,21 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
         if (!validLoginCsrf(csrf, csrfCookie)) {
             return loginResponse(c, config, "Sign in expired. Reload the sign-in page and try again.", 403);
         }
+        const formEmail = String(form.get("email") ?? "");
+        const user = safeUserByEmail(storage, formEmail);
+        if (user?.status === "disabled") {
+            return loginResponse(c, config, "Sign in failed. Check the email and password.", 401);
+        }
         const response = await auth.handler(new Request(`${config.baseUrl}/api/auth/sign-in/email`, {
             method: "POST",
             headers: {
                 "content-type": "application/json",
+                origin: config.baseUrl,
                 "x-forwarded-for": c.req.header("x-forwarded-for") ?? "",
                 cookie: c.req.header("cookie") ?? "",
             },
             body: JSON.stringify({
-                email: String(form.get("email") ?? ""),
+                email: formEmail,
                 password: String(form.get("password") ?? ""),
                 rememberMe: true,
             }),
@@ -132,12 +148,103 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
         return response;
     });
 
-    app.use("/admin/*", requireSession(auth));
-    app.use("/api/admin/*", requireSession(auth));
+    app.use("/admin/*", requireSession(auth, storage));
+    app.use("/api/admin/*", requireSession(auth, storage));
 
     app.get("/admin", (c) => {
         const session = c.get("session");
         return c.html(layout("Dashboard", dashboardPage(session, storage.ownerExists())));
+    });
+    app.get("/admin/users", requireMinimumRole("admin"), (c) => {
+        return c.html(layout("Users", usersPage(c.get("session"), storage.listUsers(), c.req.query("status") ?? "")));
+    });
+    app.get("/admin/users/new", requireMinimumRole("admin"), (c) => {
+        return c.html(layout("Create User", userFormPage(c.get("session"), null)));
+    });
+    app.post("/admin/users/new", requireMinimumRole("admin"), async (c) => {
+        const actor = c.get("session").user;
+        if (!canManageUsers(actor.role)) throw new HttpError(403, "forbidden", "Your role cannot manage users.", true);
+        const form = await c.req.formData();
+        const role = requireRole(String(form.get("role") ?? "viewer"));
+        if (!canCreateRole(actor.role, role)) {
+            throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot create ${role} users.`, true);
+        }
+        const email = validateEmail(String(form.get("email") ?? ""));
+        const name = String(form.get("name") ?? "").trim();
+        const password = String(form.get("password") ?? "");
+        const created = await createAdminUserWithPassword(auth, storage, { email, name, password, role });
+        storage.audit(actor.id, "user.created", "user", created.id, { email, role });
+        return redirectNoStore(`/admin/users/${encodeURIComponent(created.id)}?status=created`);
+    });
+    app.get("/admin/users/:id", requireMinimumRole("admin"), (c) => {
+        const id = validateUserId(c.req.param("id"));
+        const user = storage.getUserById(id);
+        if (!user) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+        return c.html(layout("User Details", userFormPage(c.get("session"), user, c.req.query("status") ?? "")));
+    });
+    app.post("/admin/users/:id/update", requireMinimumRole("admin"), async (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        const target = storage.getUserById(id);
+        if (!target) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+        if (target.role === "owner" && actor.role !== "owner") {
+            throw new HttpError(403, "owner_required", "Only an owner can update another owner.", true);
+        }
+        const form = await c.req.formData();
+        const nextRole = requireRole(String(form.get("role") ?? target.role));
+        if (!canCreateRole(actor.role, nextRole)) {
+            throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot assign ${nextRole}.`, true);
+        }
+        if (target.role === "owner" && nextRole !== "owner" && storage.ownerCount() <= 1) {
+            throw new HttpError(400, "last_owner_blocked", "Cannot remove the last owner account. Create another owner first.", true);
+        }
+        const updated = storage.updateUser(id, {
+            email: validateEmail(String(form.get("email") ?? "")),
+            name: String(form.get("name") ?? ""),
+            role: nextRole,
+        });
+        storage.audit(actor.id, "user.updated", "user", id, {
+            emailChanged: updated.email !== target.email,
+            nameChanged: updated.name !== target.name,
+            roleFrom: updated.role !== target.role ? target.role : undefined,
+            roleTo: updated.role !== target.role ? updated.role : undefined,
+        });
+        return redirectNoStore(`/admin/users/${encodeURIComponent(id)}?status=updated`);
+    });
+    app.post("/admin/users/:id/disable", requireMinimumRole("admin"), (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        disableUser(storage, actor, id);
+        return redirectNoStore(`/admin/users/${encodeURIComponent(id)}?status=disabled`);
+    });
+    app.post("/admin/users/:id/enable", requireMinimumRole("admin"), (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        enableUser(storage, actor, id);
+        return redirectNoStore(`/admin/users/${encodeURIComponent(id)}?status=enabled`);
+    });
+    app.post("/admin/users/:id/reset-password", requireMinimumRole("admin"), async (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        const target = storage.getUserById(id);
+        if (!target) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+        if (!canCreateRole(actor.role, target.role)) {
+            throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot reset ${target.role} passwords.`, true);
+        }
+        const form = await c.req.formData();
+        const passwordHash = await hashAdminPassword(auth, String(form.get("password") ?? ""));
+        storage.setUserPasswordHash(id, passwordHash);
+        storage.audit(actor.id, "user.password_reset", "user", id, { email: target.email, role: target.role });
+        return redirectNoStore(`/admin/users/${encodeURIComponent(id)}?status=password-reset`);
+    });
+    app.post("/admin/users/:id/delete", requireMinimumRole("admin"), (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        deleteUser(storage, actor, id);
+        return redirectNoStore("/admin/users?status=deleted");
+    });
+    app.get("/admin/audit", requireMinimumRole("admin"), (c) => {
+        return c.html(layout("Audit", auditPage(storage.recentAudit())));
     });
 
     app.get("/api/admin/session", (c) => {
@@ -166,6 +273,42 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
         storage.audit(actor.id, "user.created", "user", created.id, { email, role });
         return c.json({ ok: true, user: storage.getUserById(created.id) }, 201);
     });
+    app.get("/api/admin/users/:id", requireMinimumRole("admin"), (c) => {
+        const id = validateUserId(c.req.param("id"));
+        const user = storage.getUserById(id);
+        if (!user) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+        return c.json({ ok: true, user });
+    });
+    app.patch("/api/admin/users/:id", requireMinimumRole("admin"), async (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        const target = storage.getUserById(id);
+        if (!target) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+        if (!canManageUsers(actor.role)) throw new HttpError(403, "forbidden", "Your role cannot manage users.", true);
+        if (target.role === "owner" && actor.role !== "owner") {
+            throw new HttpError(403, "owner_required", "Only an owner can update another owner.", true);
+        }
+        const body = await safeJson(c);
+        const nextRole = body["role"] === undefined ? undefined : requireRole(body["role"]);
+        if (nextRole !== undefined) {
+            if (!canCreateRole(actor.role, nextRole)) {
+                throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot assign ${nextRole}.`, true);
+            }
+            if (target.role === "owner" && nextRole !== "owner" && storage.ownerCount() <= 1) {
+                throw new HttpError(400, "last_owner_blocked", "Cannot remove the last owner account. Create another owner first.", true);
+            }
+        }
+        const name = body["name"] === undefined ? undefined : String(body["name"] ?? "");
+        const email = body["email"] === undefined ? undefined : validateEmail(String(body["email"] ?? ""));
+        const updated = storage.updateUser(id, { name, email, role: nextRole });
+        storage.audit(actor.id, "user.updated", "user", id, {
+            emailChanged: email !== undefined && email !== target.email,
+            nameChanged: name !== undefined && name.trim() !== target.name,
+            roleFrom: nextRole !== undefined && nextRole !== target.role ? target.role : undefined,
+            roleTo: nextRole !== undefined && nextRole !== target.role ? nextRole : undefined,
+        });
+        return c.json({ ok: true, user: updated });
+    });
     app.patch("/api/admin/users/:id/role", requireMinimumRole("admin"), async (c) => {
         const actor = c.get("session").user;
         const id = validateUserId(c.req.param("id"));
@@ -186,6 +329,33 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
         storage.audit(actor.id, "user.role_changed", "user", id, { from: target.role, to: role });
         return c.json({ ok: true, user: storage.getUserById(id) });
     });
+    app.post("/api/admin/users/:id/disable", requireMinimumRole("admin"), (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        disableUser(storage, actor, id);
+        return c.json({ ok: true, user: storage.getUserById(id) });
+    });
+    app.post("/api/admin/users/:id/enable", requireMinimumRole("admin"), (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        enableUser(storage, actor, id);
+        return c.json({ ok: true, user: storage.getUserById(id) });
+    });
+    app.post("/api/admin/users/:id/reset-password", requireMinimumRole("admin"), async (c) => {
+        const actor = c.get("session").user;
+        const id = validateUserId(c.req.param("id"));
+        const target = storage.getUserById(id);
+        if (!target) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+        if (!canCreateRole(actor.role, target.role)) {
+            throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot reset ${target.role} passwords.`, true);
+        }
+        const body = await safeJson(c);
+        const password = String(body["password"] ?? "");
+        const passwordHash = await hashAdminPassword(auth, password);
+        storage.setUserPasswordHash(id, passwordHash);
+        storage.audit(actor.id, "user.password_reset", "user", id, { email: target.email, role: target.role });
+        return c.json({ ok: true });
+    });
     app.delete("/api/admin/users/:id", requireMinimumRole("admin"), (c) => {
         const actor = c.get("session").user;
         const id = validateUserId(c.req.param("id"));
@@ -197,11 +367,7 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
         if (!canDeleteRole(actor.role, target.role)) {
             throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot delete ${target.role} users.`, true);
         }
-        if (target.role === "owner" && storage.ownerCount() <= 1) {
-            throw new HttpError(400, "last_owner_blocked", "Cannot delete the last owner account. Create another owner first.", true);
-        }
-        storage.deleteUser(id);
-        storage.audit(actor.id, "user.deleted", "user", id, { email: target.email, role: target.role });
+        deleteUser(storage, actor, id);
         return c.json({ ok: true });
     });
     app.get("/api/admin/audit", requireMinimumRole("admin"), (c) => {
@@ -306,7 +472,7 @@ function parseOrigin(value: string): string {
     }
 }
 
-function requireSession(auth: ReturnType<typeof createAuth>): MiddlewareHandler<{ Variables: AppVariables }> {
+function requireSession(auth: ReturnType<typeof createAuth>, storage: AdminStorage): MiddlewareHandler<{ Variables: AppVariables }> {
     return async (c, next) => {
         const session = await getCurrentSession(auth, c.req.raw.headers);
         if (!session) {
@@ -315,7 +481,23 @@ function requireSession(auth: ReturnType<typeof createAuth>): MiddlewareHandler<
             }
             return c.redirect("/login");
         }
-        c.set("session", session);
+        const user = storage.getUserById(session.user.id);
+        if (!user || user.status === "disabled") {
+            if (user?.status === "disabled") storage.deleteSessionsForUser(user.id);
+            if (c.req.path.startsWith("/api/")) {
+                return apiError(c, new HttpError(401, "unauthorized", "Authentication is required. Sign in and retry.", true, "Open /login"));
+            }
+            return c.redirect("/login");
+        }
+        c.set("session", {
+            session: session.session,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role: user.role,
+            },
+        });
         await next();
     };
 }
@@ -359,6 +541,58 @@ function apiError(c: Context, err: HttpError): Response {
         },
     };
     return c.json(body, err.status as 400);
+}
+
+function safeUserByEmail(storage: AdminStorage, email: string) {
+    try {
+        return storage.getUserByEmail(email);
+    } catch {
+        return null;
+    }
+}
+
+function disableUser(storage: AdminStorage, actor: CurrentSession["user"], id: string): AdminUserRow {
+    if (id === actor.id) {
+        throw new HttpError(400, "self_disable_blocked", "You cannot disable your own active admin account.", true);
+    }
+    const target = storage.getUserById(id);
+    if (!target) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+    if (!canDeleteRole(actor.role, target.role)) {
+        throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot disable ${target.role} users.`, true);
+    }
+    if (target.role === "owner" && target.status === "active" && storage.ownerCount() <= 1) {
+        throw new HttpError(400, "last_owner_blocked", "Cannot disable the last owner account. Create another owner first.", true);
+    }
+    storage.setUserStatus(id, "disabled");
+    storage.audit(actor.id, "user.disabled", "user", id, { email: target.email, role: target.role });
+    return storage.getUserById(id) ?? target;
+}
+
+function enableUser(storage: AdminStorage, actor: CurrentSession["user"], id: string): AdminUserRow {
+    const target = storage.getUserById(id);
+    if (!target) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+    if (!canCreateRole(actor.role, target.role)) {
+        throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot enable ${target.role} users.`, true);
+    }
+    storage.setUserStatus(id, "active");
+    storage.audit(actor.id, "user.enabled", "user", id, { email: target.email, role: target.role });
+    return storage.getUserById(id) ?? target;
+}
+
+function deleteUser(storage: AdminStorage, actor: CurrentSession["user"], id: string): void {
+    if (id === actor.id) {
+        throw new HttpError(400, "self_delete_blocked", "You cannot delete your own active admin account.", true);
+    }
+    const target = storage.getUserById(id);
+    if (!target) throw new HttpError(404, "not_found", "Admin user was not found.", true);
+    if (!canDeleteRole(actor.role, target.role)) {
+        throw new HttpError(403, "role_not_allowed", `Role ${actor.role} cannot delete ${target.role} users.`, true);
+    }
+    if (target.role === "owner" && target.status === "active" && storage.ownerCount() <= 1) {
+        throw new HttpError(400, "last_owner_blocked", "Cannot delete the last owner account. Create another owner first.", true);
+    }
+    storage.deleteUser(id);
+    storage.audit(actor.id, "user.deleted", "user", id, { email: target.email, role: target.role });
 }
 
 function browserError(c: Context, status: number, title: string, message: string, href: string, label: string): Response {
@@ -484,8 +718,10 @@ p{line-height:1.5}
 label{display:grid;gap:6px;margin:12px 0;font-weight:600}
 input,select{font:inherit;padding:10px;border:1px solid #aeb7b0;border-radius:6px;background:#fff;color:#1d2521}
 button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 14px;border:1px solid #1e5f54;border-radius:6px;background:#1e5f54;color:white;text-decoration:none;font-weight:700;cursor:pointer}
-.button.secondary{background:#fff;color:#1e5f54}
+button.danger,.button.danger{border-color:#9f2424;background:#9f2424}.button.secondary,button.secondary{background:#fff;color:#1e5f54}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.topnav{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}.topnav a{color:#1e5f54;font-weight:700}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid #dde3dd;vertical-align:top}.badge{display:inline-flex;border:1px solid #aeb7b0;border-radius:999px;padding:2px 8px;font-size:12px}
 .muted{color:#5d6962}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 pre{white-space:pre-wrap;overflow:auto;padding:12px;border-radius:6px;background:#10231f;color:#e8fff7}
@@ -506,6 +742,10 @@ async function signOut(){
   location.href='/login';
 }
 </script>`;
+}
+
+function nav(): string {
+    return `<nav class="topnav"><a href="/admin">Dashboard</a><a href="/admin/users">Users</a><a href="/admin/audit">Audit</a><a href="/admin/users/new">New user</a><a href="#" onclick="signOut();return false">Sign out</a></nav>`;
 }
 
 function loginPage(csrf: string, error = ""): string {
@@ -542,16 +782,106 @@ function bootstrapPage(hasTokenCookie: boolean): string {
 
 function dashboardPage(session: CurrentSession, ownerExists: boolean): string {
     return `<div class="shell">
+${nav()}
 <section class="panel">
 <h1>Dashboard</h1>
 <p class="muted">Signed in as ${escapeHtml(session.user.email)} (${session.user.role}).</p>
 <div class="grid">
 <div><h2>Bootstrap</h2><p>${ownerExists ? "Disabled after owner creation." : "No owner exists. Run ct admin bootstrap."}</p></div>
+<div><h2>Accounts</h2><p>Review roles, disable stale users, and reset credentials.</p><a class="button secondary" href="/admin/users">Manage users</a></div>
 <div><h2>Doctor</h2><p>Run diagnostics from the API or CLI.</p><button onclick="fetch('/api/admin/doctor',{method:'POST'}).then(r=>r.json()).then(j=>alert(JSON.stringify(j,null,2)))">Run doctor</button></div>
 <div><h2>Session</h2><p>Secure httpOnly Better Auth cookie session.</p><button class="secondary" onclick="signOut()">Sign out</button></div>
 </div>
 </section>
 </div>`;
+}
+
+function usersPage(session: CurrentSession, users: readonly AdminUserRow[], status: string): string {
+    const rows = users.map((user) => `<tr>
+<td><a href="/admin/users/${escapeHtml(user.id)}">${escapeHtml(user.email)}</a><br><span class="muted">${escapeHtml(user.name)}</span></td>
+<td><span class="badge">${user.role}</span></td>
+<td><span class="badge">${user.status}</span>${user.disabledAt ? `<br><span class="muted">${escapeHtml(user.disabledAt)}</span>` : ""}</td>
+<td><span class="muted">${escapeHtml(user.updatedAt)}</span></td>
+</tr>`).join("");
+    return `<div class="shell">
+${nav()}
+<section class="panel">
+<div class="row"><h1>Users</h1><a class="button" href="/admin/users/new">Create user</a></div>
+<p class="muted">Signed in as ${escapeHtml(session.user.email)} (${session.user.role}).</p>
+${statusMessage(status)}
+${users.length === 0 ? "<p>No admin accounts exist yet.</p>" : `<table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Updated</th></tr></thead><tbody>${rows}</tbody></table>`}
+</section>
+</div>`;
+}
+
+function userFormPage(session: CurrentSession, user: AdminUserRow | null, status = ""): string {
+    const isNew = user === null;
+    const action = isNew ? "/admin/users/new" : `/admin/users/${escapeHtml(user.id)}/update`;
+    const title = isNew ? "Create User" : "User Details";
+    const roleOptions = ["viewer", "operator", "admin", "owner"].filter((role) => canCreateRole(session.user.role, role as AdminRole) || role === user?.role).map((role) => {
+        const selected = user?.role === role || (isNew && role === "viewer") ? " selected" : "";
+        return `<option value="${role}"${selected}>${role}</option>`;
+    }).join("");
+    return `<div class="shell">
+${nav()}
+<section class="panel">
+<h1>${title}</h1>
+${statusMessage(status)}
+<form method="post" action="${action}">
+<label>Name<input name="name" value="${escapeHtml(user?.name ?? "")}" autocomplete="name" required maxlength="120"></label>
+<label>Email<input name="email" type="email" value="${escapeHtml(user?.email ?? "")}" autocomplete="email" required></label>
+<label>Role<select name="role">${roleOptions}</select></label>
+${isNew ? '<label>Temporary password<input name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label>' : ""}
+<div class="row"><button type="submit">${isNew ? "Create user" : "Save changes"}</button><a class="button secondary" href="/admin/users">Back</a></div>
+</form>
+</section>
+${user ? userActionsPage(session, user) : ""}
+</div>`;
+}
+
+function userActionsPage(session: CurrentSession, user: AdminUserRow): string {
+    const canDeleteOrDisable = canDeleteRole(session.user.role, user.role) && user.id !== session.user.id;
+    const canReset = canCreateRole(session.user.role, user.role);
+    return `<section class="panel">
+<h2>Account Actions</h2>
+<p>Status: <span class="badge">${user.status}</span>${user.disabledAt ? ` <span class="muted">disabled ${escapeHtml(user.disabledAt)}</span>` : ""}</p>
+<div class="row">
+${canDeleteOrDisable && user.status === "active" ? `<form method="post" action="/admin/users/${escapeHtml(user.id)}/disable"><button class="secondary" type="submit">Disable</button></form>` : ""}
+${canDeleteOrDisable && user.status === "disabled" ? `<form method="post" action="/admin/users/${escapeHtml(user.id)}/enable"><button class="secondary" type="submit">Enable</button></form>` : ""}
+${canDeleteOrDisable ? `<form method="post" action="/admin/users/${escapeHtml(user.id)}/delete"><button class="danger" type="submit">Delete</button></form>` : ""}
+</div>
+${canReset ? `<form method="post" action="/admin/users/${escapeHtml(user.id)}/reset-password"><label>New temporary password<input name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label><button type="submit">Reset password</button></form>` : "<p class=\"muted\">Your role cannot reset this user's password.</p>"}
+</section>`;
+}
+
+function auditPage(audit: readonly AuditRow[]): string {
+    const rows = audit.map((row) => `<tr>
+<td>${escapeHtml(row.createdAt)}</td>
+<td>${escapeHtml(row.action)}</td>
+<td>${escapeHtml(row.targetType ?? "")}</td>
+<td class="mono">${escapeHtml(row.targetId ?? "")}</td>
+<td><pre>${escapeHtml(row.detail ?? "")}</pre></td>
+</tr>`).join("");
+    return `<div class="shell">
+${nav()}
+<section class="panel">
+<h1>Audit</h1>
+${audit.length === 0 ? "<p>No audit entries yet.</p>" : `<table><thead><tr><th>Time</th><th>Action</th><th>Target</th><th>ID</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`}
+</section>
+</div>`;
+}
+
+function statusMessage(status: string): string {
+    const map: Record<string, string> = {
+        created: "User created.",
+        updated: "User updated.",
+        disabled: "User disabled and active sessions revoked.",
+        enabled: "User enabled.",
+        "password-reset": "Password reset and active sessions revoked.",
+        deleted: "User deleted.",
+    };
+    const message = map[status];
+    return message ? `<p role="status">${escapeHtml(message)}</p>` : "";
 }
 
 function messagePage(title: string, message: string, href: string, label: string): string {
