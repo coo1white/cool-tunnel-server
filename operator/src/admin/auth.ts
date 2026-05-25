@@ -139,6 +139,14 @@ export async function getCurrentSession(auth: ReturnType<typeof createAuth>, hea
     };
 }
 
+export async function hashAdminPassword(auth: ReturnType<typeof createAuth>, password: string): Promise<string> {
+    if (password.length < 12 || password.length > 128) {
+        throw new Error("password must be 12-128 characters");
+    }
+    const ctx = await auth.$context;
+    return ctx.password.hash(password);
+}
+
 export async function createAdminUserWithPassword(
     auth: ReturnType<typeof createAuth>,
     storage: AdminStorage,
@@ -160,8 +168,7 @@ export async function createAdminUserWithPassword(
     if (storage.getUserByEmail(input.email)) {
         throw new Error("admin user already exists for that email");
     }
-    const ctx = await auth.$context;
-    const passwordHash = await ctx.password.hash(input.password);
+    const passwordHash = await hashAdminPassword(auth, input.password);
     const user = storage.createCredentialUser({
         email: input.email,
         name: input.name,
@@ -187,8 +194,7 @@ export async function createFirstOwnerWithBootstrapToken(
     if (input.name.trim().length < 1 || input.name.trim().length > 120) {
         throw new Error("name must be 1-120 characters");
     }
-    const ctx = await auth.$context;
-    const passwordHash = await ctx.password.hash(input.password);
+    const passwordHash = await hashAdminPassword(auth, input.password);
     const result = storage.createFirstOwnerWithBootstrapToken({
         tokenHash: input.tokenHash,
         email: input.email,

@@ -33,8 +33,10 @@ Caddy does not decrypt proxy traffic. Reality TLS terminates inside sing-box on 
 - Sessions use httpOnly cookies with SameSite=Lax and Secure cookies in production.
 - Public signup is disabled unless config explicitly enables it.
 - First owner creation uses `ct admin bootstrap`, an expiring one-time token, and no default password.
-- Roles are intentionally simple: owner, admin, operator, viewer.
-- Admin/account data lives in `/data/admin/admin.sqlite` by default, is migrated idempotently, and is included in `ct backup` as the `admin_data` volume snapshot.
+- Roles are intentionally simple: owner, admin, operator, viewer. Owners have full access; admins manage operator/viewer accounts and operational workflows; operators run safe operational actions; viewers are read-only.
+- The account panel supports user list/detail/create/edit, role changes, disable/enable, protected deletes, password reset to a temporary password, and audit for important admin actions.
+- Disabled accounts cannot sign in, and disabling or resetting a password revokes active sessions.
+- Admin/account data lives in `/data/admin/admin.sqlite` by default, is migrated idempotently, and is included in `ct backup` as the `admin_data` volume snapshot. User rows carry role, status, and disabled timestamp metadata alongside Better Auth credential/session tables.
 
 ## Rust Boundary
 

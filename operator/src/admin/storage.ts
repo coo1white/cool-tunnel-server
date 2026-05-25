@@ -8,6 +8,9 @@ import type { AdminRole } from "./roles";
 import { requireRole } from "./roles";
 import { validateEmail, validateUserId } from "./config";
 
+export type AdminUserStatus = "active" | "disabled";
+export const ADMIN_USER_STATUSES = ["active", "disabled"] as const;
+
 export function openAdminDatabase(path: string): Database {
     const db = new Database(path, { create: true, strict: true });
     db.exec("PRAGMA foreign_keys = ON");
@@ -21,8 +24,10 @@ export interface AdminUserRow {
     readonly name: string;
     readonly email: string;
     readonly role: AdminRole;
+    readonly status: AdminUserStatus;
     readonly createdAt: string;
     readonly updatedAt: string;
+    readonly disabledAt: string | null;
 }
 
 export interface AuditRow {
@@ -65,12 +70,12 @@ export class AdminStorage {
     }
 
     ownerExists(): boolean {
-        const row = this.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM user WHERE role = 'owner'").get();
+        const row = this.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM user WHERE role = 'owner' AND status = 'active'").get();
         return (row?.n ?? 0) > 0;
     }
 
     ownerCount(): number {
-        return this.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM user WHERE role = 'owner'").get()?.n ?? 0;
+        return this.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM user WHERE role = 'owner' AND status = 'active'").get()?.n ?? 0;
     }
 
     userCount(): number {
@@ -80,7 +85,7 @@ export class AdminStorage {
     getUserById(id: string): AdminUserRow | null {
         validateUserId(id);
         const row = this.db.query<AdminUserRow, [string]>(
-            "SELECT id, name, email, role, createdAt, updatedAt FROM user WHERE id = ?",
+            "SELECT id, name, email, role, status, disabledAt, createdAt, updatedAt FROM user WHERE id = ?",
         ).get(id);
         return row ? normalizeUserRow(row) : null;
     }
@@ -88,15 +93,43 @@ export class AdminStorage {
     getUserByEmail(email: string): AdminUserRow | null {
         const normalized = validateEmail(email);
         const row = this.db.query<AdminUserRow, [string]>(
-            "SELECT id, name, email, role, createdAt, updatedAt FROM user WHERE email = ?",
+            "SELECT id, name, email, role, status, disabledAt, createdAt, updatedAt FROM user WHERE email = ?",
         ).get(normalized);
         return row ? normalizeUserRow(row) : null;
     }
 
     listUsers(): AdminUserRow[] {
         return this.db.query<AdminUserRow, []>(
-            "SELECT id, name, email, role, createdAt, updatedAt FROM user ORDER BY role = 'owner' DESC, email ASC",
+            "SELECT id, name, email, role, status, disabledAt, createdAt, updatedAt FROM user ORDER BY role = 'owner' DESC, status = 'active' DESC, email ASC",
         ).all().map(normalizeUserRow);
+    }
+
+    updateUser(userId: string, input: { readonly email?: string; readonly name?: string; readonly role?: AdminRole }): AdminUserRow {
+        validateUserId(userId);
+        const nextEmail = input.email === undefined ? undefined : validateEmail(input.email);
+        const nextName = input.name === undefined ? undefined : input.name.trim();
+        const nextRole = input.role === undefined ? undefined : requireRole(input.role);
+        if (nextName !== undefined && (nextName.length < 1 || nextName.length > 120)) {
+            throw new Error("name must be 1-120 characters");
+        }
+        const updated = this.db.transaction((id: string, timestamp: string) => {
+            const current = this.getUserById(id);
+            if (!current) return null;
+            if (nextRole && current.role === "owner" && nextRole !== "owner" && this.ownerCount() <= 1) {
+                throw new Error("cannot remove the last owner account");
+            }
+            this.db.query(
+                `UPDATE user
+                 SET email = COALESCE(?, email),
+                     name = COALESCE(?, name),
+                     role = COALESCE(?, role),
+                     updatedAt = ?
+                 WHERE id = ?`,
+            ).run(nextEmail ?? null, nextName ?? null, nextRole ?? null, timestamp, id);
+            return this.getUserById(id);
+        })(userId, new Date().toISOString());
+        if (!updated) throw new Error(`user not found: ${userId}`);
+        return updated;
     }
 
     setUserRole(userId: string, role: AdminRole): void {
@@ -117,12 +150,58 @@ export class AdminStorage {
         }
     }
 
+    setUserStatus(userId: string, status: AdminUserStatus): void {
+        validateUserId(userId);
+        requireUserStatus(status);
+        const result = this.db.transaction((id: string, nextStatus: AdminUserStatus, timestamp: string) => {
+            const current = this.getUserById(id);
+            if (!current) return { changes: 0 };
+            if (current.role === "owner" && current.status === "active" && nextStatus === "disabled" && this.ownerCount() <= 1) {
+                throw new Error("cannot disable the last owner account");
+            }
+            const disabledAt = nextStatus === "disabled" ? timestamp : null;
+            const changes = this.db.query(
+                "UPDATE user SET status = ?, disabledAt = ?, updatedAt = ? WHERE id = ?",
+            ).run(nextStatus, disabledAt, timestamp, id);
+            if (nextStatus === "disabled") {
+                this.deleteSessionsForUser(id);
+            }
+            return changes;
+        })(userId, status, new Date().toISOString());
+        if (result.changes !== 1) {
+            throw new Error(`user not found: ${userId}`);
+        }
+    }
+
+    setUserPasswordHash(userId: string, passwordHash: string): void {
+        validateUserId(userId);
+        if (!passwordHash) throw new Error("password hash is required");
+        const result = this.db.transaction((id: string, hash: string, timestamp: string) => {
+            const current = this.getUserById(id);
+            if (!current) return { changes: 0 };
+            const account = this.db.query<{ id: string }, [string]>(
+                "SELECT id FROM account WHERE userId = ? AND providerId = 'credential' ORDER BY createdAt ASC LIMIT 1",
+            ).get(id);
+            if (!account) throw new Error("credential account not found for user");
+            this.deleteSessionsForUser(id);
+            return this.db.query("UPDATE account SET password = ?, updatedAt = ? WHERE id = ?").run(hash, timestamp, account.id);
+        })(userId, passwordHash, new Date().toISOString());
+        if (result.changes !== 1) {
+            throw new Error(`user not found: ${userId}`);
+        }
+    }
+
+    deleteSessionsForUser(userId: string): void {
+        validateUserId(userId);
+        this.db.query("DELETE FROM session WHERE userId = ?").run(userId);
+    }
+
     deleteUser(userId: string): void {
         validateUserId(userId);
         const result = this.db.transaction((id: string) => {
             const current = this.getUserById(id);
             if (!current) return { changes: 0 };
-            if (current.role === "owner" && this.ownerCount() <= 1) {
+            if (current.role === "owner" && current.status === "active" && this.ownerCount() <= 1) {
                 throw new Error("cannot delete the last owner account");
             }
             return this.db.query("DELETE FROM user WHERE id = ?").run(id);
@@ -201,7 +280,7 @@ export class AdminStorage {
         timestamp: string,
     ): void {
         this.db.query(
-            "INSERT INTO user (id, name, email, emailVerified, image, createdAt, updatedAt, role) VALUES (?, ?, ?, 0, NULL, ?, ?, ?)",
+            "INSERT INTO user (id, name, email, emailVerified, image, createdAt, updatedAt, role, status, disabledAt) VALUES (?, ?, ?, 0, NULL, ?, ?, ?, 'active', NULL)",
         ).run(userId, name, email, timestamp, timestamp, role);
         this.db.query(
             `INSERT INTO account (
@@ -325,7 +404,14 @@ export function ensureServerConfig(storage: AdminStorage, input: {
 }
 
 function normalizeUserRow(row: AdminUserRow): AdminUserRow {
-    return { ...row, email: validateEmail(row.email), role: requireRole(row.role) };
+    return { ...row, email: validateEmail(row.email), role: requireRole(row.role), status: requireUserStatus(row.status), disabledAt: row.disabledAt ?? null };
+}
+
+export function requireUserStatus(value: unknown): AdminUserStatus {
+    if (value === "active" || value === "disabled") {
+        return value;
+    }
+    throw new Error(`invalid user status: ${String(value)} (expected one of: ${ADMIN_USER_STATUSES.join(", ")})`);
 }
 
 function maskAuditDetail(detail: Record<string, unknown>): Record<string, unknown> {
@@ -351,7 +437,9 @@ CREATE TABLE IF NOT EXISTS user (
     image TEXT,
     createdAt DATE NOT NULL,
     updatedAt DATE NOT NULL,
-    role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('owner','admin','operator','viewer'))
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('owner','admin','operator','viewer')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+    disabledAt DATE
 );
 
 CREATE TABLE IF NOT EXISTS session (
@@ -451,6 +539,9 @@ CREATE TABLE IF NOT EXISTS server_config (
     // earlier Better Auth experiments.
     addColumnIfMissing(db, "user", "role", "TEXT NOT NULL DEFAULT 'viewer'");
     db.exec("UPDATE user SET role = 'viewer' WHERE role IS NULL OR role NOT IN ('owner','admin','operator','viewer')");
+    addColumnIfMissing(db, "user", "status", "TEXT NOT NULL DEFAULT 'active'");
+    addColumnIfMissing(db, "user", "disabledAt", "DATE");
+    db.exec("UPDATE user SET status = 'active' WHERE status IS NULL OR status NOT IN ('active','disabled')");
 }
 
 function addColumnIfMissing(db: Database, table: string, column: string, definition: string): void {

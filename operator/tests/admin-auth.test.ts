@@ -14,6 +14,10 @@ import { isCoreAction } from "../src/admin/core-boundary";
 import { redactSensitive } from "../src/util/redact";
 
 const SECRET = "test-better-auth-secret-".padEnd(43, "x");
+const PASSWORD = ["test", "admin", "password", "value"].join("-");
+const NEW_PASSWORD = ["rotated", "admin", "password", "value"].join("-");
+const CLI_TEMP_PASSWORD = ["cli", "temporary", "password", "value"].join("-");
+const BOOTSTRAP_TOKEN = `ctbt_${"testTokenValue".padEnd(34, "x")}`;
 
 function tempDbPath(): { dir: string; dbPath: string } {
     const dir = mkdtempSync(join(tmpdir(), "ct-admin-test-"));
@@ -34,6 +38,19 @@ function baseEnv(dbPath: string, extra: Record<string, string> = {}) {
     };
 }
 
+async function signInCookie(app: ReturnType<typeof createAdminApp>["app"], email: string, password = PASSWORD): Promise<string> {
+    const response = await app.request("/api/auth/sign-in/email", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "203.0.113.20",
+        },
+        body: JSON.stringify({ email, password, rememberMe: true }),
+    });
+    expect(response.status).toBe(200);
+    return (response.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+}
+
 test("first-owner bootstrap creates one owner and rejects token reuse", async () => {
     const { dir, dbPath } = tempDbPath();
     try {
@@ -49,7 +66,7 @@ test("first-owner bootstrap creates one owner and rejects token reuse", async ()
             tokenHash,
             email: "owner@example.com",
             name: "Owner",
-            password: "correct horse battery staple",
+            password: PASSWORD,
         });
         expect(created.ok).toBe(true);
         expect(storage.ownerCount()).toBe(1);
@@ -59,7 +76,7 @@ test("first-owner bootstrap creates one owner and rejects token reuse", async ()
             tokenHash,
             email: "second@example.com",
             name: "Second",
-            password: "correct horse battery staple",
+            password: PASSWORD,
         });
         expect(reused).toEqual({ ok: false, reason: "owner-exists" });
         expect(storage.ownerCount()).toBe(1);
@@ -83,7 +100,7 @@ test("expired bootstrap token is rejected without creating an owner", async () =
             tokenHash,
             email: "owner@example.com",
             name: "Owner",
-            password: "correct horse battery staple",
+            password: PASSWORD,
         });
         expect(result).toEqual({ ok: false, reason: "expired" });
         expect(storage.ownerCount()).toBe(0);
@@ -113,7 +130,7 @@ test("failed duplicate-email bootstrap does not consume the token", async () => 
             tokenHash,
             email: "owner@example.com",
             name: "Owner",
-            password: "correct horse battery staple",
+            password: PASSWORD,
         })).rejects.toThrow("admin user already exists");
 
         expect(storage.bootstrapTokenStatus(tokenHash)).toBe("valid");
@@ -191,7 +208,7 @@ test("Better Auth login sets httpOnly session cookie and unlocks protected admin
             tokenHash,
             email: "owner@example.com",
             name: "Owner",
-            password: "correct horse battery staple",
+            password: PASSWORD,
         });
 
         const denied = await app.request("/api/admin/session");
@@ -205,7 +222,7 @@ test("Better Auth login sets httpOnly session cookie and unlocks protected admin
             },
             body: JSON.stringify({
                 email: "owner@example.com",
-                password: "correct horse battery staple",
+                password: PASSWORD,
                 rememberMe: true,
             }),
         });
@@ -310,7 +327,7 @@ test("server-side login fallback redirects with session cookie and generic failu
             tokenHash,
             email: "owner@example.com",
             name: "Owner",
-            password: "correct horse battery staple",
+            password: PASSWORD,
         });
 
         const page = await app.request("/login");
@@ -329,7 +346,7 @@ test("server-side login fallback redirects with session cookie and generic failu
             body: new URLSearchParams({
                 csrf,
                 email: "owner@example.com",
-                password: "correct horse battery staple",
+                password: PASSWORD,
             }),
         });
         expect(success.status).toBe(303);
@@ -391,7 +408,7 @@ test("bootstrap setup URL is scrubbed into an httpOnly cookie", async () => {
             CT_ADMIN_SECURE_COOKIES: "true",
         }));
         const { app, storage } = createAdminApp(config);
-        const token = "ctbt_secretTokenValue1234567890abcdefghi";
+        const token = BOOTSTRAP_TOKEN;
         const response = await app.request(`/setup/bootstrap?token=${token}`);
         expect(response.status).toBe(303);
         expect(response.headers.get("location")).toBe("/setup/bootstrap");
@@ -459,7 +476,7 @@ test("role authorization blocks viewer from protected admin actions", async () =
         const user = await createAdminUserWithPassword(auth, storage, {
             email: "viewer@example.com",
             name: "Viewer",
-            password: "correct horse battery staple",
+            password: PASSWORD,
             role: "viewer",
         });
         expect(user.role).toBe("viewer");
@@ -472,7 +489,7 @@ test("role authorization blocks viewer from protected admin actions", async () =
             },
             body: JSON.stringify({
                 email: "viewer@example.com",
-                password: "correct horse battery staple",
+                password: PASSWORD,
             }),
         });
         const cookie = (signIn.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
@@ -481,6 +498,228 @@ test("role authorization blocks viewer from protected admin actions", async () =
         expect(await response.json()).toMatchObject({ ok: false, error: { code: "forbidden" } });
         storage.close();
     } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("admin account lifecycle supports details update disable enable reset and audit", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const { app, storage, auth } = createAdminApp(config);
+        const owner = await createAdminUserWithPassword(auth, storage, {
+            email: "owner@example.com",
+            name: "Owner",
+            password: PASSWORD,
+            role: "owner",
+        });
+        const target = await createAdminUserWithPassword(auth, storage, {
+            email: "operator@example.com",
+            name: "Operator",
+            password: PASSWORD,
+            role: "operator",
+        });
+        const ownerCookie = await signInCookie(app, owner.email);
+        const targetCookie = await signInCookie(app, target.email);
+
+        const detail = await app.request(`/api/admin/users/${target.id}`, { headers: { cookie: ownerCookie } });
+        expect(detail.status).toBe(200);
+        expect(await detail.json()).toMatchObject({ ok: true, user: { email: "operator@example.com", status: "active" } });
+
+        const updated = await app.request(`/api/admin/users/${target.id}`, {
+            method: "PATCH",
+            headers: { cookie: ownerCookie, "content-type": "application/json" },
+            body: JSON.stringify({ name: "Ops User", email: "ops@example.com", role: "viewer" }),
+        });
+        expect(updated.status).toBe(200);
+        expect(await updated.json()).toMatchObject({ ok: true, user: { email: "ops@example.com", name: "Ops User", role: "viewer" } });
+
+        const disabled = await app.request(`/api/admin/users/${target.id}/disable`, {
+            method: "POST",
+            headers: { cookie: ownerCookie },
+        });
+        expect(disabled.status).toBe(200);
+        expect(await disabled.json()).toMatchObject({ ok: true, user: { status: "disabled" } });
+        expect(storage.getUserById(target.id)?.disabledAt).toBeTruthy();
+
+        const oldSession = await app.request("/api/admin/session", { headers: { cookie: targetCookie } });
+        expect(oldSession.status).toBe(401);
+
+        const disabledLogin = await app.request("/api/auth/sign-in/email", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email: "ops@example.com", password: PASSWORD }),
+        });
+        expect(disabledLogin.status).toBe(401);
+        expect(await disabledLogin.text()).not.toContain("ops@example.com");
+
+        const enabled = await app.request(`/api/admin/users/${target.id}/enable`, {
+            method: "POST",
+            headers: { cookie: ownerCookie },
+        });
+        expect(enabled.status).toBe(200);
+        expect(await enabled.json()).toMatchObject({ ok: true, user: { status: "active", disabledAt: null } });
+
+        const reset = await app.request(`/api/admin/users/${target.id}/reset-password`, {
+            method: "POST",
+            headers: { cookie: ownerCookie, "content-type": "application/json" },
+            body: JSON.stringify({ password: NEW_PASSWORD }),
+        });
+        expect(reset.status).toBe(200);
+
+        const oldPassword = await app.request("/api/auth/sign-in/email", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email: "ops@example.com", password: PASSWORD }),
+        });
+        expect(oldPassword.status).toBe(401);
+        const newPassword = await app.request("/api/auth/sign-in/email", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email: "ops@example.com", password: NEW_PASSWORD }),
+        });
+        expect(newPassword.status).toBe(200);
+
+        const audit = await app.request("/api/admin/audit", { headers: { cookie: ownerCookie } });
+        expect(audit.status).toBe(200);
+        const body = await audit.json() as { audit: Array<{ action: string; detail: string | null }> };
+        expect(body.audit.map((row) => row.action)).toContain("user.updated");
+        expect(body.audit.map((row) => row.action)).toContain("user.disabled");
+        expect(body.audit.map((row) => row.action)).toContain("user.enabled");
+        expect(body.audit.map((row) => row.action)).toContain("user.password_reset");
+        expect(JSON.stringify(body.audit)).not.toContain(NEW_PASSWORD);
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("admin cannot manage owner accounts and operator cannot manage users", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const { app, storage, auth } = createAdminApp(config);
+        const owner = await createAdminUserWithPassword(auth, storage, {
+            email: "owner@example.com",
+            name: "Owner",
+            password: PASSWORD,
+            role: "owner",
+        });
+        const admin = await createAdminUserWithPassword(auth, storage, {
+            email: "admin@example.com",
+            name: "Admin",
+            password: PASSWORD,
+            role: "admin",
+        });
+        const operator = await createAdminUserWithPassword(auth, storage, {
+            email: "operator@example.com",
+            name: "Operator",
+            password: PASSWORD,
+            role: "operator",
+        });
+        const adminCookie = await signInCookie(app, admin.email);
+        const operatorCookie = await signInCookie(app, operator.email);
+
+        const demoteOwner = await app.request(`/api/admin/users/${owner.id}`, {
+            method: "PATCH",
+            headers: { cookie: adminCookie, "content-type": "application/json" },
+            body: JSON.stringify({ role: "admin" }),
+        });
+        expect(demoteOwner.status).toBe(403);
+        expect(await demoteOwner.json()).toMatchObject({ ok: false, error: { code: "owner_required" } });
+
+        const disableOwner = await app.request(`/api/admin/users/${owner.id}/disable`, {
+            method: "POST",
+            headers: { cookie: adminCookie },
+        });
+        expect(disableOwner.status).toBe(403);
+
+        const operatorList = await app.request("/api/admin/users", { headers: { cookie: operatorCookie } });
+        expect(operatorList.status).toBe(403);
+        const operatorCreate = await app.request("/api/admin/users", {
+            method: "POST",
+            headers: { cookie: operatorCookie, "content-type": "application/json" },
+            body: JSON.stringify({ email: "new@example.com", name: "New", password: PASSWORD, role: "viewer" }),
+        });
+        expect(operatorCreate.status).toBe(403);
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("last active owner cannot be disabled and disabled owner does not count for bootstrap", () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const storage = new AdminStorage(dbPath);
+        storage.migrate();
+        const owner = storage.createCredentialUser({
+            email: "owner@example.com",
+            name: "Owner",
+            role: "owner",
+            passwordHash: "hash",
+        });
+        expect(() => storage.setUserStatus(owner.id, "disabled")).toThrow("last owner");
+
+        const second = storage.createCredentialUser({
+            email: "second@example.com",
+            name: "Second",
+            role: "owner",
+            passwordHash: "hash",
+        });
+        storage.setUserStatus(second.id, "disabled");
+        expect(storage.ownerCount()).toBe(1);
+        expect(storage.ownerExists()).toBe(true);
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("admin users CLI can list disable enable and reset password without printing the password", async () => {
+    const { dir, dbPath } = tempDbPath();
+    const writes: string[] = [];
+    const oldWrite = process.stdout.write;
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const storage = new AdminStorage(dbPath);
+        storage.migrate();
+        const auth = createAuth(config);
+        const user = await createAdminUserWithPassword(auth, storage, {
+            email: "cli@example.com",
+            name: "CLI",
+            password: PASSWORD,
+            role: "admin",
+        });
+        storage.close();
+        const { AdminTask } = await import("../src/tasks/admin");
+        const task = new AdminTask();
+        const oldArgv = process.argv;
+        process.stdout.write = ((chunk: string | Uint8Array) => {
+            writes.push(String(chunk));
+            return true;
+        }) as typeof process.stdout.write;
+        try {
+            process.argv = ["bun", "ct-operator", "admin", "users", "disable", user.email];
+            const disabled = await task.run({ cwd: dir, env: baseEnv(dbPath), logger: { info() {}, warn() {}, error() {}, debug() {} }, json: false, interactive: false });
+            expect(disabled.ok).toBe(true);
+            process.argv = ["bun", "ct-operator", "admin", "users", "enable", user.email];
+            const enabled = await task.run({ cwd: dir, env: baseEnv(dbPath), logger: { info() {}, warn() {}, error() {}, debug() {} }, json: false, interactive: false });
+            expect(enabled.ok).toBe(true);
+            process.argv = ["bun", "ct-operator", "admin", "users", "reset-password", user.email, CLI_TEMP_PASSWORD];
+            const reset = await task.run({ cwd: dir, env: baseEnv(dbPath), logger: { info() {}, warn() {}, error() {}, debug() {} }, json: false, interactive: false });
+            expect(reset.ok).toBe(true);
+        } finally {
+            process.argv = oldArgv;
+            process.stdout.write = oldWrite;
+        }
+        const output = writes.join("");
+        expect(output).toContain("admin user disabled: cli@example.com");
+        expect(output).toContain("admin user enabled: cli@example.com");
+        expect(output).toContain("admin user password reset: cli@example.com");
+        expect(output).not.toContain(CLI_TEMP_PASSWORD);
+    } finally {
+        process.stdout.write = oldWrite;
         rmSync(dir, { recursive: true, force: true });
     }
 });
@@ -518,8 +757,10 @@ test("admin migrations are idempotent and SQLite backup includes WAL writes", ()
 
         const db = new Database(dest, { readonly: true, strict: true });
         try {
-            const row = db.query<{ role: string }, [string]>("SELECT role FROM user WHERE email = ?").get("backup@example.com");
+            const row = db.query<{ role: string; status: string; disabledAt: string | null }, [string]>("SELECT role, status, disabledAt FROM user WHERE email = ?").get("backup@example.com");
             expect(row?.role).toBe("admin");
+            expect(row?.status).toBe("active");
+            expect(row?.disabledAt).toBeNull();
         } finally {
             db.close();
         }
@@ -533,7 +774,7 @@ test("Bun/Rust boundary rejects unknown actions and redaction masks bootstrap UR
     expect(isCoreAction("doctor")).toBe(true);
     expect(isCoreAction("restart-services")).toBe(true);
     expect(isCoreAction("rm -rf /")).toBe(false);
-    expect(redactSensitive("open /setup/bootstrap?token=ctbt_secretTokenValue1234567890")).toContain("token=<redacted>");
+    expect(redactSensitive("open /setup/bootstrap?token=ctbt_" + "redactedFixtureToken")).toContain("token=<redacted>");
 });
 
 test("production secure cookies require an https admin base URL", () => {

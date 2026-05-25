@@ -23,6 +23,8 @@ ct admin bootstrap
 
 `ct admin bootstrap` writes the setup page and one-time token to a root-only file and prints the exact `sudo cat ...` command to read it over SSH. Open the setup page, paste the token, create the first owner, then delete the file. There is no default admin password.
 
+After sign-in, use `/admin/users` to create and manage admin accounts. Owners can manage every role; admins can manage operator and viewer accounts. Disabling an account blocks login and revokes sessions.
+
 ## Required Config
 
 Set at least:

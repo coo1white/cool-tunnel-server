@@ -12,7 +12,7 @@ Cool Tunnel Server runs Caddy, sing-box, VLESS + Reality, a Bun/Hono/Better Auth
 
 ## What You Get
 
-- Minimal admin panel for login, roles, doctor/status, safe actions, and setup.
+- Minimal admin panel for login, roles, user lifecycle controls, audit, doctor/status, safe actions, and setup.
 - Secure Better Auth sessions in httpOnly cookies; no default credentials.
 - First-owner bootstrap with `ct admin bootstrap` and an expiring one-time token.
 - Private VLESS + Reality endpoint rendered from validated config.
@@ -57,6 +57,8 @@ nano .env
 https://<PANEL_DOMAIN>/admin
 ```
 
+From the panel, owners can manage all admin accounts. Admins can manage operator and viewer accounts. Viewer accounts are read-only, operators can run safe operational actions, and disabled accounts cannot sign in or keep active sessions.
+
 Release installs download verified Docker image slices for the VPS CPU architecture and load them one at a time. The VPS uses `docker load`; it does not build Rust, Bun, Go, or Docker images during `ct install` or `ct update`.
 
 ## Daily Operation
@@ -68,6 +70,7 @@ ct backup          # snapshot runtime data and secrets
 ct update          # update to the current release and restart safely
 ct render singbox  # re-render generated runtime config
 ct recover         # diagnose/repair failed settle gates
+ct admin users list
 ```
 
 For an already installed VPS:

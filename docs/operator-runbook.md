@@ -28,6 +28,21 @@ ct admin bootstrap
 
 `ct admin bootstrap` writes the setup page and one-time token to a root-only file and prints the exact `sudo cat ...` command to read it over SSH. Open the setup page, paste the token, create the owner, delete the file, then sign in at `https://<PANEL_DOMAIN>/admin`.
 
+## Admin Accounts
+
+Use the web panel at `/admin/users` for account lifecycle work. The panel supports user details, create/edit, role changes, disable/enable, protected deletes, password reset to a temporary password, and audit review at `/admin/audit`.
+
+The CLI mirrors emergency account actions without printing secrets:
+
+```bash
+ct admin users list
+ct admin users disable user@example.com
+ct admin users enable user@example.com
+CT_ADMIN_TEMP_PASSWORD='replace-with-a-long-temporary-password' ct admin users reset-password user@example.com
+```
+
+Owners can manage every account. Admins can manage operator and viewer accounts. Operators cannot manage users, and viewers cannot mutate admin state.
+
 ## Update
 
 ```bash
