@@ -9,9 +9,8 @@
 //! deleted alongside the modules that constructed them
 //! (`db::active_proxy_accounts` + `metrics::collect`, both retired
 //! when sing-box VLESS+Reality replaced the clash-API-bearing naive
-//! stack). The panel-side equivalent of ProxyAccount lives in
-//! `panel/app/Models/ProxyAccount.php`; per-user accounting moves
-//! to operator-side instrumentation.
+//! stack). Proxy-account storage lives in `packages/db` in v0.5.2;
+//! per-user accounting moves to operator-side instrumentation.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

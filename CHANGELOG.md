@@ -12,15 +12,55 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+---
+
+## [0.5.2] - 2026-05-26 - Better-T-Stack control-plane rebuild
+
 ### Added
+
+- Added a Better-T-Stack-style monorepo with Next.js admin frontend,
+  Hono/Bun API, Better Auth sessions, SQLite storage, shared packages,
+  operator CLI boundaries, and internal Rust core boundaries.
+- Documented the v0.5.1 to v0.5.2 migration path, including the
+  explicit `legacy_*` staging tables that are imported into SQLite and
+  the maintainer-owned export step that is still required.
 
 ### Changed
 
+- Updated active docs, manifests, and GitHub workflow metadata for the
+  v0.5.2 Better-T-Stack monorepo runtime: `apps/web`, `apps/api`,
+  shared packages, Better Auth, SQLite, Caddy, and sing-box.
+- Replaced active panel manifest metadata with `admin-api` and
+  `admin-web` manifests, and marked MariaDB/Redis manifests as retired
+  component guards.
+- Reworked CI/audit/tag-version workflow metadata away from deleted
+  PHP/Laravel checks and toward Bun workspace, package-version, and
+  manifest checks.
+- Moved admin SQLite to `./data/admin/admin.sqlite` on the host,
+  bind-mounted into the API container, so `ct admin`, backup/restore,
+  and the runtime API operate on the same database.
+
 ### Removed
+
+- Removed active-runtime release metadata references to the retired
+  PHP/Laravel/Filament/Composer panel path.
+- Removed nested workspace Bun lockfiles in favor of the root
+  `pnpm-lock.yaml`.
 
 ### Fixed
 
+- Fixed legacy PHP migration idempotency so a zero-row update cannot
+  mark migration complete before `legacy_*` staging tables are present.
+- Fixed setup query scrubbing for non-token query strings and hardened
+  release workflows around pnpm, Caddy manifest parsing, and checksum
+  merge ordering.
+
 ### Security
+
+- Preserved v0.5.1 security behavior: server-side login POSTs,
+  HttpOnly/SameSite/Secure-aware Better Auth cookies, no public signup,
+  one-time root-only bootstrap material, redacted diagnostics, query
+  stripping, Caddy redirect query removal, and no telemetry.
 
 ---
 

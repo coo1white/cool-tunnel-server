@@ -1,118 +1,76 @@
-# Support and EOL policy
+# Support and EOL Policy
 
-cool-tunnel-server is run by individual operators. We prioritise
-**predictability over novelty**: long support windows, breaking
-changes only at minor-version boundaries, and explicit EOL dates
-on every release.
+cool-tunnel-server is run by individual operators. We prioritize
+predictability over novelty: explicit upgrade steps, release gates, and
+clear EOL notes on every release.
 
-## Supported platforms
+## Supported Platforms
 
 | Platform | Support tier |
 | --- | --- |
-| Debian 12 (bookworm) | **Tier 1** — primary CI target |
-| Debian 13 (trixie) | Tier 1 — verified at each release |
-| Debian 11 (bullseye) | Tier 2 — should work; not in CI |
+| Debian 12 (bookworm) | Tier 1, primary target |
+| Debian 13 (trixie) | Tier 1 |
 | Ubuntu LTS (22.04, 24.04) | Tier 2 |
-| Debian 10 (buster) | **Tier 3** — best effort, EOL upstream |
-| Other Linux | Tier 3 — operator responsibility |
-| Non-Linux | unsupported |
+| Debian 11 (bullseye) | Tier 2 |
+| Other Linux | Tier 3, operator responsibility |
+| Non-Linux | unsupported for the server stack |
 
-**Tier 1** = CI builds + boots a stack on this platform on every
-release; bugs here block a release.
-
-**Tier 2** = the install commands in `docs/installation-debian.md`
-should work; we accept bug reports but a Tier-1 fix takes
-precedence.
-
-**Tier 3** = it might work; we won't actively keep it working.
+Tier 1 means the install/update flow is expected to work and release
+bugs block shipping. Tier 2 bugs are accepted, but Tier 1 fixes take
+precedence. Tier 3 is best effort.
 
 ## Architectures
 
 | Arch | Support tier |
 | --- | --- |
 | `linux/amd64` | Tier 1 |
-| `linux/arm64` | Tier 1 (CI builds the Rust core for both arches) |
-| `linux/armv7` | Tier 3 (sing-box image supports it; not CI-tested) |
+| `linux/arm64` | Tier 1 |
+| `linux/armv7` | Tier 3 |
 
-## Languages / runtimes (the inside-the-image versions)
+## Runtime Pins
 
 | Component | Source of truth | Current pin | When we re-pin |
 | --- | --- | --- | --- |
-| Rust | `core/rust-toolchain.toml`, `core/Cargo.toml`, `docker/core/Dockerfile` | `1.88` | When a transitive crate raises the floor |
-| PHP runtime | `docker/panel/Dockerfile`, `panel/composer.json` | `dunglas/frankenphp:1-php8.4-alpine` | At PHP minor releases inside the supported window |
-| Caddy | `docker/caddy/Dockerfile` | `caddy:2.11.3-alpine` | At Caddy minor releases or Caddy module compatibility bumps |
-| sing-box | `singbox-core/singbox.upstream.json` | `v1.13.12` | At sing-box minor releases |
-| MariaDB | `docker-compose.yml` | `mariadb:11.8.6` | At MariaDB minor releases |
-| Redis | `docker-compose.yml`, `docker/panel/Dockerfile` | `redis:7.4.8-alpine` | At Redis minor releases inside the BSD-3 line |
+| Bun / TypeScript apps | `package.json`, `pnpm-lock.yaml` | release lockfile | Security or runtime fixes |
+| Rust | `core/rust-toolchain.toml`, `core/Cargo.toml` | `1.88` | When a transitive crate raises the floor |
+| Caddy | `manifests/caddy.upstream.json`, `docker-compose.yml` | manifest pin | Caddy or module compatibility fixes |
+| sing-box | `singbox-core/singbox.upstream.json` | manifest pin | sing-box minor or security releases |
+| SQLite admin state | `packages/db` migrations | bundled with v0.5.2 | Schema changes only through migrations |
 
-## Release cadence
+The retired PHP admin, MariaDB, and Redis manifests remain only as
+migration/retired-component guardrails for operators upgrading from
+v0.5.1. They are not live v0.5.2 services.
 
-Pre-`1.0`:
+## Upgrade Policy
 
-- A new `0.0.x` lands roughly every 1–4 weeks. Each release is a
-  pre-release on GitHub and the tag message lists the headline
-  changes.
-- We do not commit to a stable wire/config format until `0.1.0`.
+Patch upgrades inside a minor line are expected to be direct. Minor
+upgrades may require documented migration steps. The v0.5.1 to v0.5.2
+upgrade moves admin state into SQLite via idempotent `packages/db`
+migrations and the `ct admin migrate` flow.
 
-Post-`1.0` (target: when sing-box's `naive` inbound has had
-multi-user load tested by us in production for 6+ months):
+Run upgrades with:
 
-- Minor releases: every 3–6 months.
-- Patch releases: as needed for security or a clear bug.
-- Each minor release line is supported for **18 months** for
-  security and **6 months** for bugs after the next minor lands.
-  See `SECURITY.md` for the supported-versions table.
+```bash
+./ct update
+./ct doctor
+```
 
-## What "supported" means
+`ct update` runs the migration checks before restart. `ct doctor`
+reports actionable migration status and points to the admin command when
+manual intervention is required.
 
-- We will publish patch releases for the supported version lines
-  when a security issue is confirmed.
-- We will accept bug reports against the supported lines and
-  triage them.
-- We will keep the manifest pinning + reproducible-build recipe
-  working for the supported lines (so a 12-month-old release can
-  still be built bit-for-bit if the upstream images are still
-  available).
+## Reporting Bugs
 
-## What "supported" does NOT mean
+Open a GitHub issue and include:
 
-- We will not backport features. If a feature lands in `0.2.0`,
-  it stays there.
-- We will not provide email / chat / phone support. Use GitHub
-  Issues for bugs and Discussions for questions.
-- We will not test against arbitrary Debian customisations. If
-  you've replaced systemd with runit, or rebuilt Docker from
-  source, or pinned `caddy` to a non-canonical fork, you're on
-  your own.
+1. The version (`./ct version` or `git rev-parse HEAD`).
+2. The platform (`cat /etc/os-release` and `uname -m`).
+3. Redacted `./ct doctor` output.
+4. Relevant redacted logs, for example:
 
-## Upgrade matrix
+```bash
+docker compose logs --tail=200 admin-api admin-web singbox caddy
+```
 
-You may always upgrade by N + 1 minor versions in one step. Skipping
-a minor release line is **unsupported** unless the changelog
-explicitly says so. The reason: each minor may include a database
-migration that depends on the previous minor's schema being in place.
-
-| From | To | OK? |
-| --- | --- | --- |
-| `0.0.X` | `0.0.X+1` | yes |
-| `0.0.X` | `0.0.X+2` | yes (we keep migrations linear inside a minor line) |
-| `0.0.X` | `0.1.0` | yes |
-| `0.0.X` | `0.2.0` | **no** — go via `0.1.0` |
-| `0.1.0` | `1.0.0` | yes |
-
-Run the upgrade with `./ct update`. It rebuilds the images,
-runs DB migrations, runs health gates, and only swaps traffic over if
-the deployment reports healthy.
-
-## Reporting bugs
-
-GitHub Issues. Include:
-
-1. The version you're on (`git rev-parse HEAD` and `git tag --points-at HEAD`).
-2. The platform (`cat /etc/os-release` + `uname -r`).
-3. The output of `ct doctor`.
-4. A reproduction or, if it's intermittent, the relevant log
-   excerpts (`docker compose logs --tail=200 panel singbox caddy`).
-
-For security issues, see `SECURITY.md` — do not file public GitHub
-issues for those.
+For security issues, follow [SECURITY.md](./SECURITY.md) instead of
+opening a public issue.

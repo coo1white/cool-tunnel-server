@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Validate the project-wide plain-text encoding contract.
 #
-# All tracked Rust, Bun/TypeScript, PHP, shell, Docker, config,
+# All tracked Rust, Bun/TypeScript, shell, Docker, config,
 # manifest, and documentation files in this repository are UTF-8.
 # Pure ASCII is valid UTF-8. This check intentionally validates bytes
 # only; higher-level copy/paste traps such as smart quotes remain

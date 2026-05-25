@@ -30,7 +30,7 @@ export type ShResult = {
 // Resolve a Bun shell promise without throwing on non-zero exit.
 //
 // Usage:
-//   const r = await capture($`docker compose ps panel --status running`);
+//   const r = await capture($`docker compose ps admin-api --status running`);
 //   if (!r.ok) handle(...);
 export async function capture(p: ReturnType<typeof $>): Promise<ShResult> {
     const r = await p.nothrow().quiet();

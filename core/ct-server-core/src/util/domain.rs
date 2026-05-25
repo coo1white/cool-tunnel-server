@@ -7,14 +7,7 @@
 //! `PANEL_DOMAIN`-or-fallback-to-`panel.<DOMAIN>` derivation. v0.0.51,
 //! v0.0.53, and v0.0.54 each fixed one site; this module collapses
 //! the derivation into a single function that all in-tree Rust
-//! callers (Caddy renderer, CLI helpers) and PHP
-//! callers (via panel/config/cool-tunnel.php::panel_domain, mirrored
-//! shape) read from.
-//!
-//! Cross-language symmetry: the PHP fallback in
-//! panel/config/cool-tunnel.php uses identical logic. CI guard
-//! scripts/verify_sot.sh runs both and asserts byte-equality on
-//! fixture envs.
+//! callers (Caddy renderer, CLI helpers, admin API helpers) read from.
 //!
 //! Fail-fast on empty env (per the operator directive): if both
 //! PANEL_DOMAIN and DOMAIN are unset/empty, return an error rather
@@ -87,7 +80,7 @@ mod tests {
         // Defensive: `PANEL_DOMAIN=    ` (operator set with stray
         // whitespace) is treated as unset rather than as a literal
         // blank-string hostname. trim()-then-empty-check on both
-        // inputs. PHP-side mirrors this discipline.
+        // inputs. Other language callers mirror this discipline.
         let r = panel_domain_from("   \n\t", "example.com");
         assert_eq!(r.unwrap_or_default(), "panel.example.com");
     }

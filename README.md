@@ -2,16 +2,17 @@
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-1c5cdc)](./LICENSE)
 [![LTSC-Heng Draft](https://img.shields.io/badge/license--draft-LTSC--Heng-111111)](./LTSC-HENG-LICENSE-DRAFT.md)
-[![Latest release](https://img.shields.io/badge/release-v0.4.22-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.4.22)
+[![Latest release](https://img.shields.io/badge/release-v0.5.2-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.5.2)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
 
 Open-source, self-hosted proxy server for a Debian VPS.
 
-Cool Tunnel Server runs Caddy, sing-box, VLESS + Reality, MariaDB,
-Redis, and a Laravel/Filament admin panel in Docker Compose. You point
-a domain at your VPS, install the stack, create user accounts in the
-panel, and connect devices through per-user subscription URLs.
+Cool Tunnel Server runs Caddy, sing-box, VLESS + Reality, a Next.js
+admin web app, and a Bun/Hono API with Better Auth and SQLite in Docker
+Compose. You point a domain at your VPS, install the stack, create user
+accounts in the admin UI, and connect devices through per-user
+subscription URLs.
 
 It is a VPS-hosted VPN alternative for people who want to own and audit
 their server. It is not a managed VPN service: you are responsible for
@@ -19,12 +20,14 @@ the VPS, domain, updates, backups, provider terms, and local law.
 
 ## What You Get
 
-- **Admin panel** for accounts, settings, health, and subscription URLs.
-- **Private VLESS + Reality endpoint** generated from panel state.
+- **Next.js admin UI** for accounts, settings, health, audit history,
+  and subscription URLs.
+- **Bun/Hono admin API** with Better Auth, RBAC, and SQLite storage.
+- **Private VLESS + Reality endpoint** generated from admin state.
 - **`ct` operator CLI** for install, update, doctor, backup, restore,
   and config rendering.
-- **Docker Compose runtime** with Caddy SNI routing, sing-box, panel,
-  MariaDB, and Redis.
+- **Docker Compose runtime** with Caddy SNI routing, sing-box,
+  `admin-api`, and `admin-web`.
 - **Release-pinned Docker image slices** with `SHA256SUMS`
   verification and a per-architecture image BOM.
 - **No local runtime builds on the VPS** during normal install/update:
@@ -84,7 +87,7 @@ nano .env
 
 Release installs download verified Docker image slices for the VPS CPU
 architecture and load them one at a time. The VPS uses `docker load`;
-it does not build Rust, Bun, Go, PHP extensions, or Docker images
+it does not build Rust, Bun, Go, Node/Next, or Docker images
 during `ct install` or `ct update`.
 
 Set at least these `.env` values before running `./ct install`:
@@ -100,24 +103,28 @@ recovery hints, read [GETTING_STARTED.md](./GETTING_STARTED.md).
 
 ## Panel Login and Account Setup
 
-Open the panel:
+Open the admin UI:
 
 ```text
-https://<PANEL_DOMAIN>/admin
+https://<PANEL_DOMAIN>/login
 ```
 
-Initial admin login:
+Create the first owner from the VPS. The token is one-time only and
+expires:
 
-```text
-admin name: holder
-password: value of CT_BOOTSTRAP_ADMIN_PASSWORD in /opt/cool-tunnel-server/.env
+```sh
+cd /opt/cool-tunnel-server
+ct admin bootstrap
 ```
 
-The panel forces a password change after the first login. After that,
-create a device/user account:
+Open the root-only setup URL from the generated file once; the API
+stores the one-time token in an HttpOnly cookie and immediately
+redirects to a clean `/setup` page. Create the owner account, then log
+in at `/login`. Public signup is disabled by default. After that, create
+a proxy account:
 
 ```text
-Proxy accounts -> New proxy account -> Save
+Users -> New proxy account -> Save
 ```
 
 After the account is created, open the account row's **Subscription
@@ -130,8 +137,8 @@ If you need to recover access:
 
 ```sh
 cd /opt/cool-tunnel-server
-docker compose exec panel php artisan ct:make-admin
-docker compose exec panel php artisan ct:make-admin --force --email=you@example.com
+printf '%s\n' '<new long password>' | ct admin create-owner --email you@example.com --username you --password-stdin
+printf '%s\n' '<temporary long password>' | ct admin users reset-password --id <user-id> --password-stdin
 ```
 
 ## Daily Operation
@@ -151,7 +158,7 @@ ct update   # update to the current release and restart safely
 For an already installed VPS, SSH into the server and paste:
 
 ```sh
-sudo bash -lc 'set -euo pipefail; cd /opt/cool-tunnel-server; test -f .env || { echo "ERROR: .env is missing. This looks like a fresh or unfinished install, not an update."; echo "Run: cd /opt/cool-tunnel-server && cp .env.example .env && nano .env && ./ct install"; exit 1; }; ./ct backup; ./ct update; ./ct doctor; echo; echo "Panel URL:"; . ./.env; echo "https://${PANEL_DOMAIN}/admin"; echo; echo "Bootstrap admin password, if needed:"; grep "^CT_BOOTSTRAP_ADMIN_PASSWORD=" .env || true'
+sudo bash -lc 'set -euo pipefail; cd /opt/cool-tunnel-server; test -f .env || { echo "ERROR: .env is missing. This looks like a fresh or unfinished install, not an update."; echo "Run: cd /opt/cool-tunnel-server && cp .env.example .env && nano .env && ./ct install"; exit 1; }; ./ct backup; ./ct update; ./ct doctor; echo; echo "Admin URL:"; . ./.env; echo "https://${PANEL_DOMAIN}/login"; echo; echo "If first-owner setup is still needed, run: ct admin bootstrap"'
 ```
 
 If the update stops with `git pull failed`, reset the VPS checkout to
@@ -172,7 +179,8 @@ git reset --hard origin/main
 
 Do not create a new `.env` on a VPS that was already working before;
 recover the old `.env` from a backup instead. It contains the database,
-Redis, app, and bootstrap-admin secrets for that deployment.
+Better Auth, SQLite, Reality, and bootstrap-admin secrets for that
+deployment.
 
 ## What Runs
 
@@ -180,14 +188,14 @@ Redis, app, and bootstrap-admin secrets for that deployment.
 | --- | --- |
 | `caddy` | Public `:443` front door, ACME, TLS, and SNI routing |
 | `singbox` | VLESS + Reality proxy service |
-| `panel` | Laravel + Filament admin UI and render commands |
-| `db` | MariaDB data store |
-| `redis` | Cache and queue backend |
+| `admin-api` | Hono/Bun API, Better Auth, SQLite store, subscription endpoint, and render actions |
+| `admin-web` | Next.js admin dashboard |
 
-The control plane is split between Laravel/Filament, TypeScript
-`singbox-core`, and Rust `ct-server-core`. See
-[docs/architecture.md](./docs/architecture.md) for diagrams and design
-rationale.
+The control plane is the Better-T-Stack monorepo: `apps/web`,
+`apps/api`, `packages/shared`, `packages/db`, `packages/security`,
+`packages/config`, the TypeScript operator CLI, `singbox-core`, and
+Rust `ct-server-core`. See [docs/architecture.md](./docs/architecture.md)
+for diagrams and design rationale.
 
 ## Project Rule
 
@@ -203,7 +211,7 @@ something fails.
 
 ## Release
 
-Latest stable server release: `v0.4.22`.
+Latest stable server release: `v0.5.2`.
 
 Server releases own the runtime assets used by clients:
 

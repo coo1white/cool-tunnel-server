@@ -4,8 +4,7 @@ End-to-end smoke test on a real VPS before pushing a release to
 production. Catches the things `cargo test`, `bun test`, and
 `make ci` structurally can't:
 
-- Panel entrypoint completes inside its 90 s sentinel window on a
-  1 vCPU box.
+- `admin-api` and `admin-web` start cleanly on a 1 vCPU box.
 - `singbox-core render-server` produces a parse-clean
   `/data/config/singbox.json` from a live DB.
 - Let's Encrypt ACME succeeds on the real DNS + public IP.
@@ -13,9 +12,9 @@ production. Catches the things `cargo test`, `bun test`, and
   traffic through it.
 - `ct doctor` reports a clean PASS / WARN / FAIL dashboard.
 
-If you only need the local CI gates (Rust + PHP + operator
-typecheck + drift detectors), use `make ci` instead — it's faster
-and runs without a VPS.
+If you only need the local CI gates (Rust + TypeScript + operator
+typecheck + drift detectors), use `make ci` instead — it's faster and
+runs without a VPS.
 
 ## What you need
 
@@ -86,9 +85,9 @@ malformed.
 
 ### 5. Create a test proxy account + import subscription
 
-Browser → `https://panel.test.your-zone.com/admin` → log in as
-`holder` with `CT_BOOTSTRAP_ADMIN_PASSWORD` from `.env`, change the
-password when prompted, then go to **Proxy Accounts** →
+From the VPS, run `ct admin bootstrap`, open the root-only setup URL
+from the generated file once, create the first owner, then log in at
+`https://panel.test.your-zone.com/login`. Go to **Users** →
 **New proxy account** → username `demo-user` → Save.
 
 Copy the **Subscription URL** from the green notification.
@@ -121,8 +120,8 @@ On a deployment already at `main` HEAD this is mostly a no-op
 (git pull is fast-forward zero, the release image bundle is already
 loaded, health gates stay green). It exercises every step in
 `operator/update.ts`
-against real Docker + the real panel entrypoint, which is the part
-that can't be tested locally.
+against real Docker + the real admin API/web startup path, which is
+the part that can't be tested locally.
 
 ### 7. (Optional) Re-run diagnostics
 

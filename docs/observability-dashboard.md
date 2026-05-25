@@ -83,7 +83,6 @@ Import these as Prometheus query panels:
 | Buffer high-water | `ct_buffer_utilization_high_water_basis_points / 100` | percent |
 | 80% threshold crossings | `increase(ct_threshold_80pct_crossings_total[15m])` | short |
 | FSM hard resets | `increase(ct_daemon_fsm_hard_resets_total[15m])` | short |
-| Redis subscriber restarts | `increase(ct_redis_subscriber_restarts_total[15m])` | short |
 | Coalescer reload fires | `increase(ct_coalescer_fires_total[15m])` | short |
 
 ## Trace Correlation

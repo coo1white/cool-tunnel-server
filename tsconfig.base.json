@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "noImplicitOverride": true,
+    "resolveJsonModule": true,
+    "jsx": "preserve",
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "@cool-tunnel/shared": ["packages/shared/src/index.ts"],
+      "@cool-tunnel/security": ["packages/security/src/index.ts"],
+      "@cool-tunnel/config": ["packages/config/src/index.ts"],
+      "@cool-tunnel/db": ["packages/db/src/index.ts"]
+    }
+  }
+}

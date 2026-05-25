@@ -2,28 +2,28 @@
 .env
 .env.*.local
 
-# Composer / Laravel
+# JavaScript workspace build artifacts.
+node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
+apps/*/.next/
+apps/*/*.tsbuildinfo
+apps/*/dist/
+packages/*/dist/
+operator/dist/
+singbox-core/node_modules/
+singbox-core/dist/
+singbox-core/bin/
+
+# Retired PHP panel artifacts from old checkouts.
 panel/vendor/
 panel/node_modules/
-singbox-core/node_modules/
-singbox-core/bin/
-# `php artisan octane:install --server=frankenphp` downloads the
-# host-arch FrankenPHP binary (~165 MiB) into panel/frankenphp for
-# `php artisan octane:start` use OUTSIDE Docker. The container
-# uses the dunglas/frankenphp base image's bundled binary; this
-# host-arch file is a developer convenience only and must not
-# land in git.
 panel/frankenphp
-# PHPUnit 11 test-result cache. Created on every `make test` /
-# `phpunit` run, scoped to a single working tree. (v0.0.47.)
 panel/.phpunit.cache/
 panel/storage/app/*
 !panel/storage/app/.gitkeep
 panel/storage/framework/cache/data/*
 !panel/storage/framework/cache/data/.gitkeep
-# Laravel's compiled-facade cache writes facade-<sha>.php directly
-# into storage/framework/cache/ (bare-level, not under data/). The
-# data/* glob above doesn't catch those. (v0.0.47.)
 panel/storage/framework/cache/*.php
 panel/storage/framework/sessions/*
 !panel/storage/framework/sessions/.gitkeep
@@ -35,13 +35,6 @@ panel/bootstrap/cache/*
 !panel/bootstrap/cache/.gitkeep
 panel/public/storage
 panel/public/hot
-# Filament publishes its compiled CSS/JS at panel-boot time via
-# `php artisan filament:assets`. Files land directly under
-# panel/public/css/ and panel/public/js/ (and panel/public/vendor/
-# for some upstream package publishers) — bind-mounted from the
-# host, so they appear as untracked. The committed contents of
-# panel/public/ are only favicon.svg and index.php; any other
-# subdirectory is runtime-published. (v0.0.48.)
 panel/public/css/
 panel/public/js/
 panel/public/vendor/
@@ -60,6 +53,7 @@ caddy/Caddyfile.rendered
 backups/
 diagnostics/
 release-assets/
+data/
 *.tar
 *.tar.gz
 

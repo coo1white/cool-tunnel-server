@@ -15,23 +15,17 @@
 //      (the pre-v0.0.68 APP_URL shape causes Livewire 3 419s).
 //   4. Backfill sing-box direct outbound dial defaults so old VPSes
 //      pick up the persistent IPv4-only renderer behaviour.
-//   5. Backfill `CT_BOOTSTRAP_ADMIN_PASSWORD` so older installs that
-//      update into the no-public-default-password release have a
-//      VPS-local recovery/bootstrap secret recorded in `.env`.
 //
 // Pure: each function takes `.env` text in, returns the new text +
 // a Change descriptor describing what (if anything) was rewritten.
 // I/O happens in the caller (operator/update.ts).
-
-import { ensureBootstrapAdminPassword, generateBootstrapAdminPassword } from "./bootstrap-admin";
 
 export interface EnvChange {
     readonly phase:
         | "panel-domain-backfill"
         | "panel-domain-relocate"
         | "app-url-fix"
-        | "singbox-direct-defaults"
-        | "bootstrap-admin-password";
+        | "singbox-direct-defaults";
     readonly summary: string;
 }
 
@@ -215,39 +209,11 @@ export function backfillSingboxDirectDefaults(content: string): { content: strin
     };
 }
 
-// ---------- Phase 5: bootstrap admin password ----------
-
-export function backfillBootstrapAdminPassword(
-    content: string,
-    generate: () => string = generateBootstrapAdminPassword,
-): { content: string; change: EnvChange | null } {
-    const ensured = ensureBootstrapAdminPassword(content, generate);
-    if (!ensured.changed) {
-        return { content, change: null };
-    }
-
-    const contentWithNote = ensured.content.replace(
-        /^CT_BOOTSTRAP_ADMIN_PASSWORD=/m,
-        "# v0.4.22 auto-migration — VPS-local first admin bootstrap password\nCT_BOOTSTRAP_ADMIN_PASSWORD=",
-    );
-
-    return {
-        content: contentWithNote,
-        change: {
-            phase: "bootstrap-admin-password",
-            summary: "added VPS-local CT_BOOTSTRAP_ADMIN_PASSWORD to .env",
-        },
-    };
-}
-
-// ---------- Composer ----------
+// ---------- Migration composer ----------
 
 // Run all phases in order on a .env body. Each phase is
 // idempotent — a no-op on already-canonical input.
-export function migrateEnv(
-    content: string,
-    generateBootstrapPassword: () => string = generateBootstrapAdminPassword,
-): EnvMigrationResult {
+export function migrateEnv(content: string): EnvMigrationResult {
     const changes: EnvChange[] = [];
     let warning: string | undefined;
     let cur = content;
@@ -268,10 +234,6 @@ export function migrateEnv(
     const p4 = backfillSingboxDirectDefaults(cur);
     cur = p4.content;
     if (p4.change) changes.push(p4.change);
-
-    const p5 = backfillBootstrapAdminPassword(cur, generateBootstrapPassword);
-    cur = p5.content;
-    if (p5.change) changes.push(p5.change);
 
     return { content: cur, changes, warning };
 }

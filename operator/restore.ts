@@ -1,45 +1,21 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/restore.ts — `ct restore` implementation.
-//
-// Bring a fresh box up from a backup.ts/backup.sh tarball.
-// Companion to operator/backup.ts. Stages:
-//   1. Untar into tmp/restore
-//   2. Restore .env + manifests + Caddy template
-//   3. Load prebuilt Docker image bundle
-//   4. compose up -d db redis; wait for DB healthy
-//   5. mariadb import the dump
-//   6. Restore caddy_data volume from caddy_data.tgz
-//   7. compose up -d panel; wait for entrypoint sentinel
-//   8. compose up -d caddy singbox
-//   9. Best-effort health check
-//
-// Refuses to run over a populated stack. Single-flight under the
-// same per-project flock as backup/install/update.
 
-import { cpSync, existsSync, mkdirSync, rmSync, chmodSync, mkdtempSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { posix as pathPosix } from "node:path";
 import { $, capture, runStreaming } from "./src/util/sh";
-import { loadDotenv } from "./src/util/env";
 import { composeProjectName } from "./src/util/compose";
 import { die, makeTerm } from "./src/util/term";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
-import { waitFor } from "./src/util/wait";
 import { ensureRepoRoot } from "./src/util/repo-root";
 
-const { step, ok, warn } = makeTerm();
+const { step, ok } = makeTerm();
 
-// Parse the single positional argument (path to the backup
-// tarball). Skip operator-global flags. Exported for tests.
 export function parseRestoreArgs(argv: readonly string[]): { path: string } | string {
     const cmdIdx = argv.indexOf("restore");
     const rest = (cmdIdx >= 0 ? argv.slice(cmdIdx + 1) : argv.slice(2)).filter((a) => a !== "--json");
-    if (rest.length === 0) {
-        return "restore: usage: restore <backup.tar.gz>";
-    }
-    if (rest.length > 1) {
-        return "restore: takes exactly one argument (the backup tarball path)";
-    }
+    if (rest.length === 0) return "restore: usage: restore <backup.tar.gz>";
+    if (rest.length > 1) return "restore: takes exactly one argument (the backup tarball path)";
     return { path: rest[0]! };
 }
 
@@ -47,22 +23,16 @@ export function validateTarEntries(entries: readonly string[]): string | null {
     for (const raw of entries) {
         const entry = raw.trim();
         if (entry === "") continue;
-        if (entry.startsWith("/") || entry.startsWith("\\")) {
-            return `backup archive contains absolute path: ${entry}`;
-        }
-        if (/^[A-Za-z]:[\\/]/.test(entry)) {
-            return `backup archive contains drive-qualified path: ${entry}`;
-        }
+        if (entry.startsWith("/") || entry.startsWith("\\")) return `backup archive contains absolute path: ${entry}`;
+        if (/^[A-Za-z]:[\\/]/.test(entry)) return `backup archive contains drive-qualified path: ${entry}`;
         const normalized = pathPosix.normalize(entry.replace(/\\/g, "/"));
-        if (normalized === ".." || normalized.startsWith("../")) {
-            return `backup archive escapes restore directory: ${entry}`;
-        }
+        if (normalized === ".." || normalized.startsWith("../")) return `backup archive escapes restore directory: ${entry}`;
     }
     return null;
 }
 
 export function expectedRestoreVolumes(project: string): string[] {
-    return [`${project}_db_data`, `${project}_redis_data`, `${project}_caddy_data`, `${project}_caddy_etc`, `${project}_singbox_config`];
+    return [`${project}_caddy_data`, `${project}_caddy_etc`, `${project}_singbox_config`];
 }
 
 export function staleVolumeNames(existing: readonly string[], project: string): string[] {
@@ -72,17 +42,13 @@ export function staleVolumeNames(existing: readonly string[], project: string): 
 
 async function validateTarballMembers(path: string): Promise<void> {
     const listed = await capture($`tar -tzf ${path}`);
-    if (!listed.ok) {
-        die(`tar -tzf ${path} failed`, listed.stderr.split("\n")[0] ?? "");
-    }
+    if (!listed.ok) die(`tar -tzf ${path} failed`, listed.stderr.split("\n")[0] ?? "");
     const err = validateTarEntries(listed.stdout.split("\n"));
     if (err) die(err, "refusing to restore an unsafe backup archive");
 }
 
 function requireRestoredPath(path: string, label: string): void {
-    if (!existsSync(path)) {
-        die(`backup is missing required ${label}`, `expected ${path} after extraction`);
-    }
+    if (!existsSync(path)) die(`backup is missing required ${label}`, `expected ${path} after extraction`);
 }
 
 async function stackIsRunning(): Promise<boolean> {
@@ -92,246 +58,76 @@ async function stackIsRunning(): Promise<boolean> {
 
 async function composeVolumeNames(): Promise<string[]> {
     const r = await capture($`docker volume ls --format ${"{{.Name}}"}`);
-    if (!r.ok) return [];
-    return r.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-}
-
-async function dbHealthy(): Promise<boolean> {
-    const r = await capture($`docker inspect -f ${"{{.State.Health.Status}}"} ct-db`);
-    return r.ok && r.stdout.trim() === "healthy";
-}
-
-async function panelEntrypointDone(): Promise<boolean> {
-    const r = await capture(
-        $`docker compose exec -T panel test -f /tmp/cool-tunnel/entrypoint-complete`,
-    );
-    return r.ok;
+    return r.ok ? r.stdout.split("\n").map((s) => s.trim()).filter(Boolean) : [];
 }
 
 export async function runRestore(backupPath: string): Promise<number> {
     process.umask(0o077);
     ensureRepoRoot(import.meta.url);
-
-    // Pre-flight: require the tarball, docker, and a non-running
-    // stack. Bash original calls require_file / require_docker
-    // before locking; same order here.
-    if (!(await Bun.file(backupPath).exists())) {
-        die(`required file '${backupPath}' is missing`, "did you mean a file under backups/?");
-    }
-    if (!Bun.which("docker")) {
-        die("required command 'docker' is not on PATH", "Install per docs/installation-debian.md");
-    }
-
-    if (!process.env[LOCK_HELD_MARKER]) {
-        await acquireOpLock();
-    }
-
-    // Refuse to restore over a populated stack — too easy to nuke
-    // a live deployment by typing the wrong path. Operator must
-    // explicitly `docker compose down -v` first.
-    if (await stackIsRunning()) {
-        die(
-            "stack is currently running — refusing to restore over it",
-            "docker compose down -v   # ⚠️  destroys the current stack",
-        );
-    }
+    if (!(await Bun.file(backupPath).exists())) die(`required file '${backupPath}' is missing`, "did you mean a file under backups/?");
+    if (!Bun.which("docker")) die("required command 'docker' is not on PATH", "Install Docker and retry.");
+    if (!process.env[LOCK_HELD_MARKER]) await acquireOpLock();
+    if (await stackIsRunning()) die("stack is currently running; refusing to restore over it", "docker compose down -v");
 
     const project = await composeProjectName();
-    const staleVolumes = staleVolumeNames(await composeVolumeNames(), project);
-    if (staleVolumes.length > 0) {
-        die(
-            "existing Docker volumes would be mixed with backup data",
-            `remove the old stack first: docker compose down -v\nstale volumes: ${staleVolumes.join(", ")}`,
-        );
-    }
+    const stale = staleVolumeNames(await composeVolumeNames(), project);
+    if (stale.length > 0) die("existing Docker volumes would be mixed with backup data", `remove old stack first: docker compose down -v\nstale volumes: ${stale.join(", ")}`);
 
-    // ---------- Stage 1 ----------
-    step("Stage backup tarball under tmp/restore");
+    step("Stage backup tarball");
     mkdirSync("tmp", { recursive: true });
     const restoreDir = mkdtempSync("tmp/restore-");
-    const cleanupRestoreDir = () => {
-        try {
-            rmSync(restoreDir, { recursive: true, force: true });
-        } catch {
-            // best effort
-        }
-    };
-    process.once("exit", cleanupRestoreDir);
     try {
         await validateTarballMembers(backupPath);
-        {
-            const r = await capture($`tar -xzf ${backupPath} -C ${restoreDir}`);
-            if (!r.ok) die(`tar -xzf ${backupPath} failed`, r.stderr.split("\n")[0] ?? "");
-        }
-        const lsR = await capture($`ls ${restoreDir}`);
-        if (lsR.ok) process.stdout.write(lsR.stdout.split("\n").slice(0, 10).join("\n") + "\n");
+        const extract = await capture($`tar -xzf ${backupPath} -C ${restoreDir}`);
+        if (!extract.ok) die(`tar -xzf ${backupPath} failed`, extract.stderr.split("\n")[0] ?? "");
 
-    // ---------- Stage 2 ----------
-    step("Restore .env, manifests, templates");
-    // .env contains the operator's DOMAIN / *_PASSWORD / APP_KEY edits.
-    // Without it the panel cannot decrypt stored data and subscription
-    // signatures will not verify.
-    requireRestoredPath(`${restoreDir}/.env`, ".env");
-    requireRestoredPath(`${restoreDir}/manifests`, "manifests/");
-    requireRestoredPath(`${restoreDir}/db.sql`, "db.sql");
-    requireRestoredPath(`${restoreDir}/caddy_data.tgz`, "caddy_data.tgz");
-    await validateTarballMembers(`${restoreDir}/caddy_data.tgz`);
-    cpSync(`${restoreDir}/.env`, ".env");
-    chmodSync(".env", 0o600);
-    rmSync("manifests", { recursive: true, force: true });
-    cpSync(`${restoreDir}/manifests`, "manifests", { recursive: true });
-    // Template: legacy backups may lack it; the in-tree post-update
-    // template is the correct fallback in that case, so cp failure is
-    // non-fatal.
-    if (existsSync(`${restoreDir}/caddy/Caddyfile.tpl`)) {
-        cpSync(`${restoreDir}/caddy/Caddyfile.tpl`, "caddy/Caddyfile.tpl");
-    }
-    ok(".env restored (mode 0600), manifests + Caddy template in place");
+        step("Restore files");
+        requireRestoredPath(`${restoreDir}/.env`, ".env");
+        requireRestoredPath(`${restoreDir}/admin.sqlite`, "admin.sqlite");
+        requireRestoredPath(`${restoreDir}/caddy_data.tgz`, "caddy_data.tgz");
+        requireRestoredPath(`${restoreDir}/manifests`, "manifests/");
+        cpSync(`${restoreDir}/.env`, ".env");
+        chmodSync(".env", 0o600);
+        rmSync("manifests", { recursive: true, force: true });
+        cpSync(`${restoreDir}/manifests`, "manifests", { recursive: true });
+        if (existsSync(`${restoreDir}/caddy/Caddyfile.tpl`)) cpSync(`${restoreDir}/caddy/Caddyfile.tpl`, "caddy/Caddyfile.tpl");
+        ok(".env, manifests, and template restored");
 
-    // ---------- Stage 3 ----------
-    step("Load prebuilt Docker image bundle");
-    {
-        const r = await runStreaming($`./scripts/fetch_image_bundle.sh`);
-        if (!r.ok) {
-            die(
-                "prebuilt Docker image bundle is required",
-                "run ./scripts/fetch_image_bundle.sh, then retry ./ct restore <backup.tar.gz>",
-            );
-        }
-    }
-    ok("prebuilt Docker image bundle loaded");
+        step("Load prebuilt Docker image bundle");
+        const bundle = await runStreaming($`./scripts/fetch_image_bundle.sh`);
+        if (!bundle.ok) die("prebuilt Docker image bundle is required", "run ./scripts/fetch_image_bundle.sh, then retry restore");
 
-    // ---------- Stage 4 ----------
-    const loaded = await loadDotenv([".env"]);
-    const env = loaded?.env ?? {};
+        step("Restore admin SQLite");
+        mkdirSync("data/admin", { recursive: true, mode: 0o700 });
+        copyFileSync(`${restoreDir}/admin.sqlite`, "data/admin/admin.sqlite");
+        chmodSync("data/admin/admin.sqlite", 0o600);
+        ok("data/admin/admin.sqlite restored");
 
-    step("Bring up db + redis (NOT panel/singbox yet)");
-    {
-        const r = await capture($`docker compose up -d --no-build --pull never db redis`);
-        if (!r.ok) die(`compose up -d db redis failed`, r.stderr.split("\n")[0] ?? "");
-    }
-    const dbOk = await waitFor({
-        label: "MariaDB healthcheck",
-        maxAttempts: 30,
-        intervalMs: 2000,
-        probe: dbHealthy,
-    });
-    if (!dbOk) die("MariaDB never reached healthy state", "docker compose logs --tail=80 db");
-
-    // ---------- Stage 5 ----------
-    step("Import db.sql into MariaDB");
-    // Password discipline: MYSQL_PWD via env, never argv. The
-    // mariadb client auto-reads MYSQL_PWD when no -p is given —
-    // the secret never reaches `ps -ef` inside the container or
-    // any host-side process collector. v0.0.17 hygiene.
-    const dbPw = env["DB_ROOT_PASSWORD"] ?? "";
-    const dbName = env["DB_DATABASE"] ?? "cooltunnel";
-    {
-        const r = await capture(
-            $`docker compose exec -T -e MYSQL_PWD=${dbPw} db mariadb -u root ${dbName} < ${`${restoreDir}/db.sql`}`,
+        step("Restore volumes");
+        const cwd = process.cwd();
+        const caddyVolume = `${project}_caddy_data`;
+        await capture($`docker volume create ${caddyVolume}`);
+        const caddyCopy = await capture(
+            $`docker run --pull never --rm --entrypoint sh -v ${`${caddyVolume}:/data`} -v ${`${cwd}/${restoreDir}:/in:ro`} cool-tunnel-server-caddy:latest -c ${"cd /data && tar xzf /in/caddy_data.tgz"}`,
         );
-        if (!r.ok) {
-            die(`db.sql import failed — see ct-db logs`, "docker compose logs --tail=50 db");
-        }
-    }
-    ok("db.sql imported");
+        if (!caddyCopy.ok) die("Caddy state restore failed", caddyCopy.stderr.split("\n")[0] ?? "");
+        ok("caddy_data restored");
 
-    // ---------- Stage 6 ----------
-    step("Restore caddy_data volume from caddy_data.tgz");
-    const caddyDataVolume = `${project}_caddy_data`;
-    const inspect = await capture($`docker volume inspect ${caddyDataVolume}`);
-    if (!inspect.ok) {
-        await capture($`docker volume create ${caddyDataVolume}`);
-    }
-    const cwd = process.cwd();
-    {
-        const r = await capture(
-            $`docker run --pull never --rm --entrypoint sh -v ${`${caddyDataVolume}:/data`} -v ${`${cwd}/${restoreDir}:/in:ro`} cool-tunnel-server-caddy:latest -c ${"cd /data && tar xzf /in/caddy_data.tgz"}`,
-        );
-        if (!r.ok) {
-            die(
-                `untar of caddy_data.tgz failed (exit ${r.code})`,
-                r.stderr.split("\n")[0] ?? "",
-            );
-        }
-    }
-    ok(`caddy_data restored (ACME certs + private keys, into ${caddyDataVolume})`);
-
-    // ---------- Stage 7 ----------
-    step("Bring up panel + caddy + singbox");
-    {
-        const r = await capture($`docker compose up -d --no-build --pull never panel`);
-        if (!r.ok) die("compose up -d panel failed", r.stderr.split("\n")[0] ?? "");
-    }
-    // Wait for the entrypoint-complete sentinel — same contract
-    // install.sh uses (round-9 DR audit). Presence of the sentinel
-    // means migrate + seed + config:cache + asset publish all
-    // finished cleanly.
-    const panelOk = await waitFor({
-        label: "panel entrypoint sentinel",
-        maxAttempts: 18, // 18 * 5s = 90s — bash original uses 90s window
-        intervalMs: 5000,
-        probe: panelEntrypointDone,
-    });
-    if (!panelOk) {
-        die(
-            "panel entrypoint did not finish within 90s",
-            "docker compose logs --tail=120 panel",
-        );
-    }
-    {
-        const r = await capture($`docker compose up -d --no-build --pull never caddy singbox`);
-        if (!r.ok) die("compose up -d caddy singbox failed", r.stderr.split("\n")[0] ?? "");
-    }
-    await new Promise((r) => setTimeout(r, 5000));
-
-    // ---------- Stage 8: best-effort health check ----------
-    step("Health check");
-    const doctor = await capture($`./ct doctor`);
-    if (!doctor.ok) {
-        warn("doctor reported failures — investigate before serving real users");
-    } else {
-        ok("doctor gate passed");
-    }
-
-    process.removeListener("exit", cleanupRestoreDir);
-    cleanupRestoreDir();
-
-    const panelDomain = env["PANEL_DOMAIN"] ?? "?";
-    process.stdout.write(`
-[1m[32mRestore complete.[0m
-
-  Panel         https://${panelDomain}/admin
-  Subscription  https://${panelDomain}/api/v1/subscription/<token>
-
-Next:
-  1. Tail logs:    docker compose logs -f --tail=80
-  2. Confirm health: ./ct doctor
-  3. Test subscription: curl one of the manifest URLs you had before
-
-If the restored .env differs from the environment the current
-containers booted with, recreate the stack so panel, Caddy, and
-singbox all read the same values:
-  docker compose up -d --no-build --pull never --force-recreate
-`);
-    return 0;
+        step("Start v0.5.2 stack");
+        const up = await capture($`docker compose up -d --no-build --pull never --remove-orphans admin-api admin-web singbox caddy`);
+        if (!up.ok) die("compose up failed", up.stderr.split("\n").slice(0, 5).join("\n"));
+        ok("restore complete; run ./ct doctor");
     } finally {
-        process.removeListener("exit", cleanupRestoreDir);
-        cleanupRestoreDir();
+        rmSync(restoreDir, { recursive: true, force: true });
     }
-}
-
-async function main(): Promise<number> {
-    const parsed = parseRestoreArgs(process.argv);
-    if (typeof parsed === "string") {
-        console.error(parsed);
-        console.error("ls backups/");
-        return 2;
-    }
-    return await runRestore(parsed.path);
+    return 0;
 }
 
 if (import.meta.main) {
-    const code = await main();
-    process.exit(code);
+    const parsed = parseRestoreArgs(process.argv);
+    if (typeof parsed === "string") {
+        process.stderr.write(parsed + "\n");
+        process.exit(2);
+    }
+    process.exit(await runRestore(parsed.path));
 }

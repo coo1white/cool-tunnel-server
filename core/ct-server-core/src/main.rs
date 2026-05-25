@@ -37,8 +37,7 @@ struct Cli {
 
     // v0.4.0 — dropped Cli fields:
     //   template       (was SINGBOX_CONFIG_TEMPLATE; sing-box template
-    //                  rendering moved to singbox-core, shelled to from
-    //                  panel-side SingBoxConfigGenerator).
+    //                  rendering moved to singbox-core).
     //   output         (was SINGBOX_CONFIG_PATH; only consumer was the
     //                  deleted Rust renderer + credentials::assert_locked).
     //   admin_url / admin_secret (old clash API settings; sing-box
@@ -47,7 +46,7 @@ struct Cli {
     // they're set the binary silently ignores them (clap with no matching
     // arg is a no-op).
     /// Panel subdomain. Used by the Caddyfile renderer to attach
-    /// Caddy auto-HTTPS for the panel cert. Defaults to
+    /// Caddy auto-HTTPS for the admin cert. Defaults to
     /// `panel.${DOMAIN}` when unset; install.sh writes the chosen
     /// value into .env at first boot. (R1-1 / R1-2, v0.0.33.)
     #[arg(long, env = "PANEL_DOMAIN", default_value = "", global = true)]
@@ -65,7 +64,7 @@ struct Cli {
 enum Cmd {
     /// Caddyfile generation. v0.4.0: Caddy is the layer4 SNI
     /// splitter (panel.* → inner :8443, everything else →
-    /// tcp/ct-singbox:443) plus the inner panel reverse-proxy. No
+    /// tcp/ct-singbox:443) plus the inner admin reverse-proxy. No
     /// per-account state here; that lives in /data/config/singbox.json.
     Caddyfile {
         #[command(subcommand)]
@@ -91,11 +90,8 @@ enum Cmd {
 
 #[derive(Subcommand, Debug)]
 enum AdminOp {
-    /// Print the resolved panel hostname to stdout. The Cycle 3
-    /// `SoT` (v0.0.55) anchor — single source of truth for
-    /// `panel.<base>` derivation, mirrored byte-for-byte by
-    /// `panel/config/cool-tunnel.php::panel_domain`. Used by
-    /// `scripts/verify_sot.sh` to assert PHP/Rust parity.
+    /// Print the resolved panel hostname to stdout. This remains the
+    /// single source of truth for `PANEL_DOMAIN` fallback derivation.
     /// Resolution: `PANEL_DOMAIN` env > `panel.<DOMAIN>` env >
     /// fail-fast. Whitespace in either is trimmed; both empty
     /// errors loudly rather than producing `panel.` with no base.
@@ -123,7 +119,7 @@ enum CaddyfileOp {
 
 fn main() -> ExitCode {
     // tracing must write to stderr — `--json` render output emits
-    // machine-readable JSON on stdout that is parsed by the panel
+    // machine-readable JSON on stdout that is parsed by the admin API
     // and the stress harness. Default fmt() writes to stdout,
     // which would interleave INFO/WARN lines with the JSON and
     // break every downstream parser.
@@ -169,7 +165,7 @@ fn main() -> ExitCode {
 /// without capturing stderr.
 ///
 /// Walking the chain surfaces the originating type and message so
-/// the panel-side log + the operator's `docker compose logs` both
+/// the admin API log + the operator's `docker compose logs` both
 /// carry actionable context.
 fn format_error_chain(e: &crate::Error) -> String {
     use std::error::Error as _;
@@ -198,12 +194,11 @@ fn format_error_chain(e: &crate::Error) -> String {
 /// (`--panel-domain` accepts an ad-hoc per-invocation value used
 /// by some debug paths). The DB-fallback the pre-Cycle-3 version
 /// did has been retired — env is the single source of truth, and
-/// the panel renderer is no longer responsible for reconciling
+/// the admin renderer is no longer responsible for reconciling
 /// post-install ServerConfig.domain edits with the panel hostname
 /// (operators who change ServerConfig.domain via the UI now have
 /// to also rotate their `.env`'s `PANEL_DOMAIN`; the v0.0.54
-/// auto-heal in update.sh + the Filament UI making both fields
-/// editable side-by-side cover this discipline).
+/// auto-heal in update plus the admin settings UI cover this discipline).
 fn resolve_panel_domain(cli_value: &str) -> Result<String> {
     if !cli_value.trim().is_empty() {
         return Ok(cli_value.trim().to_owned());

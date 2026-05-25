@@ -46,8 +46,8 @@ test("parseRestoreArgs rejects extra positional args", () => {
 test("validateTarEntries accepts normal backup members", () => {
     expect(validateTarEntries([
         ".env",
-        "db.sql",
-        "manifests/panel.upstream.json",
+        "admin.sqlite",
+        "manifests/admin-api.upstream.json",
         "caddy/Caddyfile.tpl",
     ])).toBeNull();
 });
@@ -60,14 +60,17 @@ test("validateTarEntries rejects traversal and absolute members", () => {
 });
 
 test("staleVolumeNames reports only restore-owned project volumes", () => {
-    expect(expectedRestoreVolumes("cool-tunnel-server")).toContain("cool-tunnel-server_db_data");
+    expect(expectedRestoreVolumes("cool-tunnel-server")).not.toContain("cool-tunnel-server_admin_data");
     expect(staleVolumeNames([
-        "cool-tunnel-server_db_data",
         "cool-tunnel-server_caddy_data",
+        "cool-tunnel-server_caddy_etc",
+        "cool-tunnel-server_singbox_config",
+        "cool-tunnel-server_admin_data",
         "other_db_data",
         "cool-tunnel-server_unrelated",
     ], "cool-tunnel-server")).toEqual([
         "cool-tunnel-server_caddy_data",
-        "cool-tunnel-server_db_data",
+        "cool-tunnel-server_caddy_etc",
+        "cool-tunnel-server_singbox_config",
     ]);
 });

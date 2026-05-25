@@ -11,11 +11,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-VERSION=$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
-    | head -1 \
-    | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
+VERSION=$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' package.json | head -1)
 if [[ -z "$VERSION" ]]; then
-    echo "fetch_image_bundle: cannot determine version from panel/config/cool-tunnel.php" >&2
+    echo "fetch_image_bundle: cannot determine version from package.json" >&2
     exit 1
 fi
 
@@ -222,9 +220,8 @@ fi
 required=(
     cool-tunnel-server-caddy:latest
     cool-tunnel-server-singbox:latest
-    cool-tunnel-server-panel:latest
-    mariadb:11.8.6
-    redis:7.4.8-alpine
+    cool-tunnel-server-admin-api:latest
+    cool-tunnel-server-admin-web:latest
 )
 for image in "${required[@]}"; do
     if ! docker image inspect "$image" >/dev/null 2>&1; then

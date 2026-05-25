@@ -10,7 +10,7 @@
 //! Practical consequences:
 //!   - `render()` no longer reads the `proxy_accounts` table.
 //!   - `active_users` in the JSON outcome is fixed at 0 for
-//!     PHP-side compatibility.
+//!     compatibility with existing JSON consumers.
 //!   - Caddy reloads are driven by the host-side operator, where
 //!     Docker access belongs.
 
@@ -31,7 +31,7 @@ pub struct CaddyRenderOutcome {
     pub hash: String,
     pub changed: bool,
     /// The Caddyfile carries no per-account data, so this stays 0.
-    /// The field remains for PHP-side compatibility.
+    /// The field remains for compatibility with existing JSON consumers.
     pub active_users: usize,
 }
 
@@ -246,7 +246,7 @@ mod tests {
         assert!(body.contains("proxy 127.0.0.1:8443"));
         // Inner panel site block.
         assert!(body.contains("https://panel.proxy.example.com:8443"));
-        assert!(body.contains("reverse_proxy panel:9000"));
+        assert!(body.contains("reverse_proxy admin-web:3000"));
         // No proxy-domain ACME cert: Reality handles the proxy path.
         assert!(!body.contains("https://proxy.example.com:8443"));
         // No v0.2.x forward_proxy / probe_resistance / basic_auth.
@@ -257,12 +257,11 @@ mod tests {
         assert!(!body.contains("ct-naive"));
     }
 
-    // PHP-side reader is panel/app/Services/CaddyfileGenerator.php:
-    // reads `$out['changed']` + `$out['hash']` with `?? <default>`.
-    // active_users stays in the JSON for PHP-side compatibility, but
-    // is always 0 because Caddy has no per-account data.
+    // JSON consumers read `changed`, `hash`, and `active_users`.
+    // active_users stays in the JSON for compatibility, but is always
+    // 0 because Caddy has no per-account data.
     #[test]
-    fn render_outcome_json_pins_php_visible_keys() {
+    fn render_outcome_json_pins_consumer_visible_keys() {
         let out = CaddyRenderOutcome {
             path: "/etc/caddy/Caddyfile".into(),
             bytes: 512,
@@ -272,11 +271,11 @@ mod tests {
         };
         let s = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert!(v.get("changed").is_some(), "panel reads `changed`: {s}");
-        assert!(v.get("hash").is_some(), "panel reads `hash`: {s}");
+        assert!(v.get("changed").is_some(), "consumer reads `changed`: {s}");
+        assert!(v.get("hash").is_some(), "consumer reads `hash`: {s}");
         assert!(
             v.get("active_users").is_some(),
-            "panel reads `active_users`: {s}"
+            "consumer reads `active_users`: {s}"
         );
     }
 }

@@ -50,14 +50,13 @@ pub enum Error {
     ParseInt(std::num::ParseIntError),
     /// JSON parse or serialization failure.
     Json(serde_json::Error),
-    /// MariaDB / SQLx failure.
+    /// SQLx failure.
     Sql(sqlx::Error),
     /// Template syntax or binding failure.
     Template(crate::template::RenderError),
-    // v0.4.0 — `Crypt` variant removed alongside the laravel_crypt
-    // module. APP_KEY-bearing decrypts moved to the panel layer
-    // (Laravel's `encrypted` cast on ServerConfig.reality_private_key);
-    // ct-server-core no longer touches the encrypted-at-rest column.
+    // v0.4.0 — `Crypt` variant removed alongside encrypted legacy
+    // admin-storage handling; ct-server-core no longer touches that
+    // encrypted-at-rest column.
     /// Operator-controlled configuration is missing or invalid.
     Config { message: String },
     /// Input failed a domain-specific validator.

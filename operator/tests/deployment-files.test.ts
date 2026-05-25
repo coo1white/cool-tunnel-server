@@ -3,33 +3,63 @@
 // regress without touching TypeScript source.
 
 import { expect, test } from "bun:test";
+import { operatorPath, repoPath } from "./test-paths";
 
 test("Dockerfiles consume prebuilt singbox-core instead of compiling on VPS", async () => {
-    for (const path of ["../docker/singbox/Dockerfile", "../docker/panel/Dockerfile"]) {
+    for (const path of [repoPath("docker/singbox/Dockerfile"), repoPath("docker/admin-api/Dockerfile")]) {
         const body = await Bun.file(path).text();
         expect(body).toContain("ARG CT_SINGBOX_CORE_IMAGE=cool-tunnel-server-singbox-core:latest");
         expect(body).toContain("FROM ${CT_SINGBOX_CORE_IMAGE} AS singbox-core-stage");
         expect(body).toContain("COPY --from=singbox-core-stage /usr/local/bin/singbox-core");
-        expect(body).not.toContain("bun install --frozen-lockfile");
-        expect(body).not.toContain("bunx tsc --noEmit");
         expect(body).not.toContain("bun build --compile");
     }
 });
 
 test("operator release workflow pins Bun instead of floating latest", async () => {
-    const body = await Bun.file("../.github/workflows/operator-release.yml").text();
+    const body = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
     expect(body).toContain("bun-version: 1.3.14");
     expect(body).not.toContain("bun-version: latest");
 });
 
+test("release workflows avoid floating Bun and fragile asset merges", async () => {
+    const clientRuntime = await Bun.file(repoPath(".github/workflows/client-runtime-release.yml")).text();
+    const imageBundle = await Bun.file(repoPath(".github/workflows/release-image-bundle.yml")).text();
+    const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
+
+    expect(clientRuntime).toContain("bun-version: 1.3.14");
+    expect(clientRuntime).not.toContain("bun-version: latest");
+    expect(clientRuntime).toContain("--clobber || true");
+    expect(clientRuntime).toContain("cp runtime/SHA256SUMS.runtime runtime/SHA256SUMS");
+    expect(imageBundle).toContain("shopt -s nullglob");
+    expect(imageBundle).toContain('if [ "${#assets[@]}" -eq 0 ]');
+    expect(audit).toContain("ARG CT_CADDY_RUNTIME_IMAGE=");
+});
+
+test("monorepo installs use the root pnpm lockfile instead of nested Bun installs", async () => {
+    const ci = await Bun.file(repoPath(".github/workflows/ci.yml")).text();
+    const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
+    const release = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
+    const makefile = await Bun.file(repoPath("Makefile")).text();
+    const singboxRelease = await Bun.file(repoPath("scripts/build_release_singbox_core_assets.sh")).text();
+
+    for (const body of [ci, audit, release, makefile]) {
+        expect(body).toContain("pnpm install --frozen-lockfile");
+        expect(body).not.toContain("bun install --frozen-lockfile");
+    }
+    expect(singboxRelease).toContain("install --frozen-lockfile");
+    expect(singboxRelease).not.toContain("bun install --frozen-lockfile");
+    expect(release).toContain("version: 11.1.1");
+    expect(ci).toContain("version: 11.1.1");
+});
+
 test("operator linux x64 release binary uses baseline CPU target", async () => {
-    const body = await Bun.file("./build.ts").text();
+    const body = await Bun.file(operatorPath("build.ts")).text();
     expect(body).toContain(`"linux-x64": "bun-linux-x64-baseline"`);
     expect(body).not.toContain("bun-linux-x64-modern");
 });
 
 test("release workflow publishes prebuilt core assets with checksums", async () => {
-    const body = await Bun.file("../.github/workflows/operator-release.yml").text();
+    const body = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
     expect(body).toContain("Build prebuilt ct-server-core assets");
     expect(body).toContain("Build prebuilt singbox-core assets");
     expect(body).toContain("operator/bin/ct-server-core-linux-x64");
@@ -42,18 +72,18 @@ test("release workflow publishes prebuilt core assets with checksums", async () 
     expect(body).toContain("operator/bin/singbox-core-*");
 });
 
-test("prebuilt core release path wraps release binary as panel source image", async () => {
-    const buildScript = await Bun.file("../scripts/build_release_core_assets.sh").text();
-    const dockerfile = await Bun.file("../docker/core/prebuilt.Dockerfile").text();
-    const assetDockerfile = await Bun.file("../docker/core/release-asset.Dockerfile").text();
-    const install = await Bun.file("./install.ts").text();
-    const update = await Bun.file("./update.ts").text();
+test("prebuilt core release path wraps release binary as runtime source image", async () => {
+    const buildScript = await Bun.file(repoPath("scripts/build_release_core_assets.sh")).text();
+    const dockerfile = await Bun.file(repoPath("docker/core/prebuilt.Dockerfile")).text();
+    const assetDockerfile = await Bun.file(repoPath("docker/core/release-asset.Dockerfile")).text();
+    const install = await Bun.file(operatorPath("install.ts")).text();
+    const update = await Bun.file(operatorPath("update.ts")).text();
 
     expect(dockerfile).toContain("FROM scratch AS runtime");
     expect(dockerfile).toContain("COPY ct-server-core /usr/local/bin/ct-server-core");
     expect(dockerfile).not.toContain("docker/dockerfile:");
     expect(dockerfile).not.toContain("ENTRYPOINT");
-    expect(await Bun.file("../docker/core/Dockerfile").text()).toContain("CT_RUST_BASE_IMAGE");
+    expect(await Bun.file(repoPath("docker/core/Dockerfile")).text()).toContain("CT_RUST_BASE_IMAGE");
     expect(install).not.toContain("./scripts/fetch_core_binary.sh");
     expect(update).not.toContain("./scripts/fetch_core_binary.sh");
     expect(buildScript).toContain("docker buildx build");
@@ -66,14 +96,14 @@ test("prebuilt core release path wraps release binary as panel source image", as
     expect(assetDockerfile).not.toContain("cargo chef");
 });
 
-test("prebuilt singbox-core release path wraps release binary for panel and singbox images", async () => {
-    const buildScript = await Bun.file("../scripts/build_release_singbox_core_assets.sh").text();
-    const dockerfile = await Bun.file("../docker/singbox-core/prebuilt.Dockerfile").text();
-    const compose = await Bun.file("../docker-compose.yml").text();
-    const install = await Bun.file("./install.ts").text();
-    const update = await Bun.file("./update.ts").text();
-    const pkg = await Bun.file("../singbox-core/package.json").text();
-    const version = await Bun.file("../singbox-core/src/version.ts").text();
+test("prebuilt singbox-core release path wraps release binary for admin-api and singbox images", async () => {
+    const buildScript = await Bun.file(repoPath("scripts/build_release_singbox_core_assets.sh")).text();
+    const dockerfile = await Bun.file(repoPath("docker/singbox-core/prebuilt.Dockerfile")).text();
+    const compose = await Bun.file(repoPath("docker-compose.yml")).text();
+    const install = await Bun.file(operatorPath("install.ts")).text();
+    const update = await Bun.file(operatorPath("update.ts")).text();
+    const pkg = await Bun.file(repoPath("singbox-core/package.json")).text();
+    const version = await Bun.file(repoPath("singbox-core/src/version.ts")).text();
 
     expect(dockerfile).toContain("FROM scratch AS runtime");
     expect(dockerfile).toContain("COPY singbox-core /usr/local/bin/singbox-core");
@@ -94,12 +124,12 @@ test("prebuilt singbox-core release path wraps release binary for panel and sing
 });
 
 test("install and update require prebuilt Docker image bundles instead of VPS builds", async () => {
-    const fetchScript = await Bun.file("../scripts/fetch_image_bundle.sh").text();
-    const buildScript = await Bun.file("../scripts/build_release_image_bundle.sh").text();
-    const backup = await Bun.file("./backup.ts").text();
-    const install = await Bun.file("./install.ts").text();
-    const update = await Bun.file("./update.ts").text();
-    const restore = await Bun.file("./restore.ts").text();
+    const fetchScript = await Bun.file(repoPath("scripts/fetch_image_bundle.sh")).text();
+    const buildScript = await Bun.file(repoPath("scripts/build_release_image_bundle.sh")).text();
+    const backup = await Bun.file(operatorPath("backup.ts")).text();
+    const install = await Bun.file(operatorPath("install.ts")).text();
+    const update = await Bun.file(operatorPath("update.ts")).text();
+    const restore = await Bun.file(operatorPath("restore.ts")).text();
 
     expect(fetchScript).toContain('BOM_TARGET="cool-tunnel-server-images-${OS}-${ARCH}.bom.json"');
     expect(fetchScript).toContain('LEGACY_TARGET="cool-tunnel-server-images-${OS}-${ARCH}.tar.gz"');
@@ -112,9 +142,10 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(fetchScript).toContain("mktemp -d");
     expect(fetchScript).toContain("cool-tunnel-server-caddy:latest");
     expect(fetchScript).toContain("cool-tunnel-server-singbox:latest");
-    expect(fetchScript).toContain("cool-tunnel-server-panel:latest");
-    expect(fetchScript).toContain("mariadb:11.8.6");
-    expect(fetchScript).toContain("redis:7.4.8-alpine");
+    expect(fetchScript).toContain("cool-tunnel-server-admin-api:latest");
+    expect(fetchScript).toContain("cool-tunnel-server-admin-web:latest");
+    expect(fetchScript).not.toContain("mariadb:");
+    expect(fetchScript).not.toContain("redis:");
     expect(fetchScript).not.toContain("CT_SKIP_IMAGE_BUNDLE_FETCH");
     expect(buildScript).toContain("docker save");
     expect(buildScript).toContain("cool-tunnel-server-images-");
@@ -122,7 +153,7 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(buildScript).toContain("cool-tunnel-server-image-bom");
     expect(buildScript).toContain("CT_IMAGE_BOM_PART_SIZE_MB");
     expect(buildScript).toContain("DOCKER_DEFAULT_PLATFORM");
-    expect(buildScript).toContain("docker compose build caddy singbox panel");
+    expect(buildScript).toContain("docker compose build caddy singbox admin-api admin-web");
     expect(buildScript).toContain("SHA256SUMS.images");
 
     for (const body of [install, update, restore]) {
@@ -135,9 +166,10 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
         expect(body).not.toContain("docker compose build");
     }
     for (const body of [install, update]) {
-        expect(body).toContain("This VPS install/update path does not compile Docker images locally.");
     }
-    expect(install).toContain("Load image bundle");
+    expect(install).toContain("This VPS install path does not compile Docker images locally.");
+    expect(update).toContain("This VPS install/update path does not compile Docker images locally.");
+    expect(install).toContain("Load prebuilt Docker image bundle");
     expect(update).toContain("Prepare prebuilt Docker image bundle");
     expect(restore).toContain("Load prebuilt Docker image bundle");
     expect(backup).toContain("docker run --pull never");
@@ -146,9 +178,23 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(restore).not.toContain("docker run --rm");
 });
 
+test("admin SQLite is a host bind mount shared by operator and API", async () => {
+    const compose = await Bun.file(repoPath("docker-compose.yml")).text();
+    const envExample = await Bun.file(repoPath(".env.example")).text();
+    const config = await Bun.file(repoPath("packages/config/src/index.ts")).text();
+    const restore = await Bun.file(operatorPath("restore.ts")).text();
+
+    expect(envExample).toContain("CT_ADMIN_DB_PATH=./data/admin/admin.sqlite");
+    expect(config).toContain('return envValue(env, "CT_ADMIN_DB_PATH") || "./data/admin/admin.sqlite"');
+    expect(compose).toContain("./data/admin:/data/admin");
+    expect(compose).not.toContain("admin_data:");
+    expect(restore).toContain("data/admin/admin.sqlite");
+    expect(restore).not.toContain("adminVolume");
+});
+
 test("install and update avoid y/n prompts during deploy preflights", async () => {
-    const install = await Bun.file("./install.ts").text();
-    const update = await Bun.file("./update.ts").text();
+    const install = await Bun.file(operatorPath("install.ts")).text();
+    const update = await Bun.file(operatorPath("update.ts")).text();
 
     for (const body of [install, update]) {
         expect(body).not.toContain("promptYn");
@@ -158,42 +204,29 @@ test("install and update avoid y/n prompts during deploy preflights", async () =
         expect(body).not.toContain("Continue with this state?");
         expect(body).not.toContain("Wipe Docker volumes?");
     }
-
-    expect(install).toContain("existing Docker state preserved");
-    expect(install).toContain("reset to origin/main; previous HEAD saved as");
-    expect(update).toContain("auto-stashing local edits before update");
-    expect(update).toContain("reset to origin/main; previous HEAD saved as");
+    expect(update).toContain("git pull --ff-only failed; continuing with local checkout");
 });
 
-test("panel entrypoint exports generated APP_KEY before encrypted seed data", async () => {
-    const body = await Bun.file("../docker/panel/entrypoint.sh").text();
+test("install path avoids public fixed admin credentials", async () => {
+    const install = await Bun.file(operatorPath("install.ts")).text();
+    const update = await Bun.file(operatorPath("update.ts")).text();
+    const envMigrate = await Bun.file(operatorPath("src/util/env-migrate.ts")).text();
+    const envExample = await Bun.file(repoPath(".env.example")).text();
+    const readme = await Bun.file(repoPath("README.md")).text();
 
-    expect(body).toContain("sync_app_key_env_from_file");
-    expect(body).toContain("export APP_KEY=");
-    expect(body).toContain("rm -f bootstrap/cache/config.php");
-    expect(body.indexOf("sync_app_key_env_from_file")).toBeLessThan(body.indexOf("php artisan db:seed"));
-    expect(body.indexOf("php artisan key:generate --force")).toBeLessThan(body.indexOf("php artisan db:seed"));
-});
+    expect(install).toContain("ct admin bootstrap");
+    expect(install).toContain("migrateAdminDb");
+    expect(install).not.toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
+    expect(install).not.toContain("ct:make-admin --bootstrap-default");
+    expect(update).not.toContain("generateBootstrapAdminPassword");
+    expect(update).not.toContain("ct:make-admin --bootstrap-default");
+    expect(envMigrate).not.toContain("bootstrap-admin-password");
+    expect(envMigrate).not.toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
+    expect(envExample).not.toContain("CT_BOOTSTRAP_ADMIN_PASSWORD=");
+    expect(readme).toContain("ct admin bootstrap");
+    expect(readme).not.toContain("password: value of CT_BOOTSTRAP_ADMIN_PASSWORD");
 
-test("install path uses VPS-local bootstrap admin password, not a public fixed secret", async () => {
-    const install = await Bun.file("./install.ts").text();
-    const update = await Bun.file("./update.ts").text();
-    const envMigrate = await Bun.file("./src/util/env-migrate.ts").text();
-    const panelEntrypoint = await Bun.file("../docker/panel/entrypoint.sh").text();
-    const envExample = await Bun.file("../.env.example").text();
-    const readme = await Bun.file("../README.md").text();
-
-    expect(install).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
-    expect(install).toContain("--password=${env.BOOTSTRAP_ADMIN_PASSWORD}");
-    expect(update).toContain("generateBootstrapAdminPassword");
-    expect(update).toContain("ct:make-admin --bootstrap-default");
-    expect(envMigrate).toContain("bootstrap-admin-password");
-    expect(panelEntrypoint).toContain("ensure_bootstrap_admin_password_env");
-    expect(panelEntrypoint).toContain("ct:make-admin --bootstrap-default --no-interaction");
-    expect(envExample).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD=");
-    expect(readme).toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
-
-    for (const body of [install, update, envMigrate, panelEntrypoint, envExample, readme]) {
+    for (const body of [install, update, envMigrate, envExample, readme]) {
         expect(body).not.toContain("cool-tunnel-server-2026");
     }
 });

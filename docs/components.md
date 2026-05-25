@@ -13,10 +13,11 @@ sources:
 | Caddy | `docker/caddy/Dockerfile` |
 | sing-box | `singbox-core/singbox.upstream.json`, `docker/singbox/Dockerfile` |
 | Rust core | `core/Cargo.toml`, `core/rust-toolchain.toml`, `docker/core/Dockerfile` |
-| Panel | `panel/composer.json`, `docker/panel/Dockerfile` |
-| MariaDB | `docker-compose.yml` |
-| Redis | `docker-compose.yml`, `docker/panel/Dockerfile` |
-| Credential lock | `manifests/credential-lock.upstream.json`, `panel/app/Console/Commands/CredentialLockCheck.php` |
+| Admin API | `apps/api/package.json`, `docker/admin-api/Dockerfile` |
+| Admin web | `apps/web/package.json`, `docker/admin-web/Dockerfile` |
+| Shared packages | `packages/*/package.json`, `pnpm-lock.yaml` |
+| SQLite schema | `packages/db/src/index.ts` |
+| Retired DB/cache services | `manifests/mariadb.upstream.json`, `manifests/redis.upstream.json` |
 
 ## Health Gates
 
@@ -24,12 +25,17 @@ Use the current operator gates instead of old per-component CLI checks:
 
 ```sh
 ./ct doctor
-docker compose exec -T panel php artisan credential-lock:check
+docker compose exec -T admin-api bun -e 'await fetch("http://127.0.0.1:9000/up").then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); })'
 ```
 
-`doctor` is the broad PASS/WARN/FAIL dashboard. `credential-lock:check`
-verifies that the DB, rendered sing-box config, and subscription output
-agree on active credentials.
+`doctor` is the broad PASS/WARN/FAIL dashboard. The admin API status
+view reports SQLite schema status, owner setup, user counts, proxy
+account counts, and the runtime actions that require shell-side doctor
+checks.
+
+MariaDB and Redis manifests are retained as retired-component markers.
+They are not active services in v0.5.2; their verify commands assert
+that the retired services have not been reintroduced to Compose.
 
 ## Updating Pins
 
@@ -38,7 +44,7 @@ Dockerfile or `docker-compose.yml` image tag together. For in-tree
 versions, use:
 
 ```sh
-make set-version V=0.4.X
+make set-version V=0.5.X
 ```
 
 Then deploy normally:

@@ -49,7 +49,7 @@ cool-tunnel-server bootstrap will:
   - install Docker CE + Compose v2 if Docker is missing
   - clone or fast-forward ${REPO_URL} into ${INSTALL_DIR}
   - fetch the signed ct-operator binary when available
-  - create ${INSTALL_DIR}/.env with generated secrets if it is missing
+  - create ${INSTALL_DIR}/.env with a generated admin secret if it is missing
 
 It will not start the proxy stack unless AUTO_INSTALL=1 is set.
 EOF
@@ -179,30 +179,22 @@ else
     warn "repo dispatcher ./ct is missing or not executable; use ./scripts/install.sh as fallback"
 fi
 
-# ---------- 4. .env scaffold (auto-generate strong secrets) ----------------
+# ---------- 4. .env scaffold ------------------------------------------------
 
 if [ ! -f .env ]; then
     cp .env.example .env
     # Tighten before secrets land in this file. `cp` inherits the
-    # operator's umask (0022 on Debian → 0644), but install.sh's
-    # R2-1 audit gate refuses to proceed on a world-readable .env
-    # (APP_KEY + DB credentials would leak via the filesystem).
-    # Without this chmod the very next step blocks the operator
-    # with a confusing "world-readable / try: chmod 0600 .env"
-    # message on a file THIS script just created.
+    # operator's umask (0022 on Debian -> 0644), but install refuses
+    # to proceed on a world-readable .env because Better Auth and
+    # Reality secrets live there.
     chmod 0600 .env
     log "scaffolded $INSTALL_DIR/.env (mode 0600)"
 
-    # generate random passwords for any unset/changeme placeholder
-    gen_pass() { openssl rand -base64 30 | tr -d '/=+' | cut -c1-32; }
-    for key in DB_PASSWORD DB_ROOT_PASSWORD REDIS_PASSWORD; do
-        if grep -qE "^${key}=(\"\"|''|changeme.*)?$" .env 2> /dev/null; then
-            new_val=$(gen_pass)
-            # shellcheck disable=SC2002  # readability over UUOC
-            sed -i "s|^${key}=.*|${key}=${new_val}|" .env
-            log "  generated ${key}"
-        fi
-    done
+    if grep -qE '^BETTER_AUTH_SECRET=(""|'"''"'|changeme.*)?$' .env 2> /dev/null; then
+        auth_secret="$(openssl rand -base64 48 | tr -d '\n')"
+        sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=${auth_secret}|" .env
+        log "  generated BETTER_AUTH_SECRET"
+    fi
 
     if [ -n "${DOMAIN:-}" ]; then
         sed -i "s|^DOMAIN=.*|DOMAIN=${DOMAIN}|" .env
@@ -238,17 +230,23 @@ NEXT
        PANEL_DOMAIN=    # your panel domain, e.g. panel.proxy.example.com
        ACME_EMAIL=      # for Let's Encrypt cert issuance
 
-     Random secrets for DB/Redis were generated.
+     BETTER_AUTH_SECRET was generated if it was empty.
+     Generate and set REALITY_PRIVATE_KEY / REALITY_PUBLIC_KEY before
+     production install.
 
   3. Run the 8-step install (numbered output, "↳ try:" hints
      on every failure):
        cd ${INSTALL_DIR}
        ct install
 
-  4. Open the panel after ct install finishes:
-       https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
-       login: holder / CT_BOOTSTRAP_ADMIN_PASSWORD from ${INSTALL_DIR}/.env
-       change the password after first login
+  4. Create the first owner after ct install finishes:
+       ct admin bootstrap
+
+     Read the root-only setup file it prints on the VPS, open:
+       https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/setup
+
+     After the owner is created, sign in at:
+       https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/login
 =================================================================
 EOF
 

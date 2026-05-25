@@ -4,7 +4,7 @@
 
 Shared sing-box management core. Same TypeScript source compiled to a self-contained binary via `bun build --compile`, embedded by:
 
-- **cool-tunnel-server** (this repo) — `ct-singbox` container uses `singbox-core supervise` to manage the server-side sing-box process; the panel calls `singbox-core render` to emit `/data/config/singbox.json`.
+- **cool-tunnel-server** (this repo) — `ct-singbox` container uses `singbox-core supervise` to manage the server-side sing-box process; the admin API calls `singbox-core render` to emit `/data/config/singbox.json`.
 - **cool-tunnel** (macOS client) — `Cool Tunnel.app` bundles the compiled binary and the macOS-side `TunnelOrchestrator` (Swift) shells to it for spawn / config / health.
 
 ## Why a shared core

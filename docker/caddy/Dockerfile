@@ -30,7 +30,7 @@
 #   - binds :443 with mholt/caddy-l4 layer4 SNI splitter:
 #       SNI = panel.<DOMAIN>  → tcp/127.0.0.1:8443 → inner Caddy
 #                               HTTPS terminator → reverse_proxy
-#                               panel:9000
+#                               admin-web:3000
 #       any other SNI         → tcp/ct-singbox:443 (sing-box does
 #                               its own Reality TLS; Caddy doesn't
 #                               terminate or hold a cert for this)
@@ -110,7 +110,7 @@ RUN setcap cap_net_bind_service=+ep /usr/bin/caddy \
     && getcap /usr/bin/caddy | grep -q cap_net_bind_service
 
 # Caddy reads /etc/caddy/Caddyfile on boot. Compose mounts the
-# panel-rendered file (from caddy/Caddyfile.tpl) into /etc/caddy.
+# admin-rendered file (from caddy/Caddyfile.tpl) into /etc/caddy.
 VOLUME ["/etc/caddy", "/data", "/config"]
 
 # Public ports. :80 stays for ACME HTTP-01. :443 is the layer4

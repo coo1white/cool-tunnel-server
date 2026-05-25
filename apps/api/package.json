@@ -1,0 +1,21 @@
+{
+  "name": "@cool-tunnel/api",
+  "version": "0.5.2",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "build": "bun build src/server.ts --target=bun --outdir=dist",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test tests"
+  },
+  "dependencies": {
+    "@cool-tunnel/config": "workspace:*",
+    "@cool-tunnel/db": "workspace:*",
+    "@cool-tunnel/security": "workspace:*",
+    "@cool-tunnel/shared": "workspace:*",
+    "better-auth": "1.6.11",
+    "hono": "4.12.23"
+  }
+}

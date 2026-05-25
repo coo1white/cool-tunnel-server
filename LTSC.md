@@ -5,7 +5,7 @@
 > releases — and the **boundaries** of what we deliberately do
 > NOT promise.
 >
-> **Current baseline (2026-05-14):** server `v0.1.0`,
+> **Current baseline (2026-05-26):** server `v0.5.2`,
 > macOS client `v2.0.26` (separate repo —
 > see [`docs/cross-platform-clients.md`](docs/cross-platform-clients.md)).
 
@@ -19,10 +19,10 @@ A pinned, reproducible, minor-version-stable stack:
    `make set-version`.
 2. Every release builds from a tagged commit with no
    environment dependencies beyond Docker + a populated `.env`.
-3. Schema and code travel together. Compile-time SQL safety
-   (`sqlx::query!()` + `core/.sqlx/`) makes a migration that
-   doesn't reflect into Rust types fail at `cargo check`, not
-   in production.
+3. Schema and code travel together. SQLite migrations in
+   `packages/db` are idempotent, tested, and surfaced by
+   `ct admin migrate`, `ct update`, and `ct doctor` before the
+   control plane can pretend it is healthy.
 4. Rotation policy for every codified check is published in
    `AUDIT.md` § rotation.
 
@@ -30,12 +30,14 @@ A pinned, reproducible, minor-version-stable stack:
 
 | Surface | Contract | Validated by |
 | --- | --- | --- |
-| Subscription URL | One signed URL imports the VLESS UUID, Reality public key, dest_host, short ID, and client defaults | panel subscription tests; client manifest parser |
-| Subscription manifest | JSON manifest, signature in body's `signature` field, no project-identifying HTTP headers | panel subscription tests; `cycle 40` audit |
-| Component reload | DB save queues a render; changed `/data/config/singbox.json` is picked up by the sing-box supervisor | PHPUnit render-handler tests; `singbox:render` scheduler |
-| Cert renewal | Caddy renews; sing-box re-reads cert without operator action; ≤60 s upper bound | cert-mtime in render-change SHA-256 hash; `cycle 35` manifest-drift |
-| Schema↔code | A migration that retypes a column without `make sqlx-prepare` fails at `cargo check` | `cycle 43` sqlx-offline-check |
-| Build reproducibility | Same commit + same `.env` → byte-identical images | pinned base images, locked Cargo.lock + composer.lock + .sqlx/ |
+| Admin auth | Better Auth owns login/session, public signup is disabled, and credentials are submitted by server-side POST only | `apps/api/tests/admin.test.ts`; Next middleware build |
+| First owner bootstrap | One-time token, root-only material file, query-string scrub, no default credentials | API tests; operator admin tests |
+| Subscription URL | One signed URL imports the VLESS UUID, Reality public key, dest_host, short ID, and client defaults; admin UI masks it by default | API proxy-account tests; client manifest parser |
+| Subscription manifest | JSON manifest, signature in body's `signature` field, no project-identifying HTTP headers | API subscription tests; `cycle 40` audit |
+| Component reload | Admin API render action writes `/data/config/singbox.json`; singbox-core supervisor picks up changed config | API action tests; `singbox-core/tests/supervise.test.ts`; `ct render` |
+| Cert renewal | Caddy renews the panel-domain certificate; HTTP redirects strip query strings | `caddy/Caddyfile.tpl`; operator deployment tests |
+| Schema↔code | SQLite migrations are idempotent and carry v0.5.1 legacy staging tables into SQLite without dropping admin/account/settings data | `packages/db/tests/migration.test.ts`; `ct doctor` migration check |
+| Build reproducibility | Same commit + same `.env` → pinned release images and operator binaries | pinned base images, locked Cargo.lock + pnpm-lock.yaml, image BOMs |
 | API stability | `WireRequestV1` / `SubscriptionManifestV1` / `ComponentManifestV1` are append-only within a major | type tags `V1` are load-bearing; breaking → `V2` side-by-side |
 | Daemon network boundary | Every Unix-socket request is bounded by max frame bytes, read timeout, and typed error mapping; malformed peers reset the connection, not the process | `core/ct-server-core/src/frame.rs`, `err.rs`, `daemon.rs`; Rust tests |
 | Daemon state truth | One connection follows one FSM branch; invalid predecessor observations hard-reset the connection | `core/ct-server-core/src/daemon_fsm.rs`; `docs/daemon-fsm.md` |
@@ -60,7 +62,7 @@ versions:
 | --- | --- | --- | --- |
 | v0.0.6 | Initial structural review | one-shot | 1–5 |
 | v0.0.7 | Deep code review | cargo-audit, cargo-deny, composer-audit, secret-scan, manifest-drift, dependency-review, stale-docs | 31–37 |
-| v0.0.8 | UI / UX layout | php-style, blade-asset-links | 38–39 |
+| v0.0.8 | UI / UX layout | legacy PHP style and asset-link checks | 38–39 |
 | v0.0.9 | Anti-network-tracking | anti-tracking-config | 40 |
 | v0.0.10 | Code-robustness design | php-psr4, phpstan; `unwrap_used = deny` clippy floor (compile-time, not an audit cycle) | 41–42 |
 | v0.0.11 | Compile-time SQL safety | sqlx-offline-check; ci.yml `templates:` job | 43 |
@@ -76,18 +78,19 @@ Three "Cycle N" sub-projects extended the audit surface with
 
 | Sub-project | Versions | What it codified |
 | --- | --- | --- |
-| Cycle 1 — `VerifySpecV1` | v0.0.34–v0.0.38 | Manifest verify spec; verify commands run inside the panel container; `expect_no_version_line` opt-out for probes whose target has no parseable version line |
-| Cycle 2 — drift detection | v0.0.39–v0.0.43 | Real drift detection across every non-Rust component: panel (`ct:version`), redis (`INFO Server`), mariadb (`SELECT VERSION()`), sing-box (authenticated clash-API `/version`), haproxy (UNIX stats socket) |
-| Cycle 3 — panel-hostname SoT | v0.0.55–v0.0.56 | Single source of truth for the panel hostname; PHP ↔ Rust parity asserted by `scripts/verify_sot.sh` against fixture envs |
+| Cycle 1 — `VerifySpecV1` | v0.0.34–v0.0.38 | Manifest verify spec; retired verifier commands ran inside the old panel container; `expect_no_version_line` opt-out for probes whose target had no parseable version line |
+| Cycle 2 — drift detection | v0.0.39–v0.0.43 | Real drift detection across non-Rust components of that era: panel, Redis, MariaDB, sing-box, and HAProxy |
+| Cycle 3 — panel-hostname SoT | v0.0.55–v0.0.56 | Single source of truth for the panel hostname; legacy PHP to Rust parity asserted by `scripts/verify_sot.sh` against fixture envs |
 
 Hand-passes still occur — notably the **30-round audit-loop
 hardening** that accompanied the v0.0.58 FrankenPHP runtime
 swap — without claiming a new LTSC cycle index. v0.0.62
 introduced a release-time gate
 (`.github/workflows/tag-version.yml`) that asserts at
-tag-push time that the bare `v*` version equals
-`panel/config/cool-tunnel.php::version`, refusing tags whose
-source disagrees. See `AUDIT.md § Release-time gates`.
+tag-push time that the bare `v*` version matched the PHP panel
+version source. v0.5.2 moves that release source of truth to the
+root `package.json`, package manifests, Rust workspace version, and
+upstream manifests. See `AUDIT.md § Release-time gates`.
 
 The pattern: cycles 1–30 are hand-audit (real findings, real
 fixes); cycles 31–50 are codified into `audit.yml`; "Cycle N"
@@ -103,12 +106,8 @@ tolerate, codified during the 2026 release arc.
 
 A comment longer than three lines in this codebase is
 **load-bearing**, not removable cruft. The verbose `// Why:`
-blocks in `core/deny.toml::ignore[]` (RUSTSEC-2023-0071 is
-inapplicable because MariaDB 11 defaults to
-`mysql_native_password`), the deferred-fail-fast explanation
-on `panel/config/cool-tunnel.php::$resolvePanelDomain`
-(Laravel bootstrap loads config unconditionally for phpunit
-and larastan), the provenance markers on every related
+blocks in `core/deny.toml::ignore[]`, the retired deferred-fail-fast
+explanation on the old PHP panel-domain resolver, the provenance markers on every related
 declaration (`Cycle 2 / v0.0.39`, `R1-1 / R1-2`,
 `low-mem-server pass`) — these encode incident provenance
 and prevent re-debate at the next audit cycle.
@@ -201,8 +200,8 @@ regression even if the implementation looks "internal."
 
 | Category | Posture | Surface |
 | --- | --- | --- |
-| **Per-user analytics** (e.g. who connected, when, to what destination, with what subscription token) | **Deliberately not collected.** `core/ct-server-core/src/metrics.rs` remains an honest no-op (per v0.0.7 anti-tracking pass). The cover-site invariant + audit cycle 40 codify the wire-side promise; this carve-out codifies the data-side promise. | None. Operator who wants per-user counters under `coolwhite LLC` stewardship would have to fork — and AGPL § 13 then requires them to publish the modification. |
-| **Operator-internal-health** (e.g. semaphore saturation, DB-pool utilization, restart counts, Coalescer fire rate) | **Operator-visible, internal-net only, never per-user data.** Optional `/metrics` endpoint exposes Prometheus text-format counters bound to a docker-internal address — never a public port. Off by default; operator opts in via `--metrics-bind` / `CT_METRICS_BIND`. | `ct-server-core --metrics-bind 127.0.0.1:9292`; reachable from inside the panel container via `docker compose exec panel curl`. Codified at v0.0.67 (R-1). |
+| **Per-user analytics** (e.g. who connected, when, to what destination, with what subscription token) | **Deliberately not collected.** The cover-site invariant + audit cycle 40 codify the wire-side promise; this carve-out codifies the data-side promise. | None. Operator who wants per-user counters under `coolwhite LLC` stewardship would have to fork — and AGPL § 13 then requires them to publish the modification. |
+| **Operator-internal-health** (e.g. service state, restart counts, migration status, render state) | **Operator-visible, internal-net only, never per-user data.** Admin API status and `ct doctor` expose health/remediation data without user destinations or credential material. | `apps/api` `/api/status`, `/api/doctor/run`; `ct doctor`. |
 
 **Rule: a counter that identifies a specific user — even
 indirectly via labels (`{username="alice"}`, `{account_id="42"}`,
@@ -289,7 +288,7 @@ Three things the codebase is NOT trying to be:
   process). Anti-tracking targets passive scanners, not state-
   level adversaries with subpoena power.
 - **Not a multi-tenant SaaS.** The control plane assumes one
-  operator with full root. Sharing the panel across orgs would
+  operator with full root. Sharing the admin UI across orgs would
   need a tenancy model the schema doesn't have.
 - **Not a CDN.** Caddy here does ACME only, not HTTP serving.
   sing-box does proxy only, not TLS for arbitrary backends.

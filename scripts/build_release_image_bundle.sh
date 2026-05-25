@@ -17,9 +17,9 @@
 #   and image builds.
 #
 # VPS installs then download a verified image BOM and load each
-# component one at a time. This avoids Rust, Bun, Go/xcaddy, Composer,
-# PHP-extension builds, and Docker Hub pulls on low-resource machines
-# without requiring one giant archive to fit on disk.
+# component one at a time. This avoids Rust, Bun/Next.js, Go/xcaddy,
+# and Docker Hub pulls on low-resource machines without requiring one
+# giant archive to fit on disk.
 
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -33,26 +33,20 @@ CT_CADDY_RUNTIME_IMAGE="${CT_CADDY_RUNTIME_IMAGE:-caddy:2.11.3-alpine}"
 CT_GOPROXY="${CT_GOPROXY:-https://proxy.golang.org,direct}"
 CT_GOSUMDB="${CT_GOSUMDB:-sum.golang.org}"
 CT_ALPINE_RUNTIME_IMAGE="${CT_ALPINE_RUNTIME_IMAGE:-alpine:3.21}"
-CT_FRANKENPHP_IMAGE="${CT_FRANKENPHP_IMAGE:-dunglas/frankenphp:1-php8.4-alpine}"
-CT_REDIS_IMAGE="${CT_REDIS_IMAGE:-redis:7.4.8-alpine}"
-CT_MARIADB_IMAGE="${CT_MARIADB_IMAGE:-mariadb:11.8.6}"
 CT_ALPINE_REPOSITORY_BASE="${CT_ALPINE_REPOSITORY_BASE:-}"
-CT_PHP_EXT_BUILD_JOBS="${CT_PHP_EXT_BUILD_JOBS:-1}"
 CT_BUILD_FULL_IMAGE_BUNDLE="${CT_BUILD_FULL_IMAGE_BUNDLE:-0}"
 CT_IMAGE_BOM_PART_SIZE_MB="${CT_IMAGE_BOM_PART_SIZE_MB:-95}"
 RUNTIME_IMAGES=(
     "cool-tunnel-server-caddy:latest"
     "cool-tunnel-server-singbox:latest"
-    "cool-tunnel-server-panel:latest"
-    "mariadb:11.8.6"
-    "redis:7.4.8-alpine"
+    "cool-tunnel-server-admin-api:latest"
+    "cool-tunnel-server-admin-web:latest"
 )
 IMAGE_COMPONENTS=(
     "caddy|cool-tunnel-server-caddy:latest"
     "singbox|cool-tunnel-server-singbox:latest"
-    "panel|cool-tunnel-server-panel:latest"
-    "mariadb|mariadb:11.8.6"
-    "redis|redis:7.4.8-alpine"
+    "admin-api|cool-tunnel-server-admin-api:latest"
+    "admin-web|cool-tunnel-server-admin-web:latest"
 )
 GENERATED_IMAGE_ASSETS=()
 
@@ -101,8 +95,9 @@ require_native_builder() {
 refusing emulated release image build: requested ${platform}, Docker host is ${actual}
 
 Release bundles must be built on a native Linux builder for the target
-architecture. The panel image compiles FrankenPHP/PHP extensions, and
-QEMU emulation has produced autoconf/m4 crashes for amd64-on-arm64.
+architecture. The admin API/web images include compiled Bun/Next.js
+assets, and QEMU emulation has produced brittle cross-arch release
+artifacts in prior builds.
 
 Use:
   - linux/amd64 bundle: native x86_64/amd64 Linux Docker host
@@ -163,17 +158,19 @@ asset_size() {
     wc -c < "$1" | tr -d ' '
 }
 
+package_version() {
+    sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' package.json | head -1
+}
+
 write_image_bom() {
     local platform="$1"
     local suffix="$2"
     local bom="${OUT_DIR}/cool-tunnel-server-images-${suffix}.bom.json"
     local version part_bytes first_image
 
-    version=$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
-        | head -1 \
-        | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
+    version=$(package_version)
     if [[ -z "$version" ]]; then
-        echo "cannot determine version from panel/config/cool-tunnel.php" >&2
+        echo "cannot determine version from package.json" >&2
         return 1
     fi
 
@@ -331,15 +328,8 @@ build_one() {
     CT_GOPROXY="$CT_GOPROXY" \
     CT_GOSUMDB="$CT_GOSUMDB" \
     CT_ALPINE_RUNTIME_IMAGE="$CT_ALPINE_RUNTIME_IMAGE" \
-    CT_FRANKENPHP_IMAGE="$CT_FRANKENPHP_IMAGE" \
-    CT_REDIS_IMAGE="$CT_REDIS_IMAGE" \
     CT_ALPINE_REPOSITORY_BASE="$CT_ALPINE_REPOSITORY_BASE" \
-    CT_PHP_EXT_BUILD_JOBS="$CT_PHP_EXT_BUILD_JOBS" \
-        docker compose build caddy singbox panel
-
-    echo "==> pulling runtime base service images (${platform})"
-    pull_and_tag "$platform" "$CT_MARIADB_IMAGE" "mariadb:11.8.6"
-    pull_and_tag "$platform" "$CT_REDIS_IMAGE" "redis:7.4.8-alpine"
+        docker compose build caddy singbox admin-api admin-web
 
     write_image_bom "$platform" "$suffix"
 

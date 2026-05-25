@@ -67,12 +67,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           tag="${GITHUB_REF_NAME}"
           suffix="${suffix}"
-          gh release upload "$tag" \
+          assets=(
             release-assets/cool-tunnel-server-images-${suffix}.bom.json \
             release-assets/cool-tunnel-server-image-${suffix}-*.tar.gz \
             release-assets/cool-tunnel-server-image-${suffix}-*.tar.gz.part-* \
+          )
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::no image assets matched suffix ${suffix}"
+            exit 1
+          fi
+          gh release upload "$tag" "${assets[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
 

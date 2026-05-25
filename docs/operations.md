@@ -5,13 +5,14 @@ self-hosted Docker proxy server is live. This page covers the regular
 VPS operations for Cool Tunnel Server: health checks, release updates,
 backups, restores, logs, password rotation, and troubleshooting.
 
-Use it when you need to operate a sing-box VLESS Reality server and web
-admin panel after the first install:
+Use it when you need to operate a sing-box VLESS Reality server and
+Better-T-Stack admin surface after the first install:
 
 - [Daily checklist](#daily-checklist)
 - [Updating to a new release](#updating-to-a-new-release)
 - [Backing up](#backing-up)
 - [Restoring from backup](#restoring-from-backup)
+- [Migrating v0.5.1 to v0.5.2](#migrating-v051-to-v052)
 - [Looking at logs when something seems off](#looking-at-logs-when-something-seems-off)
 - [Rotating passwords](#rotating-passwords)
 - [Watching health over time](#watching-health-over-time)
@@ -39,7 +40,7 @@ ct backup   # safety before changes
 
 Do not maintain a private fork directly on the VPS. Do not hand-edit
 rendered Caddy or sing-box config. The repo should stay clean so
-`ct update` can fast-forward and the panel can regenerate runtime
+`ct update` can fast-forward and the admin API can regenerate runtime
 config from one source of truth.
 
 The server release owns these portable runtime plugins:
@@ -62,8 +63,8 @@ ct doctor
 ```
 
 That prints a colour-coded PASS / WARN / FAIL dashboard across ~13
-checks (DNS, ports, ACME cert expiry, container health, supervisord
-programs, /up endpoint, direct-dial settings, disk + RAM headroom). Any
+checks (DNS, ports, ACME cert expiry, container health, admin API
+/up endpoint, direct-dial settings, disk + RAM headroom). Any
 FAIL row comes with a one-line "↳" hint at the bottom telling you
 exactly what to run next.
 
@@ -102,7 +103,7 @@ ct doctor
 
 That reset discards tracked local source edits. On a production VPS,
 that is usually correct because config belongs in `.env`, the database,
-and the panel, not in patched source files.
+and the admin UI/API, not in patched source files.
 
 What `ct update` does, in plain terms:
 
@@ -110,18 +111,19 @@ What `ct update` does, in plain terms:
    runs a safe temp/build-cache cleanup, checks disk headroom, stack is
    up, working tree is clean.
    If your tree has uncommitted edits (e.g. a hand-patched Dockerfile),
-   it offers to stash / discard / abort.
+   it can continue as install-style reconciliation if the stack is down.
 2. **Locks** so no one else can run an update at the same time.
 3. **Pulls** the latest code from GitHub (`git pull --ff-only`).
 4. **Auto-migrates** legacy `.env` shape if needed (idempotent).
 5. **Loads** the verified Docker image BOM/slices for the release.
-6. **Brings up** the new panel image and waits for the entrypoint
-   sentinel.
-7. **Runs migrations** (no-op if nothing pending).
-8. **Re-renders** the Caddyfile and reloads Caddy from the host-side
+6. **Migrates** the admin SQLite database and reports the schema status.
+7. **Re-renders** the Caddyfile and sing-box config through the
+   `admin-api` render boundary.
+8. **Recreates** `admin-api`, `admin-web`, `singbox`, and `caddy`.
+9. **Reloads** Caddy from the host-side
    operator.
-9. **Health gates** on the post-swap runtime; reports remediation
-   hints when `doctor` or `readiness` fails.
+10. **Health gates** on the post-swap runtime; reports remediation
+   hints when `doctor` fails.
 
 ✅ **Good**: ends with `✓ Update complete.` and `ct doctor` afterward
 shows mostly PASS.
@@ -182,15 +184,17 @@ ct backup
 
 Creates `backups/cool-tunnel-<UTC-timestamp>.tar.gz` containing:
 
-- MariaDB dump (full schema + data)
+- Admin SQLite database (`admin.sqlite`)
 - The `caddy_data` Docker volume (ACME certificates + private keys)
 - Your `.env` (with all secrets)
 - The manifest set and render templates
 
 The tarball is mode 0600 by default. Two important things:
 
-1. **The backup contains every password on your VPS** — `DB_PASSWORD`,
-   `REDIS_PASSWORD`, `APP_KEY`. Treat it like a secret.
+1. **The backup contains every admin and proxy secret on your VPS** —
+   `BETTER_AUTH_SECRET`, Reality keys, bootstrap material if present,
+   SQLite user/password hashes, subscription tokens, and ACME private
+   keys. Treat it like a secret.
 2. **Copy it off-server.** A fire / VPS termination otherwise takes
    both your live data and the backup with it. From your laptop:
 
@@ -217,7 +221,7 @@ If your VPS dies and you need to bring up a new one:
 1. **Provision a fresh VPS** the same way you did the first time.
 2. **Run `ct install`** to bring up an empty stack (Steps 1-4 of
    GETTING_STARTED.md). This gets Docker + base images + an empty
-   database.
+   SQLite database.
 3. **Copy your backup tarball** back to the new VPS:
 
    ```sh
@@ -232,38 +236,77 @@ If your VPS dies and you need to bring up a new one:
    ct doctor
    ```
 
-You're back online with the same accounts, same passwords, same
-SSL certs.
+You're back online with the same accounts, same password hashes, same
+subscription tokens, same Reality credentials, and same SSL certs.
 
 > **Destructive.** The DB import step drops + recreates the
-> `cool_tunnel` schema. There's no "are you sure?" prompt — run with
-> intent.
+> Docker volumes for the restored stack. There's no "are you sure?"
+> prompt — run with intent.
+
+---
+
+## Migrating v0.5.1 to v0.5.2
+
+v0.5.2 is a control-plane rebuild. It replaces the old PHP admin
+runtime with `apps/web` plus `apps/api`, and replaces MariaDB/Redis
+control-plane storage with SQLite at `./data/admin/admin.sqlite`.
+
+Before touching a live v0.5.1 VPS, run `ct backup` and copy the backup
+off-server. Preserve `.env`, `caddy_data`, Reality keys, release
+manifests, and the old database export until `ct doctor` is clean on
+v0.5.2.
+
+What the v0.5.2 importer can migrate after a maintainer stages the data
+into SQLite `legacy_*` tables:
+
+- `legacy_users` -> Better Auth users/accounts, including email,
+  username, role, active/disabled state, password hash, and
+  must-change-password flag when present;
+- `legacy_proxy_accounts` -> proxy accounts, including username, UUID,
+  previous UUID grace, subscription secret, label, enabled state,
+  local port, enabled protocols, expiry, last-seen, and timestamps;
+- `legacy_server_configs` -> domain, panel domain, ACME settings,
+  anti-tracking settings, DoH resolver, Reality keys, Reality
+  destination, short IDs, and render metadata.
+
+Maintainer action required:
+
+1. Export the v0.5.1 data into the expected `legacy_users`,
+   `legacy_proxy_accounts`, and `legacy_server_configs` staging tables.
+2. Run `ct admin migrate` so `packages/db` imports those rows into the
+   active SQLite schema.
+3. Run `ct update`, then `ct doctor`.
+4. Re-render and spot-check subscriptions for active users.
+
+Not migrated automatically: Redis cache/session/queue state, old
+framework internals, failed job rows, and any custom app source edits.
+Those belonged to the retired runtime and should be reviewed manually
+only if a maintainer knows they carry business data.
 
 ---
 
 ## Looking at logs when something seems off
 
 ```sh
-# Last few minutes of the panel (the most-common place to look)
-docker compose logs --tail=60 panel
+# Last few minutes of the admin API (the most-common place to look)
+docker compose logs --tail=60 admin-api
 
 # Same, but follow live (Ctrl+C to stop)
-docker compose logs -f panel
+docker compose logs -f admin-api
 
 # Just the errors, no info noise
-docker compose logs --tail=200 panel \
+docker compose logs --tail=200 admin-api \
   | grep -iE 'error|fatal|critical|warn'
 ```
 
-Replace `panel` with one of: `singbox`, `caddy`, `db`, `redis`.
+Replace `admin-api` with one of: `admin-web`, `singbox`, `caddy`.
 
 Quick triage rules:
 
-- **Panel restart-loops** → the entrypoint failed. Look for "composer
-  install" errors, migration errors, or APP_KEY-missing in the panel
-  log.
-- **502 from the panel domain** → Caddy can't reach FrankenPHP. Check
-  panel container is running (`docker compose ps panel`).
+- **Admin API restart-loops** → config validation or SQLite migration
+  failed. Check `docker compose logs --tail=120 admin-api`.
+- **502 from the panel domain** → Caddy can't reach `admin-web`. Check
+  `docker compose ps admin-web admin-api`.
 - **Subscription URLs don't reach sing-box** → Caddy SNI routing or
   sing-box startup issue. Check `docker compose logs caddy` and
   `docker compose logs singbox`.
@@ -272,16 +315,17 @@ Quick triage rules:
 
 ---
 
-## Rotating passwords
+## Rotating secrets
 
-Recommended cadence: every 90 days for `DB_PASSWORD` + `REDIS_PASSWORD`.
-**Never rotate `APP_KEY`** — it signs every subscription URL and seals
-stored server secrets; rotating it invalidates existing subscription
-links and encrypted Reality private-key material.
+Recommended cadence: rotate admin passwords when staff changes and
+rotate `BETTER_AUTH_SECRET` only as an incident response. `BETTER_AUTH_SECRET`
+signs sessions, bootstrap tokens, and subscription URL tokens; changing
+it logs admins out and invalidates existing subscription URLs until you
+open each proxy account and copy a fresh URL.
 
-> ⚠️ **Read the whole section before running anything.** Done wrong,
-> the panel can't connect to its database and goes down. Done right,
-> you have new secrets and ~30 seconds of downtime.
+Do not rotate Reality keys casually. They are part of the client
+connection profile and require clients to re-import subscriptions after
+the server is re-rendered.
 
 Always back up first:
 
@@ -289,49 +333,29 @@ Always back up first:
 ct backup
 ```
 
-### Redis (lowest blast radius — do this first)
+### Admin Passwords
+
+Owners and admins can reset user passwords from the admin UI. From the
+VPS shell:
 
 ```sh
-cd /opt/cool-tunnel-server
-NEW=$(openssl rand -base64 32)
-awk -v p="$NEW" '/^REDIS_PASSWORD=/ { print "REDIS_PASSWORD=" p; next } { print }' \
-  .env > .env.tmp && mv .env.tmp .env && chmod 0600 .env
-docker compose up -d --no-build --pull never --force-recreate redis panel
-unset NEW; history -d $((HISTCMD-1)) 2>/dev/null
-sleep 15 && ct doctor   # should be all PASS
+ct admin users list
+printf '%s\n' '<temporary long password>' | ct admin users reset-password --id <user-id> --password-stdin
 ```
 
-### MariaDB
+### Better Auth Secret
 
-Order matters: update the database first, then `.env`, then restart.
+Back up first, then replace `BETTER_AUTH_SECRET` in `.env`, restart the
+admin API, and copy fresh subscription URLs for active clients:
 
 ```sh
-cd /opt/cool-tunnel-server
-NEW_DB=$(openssl rand -base64 32)
-NEW_ROOT=$(openssl rand -base64 32)
-
-# 1) Tell MariaDB about the new passwords (uses OLD root password from .env)
-docker compose exec -T -e MYSQL_PWD="$(grep '^DB_ROOT_PASSWORD=' .env | cut -d= -f2-)" db \
-  mariadb -u root -e "
-    ALTER USER 'cooltunnel'@'%' IDENTIFIED BY '$NEW_DB';
-    SET PASSWORD FOR 'root'@'%' = PASSWORD('$NEW_ROOT');
-    SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$NEW_ROOT');
-    FLUSH PRIVILEGES;
-  "
-
-# 2) Update .env with the new values
-awk -v db="$NEW_DB" -v dbroot="$NEW_ROOT" \
-  '/^DB_PASSWORD=/      { print "DB_PASSWORD=" db; next }
-   /^DB_ROOT_PASSWORD=/ { print "DB_ROOT_PASSWORD=" dbroot; next }
-   { print }' \
+ct backup
+NEW_SECRET=$(openssl rand -base64 48 | tr -d '\n')
+awk -v p="$NEW_SECRET" '/^BETTER_AUTH_SECRET=/ { print "BETTER_AUTH_SECRET=" p; next } { print }' \
   .env > .env.tmp && mv .env.tmp .env && chmod 0600 .env
-
-# 3) Restart panel so it picks up the new DB_PASSWORD
-docker compose up -d --no-build --pull never --force-recreate panel
-
-# 4) Wipe new values from shell + verify
-unset NEW_DB NEW_ROOT; history -d $((HISTCMD-1)) 2>/dev/null
-sleep 15 && ct doctor
+docker compose up -d --no-build --pull never --force-recreate admin-api admin-web
+unset NEW_SECRET
+ct doctor
 ```
 
 ---
@@ -344,11 +368,11 @@ Alertmanager, etc. Off by default.
 To enable:
 
 1. Edit `.env`, add: `CT_METRICS_BIND=127.0.0.1:9292`
-2. `ct update` (or `docker compose restart panel`)
-3. Scrape from inside the panel container:
+2. `ct update` (or `docker compose restart admin-api`)
+3. Scrape from inside the admin API container:
 
    ```sh
-   docker compose exec -T panel curl -fsS http://127.0.0.1:9292/metrics
+   docker compose exec -T admin-api curl -fsS http://127.0.0.1:9292/metrics
    ```
 
 Three counters worth alarming on:
@@ -376,14 +400,12 @@ a one-command fix:
 |--------------------|---------------|-----------|
 | `ct update` died mid-way (SSH dropped, disk full, etc.) | Build was interrupted but state is fine | Re-run `ct update` — idempotent and safe to repeat |
 | Build fails with `curl: (22) error 404` | Upstream package got renamed | `git pull && ct update` for the latest fix |
-| `credential-lock` reports NG | DB password and rendered config disagree | Re-run `ct update`; if it persists, the rotation playbook above probably wasn't run cleanly — restore from backup |
-| Panel container restart-loops | Usually empty `APP_KEY`, wrong `OCTANE_SERVER`, or composer install failure | `docker compose logs --tail=80 panel` shows the exact line; reports starting with `[frankenphp-worker]` are the most informative |
-| `doctor` shows `/up endpoint connection failed` | Panel container down or FrankenPHP crashed | `docker compose ps panel` + `docker compose logs --tail=80 panel` |
-| `doctor` shows `Containers <N>/6 running` with one missing | One container failed | The diagnostic block lists which one + its log-tail command |
-| `readiness` check 8 NG with `Redis URL did not parse` | You rotated `REDIS_PASSWORD` to a value with `/`, `+`, or `=` on a pre-v0.0.88 install | Upgrade to v0.0.88+ (`ct update`) or rotate to a hex-only value (`openssl rand -hex 32`) |
-| Filament login returns `419 PAGE EXPIRED` on every form submit | Pre-v0.0.68 `.env` issue with `APP_URL` | `ct update` — auto-migration fixes it |
+| Admin API restart-loops | Usually missing `BETTER_AUTH_SECRET`, invalid Reality keys, or SQLite migration failure | `docker compose logs --tail=120 admin-api` shows the exact line |
+| `doctor` shows `/up endpoint connection failed` | `admin-api` down or unreachable | `docker compose ps admin-api` + `docker compose logs --tail=80 admin-api` |
+| `doctor` shows `Containers <N>/4 running` with one missing | One container failed | The diagnostic block lists which one + its log-tail command |
+| Admin login fails after secret rotation | `BETTER_AUTH_SECRET` changed | Log in again and copy fresh subscription URLs for clients |
 | Browser shows `ERR_SSL_PROTOCOL_ERROR` | Certificate hasn't been issued or expired | `docker compose logs caddy \| tail -40` shows the ACME error; usually DNS or port-80 reachability |
-| Component drift (e.g. `mariadb` reports VersionMismatch) | Pinned version bumped in code | `ct update` brings everything in lockstep |
+| Component drift | Pinned version bumped in code | `ct update` brings everything in lockstep |
 
 For deeper troubleshooting: [docs/operator-runbook.md](./operator-runbook.md).
 
@@ -407,12 +429,11 @@ For operators who want to understand the exact sequence:
 4. Auto-migrates legacy `.env` shape (PANEL_DOMAIN placement, APP_URL
    hostname) if needed; idempotent on already-canonical files.
 5. Loads the verified Docker image BOM/slices for the release.
-6. Brings the new panel image up and waits for the entrypoint
-   sentinel.
-7. Runs Laravel migrations (no-op if nothing pending).
-8. Re-renders the Caddyfile and reloads Caddy from the host-side
-   operator.
-9. Health gates on the post-swap runtime.
+6. Runs SQLite migrations through the shared DB package.
+7. Re-renders the Caddyfile and sing-box config through `admin-api`.
+8. Recreates `admin-api`, `admin-web`, `singbox`, and `caddy`.
+9. Reloads Caddy from the host-side operator and health gates on the
+   post-swap runtime.
 
 If anything fails mid-update, the `flock` auto-releases on script
 exit and the whole script is idempotent — just re-run `ct update`.

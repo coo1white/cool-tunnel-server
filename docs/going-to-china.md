@@ -28,7 +28,7 @@ Cloudflare DoH is intermittently blocked or silently dropped from
 mainland China — the daemon's DNS path looks healthy ("connection
 open") but every name lookup fails.
 
-In **Panel → Server Config → Anti-Tracking → DoH Resolver**, switch
+In **Settings → Anti-Tracking → DoH Resolver**, switch
 to one of:
 
 | Endpoint                                | Reachable from China | Trust profile                   |
@@ -63,16 +63,16 @@ cd ~/cool-tunnel-server
 git pull --ff-only
 ct update
 ./ct doctor                # no FAIL rows?
-make verify-sot-vps        # all 5 fixtures pass?
+make manifest-lockstep     # package/Rust/manifest versions aligned?
 ```
 
 Anything not OK gets fixed BEFORE you leave. Inside China, debug
 turnaround takes longer (every roundtrip goes through the same
 proxy you're trying to debug).
 
-### 4. Build a backup-access plan for the panel
+### 4. Build a backup-access plan for the admin UI
 
-The Filament admin panel is served at `https://<PANEL_DOMAIN>/admin`.
+The admin UI is served at `https://<PANEL_DOMAIN>/login`.
 Keep an out-of-band management path anyway; if your VPS provider's IP
 range gets put on a Chinese block list, you may lose normal SSH access
 too.
@@ -93,7 +93,7 @@ travel.
 ### 5. Pre-stage the subscription URL on every device you'll use
 
 Once inside China, fetching a new subscription URL means reaching
-the panel while the same network may be hostile. Generate the URL now
+the admin UI while the same network may be hostile. Generate the URL now
 for every laptop/phone/tablet you'll travel with, paste into each
 client app's subscription input, and verify the connection profile
 imports cleanly. You can use the same URL on multiple devices.
@@ -102,7 +102,7 @@ imports cleanly. You can use the same URL on multiple devices.
 
 Cool Tunnel's official iOS/Android clients are still roadmap work.
 For phone-side use right now, pick a maintained sing-box-compatible
-client that can import the panel's subscription output. Test on your
+client that can import the admin API's subscription output. Test on your
 home network before you fly.
 
 ---
@@ -131,9 +131,8 @@ docker compose logs --tail=50 singbox | grep -iE 'error|fatal' | tail -5
 ```
 
 If any step fails, the most likely culprit is the DoH resolver
-(see step 1 of the pre-departure checklist). Switch in panel,
-`docker compose exec -T panel php artisan singbox:render`,
-re-test.
+(see step 1 of the pre-departure checklist). Switch it in Settings,
+run `ct render singbox`, and re-test.
 
 ---
 
@@ -146,10 +145,10 @@ Read symptoms left-to-right. First match wins.
 | Connection times out from every client | VPS IP blocked OR cert expired | `ssh root@vps` from a non-China network -> if SSH works, run `./ct doctor` |
 | Connection works from one network, not another | Carrier-level domain block | Try a different network (mobile data vs WiFi). If carrier-only, no fix on server side. |
 | Connection hangs after TLS handshake | Active-probing in progress, sing-box slow to respond | `docker compose logs singbox \| grep "active-probe"` if probe logging is enabled. Restart sing-box: `docker compose restart singbox`. |
-| Some sites work, others don't | DNS resolution failing | Switch DoH resolver in panel. AliDNS most reliable. |
+| Some sites work, others don't | DNS resolution failing | Switch DoH resolver in Settings. AliDNS most reliable. |
 | All sites resolve but pages don't load | Latency / packet loss between China and VPS | Likely VPS region too far. Consider HK / Tokyo VPS. |
 | Cert errors in client | Let's Encrypt renewal failed | SSH in, `docker compose logs caddy \| grep -i acme \| tail -20`. If ACME failed, swap ACME directory to ZeroSSL: `ACME_DIRECTORY=https://acme.zerossl.com/v2/DV90` in `.env`, then `ct update`. |
-| Panel `/admin` shows cover site | Caddy SNI route or `PANEL_DOMAIN` mismatch | Check `.env`, DNS for `PANEL_DOMAIN`, and `docker compose logs caddy`. |
+| Admin UI shows the wrong site | Caddy SNI route or `PANEL_DOMAIN` mismatch | Check `.env`, DNS for `PANEL_DOMAIN`, and `docker compose logs caddy`. |
 
 If the entire VPS is unreachable from China but reachable from
 elsewhere, the IP is likely on a Chinese block list. There's no
@@ -181,17 +180,18 @@ For deeper service state:
 docker compose ps
 docker compose logs --tail=120 caddy
 docker compose logs --tail=120 singbox
-docker compose logs --tail=120 panel
+docker compose logs --tail=120 admin-api
+docker compose logs --tail=120 admin-web
 ```
 
 Map the common failures this way:
 
 | Signal | Likely cause | First action |
 |---|---|---|
-| DoH resolver check fails | DoH endpoint unreachable from VPS | Switch DoH resolver in panel |
+| DoH resolver check fails | DoH endpoint unreachable from VPS | Switch DoH resolver in Settings |
 | `singbox` restarting | Rendered config or upstream binary issue | `docker compose logs --tail=120 singbox` |
 | Caddy ACME errors | DNS, port 80, or ACME provider issue | Check DNS, firewall, and `docker compose logs caddy` |
-| Panel health fails | Laravel/FrankenPHP, DB, or Redis issue | `docker compose logs --tail=120 panel db redis` |
+| Admin health fails | Admin API/web, config, or SQLite issue | `docker compose logs --tail=120 admin-api admin-web` |
 
 ---
 
@@ -210,7 +210,7 @@ The daemon now logs a `probe.detected` event at warn level when
 60 seconds:
 
 ```
-docker compose logs panel | grep probe.detected | tail -20
+docker compose logs admin-api | grep probe.detected | tail -20
 ```
 
 This isn't a block list — it's an early signal. If you see a
@@ -262,9 +262,8 @@ it:
    pre-departure step 4.
 2. From the bastion, SSH to your main VPS by its raw IP (no DNS
    needed — DNS resolution failure doesn't affect IP-based SSH).
-3. Once in, edit `panel/config/cool-tunnel.php` or use
-   `docker compose exec panel php artisan tinker` to flip settings,
-   then `ct update`.
+3. Once in, edit `.env` or use the admin UI/API settings, then run
+   `ct render caddyfile`, `ct render singbox`, and `ct update`.
 
 Without a bastion / Tailscale, your only recourse is to find a
 working proxy elsewhere (a friend's, a commercial VPN that still
@@ -276,7 +275,7 @@ works) and use it to reach your VPS. Plan ahead.
 
 The single-server architecture in v0.0.x has known limits for
 adversarial environments. A v0.1 epic on multi-server orchestration
-(panel manages a fleet, picks healthiest endpoint, automatic IP
+(admin UI manages a fleet, picks healthiest endpoint, automatic IP
 rotation via cloud-provider APIs) addresses these — see
 `docs/architectural-decisions-2026.md` for the design seed.
 

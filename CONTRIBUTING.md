@@ -53,7 +53,7 @@ For numeric constants whose choice is non-obvious (timeout
 windows, concurrency caps, retry budgets), the `///` block must
 include the *reason* the value is what it is, not just what the
 value does. Example: `daemon.rs::MAX_CONCURRENT_HANDLERS = 16`
-documents why 16 (`2 × FrankenPHP worker count`), not just that
+documents why 16 (the bounded internal reload worker budget), not just that
 it's a cap.
 
 ---
@@ -240,10 +240,12 @@ discipline above) and document why.
 
 - Branch off `main`. Naming: `feat/v0.0.X-...`, `fix/...`,
   `chore/...`, `docs/...` — see recent merged PRs for examples.
-- Run `cargo fmt --all`, `cargo test --workspace --locked`, and
-  `cargo doc --no-deps --workspace` locally before pushing.
-- For PHP changes: `cd panel && vendor/bin/pint --test`.
-- Commit messages: type-scoped subject (`feat(panel): ...`,
+- Run `make ci` locally before pushing when the change touches the
+  release path. For focused Rust-only changes, run `cargo fmt --all`,
+  `cargo test --workspace --locked`, and `cargo doc --no-deps --workspace`.
+- For TypeScript workspace changes, run `pnpm install --frozen-lockfile`,
+  `pnpm run typecheck`, and the relevant `bun test` suites.
+- Commit messages: type-scoped subject (`feat(api): ...`,
   `fix(daemon): ...`), body explaining *why* the change exists,
   not what it does (the diff shows what). Past commits follow
   this shape.
@@ -255,8 +257,9 @@ discipline above) and document why.
 
 ## What this document is NOT
 
-- A style guide. `cargo fmt` + `vendor/bin/pint` are the style
-  guides. They run in CI; if either fails, the change doesn't ship.
+- A style guide. `cargo fmt`, TypeScript, and the workspace test
+  runners are the style gates. They run in CI; if a required gate
+  fails, the change doesn't ship.
 - A complete reference. The contract is `LTSC.md`. The audit
   cycles are `AUDIT.md`. The release ritual is `RELEASE.md`. This
   file documents the *patterns* that hold those three together at

@@ -32,7 +32,8 @@ const MAPPINGS: ReadonlyArray<{ readonly file: string; readonly image: string }>
     { file: "docker/singbox/Dockerfile", image: "alpine:3.21" },
     { file: "docker/core/Dockerfile", image: "rust:1.88.0-alpine" },
     { file: "docker/core/Dockerfile", image: "alpine:3.20" },
-    { file: "docker/panel/Dockerfile", image: "dunglas/frankenphp:1-php8.4-alpine" },
+    { file: "docker/admin-api/Dockerfile", image: "oven/bun:1.3.14-alpine" },
+    { file: "docker/admin-web/Dockerfile", image: "oven/bun:1.3.14-alpine" },
 ];
 
 // Build the FROM-line regex for a given image. Matches:

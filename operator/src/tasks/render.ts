@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/render.ts — one-shot config render subcommand.
 //
-// v0.4.0+ has two live render targets:
-//   - caddyfile: ct-server-core still owns the Caddyfile renderer.
-//   - singbox: panel-side SingBoxConfigGenerator shells to singbox-core.
-// `haproxy` stays retired.
+// v0.5.2 render targets are owned by the Hono API boundary and run
+// inside the admin-api container. Rust remains internal for Caddyfile
+// rendering; singbox-core remains internal for sing-box JSON rendering.
 //
 // Usage:
 //   ct-operator render caddyfile [--if-changed]
@@ -14,6 +13,7 @@
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
+import { renderScript } from "../../install";
 
 const TARGETS = ["caddyfile", "singbox"] as const;
 type Target = typeof TARGETS[number];
@@ -61,9 +61,11 @@ export class RenderTask implements Task {
         }
 
         ctx.logger.info(`rendering ${target} config`);
-        const r = target === "singbox"
-            ? await capture($`docker compose exec -T panel php artisan singbox:render ${passthrough}`)
-            : await capture($`docker compose exec -T panel ct-server-core --json ${target} render ${passthrough}`);
+        if (passthrough.length > 0) {
+            ctx.logger.warn("render passthrough flags are ignored by the v0.5.2 admin-api renderer");
+        }
+        const action = target === "caddyfile" ? "render-caddyfile" : "render-singbox";
+        const r = await capture($`docker compose run --rm --no-deps admin-api bun -e ${renderScript(action)}`);
         if (r.stdout) process.stdout.write(r.stdout);
         if (r.stderr) process.stderr.write(r.stderr);
         if (!r.ok) {
@@ -74,7 +76,7 @@ export class RenderTask implements Task {
             };
         }
         if (target === "singbox") {
-            const file = await capture($`docker compose exec -T panel test -s /data/config/singbox.json`);
+            const file = await capture($`docker compose run --rm --no-deps --entrypoint sh admin-api -c ${"test -s /data/config/singbox.json"}`);
             if (!file.ok) {
                 return {
                     ok: false,

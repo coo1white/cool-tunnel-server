@@ -18,13 +18,11 @@ if [[ "${CT_SKIP_OPERATOR_FETCH:-}" == "1" ]]; then
     exit 0
 fi
 
-# Deployed version — panel config is the runtime source of truth
-# (matches what `ct version` prints; see `make set-version`).
-VERSION=$(grep -E "^\s*'version'\s*=>" panel/config/cool-tunnel.php 2>/dev/null \
-    | head -1 \
-    | sed -E "s/.*'([0-9.]+)'.*/\1/" || true)
+# Deployed version. v0.5.2 uses root package.json as the release
+# source of truth.
+VERSION=$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' package.json | head -1)
 if [[ -z "$VERSION" ]]; then
-    echo "fetch_operator_binary: cannot determine version from panel/config/cool-tunnel.php" >&2
+    echo "fetch_operator_binary: cannot determine version from package.json" >&2
     exit 1
 fi
 

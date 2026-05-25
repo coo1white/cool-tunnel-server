@@ -1,70 +1,21 @@
-# Cool Tunnel Server — full stack.
+# SPDX-License-Identifier: AGPL-3.0-only
 #
-# Edit .env (copied from .env.example) before bringing this up.
-# install.sh handles first-time bootstrap; this file is the source
-# of truth for what is running in production.
+# Cool Tunnel Server v0.5.2 runtime.
 #
-# Architecture (v0.4.0+, one-line per layer):
+# Control plane:
+#   admin-web  Next.js admin dashboard. Talks only to admin-api.
+#   admin-api  Bun + Hono + Better Auth + SQLite. Owns auth,
+#              users, proxy accounts, settings, status, audit, and
+#              render/doctor action boundaries.
 #
-#   :80  → caddy     ACME HTTP-01 for the PANEL subdomain only +
-#                    http→https redirect. Reality on the proxy path
-#                    means the proxy domain doesn't need an ACME cert.
+# Data plane:
+#   caddy      Public :80/:443 front door and SNI router.
+#   singbox    VLESS + Reality proxy runtime supervised by singbox-core.
 #
-#   :443 → caddy     mholt/caddy-l4 layer4 SNI splitter:
-#                       SNI = PANEL_DOMAIN    → tcp/127.0.0.1:8443
-#                                               (inner Caddy HTTPS
-#                                                terminator →
-#                                                reverse_proxy
-#                                                panel:9000)
-#                       any other SNI         → tcp/ct-singbox:443
-#                                               (sing-box does its
-#                                                own Reality TLS;
-#                                                Caddy never sees
-#                                                the decrypted bytes)
-#
-#         singbox    v0.4.0 NEW. SagerNet/sing-box binary running
-#                    in VLESS + Reality server mode. Managed by
-#                    `singbox-core supervise` (a self-contained
-#                    Bun-compiled binary built from singbox-core/).
-#                    Same singbox-core source is also embedded in
-#                    the macOS client (Cool Tunnel.app), so server
-#                    and client are guaranteed to speak the same
-#                    sing-box protocol version pinned in
-#                    singbox-core/singbox.upstream.json.
-#
-#         panel      Filament 3 admin (PHP). Writes
-#                    /data/config/singbox.json via singbox-core
-#                    render-server (prebuilt Bun-compiled binary,
-#                    replacing the v0.3.x Rust renderer). Manages
-#                    Reality keypair + per-user
-#                    UUIDs instead of basic-auth passwords.
-#
-#         db / redis MariaDB + Redis.
-#
-# Drift surface history:
-#   v0.1.x: HAProxy + sing-box + ghost-Caddy. Sing-box's naive plugin
-#           lagged klzgrad/naiveproxy upstream → padding drift.
-#   v0.2.x: Caddy + klzgrad/forwardproxy@naive. forwardproxy@naive
-#           branch frozen Jan 2025 → preamble drift vs current naive.
-#   v0.3.0: Tried to run naive itself as server. WRONG: naive's
-#           --listen flag does not support https; naive is client-only.
-#   v0.4.0: sing-box (VLESS+Reality) on both ends. Same upstream
-#           project, one binary, one config schema, one version pin.
-#           Drift class structurally eliminated.
+# SQLite is the default storage. There is no PHP/Laravel/Filament,
+# MariaDB, Redis, public signup, telemetry, or credential-bearing URL
+# login flow in the v0.5.2 runtime.
 
-# v0.0.17 hardening defaults — applied to every long-running service
-# via YAML anchor merge (`<<: *svc-hardening`). Three properties:
-#   - cap_drop ALL: containers start with NO Linux capabilities.
-#     Each service that genuinely needs a capability adds it back
-#     explicitly via `cap_add` (caddy needs NET_BIND_SERVICE for
-#     :80 + :443; nothing else needs anything).
-#   - security_opt no-new-privileges: blocks setuid escalation
-#     even if a binary inside the container has the bit set.
-#   - logging json-file with 10 MB × 3 file rotation: prevents
-#     unbounded `docker logs` growth on a chatty container from
-#     pushing the host into disk-full. Without this the docker
-#     daemon's default is "no rotation" which has bitten operators
-#     repeatedly across the ecosystem.
 x-svc-hardening: &svc-hardening
   cap_drop:
     - ALL
@@ -76,64 +27,20 @@ x-svc-hardening: &svc-hardening
       max-size: "10m"
       max-file: "3"
 
-# Project text runtime contract. The repo's tracked text is UTF-8
-# (see scripts/check-utf8.sh); long-running containers also run
-# under a UTF-8 locale so shell/PHP/TypeScript/Rust subprocesses do
-# not inherit host- or base-image-specific ASCII/C defaults.
 x-utf8-env: &utf8-env
   LANG: C.UTF-8
   LC_ALL: C.UTF-8
 
 services:
-  # Maintainer/dev-only Rust core builder. Production install/update
-  # loads cool-tunnel-server-core from the release image bundle.
   core-builder:
     build:
       context: .
       dockerfile: docker/core/Dockerfile
-      # Explicitly target the `runtime` stage. The Dockerfile
-      # also contains an `sqlx-prepare` stage AFTER `runtime`;
-      # without this target, BuildKit would build the wrong
-      # stage (the rust/cargo image) and tag it as
-      # cool-tunnel-server-core:latest, which then has no
-      # ct-server-core binary at /usr/local/bin/.
       target: runtime
-      # Wire CT_CORE_BUILD_PROFILE through to the Dockerfile's
-      # CARGO_PROFILE ARG for maintainer/dev builds.
       args:
         CARGO_PROFILE: ${CT_CORE_BUILD_PROFILE:-release}
     image: cool-tunnel-server-core:latest
-    profiles: ["build-only"]      # never started by `compose up`
-
-  # On-demand sqlx-cli runner. Brought up by `make sqlx-prepare`
-  # to refresh core/.sqlx/ when migrations change column types.
-  # Uses the `sqlx-prepare` stage of docker/core/Dockerfile,
-  # which BuildKit caches alongside the `builder` stage — no
-  # extra rust:1.86-alpine pull (Docker Hub rate-limit-safe).
-  sqlx-prepare:
-    build:
-      context: .
-      dockerfile: docker/core/Dockerfile
-      target: sqlx-prepare
-    image: cool-tunnel-server-sqlx-prepare:latest
-    profiles: ["sqlx"]            # never started by `compose up`
-    environment:
-      <<: *utf8-env
-      DATABASE_URL: "mysql://${DB_USERNAME}:${DB_PASSWORD}@db:3306/${DB_DATABASE}"
-    volumes:
-      - ./core:/build/core
-    working_dir: /build/core
-    networks:
-      # ct-data: reach `db:3306` for query type-checking against
-      #          the live schema.
-      # ct-net:  maintainer/dev-only egress for refreshing the
-      #          sqlx-prepare image. Production install/update never
-      #          starts this profile.
-      - ct-data
-      - ct-net
-    depends_on:
-      db:
-        condition: service_healthy
+    profiles: ["build-only"]
 
   caddy:
     <<: *svc-hardening
@@ -149,40 +56,20 @@ services:
     restart: unless-stopped
     environment:
       <<: *utf8-env
-    # 1 GB-VPS sizing (v0.4.0). Caddy is purely L4 SNI splitter +
-    # inner panel reverse_proxy now (Reality on the proxy path means
-    # Caddy doesn't terminate TLS for <DOMAIN> at all; sing-box does
-    # its own Reality handshake). Memory cap stays at 192 MiB
-    # to absorb the L4 connection table for many concurrent SNI
-    # routings before OOM-kill, with headroom over the ~30 MiB
-    # measured idle (lighter than v0.3.x — fewer certs to manage).
     mem_limit: 192m
-    # Each L4 connection is a goroutine (cheap, not a pid). 96 OS
-    # threads cover Go's M:N scheduling + ACME + reverse_proxy +
-    # inner :8443 HTTPS server.
     pids_limit: 96
     cap_add:
       - NET_BIND_SERVICE
     ports:
-      - "80:80"             # ACME HTTP-01 challenges + HTTP→HTTPS redirect
-      - "443:443"           # L4 SNI splitter:
-                            #   panel.<DOMAIN> SNI → inner Caddy HTTPS
-                            #                        (127.0.0.1:8443)
-                            #                        → reverse_proxy
-                            #                          panel:9000
-                            #   any other SNI      → tcp/ct-singbox:443
-                            #                        (sing-box does
-                            #                         its own Reality
-                            #                         TLS)
+      - "80:80"
+      - "443:443"
     volumes:
-      # The panel renders Caddyfile into this shared volume.
       - caddy_etc:/etc/caddy
-      # Caddy stores certs + ACME state under /data. v0.4.0+ caddy
-      # only manages ONE cert (the panel subdomain); the proxy path
-      # has no cert because Reality fakes the destination site's TLS.
       - caddy_data:/data
     depends_on:
-      panel:
+      admin-web:
+        condition: service_started
+      singbox:
         condition: service_started
     networks:
       - ct-net
@@ -190,9 +77,6 @@ services:
   singbox:
     <<: *svc-hardening
     build:
-      # Context is the repo root so the Dockerfile can COPY from the
-      # prebuilt singbox-core carrier image included in the release
-      # image bundle.
       context: .
       dockerfile: docker/singbox/Dockerfile
       args:
@@ -204,356 +88,75 @@ services:
     restart: unless-stopped
     environment:
       <<: *utf8-env
-    # 1 GB-VPS sizing (v0.4.0). sing-box's footprint at idle is ~40
-    # MiB (Go runtime + Reality state machine); per-session memory is
-    # under 200 KiB for VLESS+Reality. 192 MiB cap matches caddy's
-    # for symmetry; OOM-kill on overflow flags a session-leak
-    # regression. Raise alongside concurrent-user growth past a few
-    # hundred sessions.
     mem_limit: 192m
-    # sing-box is a Go binary — each session is a goroutine, not a
-    # pid. The Bun supervisor adds a handful of JS threads. 96 is
-    # generous; cap protects against a runaway crash-loop fork bomb.
     pids_limit: 96
-    # NET_BIND_SERVICE granted at the cgroup level here; the
-    # docker/singbox/Dockerfile sets the matching file-cap on
-    # /usr/local/bin/sing-box so the non-root `singbox` user can
-    # bind :443 inside the container.
     cap_add:
       - NET_BIND_SERVICE
-    # No `ports:` block — ct-singbox is reachable only on the
-    # docker-internal ct-net. Public :443 traffic enters via
-    # ct-caddy's layer4 SNI splitter, which forwards the non-panel
-    # SNI traffic to ct-singbox:443.
     volumes:
-      # Panel writes /data/config/singbox.json; the supervisor
-      # (singbox-core) file-watches and respawns sing-box on change.
-      # Read-only — only the panel writes here.
       - singbox_config:/data/config:ro
-    depends_on:
-      panel:
-        condition: service_started
     networks:
       - ct-net
 
-  panel:
+  admin-api:
     <<: *svc-hardening
     build:
-      # Context is the repo ROOT (not ./docker/panel) so the
-      # Dockerfile can copy panel/ plus shared Docker assets. The
-      # singbox-core binary is supplied by the prebuilt carrier image
-      # included in the release image bundle.
       context: .
-      dockerfile: docker/panel/Dockerfile
+      dockerfile: docker/admin-api/Dockerfile
       args:
-        CT_CORE_IMAGE: cool-tunnel-server-core:latest
         CT_SINGBOX_CORE_IMAGE: cool-tunnel-server-singbox-core:latest
-        CT_FRANKENPHP_IMAGE: ${CT_FRANKENPHP_IMAGE:-dunglas/frankenphp:1-php8.4-alpine}
-        CT_REDIS_IMAGE: ${CT_REDIS_IMAGE:-redis:7.4.8-alpine}
-        CT_ALPINE_REPOSITORY_BASE: ${CT_ALPINE_REPOSITORY_BASE:-}
-        CT_PHP_EXT_BUILD_JOBS: ${CT_PHP_EXT_BUILD_JOBS:-1}
-    image: cool-tunnel-server-panel:latest
-    container_name: ct-panel
+    image: cool-tunnel-server-admin-api:latest
+    container_name: ct-admin-api
     restart: unless-stopped
-    # init + stop_grace_period — round-6 ops audit follow-up.
-    # The panel container runs supervisord as PID 1, which forks
-    # FrankenPHP, queue worker, scheduler, and the ct-server-core
-    # daemon. Without `init: true` PID 1 IS supervisord, and
-    # supervisord doesn't reap zombie children from the crashed
-    # PHP worker subprocesses cleanly under sustained restart-
-    # loop scenarios — over time the process table fills.
-    # Docker's tini-as-init pattern handles SIGCHLD reaping for
-    # us. `stop_grace_period: 30s` gives supervisord's
-    # stopwaitsecs=20 (per-program in supervisord.conf) headroom
-    # to drain Octane workers cleanly before compose escalates
-    # to SIGKILL on container stop / restart.
-    init: true
-    stop_grace_period: 30s
-    # cap_drop ALL (from x-svc-hardening) is too aggressive for
-    # this container — supervisord starts as root and PHP-FPM
-    # forks worker processes that setuid() to the `www-data`
-    # account configured in the FPM pool. setuid() needs
-    # CAP_SETUID (Linux is strict about user-switching even when
-    # demoting from root); without it the worker boot fails with
-    # "operation not permitted". Also need CAP_CHOWN +
-    # CAP_FOWNER + CAP_DAC_OVERRIDE for the entrypoint's
-    # `chmod -R 0775 storage bootstrap/cache` against the bind-
-    # mounted ./panel directory. (v0.0.24 hotfix — first real-
-    # deploy on Debian 13 caught this.)
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
-      - FOWNER
-    # 1 GB-VPS sizing (post-FrankenPHP-runtime-swap). Pre-swap the
-    # panel ran nginx + php-fpm + 4 ondemand FPM workers, with
-    # measured idle at ~110 MiB and peak ~250 MiB. Post-swap it
-    # runs FrankenPHP (one parent process holding 4 long-lived
-    # PHP workers — count baked into docker/panel/Caddyfile's
-    # `worker { num 4 }` block) plus the queue worker, scheduler,
-    # and ct-server-core daemon. Each worker holds a Laravel +
-    # Filament boot in memory (~30-50 MiB resident); steady state
-    # at 4 workers is ~250 MiB. 320 MiB still gives modest headroom
-    # for opcache touching its 64 MiB cap; raise to 512 MiB if you
-    # bump the Caddyfile worker count past 4.
-    mem_limit: 320m
-    # FrankenPHP's worker pool is N PHP processes + the parent
-    # supervisor; supervisord process tree is (1) frankenphp parent
-    # + N PHP workers + (2) queue worker + (3) scheduler + (4)
-    # ct-core daemon + opcache cleanup threads. 256 process slots
-    # is generous; raise alongside the Caddyfile `worker { num }`
-    # value if you significantly grow the worker pool.
-    pids_limit: 256
     env_file:
       - .env
-    ports:
-      # Bind to the host's loopback only so an SSH-local-port-forward
-      # (`ssh -L 9000:127.0.0.1:9000 host`) can reach the panel from
-      # the operator's laptop. Public reachability of `/admin` is a
-      # deferred v0.1 architectural item (R1-1 / R1-2 in the
-      # 2026-05-04 audit; design seed at docs/design/sni-router-v0.1.md).
-      # The 0.0.0.0 bind would expose the panel publicly with no TLS
-      # and no auth; loopback bind keeps it SSH-gated.
-      - "127.0.0.1:9000:9000"
     environment:
       <<: *utf8-env
-      # The panel service receives every key from .env via the
-      # `env_file: - .env` directive below — that's the canonical
-      # delivery for credentials (DB_USERNAME, DB_PASSWORD,
-      # REDIS_PASSWORD, etc.) and any other operator-tunable values.
-      # The `environment:` keys below are
-      # only those that need to be different from .env or that
-      # don't live in .env at all (container-internal hostnames,
-      # render paths, derived URLs). Pre-v0.0.46 this block also
-      # duplicated DB_USERNAME / DB_PASSWORD / REDIS_PASSWORD with
-      # explanatory comments; v0.0.46 removed those — env_file
-      # already injects them, and duplicate identical values are
-      # a no-op.
-      DB_HOST: db
-      DB_PORT: 3306
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      # ct-server-core daemon's redis subscriber is built from the
-      # discrete REDIS_* env vars above plus REDIS_PASSWORD (from
-      # env_file: .env). Pre-v0.0.88 this stanza also set
-      #   REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
-      # but string-interpolating a password with URL-meta chars (`/+=`
-      # from `openssl rand -base64`) into the URL broke the redis
-      # crate's parser with `InvalidClientConfig`. The typed
-      # `ConnectionInfo` path in `redis_bridge::run_subscriber` now
-      # reads the discrete vars directly and accepts any password
-      # bytes — mirror of v0.0.25's MariaDB-URL hotfix.
-      # Where the CaddyfileGenerator (panel) writes the rendered Caddyfile.
-      # Caddy in this stack owns ACME, layer4 SNI splitting, and the
-      # panel reverse-proxy.
-      CADDYFILE_PATH:         /etc/caddy/Caddyfile
-      CADDYFILE_TEMPLATE:     /srv/caddy/Caddyfile.tpl
-      # Where the daemon's own JSON-over-unix-socket lives.
-      CT_CORE_SOCKET:         /run/cool-tunnel/core.sock
-      CT_MANIFESTS_DIR:       /srv/manifests
+      CT_ADMIN_HOST: 0.0.0.0
+      CT_ADMIN_PORT: 9000
+      CT_ADMIN_DB_PATH: /data/admin/admin.sqlite
+      CT_ADMIN_SECURE_COOKIES: ${CT_ADMIN_SECURE_COOKIES:-true}
+      BETTER_AUTH_URL: https://${PANEL_DOMAIN}
+      CADDYFILE_PATH: /etc/caddy/Caddyfile
+      CADDYFILE_TEMPLATE: /srv/caddy/Caddyfile.tpl
+      SINGBOX_CONFIG_PATH: /data/config/singbox.json
+      CT_MANIFESTS_DIR: /srv/manifests
     volumes:
-      - ./panel:/var/www/html
-      # Mount the repo-root .env over the panel project's .env. The
-      # bootstrap operator edits /opt/cool-tunnel-server/.env (one
-      # file, one source of truth); Laravel inside the container
-      # reads + writes /var/www/html/.env (its standard project
-      # location, where `php artisan key:generate` appends APP_KEY).
-      # Without this mount, the entrypoint's key:generate fails
-      # with "Failed to open stream: No such file or directory".
-      # RW is required because key:generate needs to append; mounted
-      # as a single-file bind so other panel/ contents stay in
-      # sync via the directory mount above.
-      - ./.env:/var/www/html/.env
-      - ./manifests:/srv/manifests:ro
-      - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
-      - panel_storage:/var/www/html/storage
-      # Caddyfile is rendered into this volume so caddy picks it up.
+      - ./data/admin:/data/admin
       - caddy_etc:/etc/caddy
-      # Panel-side ct-server-core reads cert mtime from here so the
-      # render path picks up Caddy's renewals. RO — only Caddy
-      # writes this volume.
-      - caddy_data:/data/caddy:ro
-      # v0.4.0+: panel writes singbox.json (Reality keypair + per-user
-      # VLESS UUIDs + listen port) to this shared volume on every
-      # credential change. ct-singbox's supervisor (singbox-core)
-      # watches the same path and respawns sing-box when the file
-      # mtime changes. RW — panel is the only writer.
+      - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
+      - ./manifests:/srv/manifests:ro
       - singbox_config:/data/config
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "9000"
+    networks:
+      - ct-net
+
+  admin-web:
+    <<: *svc-hardening
+    build:
+      context: .
+      dockerfile: docker/admin-web/Dockerfile
+    image: cool-tunnel-server-admin-web:latest
+    container_name: ct-admin-web
+    restart: unless-stopped
+    environment:
+      <<: *utf8-env
+      NODE_ENV: production
+      CT_API_INTERNAL_ORIGIN: http://admin-api:9000
+    expose:
+      - "3000"
     depends_on:
-      db:
-        condition: service_healthy
-      redis:
+      admin-api:
         condition: service_started
     networks:
       - ct-net
-      - ct-data
-
-  db:
-    <<: *svc-hardening
-    image: mariadb:11.8.6
-    container_name: ct-db
-    restart: unless-stopped
-    # cap_drop ALL (from x-svc-hardening) blocks the MariaDB
-    # entrypoint's `gosu mysql ...` setuid call with "operation
-    # not permitted", crash-looping forever before the DB ever
-    # initialises. Add back the minimum capability set the
-    # entrypoint actually needs: SETUID + SETGID for the
-    # root → mysql user switch, CHOWN + FOWNER + DAC_OVERRIDE
-    # for the `chown -R mysql /var/lib/mysql` mysql_install_db
-    # pre-flight. Caught on the first real Debian 13 deploy
-    # (v0.0.24 hotfix).
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
-      - FOWNER
-    # 1 GB-VPS sizing (v0.0.22). v0.0.17's `command:` block already
-    # tuned MariaDB's internal buffers (innodb-buffer-pool-size=64M,
-    # performance-schema=OFF, max-connections=20). Resident under
-    # those caps is ~95-100 MiB. 192 MiB hard cap accommodates the
-    # full buffer pool + max_connections × per-thread overhead with
-    # ~2x headroom; OOM-kill on overflow is the tightest signal
-    # available.
-    mem_limit: 192m
-    # MariaDB connection threads are pids in cgroup accounting.
-    # max-connections=20 + background threads (purge, master,
-    # InnoDB IO) + healthcheck.sh forks. 128 is generous; cap
-    # protects against a runaway query spawning more.
-    pids_limit: 128
-    # MariaDB low-mem tuning (2026-05-05 low-mem-server pass).
-    # Stock mariadb:11 reserves ~130 MiB on this box at idle —
-    # mostly performance_schema (~80 MiB) plus the default 128 MB
-    # InnoDB buffer pool. The flags below drop idle resident to
-    # ~50-60 MiB while keeping query throughput ample for the
-    # panel's read-mostly workload (proxy_accounts is in the
-    # thousands, traffic_logs partitions by day). Tune higher on
-    # boxes with more RAM via env (`DB_INNODB_BUFFER_POOL` etc.).
-    command:
-      - --innodb-buffer-pool-size=64M
-      - --innodb-log-file-size=16M
-      - --innodb-log-buffer-size=4M
-      - --max-connections=20
-      - --thread-cache-size=4
-      - --table-open-cache=128
-      - --performance-schema=OFF
-      - --skip-name-resolve
-    environment:
-      <<: *utf8-env
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MARIADB_DATABASE:      ${DB_DATABASE}
-      MARIADB_USER:          ${DB_USERNAME}
-      MARIADB_PASSWORD:      ${DB_PASSWORD}
-    volumes:
-      - db_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    networks:
-      # db is on the internal-only network — no internet access from
-      # the database host. Only `panel` can reach it.
-      - ct-data
-
-  redis:
-    <<: *svc-hardening
-    image: redis:7.4.8-alpine
-    container_name: ct-redis
-    restart: unless-stopped
-    # Same v0.0.17 cap_drop ALL regression as db / panel: the
-    # redis:7-alpine entrypoint runs `su-exec redis ...` to drop
-    # privileges, which needs CAP_SETUID + CAP_SETGID. CHOWN +
-    # FOWNER + DAC_OVERRIDE cover the chown of /data on first
-    # boot. (v0.0.24 hotfix.)
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
-      - FOWNER
-    # 1 GB-VPS sizing (v0.0.22). Redis here is the cache + pub/sub
-    # bus + queue backend. Measured idle 9 MiB, peak under
-    # bulk-revocation fan-out ~25 MiB. 64 MiB is generous; the OOM-
-    # kill on overflow signals an unbounded data structure (which
-    # we don't have today, but the cap protects against future
-    # regressions).
-    mem_limit: 64m
-    # Single-threaded Redis core + a few I/O threads + bgsave fork
-    # at AOF-rewrite time. 32 is plenty.
-    pids_limit: 32
-    # Why not just `command: [redis-server, ..., --requirepass, ${REDIS_PASSWORD}]`?
-    # Pre-fix, compose substituted ${REDIS_PASSWORD} at parse time
-    # and the resolved password ended up in the container's Cmd[]
-    # array, visible via `docker inspect ct-redis` AND in the
-    # container's `ps -e` (any process inside the redis container,
-    # if compromised, could read /proc/1/cmdline). Industry
-    # convention and Kubernetes-style security policies both want
-    # secrets in env, never in argv.
-    #
-    # Post-fix: redis-server reads its config from stdin
-    # (the `-` argument is documented in `redis-server --help`).
-    # The password reaches redis via $REDIS_PASSWORD (mirroring how
-    # every other service in this stack receives credentials — db,
-    # panel, ct-server-core daemon all read REDIS_PASSWORD from env).
-    # Inside the container, `ps -e` now shows `redis-server -`
-    # with no password at all; the secret never appears on a
-    # command line.
-    #
-    # docker inspect still shows REDIS_PASSWORD in the container's
-    # Env[] field — that's the existing pattern across every other
-    # service and a separate (much larger) refactor would be needed
-    # to move ALL service secrets to mounted-file form. This PR is
-    # scoped to closing the redis-specific Cmd[] leak the 2026-05-15
-    # audit flagged.
-    environment:
-      <<: *utf8-env
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-    command:
-      - sh
-      - -c
-      - |
-        if [ -z "$$REDIS_PASSWORD" ]; then
-            echo "FATAL: REDIS_PASSWORD is empty or unset; refusing to start without auth" >&2
-            exit 1
-        fi
-        umask 077
-        # `redis-server -` reads config from stdin. The
-        # password never lands in argv, so the container's
-        # `ps -e` and /proc/<pid>/cmdline are clean.
-        printf 'appendonly yes\nrequirepass %s\n' "$$REDIS_PASSWORD" | exec redis-server -
-    volumes:
-      - redis_data:/data
-    networks:
-      # Same as db: internal-only.
-      - ct-data
 
 volumes:
   caddy_etc:
   caddy_data:
-  # v0.4.0+: panel renders /data/config/singbox.json here; ct-singbox's
-  # supervisor (singbox-core) watches the file and respawns sing-box on
-  # change. Panel RW, ct-singbox RO. v0.3.x had a similar `naive_config`
-  # volume that this replaces.
   singbox_config:
-  panel_storage:
-  db_data:
-  redis_data:
 
 networks:
-  # ct-net: the "front" network. caddy + panel + singbox (v0.4.0+)
-  # sit here. Has internet access (caddy needs ACME outbound, panel
-  # needs app/runtime egress, and sing-box needs to reach the Reality
-  # destination host and the operator-requested target hosts).
   ct-net:
     driver: bridge
-
-  # ct-data: the "back" network. Only db + redis + panel. `internal:
-  # true` cuts the internet entirely — a compromised db or redis
-  # cannot phone home or pull tooling. Panel bridges the two
-  # networks because it's the only thing that needs both DB access
-  # and outside-world connectivity.
-  ct-data:
-    driver: bridge
-    internal: true

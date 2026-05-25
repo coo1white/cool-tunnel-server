@@ -4,8 +4,8 @@
 import { expect, test } from "bun:test";
 import {
     checkDirectDialOutbound,
+    classifyMigrationStatus,
     checkRecentRealityInvalidOutput,
-    checkSupervisordStatusOutput,
     indexComposeRowsByService,
     opensslSClientArgs,
     recentRealityLogArgs,
@@ -15,7 +15,7 @@ test("indexComposeRowsByService indexes valid compose rows by service", () => {
     const rows = [
         JSON.stringify({ Service: "caddy", State: "running", Health: "healthy" }),
         "not json",
-        JSON.stringify({ Service: "panel", State: "running" }),
+        JSON.stringify({ Service: "admin-api", State: "running" }),
         JSON.stringify({ Name: "missing-service", State: "running" }),
         "",
     ].join("\n");
@@ -24,7 +24,7 @@ test("indexComposeRowsByService indexes valid compose rows by service", () => {
 
     expect(indexed.size).toBe(2);
     expect(indexed.get("caddy")?.["Health"]).toBe("healthy");
-    expect(indexed.get("panel")?.["State"]).toBe("running");
+    expect(indexed.get("admin-api")?.["State"]).toBe("running");
     expect(indexed.has("missing-service")).toBe(false);
 });
 
@@ -75,31 +75,6 @@ test("checkDirectDialOutbound warns on missing strategy", () => {
     expect(checked.detail).toContain("no direct dial domain strategy");
 });
 
-test("checkSupervisordStatusOutput accepts any all-running program count", () => {
-    const checked = checkSupervisordStatusOutput(
-        [
-            "frankenphp                       RUNNING   pid 101, uptime 0:01:00",
-            "queue                            RUNNING   pid 102, uptime 0:01:00",
-            "messenger                        RUNNING   pid 103, uptime 0:01:00",
-        ].join("\n"),
-    );
-
-    expect(checked.severity).toBe("pass");
-    expect(checked.detail).toBe("3/3 programs running");
-});
-
-test("checkSupervisordStatusOutput warns on partial running state", () => {
-    const checked = checkSupervisordStatusOutput(
-        [
-            "frankenphp                       RUNNING   pid 101, uptime 0:01:00",
-            "queue                            FATAL     Exited too quickly",
-        ].join("\n"),
-    );
-
-    expect(checked.severity).toBe("warn");
-    expect(checked.detail).toBe("1/2 programs running");
-});
-
 test("checkRecentRealityInvalidOutput passes when recent logs are clean", () => {
     const checked = checkRecentRealityInvalidOutput("");
 
@@ -145,4 +120,29 @@ test("opensslSClientArgs keeps hostile domain inside one argv value", () => {
 
 test("recentRealityLogArgs avoids shell pipelines", () => {
     expect(recentRealityLogArgs()).toEqual(["compose", "logs", "--since=10m", "--no-color", "singbox"]);
+});
+
+test("classifyMigrationStatus reports current schema as pass", () => {
+    const checked = classifyMigrationStatus(JSON.stringify({
+        ok: true,
+        currentVersion: 5,
+        requiredVersion: 5,
+        legacyPhpDetected: false,
+        message: "SQLite schema is current.",
+    }));
+
+    expect(checked.severity).toBe("pass");
+    expect(checked.detail).toContain("schema 5/5");
+});
+
+test("classifyMigrationStatus makes stale schema actionable", () => {
+    const checked = classifyMigrationStatus(JSON.stringify({
+        ok: false,
+        currentVersion: 3,
+        requiredVersion: 5,
+        message: "Run `ct admin migrate` before starting the v0.5.2 admin runtime.",
+    }));
+
+    expect(checked.severity).toBe("fail");
+    expect(checked.hint).toContain("ct admin migrate");
 });

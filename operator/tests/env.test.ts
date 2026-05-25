@@ -47,3 +47,13 @@ test("mergeEnv tolerates null overlay", () => {
     const merged = mergeEnv({ X: "y" }, null);
     expect(merged["X"]).toBe("y");
 });
+
+test("mergeEnv expands PANEL_DOMAIN references used by admin URL settings", () => {
+    const merged = mergeEnv({}, {
+        PANEL_DOMAIN: "panel.example.com",
+        BETTER_AUTH_URL: "https://${PANEL_DOMAIN}",
+        APP_URL: "https://${PANEL_DOMAIN}",
+    });
+    expect(merged["BETTER_AUTH_URL"]).toBe("https://panel.example.com");
+    expect(merged["APP_URL"]).toBe("https://panel.example.com");
+});

@@ -1,11 +1,12 @@
 {
     "name": "mariadb",
-    "kind": "container-image",
-    "version": "11.8.6",
+    "kind": "retired-container-image",
+    "version": "retired-in-v0.5.2",
     "upstream": "https://hub.docker.com/_/mariadb",
     "verify": {
-        "command": ["bash", "-c", "MYSQL_PWD=\"$DB_PASSWORD\" mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USERNAME\" -BN -e 'SELECT VERSION()'"],
-        "expect_zero_exit": true
+        "command": ["bash", "-c", "test ! -f docker-compose.yml || ! grep -Eq '^[[:space:]]*(db|mariadb):' docker-compose.yml"],
+        "expect_zero_exit": true,
+        "expect_no_version_line": true
     },
-    "note": "GPL-2.0. Stores proxy_accounts, traffic_logs, fake_websites, server_configs, and the Filament users table. Verify probe is the Cycle 2 / 3 drift-detection upgrade (v0.0.41) — runs `SELECT VERSION()` from inside the panel container against the live db service, and the matcher's soft version match asserts the pinned `version` field above is contained in the bare X.Y.Z-MariaDB string the daemon returns. `mariadb -BN` strips the ASCII-table formatting (-B batch, -N no-headers) so first_line(stdout) is exactly `<version>-MariaDB[-build_flavor]`. Auth via the existing app user (DB_USERNAME / DB_PASSWORD) — SELECT VERSION() is a system function that any authenticated user can call regardless of grants, so reusing the panel's existing credential avoids a dedicated `health` user provisioning step. MYSQL_PWD env-var keeps the password out of argv (would otherwise surface in `ps -ef` for the probe's lifetime — same v0.0.17 supply-chain hygiene as scripts/backup.sh:33's mariadb-dump invocation). Probe evolution: v0.0.34 introduced a TCP-open + echo (broken at the soft-version-match stage — `connected` doesn't contain `11`); v0.0.35 silenced it; v0.0.37 declared the silencing honestly via `expect_no_version_line: true`; v0.0.41 finally restores real drift detection by giving the probe an authenticated identity query. expect_zero_exit: true means Access-denied / can't-connect / cli-missing all flip the row to VerifyFailed; a deployed MariaDB whose VERSION() doesn't contain the pinned string flips to VersionMismatch."
+    "note": "Retired active runtime component. v0.5.2 stores admin/control-plane state in SQLite through packages/db and apps/api. Maintainers migrating a v0.5.1 deployment must export old data into explicit legacy_* staging tables before running `ct admin migrate`; this manifest remains only to document the retirement and to prevent a MariaDB service from reappearing in docker-compose.yml."
 }

@@ -2,7 +2,7 @@
 #
 # Tiny ct-server-core carrier image for release installs.
 #
-# The panel Dockerfile only needs an image it can COPY
+# Runtime Dockerfiles only need an image they can COPY
 # /usr/local/bin/ct-server-core from. Release installs fetch the
 # verified binary asset and build this scratch image locally, avoiding
 # a Rust/Cargo compile on low-resource VPS hosts.

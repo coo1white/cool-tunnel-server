@@ -1,0 +1,11 @@
+{
+  "name": "admin-web",
+  "kind": "container-image",
+  "version": "0.5.2",
+  "upstream": "https://github.com/coo1white/cool-tunnel-server",
+  "verify": {
+    "command": ["bun", "run", "--cwd", "apps/web", "build"],
+    "expect_zero_exit": true
+  },
+  "note": "AGPL-3.0-only admin web code (Copyright (C) 2026 coolwhite LLC). Built from apps/web and docker/admin-web/Dockerfile. Next.js renders the operator dashboard and talks to admin-api over the internal Compose network; public signup remains disabled by the API."
+}

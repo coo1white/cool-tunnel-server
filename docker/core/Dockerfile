@@ -2,8 +2,8 @@
 #
 # Build the ct-server-core Rust binary. This image isn't run as a
 # service; it's used by docker-compose's build stage to extract the
-# binary and copy it into the panel image. (See the panel image's
-# multi-stage build, which uses --from=ct-server-core-builder.)
+# binary and copy it into runtime images that need internal core logic.
+# The active admin API calls the binary through its Hono boundary.
 #
 # v0.0.49 restructured the build pipeline around cargo-chef + a
 # target/ cache mount. The dependency graph (recipe.json from
@@ -184,7 +184,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     test -x /ct-server-core
 
 # Final runtime stage: a tiny image we never actually run, but use
-# as the source for `--from=` in the panel Dockerfile.
+# as the source for `--from=` in runtime Dockerfiles.
 #
 # IMPORTANT: this stage MUST be explicitly named (`AS runtime`)
 # because the file also contains an `AS sqlx-prepare` stage below.
@@ -193,9 +193,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # docker-compose.yml's core-builder service, BuildKit would build
 # the sqlx-prepare stage and tag it as cool-tunnel-server-core,
 # resulting in an image that has cargo + sqlx-cli but NO
-# ct-server-core binary. The panel image's
-# `COPY --from=ct-core-stage /usr/local/bin/ct-server-core` then
-# fails with "/usr/local/bin/ct-server-core: not found".
+# ct-server-core binary. Any runtime image copy from this stage would
+# then fail with "/usr/local/bin/ct-server-core: not found".
 FROM ${CT_ALPINE_BASE_IMAGE} AS runtime
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
@@ -209,15 +208,11 @@ CMD ["--help"]
 #
 # Why a stage in this Dockerfile rather than a pull from
 # Docker Hub: anonymous Docker Hub pulls are rate-limited
-# (100/6h per IP). On a fresh VPS that just pulled
-# rust:1.86-alpine + alpine:3.20 + caddy + sing-box + php:8.3-fpm
-# + mariadb + redis to bring the stack up, the limit is already
-# half-consumed; one extra `docker run rust:1.86-alpine` at
-# prepare time can tip over. Building this stage as part of the
-# project's compose graph lets BuildKit reuse the cached layers
-# from the `chef` stage above — no fresh registry pull. (The
-# apk add list and rustup component set are deliberately distinct
-# from the chef stage's; sqlx-prepare needs git for cargo's
+# (100/6h per IP). Building this stage as part of the project's
+# compose graph lets BuildKit reuse the cached layers from the `chef`
+# stage above, avoiding an extra registry pull. (The apk add list and
+# rustup component set are deliberately distinct from the chef stage's;
+# sqlx-prepare needs git for cargo's
 # crates.io fetch, plus clippy + rustfmt for the toolchain.toml
 # components.)
 #

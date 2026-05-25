@@ -1,92 +1,54 @@
-# Versioning policy
+# Versioning Policy
 
-Short version: this project follows [SemVer](https://semver.org)
-for the **operator-facing surface area**. Internal Rust APIs,
-internal database schema, Docker image layout, and panel HTML are
-explicitly NOT covered by SemVer until `1.0.0`.
+This project follows SemVer for the operator-facing surface area.
+Internal Rust APIs, SQLite table layout, Docker image layout, and admin
+HTML are not public contracts before `1.0.0`.
 
-## What's covered by SemVer
+## Covered Surfaces
 
-The "public API" we promise SemVer compatibility on:
-
-| Surface | What you can rely on across compatible versions |
+| Surface | Compatibility promise inside a minor line |
 | --- | --- |
-| `naive+https://...` profile URL format | A `0.X.Y` URL parses on any `0.X.Z` release |
-| `SubscriptionManifestV1` JSON shape | Field set is additive within `V1`; breaking changes go in `V2` |
-| `ComponentManifestV1` JSON shape | Same |
-| `WireRequestV1` / `WireResponseV1` / `WireEventV1` | Same |
-| `ct-server-core` CLI subcommand surface | Subcommands and flags don't change names within a minor; new ones may be added |
-| `.env` keys | Existing keys keep their semantics; new ones may be added; deprecations get a one-minor warning window |
-| Filament admin URL routes (`/admin`, `/api/v1/...`) | Stable within a minor |
+| `ct` operator commands | Existing command names and flags keep their behavior unless the changelog calls out a migration |
+| `.env` keys | Existing keys keep their semantics; new keys may be added with safe defaults |
+| Admin API JSON contracts | Additive changes are allowed; removals require release notes |
+| Subscription manifest shape | Additive within the current manifest version |
+| Component manifest shape | Additive within the current manifest version |
+| Rust wire/profile types | Additive within the current minor line |
 
-Anything else is an internal implementation detail and may change
-without notice. Don't write a script that parses the panel's HTML;
-don't rely on a specific table name in the database.
+Anything else is internal. Do not automate against rendered admin HTML
+or private SQLite table names unless the docs explicitly bless that use.
 
-## Pre-`1.0` (where we are now)
+## Pre-1.0 Rules
 
-A few things relax in pre-`1.0`:
+- Patch releases should avoid breaking operator workflows.
+- Minor releases may include breaking changes with explicit changelog and
+  migration notes.
+- Storage changes must go through idempotent migrations.
+- Cross-stack migrations, such as v0.5.1 PHP-backed admin data to
+  v0.5.2 SQLite, must have either an operator command or documented
+  maintainer action.
 
-- **Minor bumps may break compatibility** with explicit changelog
-  notes. We use the patch position (`0.0.X` → `0.0.Y`) for
-  no-breaking-change releases and the minor position
-  (`0.X.Y` → `0.X+1.Y`) for any breaking change.
-- **The DB schema is migration-managed but unstable.** Every
-  release runs `php artisan migrate` cleanly from any prior
-  release in the same minor line. Across minors, you may need to
-  run a documented migration script.
-- **The wire format is forward-compatible only**, not
-  backward-compatible. A `0.0.5` server speaks to a `0.0.4`
-  client, but a `0.0.4` server may reject a `0.0.5` client's
-  subscription token.
+## Release Checklist
 
-## Post-`1.0`
+See [RELEASE.md](./RELEASE.md). The short version:
 
-When we cut `1.0.0`:
-
-- The wire formats freeze. Any change is a `V2` that lives
-  side-by-side with `V1`.
-- Minor releases are additive only.
-- Major releases get a 12-month deprecation window — old surface
-  works, with deprecation warnings, for one full year before
-  removal.
-- The database schema commits to forward + backward migrations
-  within a major line.
-
-## Cross-platform-client compatibility
-
-The Rust client cores (current `cool-tunnel-core` for macOS, future
-ones for iOS / Android / Windows / Linux desktop) all link the same
-`ct-protocol` crate. We commit to:
-
-- A `ct-protocol` minor release is a non-breaking superset of
-  earlier minor releases in the same major.
-- A client built against `ct-protocol = "0.0.5"` works against any
-  server running `ct-protocol >= 0.0.5` within the same `0.x` line.
-
-## How we cut a release
-
-See [`RELEASE.md`](./RELEASE.md). The short version:
-
-1. Update `CHANGELOG.md`. Move the `[Unreleased]` items into a new
-   versioned section.
-2. Bump the version in `core/Cargo.toml` workspace.
-3. Bump the version in the relevant `manifests/*.upstream.json`
-   files.
-4. `make ci` locally — must be green before tagging.
-5. `git tag -a vX.Y.Z -m "..."` and push.
-6. CI builds the release artefacts; we mark the GitHub release
-   pre-release until the operator(s) running production have
-   confirmed.
+1. Update `CHANGELOG.md`.
+2. Bump root, app, package, operator, singbox-core, Rust, and manifest
+   versions.
+3. Run `make manifest-lockstep`.
+4. Run the TypeScript, operator, Docker, stale-reference, and Rust
+   verification gates listed in `RELEASE.md`.
+5. Commit, push, and open a pull request.
+6. Tag and publish only after required verification passes.
 
 ## Rollback
 
-A release can be rolled back by checking out the previous tag and
-running `./ct update`. Database migrations are designed to
-be **safe-to-roll-back within a minor line** but **not necessarily
-between minor lines** — the changelog calls out any migration
-that's one-way.
+Before upgrade, take a backup:
 
-If you've already taken a `down` migration that's one-way, the
-backup taken by `./ct backup` before the upgrade is your
-recovery path.
+```bash
+./ct backup
+```
+
+Rollback is checking out the previous release and running `./ct update`.
+If a migration is one-way, the changelog calls it out and the backup is
+the recovery path.

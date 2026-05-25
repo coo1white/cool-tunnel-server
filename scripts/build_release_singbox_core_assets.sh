@@ -11,9 +11,14 @@ cd "$(dirname "$0")/.." || exit 1
 
 OUT_DIR="${OUT_DIR:-release-assets}"
 BUN="${BUN:-bun}"
+PNPM="${PNPM:-pnpm}"
 TARGETS="${TARGETS:-linux-x64 linux-arm64}"
 
 mkdir -p "$OUT_DIR"
+
+if [[ "${CT_SKIP_PNPM_INSTALL:-0}" != "1" ]]; then
+    "$PNPM" install --frozen-lockfile
+fi
 
 build_one() {
     local suffix="$1"
@@ -34,7 +39,6 @@ build_one() {
     echo "==> building singbox-core-${suffix} (${bun_target})"
     (
         cd singbox-core
-        "$BUN" install --frozen-lockfile
         "$BUN" run typecheck
         "$BUN" build --compile --target="$bun_target" \
             src/cli.ts \

@@ -8,6 +8,7 @@
 .env.local
 operator/signing.key
 backups/
+data/
 
 # VCS + IDE noise.
 .git/
@@ -24,11 +25,22 @@ core/bin/
 **/target/
 core/Cargo.lock        # we want it in the image actually — see negation below
 
-# Composer / Laravel local state.
+# JavaScript workspace local state.
+node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
+apps/*/.next/
+apps/*/dist/
+apps/*/*.tsbuildinfo
+packages/*/dist/
+operator/dist/
+singbox-core/node_modules/
+singbox-core/dist/
+singbox-core/bin/
+
+# Retired PHP panel local state from old checkouts.
 panel/vendor/
 panel/node_modules/
-singbox-core/node_modules/
-singbox-core/bin/
 panel/storage/app/*
 panel/storage/framework/cache/data/*
 panel/storage/framework/sessions/*

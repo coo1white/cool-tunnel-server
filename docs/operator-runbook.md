@@ -15,7 +15,7 @@ doctor -> follow the remediation
 ```
 
 The production VPS should not be a place for long-lived source edits.
-Use `.env`, the panel, and release tags as the control surface.
+Use `.env`, the admin UI/API, and release tags as the control surface.
 
 ## Install
 
@@ -33,8 +33,7 @@ Verify:
 
 ```bash
 docker compose ps
-docker compose exec -T panel php artisan ct:version
-docker compose exec -T panel php artisan credential-lock:check
+docker compose exec -T admin-api bun -e 'await fetch("http://127.0.0.1:9000/up").then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); })'
 ./ct doctor
 ```
 
@@ -49,13 +48,12 @@ ct doctor
 
 `ct update` owns the release path: load release images, run
 migrations, render Caddy and sing-box config, restart affected
-services, verify credential lock, and run the health gates.
+services, and run the health gates.
 
 Verify after update:
 
 ```bash
-docker compose exec -T panel php artisan ct:version
-docker compose exec -T panel php artisan credential-lock:check
+docker compose exec -T admin-api bun -e 'await fetch("http://127.0.0.1:9000/up").then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); })'
 ./ct doctor
 ```
 
@@ -95,8 +93,7 @@ the update section.
 If credentials or rendered config look stale:
 
 ```bash
-docker compose exec -T panel php artisan credential-lock:check
-docker compose exec -T panel php artisan singbox:render --no-interaction
+ct render singbox
 docker compose restart singbox
 ./ct doctor
 ```
@@ -104,11 +101,10 @@ docker compose restart singbox
 Useful logs:
 
 ```bash
-docker compose logs --tail=120 panel
+docker compose logs --tail=120 admin-api
+docker compose logs --tail=120 admin-web
 docker compose logs --tail=120 caddy
 docker compose logs --tail=120 singbox
-docker compose logs --tail=120 db
-docker compose logs --tail=120 redis
 ```
 
 If `ct update` reports a missing image bundle:

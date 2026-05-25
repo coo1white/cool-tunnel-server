@@ -3,12 +3,12 @@
 Step-by-step setup for Cool Tunnel Server on **Debian 12 (bookworm) and
 newer**. This guide turns a
 fresh Debian VPS into a self-hosted proxy server with Docker Compose,
-Caddy, sing-box, VLESS + Reality, MariaDB, Redis, and the web admin
-panel.
+Caddy, sing-box, VLESS + Reality, a Next.js admin UI, a Bun/Hono API,
+Better Auth, and SQLite.
 
 This guide is for the *operator* — somebody who has just spun up a
-fresh VPS, has root, and wants a working proxy with the Filament
-admin panel in about 20 minutes. Every command is explicit and
+fresh VPS, has root, and wants a working proxy with the web admin UI in
+about 20 minutes. Every command is explicit and
 copy-pasteable; per-Debian-version differences are called out
 inline.
 
@@ -16,7 +16,8 @@ inline.
 > supported path for release installs.
 >
 > **Reference:** this guide builds on the original bare Caddy
-> deployment shape and adds the panel plus sing-box VLESS+Reality.
+> deployment shape and adds the Better-T-Stack admin apps plus sing-box
+> VLESS+Reality.
 
 ---
 
@@ -24,7 +25,7 @@ inline.
 
 | Thing | Detail |
 | --- | --- |
-| **VPS** | 1 vCPU, 1 GB RAM, 10 GB disk, public IPv4. 2 GB RAM is more comfortable once the panel + MariaDB + Caddy are all running. |
+| **VPS** | 1 vCPU, 1 GB RAM, 10 GB disk, public IPv4. 2 GB RAM is more comfortable for admin browsing and Docker image loading. |
 | **Domain** | A real domain you control. ACME (Let's Encrypt) needs to validate it via HTTP-01 on port 80. Subdomains are fine (e.g. `proxy.example.com`). |
 | **DNS records** | `A` pointing at the VPS public IPv4, **TTL 300**, **proxy disabled** (Cloudflare grey cloud, not orange). |
 | **Ports open** at the cloud-provider firewall | `22/tcp` (SSH, your IP only is best), `80/tcp` (ACME), `443/tcp`, `443/udp` (HTTP/3 / QUIC). |
@@ -311,25 +312,22 @@ LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1
 BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 cd /opt/cool-tunnel-server
 
-# Generate strong random values for every secret. Three calls because
-# we need three independent passwords (DB_ROOT_PASSWORD, DB_PASSWORD,
-# REDIS_PASSWORD); APP_KEY is generated automatically by artisan.
-DB_ROOT=$(openssl rand -base64 32 | tr -d '\n')
-DB_PASS=$(openssl rand -base64 32 | tr -d '\n')
-REDIS_PASS=$(openssl rand -base64 32 | tr -d '\n')
+# Generate a strong Better Auth secret. Generate the Reality keypair
+# with the release/operator tooling before production and paste both
+# 43-character base64url keys into .env.
+AUTH_SECRET=$(openssl rand -base64 48 | tr -d '\n')
 
-# Edit DOMAIN, ACME_EMAIL, and the *_PASSWORD lines. Pick any editor.
+# Edit DOMAIN, PANEL_DOMAIN, ACME_EMAIL, BETTER_AUTH_SECRET, and the
+# REALITY_* key lines. Pick any editor.
 sed -i "s|^DOMAIN=.*|DOMAIN=proxy.example.com|"                .env
 sed -i "s|^PANEL_DOMAIN=.*|PANEL_DOMAIN=panel.proxy.example.com|" .env
 sed -i "s|^ACME_EMAIL=.*|ACME_EMAIL=admin@example.com|"        .env
-sed -i "s|^DB_ROOT_PASSWORD=.*|DB_ROOT_PASSWORD=${DB_ROOT}|"    .env
-sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${DB_PASS}|"              .env
-sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${REDIS_PASS}|"     .env
+sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=${AUTH_SECRET}|" .env
 ```
 
-> The admin panel is served at `https://${PANEL_DOMAIN}/admin`.
+> The admin UI is served at `https://${PANEL_DOMAIN}/login`.
 > Use a dedicated panel hostname such as `panel.proxy.example.com`;
-> Caddy routes that SNI to the panel and forwards other SNI traffic
+> Caddy routes that SNI to `admin-web` and forwards other SNI traffic
 > to sing-box.
 
 ---
@@ -340,7 +338,7 @@ The minimum spec — **1 vCPU, 1 GB RAM** — is enough to *run* the
 stack (idle ≈ 240 MiB, moderate load ≈ 400-500 MiB). Tagged releases
 download a verified image BOM plus Docker image slices for the VPS CPU
 architecture and load them one component at a time. The normal
-production path does **not** build Rust, Bun, Go, PHP extensions, or
+production path does **not** build Rust, Bun, Go, Next.js, or
 Docker images on the VPS.
 
 The swap step below is optional runtime safety for very small servers.
@@ -380,39 +378,15 @@ swapon --show
 free -h
 ```
 
-### b. Confirm the runtime tuning knobs (already low-mem-friendly by default)
+### b. Confirm the runtime tuning knobs
 
-The shipped defaults are already sized for a 1 GB box.
-FrankenPHP's worker pool size is configured in
-`docker/panel/Caddyfile` via the `frankenphp { worker { num 4 } }`
-block — NOT via env. To grow the pool: edit the `num` value in
-that file and rebuild the panel image on a maintainer build host, then
-publish a new image BOM and image slices. Default
-`num 4` matches the prior PHP-FPM `pm.max_children` cap and
-keeps steady-state ~250 MiB inside the panel container's 320 MiB
-mem_limit. Raising past 4 should usually be paired with a
-mem_limit raise in `docker-compose.yml`.
-
-(Pre-FrankenPHP-runtime-swap this section documented
-`PHP_FPM_*` env vars, then briefly `OCTANE_*` env vars during
-the swap iterations. Both code paths were dropped — see
-`CHANGELOG.md` for context. The Caddyfile `num` literal is the
-single source of truth today.)
-
-The MariaDB tuning lives in `docker-compose.yml` (`db.command:`
-flags: `innodb-buffer-pool-size=64M`, `performance-schema=OFF`,
-`max-connections=20`, etc.). Operators with ≥2 GB RAM can override
-in a `docker-compose.override.yml`:
-
-```yaml
-# docker-compose.override.yml — committed only on bigger boxes.
-services:
-  db:
-    command:
-      - --innodb-buffer-pool-size=256M
-      - --max-connections=50
-      - --performance-schema=ON
-```
+The shipped defaults are already sized for a 1 GB box. The v0.5.2
+runtime has no MariaDB, Redis, PHP worker pool, Laravel queue, or
+FrankenPHP tuning surface. Persistent admin state lives at
+`./data/admin/admin.sqlite` on the host and is bind-mounted into
+admin-api as `/data/admin/admin.sqlite`; the admin API uses SQLite WAL
+mode and keeps the database file mode at 0600 when the filesystem
+permits it.
 
 ### c. Steady-state expectation
 
@@ -420,26 +394,18 @@ After install completes, `docker stats --no-stream` should show
 something like:
 
 ```
-ct-db        ~ 95-100 MiB    (mariadb, performance_schema OFF)
-ct-panel     ~220-280 MiB    (frankenphp parent + 4 PHP workers
-                             + ct-server-core daemon + queue:work +
-                             scheduler; each PHP worker holds a
-                             Laravel + Filament boot resident
-                             across requests, ~30-50 MiB each)
-ct-singbox   ~ 10-15 MiB
-ct-caddy     ~ 15-20 MiB
-ct-haproxy   ~  5-10 MiB
-ct-redis     ~  9-12 MiB
+ct-admin-api ~ 70-140 MiB    (Bun + Hono + Better Auth + SQLite)
+ct-admin-web ~ 90-180 MiB    (Next.js production server)
+ct-singbox   ~ 10-25 MiB
+ct-caddy     ~ 15-30 MiB
                     ─────
-TOTAL        ~ 350-400 MiB  → ~600 MiB free on a 1 GB box
+TOTAL        ~ 200-375 MiB  → comfortable headroom on a 1 GB box
 ```
 
-Under moderate load (10-20 active proxy users + admin browsing in
-a tab) the panel container sits around 250-300 MiB (4 long-lived
-PHP workers + queue + scheduler + ct-core daemon, each worker
-holding the Filament boot in memory); total stack peaks around
-400-500 MiB. The `R-panel-1` queue refactor caps growth from
-bulk-delete admin actions at ~600 MiB.
+Under moderate load (10-20 active proxy users + admin browsing in a
+tab) the total stack should stay well below the old PHP/MariaDB/Redis
+footprint. If it does not, start with `docker stats --no-stream` and
+`docker compose logs --tail=120 admin-api admin-web`.
 
 ---
 
@@ -458,27 +424,32 @@ ct install
 2. `./scripts/fetch_image_bundle.sh` — download the release image
    bundle, verify it through `SHA256SUMS`, and load it with
    `docker load`.
-3. `docker compose up -d db redis` — bring up the data layer first.
-4. Wait for MariaDB healthcheck to go green.
-5. `docker compose up -d panel` — runs the entrypoint, which applies
-   app setup, migrations, and the initial `sing-box config.json`
-   render.
-6. Creates the bootstrap admin when needed:
-   `holder` with the VPS-local `CT_BOOTSTRAP_ADMIN_PASSWORD` from `.env`.
-7. `docker compose up -d caddy singbox` — Caddy gets the panel cert
-   and routes non-panel SNI to sing-box.
-8. Tails Caddy and sing-box logs until the panel cert is available
-   and sing-box is running.
+3. Migrates the admin SQLite database at `./data/admin/admin.sqlite`.
+4. Renders the initial Caddyfile and sing-box config through
+   `admin-api`.
+5. `docker compose up -d admin-api admin-web singbox caddy` — starts
+   the Better-T-Stack control plane and data plane.
+6. Prepares the admin account database. First-owner setup is completed
+   with a one-time token from `ct admin bootstrap`; no default
+   credentials are created.
+7. Caddy gets the panel cert and routes non-panel SNI to sing-box.
+8. Tails Caddy and sing-box logs until the panel cert is available and
+   sing-box is running.
 
 When it finishes, open:
 
 ```text
-https://${PANEL_DOMAIN}/admin
+https://${PANEL_DOMAIN}/login
 ```
 
-Log in as `holder` with `CT_BOOTSTRAP_ADMIN_PASSWORD` from `.env`.
-The panel requires you to change that bootstrap password before using
-the admin area.
+Create the first owner from the VPS:
+
+```bash
+ct admin bootstrap
+```
+
+Open the printed setup URL, create the owner account, then log in at
+`/login`. Public signup is disabled by default.
 
 ### Check the certificate landed
 
@@ -497,22 +468,22 @@ will tell you why
 
 ## 8. Create your first proxy account
 
-In the Filament panel: **Proxy Accounts → New**.
+In the admin UI: **Users → New proxy account**.
 
 - **Username** — any ASCII you like (`alice`).
 - **UUID** — generated automatically and shown once after create.
 - **Expires at** — datetime, blank = never.
 
-When you save, the panel:
+When you save, the admin API:
 
 1. Writes the account row and VLESS UUID to `proxy_accounts`.
-2. Queues a Messenger render job after the DB commit.
+2. Records an audit entry.
 3. Renders `/data/config/singbox.json`; the sing-box supervisor
    watches that file and restarts sing-box when it changes.
 
-The create page shows a subscription URL. Import that URL in the Cool
+The account page shows a subscription URL. Import that URL in the Cool
 Tunnel client; it contains the server, UUID, Reality public key,
-Reality dest_host, short ID, and local SOCKS default.
+Reality dest host, short ID, and local SOCKS default.
 
 ---
 
@@ -534,14 +505,13 @@ starts the updated containers.
 ```bash
 ./ct backup
 # → backups/cool-tunnel-YYYY-MM-DD.tar.gz   (mode 0600 — operator-only)
-#   contains: .env (APP_KEY + DB / Redis secrets), db dump
-#             (--single-transaction), caddy_data.tgz (ACME certs +
-#             private keys), manifests/, and deployment templates
+#   contains: .env (Better Auth + Reality secrets), admin.sqlite,
+#             caddy_data.tgz (ACME certs + private keys), manifests/,
+#             and deployment templates
 ```
 
-The tarball mode is `0600` — the contents are operator-secret
-(APP_KEY signs subscription URLs and decrypts sealed server secrets).
-Move it off the VPS to a private storage bucket / encrypted disk ASAP.
+The tarball mode is `0600` — the contents are operator-secret. Move it
+off the VPS to a private storage bucket / encrypted disk ASAP.
 
 ### Restore
 
@@ -566,37 +536,35 @@ Documented disaster-recovery procedure (works on a fresh VPS):
    (`dig +short ${DOMAIN}` matches the new IP).
 5. `./ct restore backups/cool-tunnel-YYYY-MM-DDTHH-MM-SSZ.tar.gz`
 6. Verify: `./ct doctor` has no FAIL rows,
-   and `curl -ksI https://${PANEL_DOMAIN}/admin` returns 200/302.
+   and `curl -ksI https://${PANEL_DOMAIN}/login` returns 200/302.
 
-The restored `.env` brings APP_KEY, DB, and Redis settings across,
-so existing signed subscription URLs and VLESS UUID credentials remain
-valid. The restored `caddy_data` brings the existing Let's Encrypt
-certs across, avoiding LE rate-limit budget on re-issue (5 duplicate
-certs per 7 days).
+The restored `.env` and `admin.sqlite` bring Better Auth, subscription
+tokens, Reality keys, users, settings, and proxy accounts across, so
+existing signed subscription URLs and VLESS UUID credentials remain
+valid. The restored `caddy_data` brings the existing Let's Encrypt certs
+across, avoiding LE rate-limit budget on re-issue (5 duplicate certs
+per 7 days).
 
 ### Tail logs
 
 ```bash
 docker compose logs -f --tail=200 caddy      # ACME + routing
 docker compose logs -f --tail=200 singbox    # proxy runtime
-docker compose logs -f --tail=200 panel      # Laravel + queue worker
-docker compose logs -f --tail=200 db
+docker compose logs -f --tail=200 admin-api  # Hono API + Better Auth + SQLite
+docker compose logs -f --tail=200 admin-web  # Next.js admin dashboard
 ```
 
 ### Rotate a leaked UUID
 
-Filament panel → Proxy accounts → **Regenerate UUID**. The new UUID
-and subscription URL are shown once. The panel writes a fresh sing-box
-config immediately when it can; otherwise the queued worker or
-scheduled render reconciles it.
+Admin UI → Users → proxy account → **Regenerate UUID**. The new UUID
+and subscription URL are shown once. The admin API writes a fresh
+sing-box config through the render action path.
 
 ### Renew TLS
 
-Caddy is the ACME side; it renews automatically and writes the
-fresh cert + key to the `caddy_data` volume. The cert mtime is
-folded into the sing-box render-change hash, so the next
-`singbox:render --if-changed` (scheduled every five minutes)
-picks the new material up automatically — no manual reload step.
+Caddy is the ACME side; it renews automatically and writes the fresh
+cert + key to the `caddy_data` volume. No manual reload step is normally
+needed.
 
 To force a renewal cycle, restart Caddy (it re-checks on boot):
 
@@ -629,27 +597,25 @@ docker compose restart caddy
   TLDs see disproportionate abuse and end up on collective
   blocklists. A 1+ year old domain on a "boring" TLD (`.com`,
   `.net`, `.org`) is far less fingerprintable.
-- **Cover-site choice matters.** The fake site sing-box serves via
-  fallback at the apex is what unauthenticated probes see. Pick (or
-  generate, in the panel) a cover that *fits the domain* — a `.tech`
-  site shouldn't render a coffee-shop landing page.
+- **Reality cover choice matters.** Pick a `REALITY_DEST_HOST` that
+  fits the domain and works reliably from your users' networks.
 - **Don't reuse credentials.** One proxy account per real human.
   If a credential leaks, you can rotate just that one without
   disturbing anyone else.
-- **Don't share the panel password.** The Filament admin sees every
-  user's bcrypt hash, every traffic log, every regen-password
-  click. Treat it like root.
+- **Don't share admin accounts.** Owners can create and delete admins,
+  rotate temporary passwords, and see audit trails. Treat owner access
+  like root.
 - **Two boxes are better than one.** Run a second instance on a
   different cloud / different region as a hot-spare. The macOS
   client supports profile switching.
 - **Run the health gates** every release. `./ct doctor` and
-  `php artisan credential-lock:check` catch
-  most deployment drift before users do.
-- **Use `./ct backup`** — it captures `caddy_data` (ACME
-  certs + private keys; ACME moved from sing-box to Caddy in
-  v0.0.4) plus the DB dump, the three render-input templates,
-  manifests/, and `.env`. Run weekly to a private storage bucket;
-  store with the same security posture as your DB password.
+  the admin dashboard status page catch most deployment drift before
+  users do.
+- **Use `./ct backup`** — it captures `caddy_data` (ACME certs +
+  private keys; ACME moved from sing-box to Caddy in v0.0.4), the
+  admin SQLite database, manifests/, templates, and `.env`. Run weekly
+  to a private storage bucket; store with the same security posture as
+  your auth and Reality secrets.
   Without `caddy_data`, every `docker compose down -v` resets
   your cert and burns LE rate-limit budget (5 duplicate-cert
   issuances per 7-day window).
@@ -684,9 +650,8 @@ docker compose restart caddy
   delivered in the subscription manifest; no extra CA pinning is
   needed.
 - **Multi-tenant separation.** Every proxy account in this guide
-  lives in the same Caddy process. If you want isolation between
-  customers, run multiple stacks on different VPSs and federate the
-  panel — out of scope for v0.0.1.
+  lives in the same sing-box runtime. If you want isolation between
+  customers, run multiple stacks on different VPSs.
 - **CDN fronting.** You can put Caddy behind a CDN that supports
   HTTP/2 CONNECT (rare), but most won't work — just point DNS
   straight at the box.
