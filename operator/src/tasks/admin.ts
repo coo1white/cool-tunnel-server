@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `ct admin ...` commands for the Bun/Hono admin panel.
 
+import { chmodSync, writeFileSync } from "node:fs";
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { loadDotenv, mergeEnv } from "../util/env";
 import { loadAdminConfig } from "../admin/config";
 import { AdminStorage, ensureServerConfig } from "../admin/storage";
-import { issueBootstrapToken } from "../admin/bootstrap";
+import { bootstrapMaterialPath, issueBootstrapToken } from "../admin/bootstrap";
 import { startAdminServer } from "../admin/server";
+import { redactSensitive } from "../util/redact";
 
 type AdminCommand = "bootstrap" | "create-owner" | "serve" | "migrate" | "users" | "doctor" | "render-caddyfile" | "render-singbox";
 
@@ -66,18 +68,33 @@ export class AdminTask implements Task {
                 case "bootstrap":
                 case "create-owner": {
                     const issue = await issueBootstrapToken(storage, config);
+                    const secretFile = bootstrapMaterialPath(config);
+                    writeFileSync(secretFile, [
+                        "# Cool Tunnel first-owner bootstrap material",
+                        "# Treat this file as a secret. The token is one-time-use and expires automatically.",
+                        `setup_page=${issue.setupPageUrl}`,
+                        `token=${issue.token}`,
+                        "",
+                    ].join("\n"), { mode: 0o600 });
+                    try {
+                        chmodSync(secretFile, 0o600);
+                    } catch {
+                        // Best effort for bind mounts.
+                    }
                     const message = [
                         "First-owner bootstrap token issued.",
                         "",
-                        "Open this URL from your admin workstation:",
-                        `  ${issue.setupUrl}`,
+                        "The one-time setup page and token were written to a root-only file.",
+                        `  ${secretFile}`,
                         "",
-                        "Or paste this one-time token into /setup/bootstrap:",
-                        `  ${issue.token}`,
+                        "Copy the token over your trusted SSH session, open the setup page, then delete the file:",
+                        `  sudo cat ${secretFile}`,
+                        `  sudo rm -f ${secretFile}`,
                         "",
                         `Expires: ${issue.expiresAt.toISOString()}`,
                         "",
-                        "No password was generated or printed. You will choose the owner password in the browser.",
+                        "Setup page: https://<PANEL_DOMAIN>/setup/bootstrap",
+                        "No password or raw token was printed. You will choose the owner password in the browser.",
                     ].join("\n");
                     process.stdout.write(message + "\n");
                     return {
@@ -86,8 +103,8 @@ export class AdminTask implements Task {
                         summary: "bootstrap token issued",
                         json: {
                             ok: true,
-                            token: issue.token,
-                            setupUrl: issue.setupUrl,
+                            secretFile,
+                            setupPageUrl: "https://<PANEL_DOMAIN>/setup/bootstrap",
                             expiresAt: issue.expiresAt.toISOString(),
                         },
                     };
@@ -98,22 +115,22 @@ export class AdminTask implements Task {
                 case "doctor": {
                     const { runCoreAction } = await import("../admin/core-boundary");
                     const result = await runCoreAction("doctor", config);
-                    if (result.stdout) process.stdout.write(result.stdout);
-                    if (result.stderr) process.stderr.write(result.stderr);
+                    if (result.stdout) process.stdout.write(redactSensitive(result.stdout));
+                    if (result.stderr) process.stderr.write(redactSensitive(result.stderr));
                     return { ok: result.ok, code: result.code, summary: result.ok ? "doctor ok" : "doctor failed" };
                 }
                 case "render-caddyfile": {
                     const { runCoreAction } = await import("../admin/core-boundary");
                     const result = await runCoreAction("render-caddyfile", config);
-                    if (result.stdout) process.stdout.write(result.stdout);
-                    if (result.stderr) process.stderr.write(result.stderr);
+                    if (result.stdout) process.stdout.write(redactSensitive(result.stdout));
+                    if (result.stderr) process.stderr.write(redactSensitive(result.stderr));
                     return { ok: result.ok, code: result.code, summary: result.ok ? "caddyfile rendered" : "caddyfile render failed" };
                 }
                 case "render-singbox": {
                     const { runCoreAction } = await import("../admin/core-boundary");
                     const result = await runCoreAction("render-singbox", config);
-                    if (result.stdout) process.stdout.write(result.stdout);
-                    if (result.stderr) process.stderr.write(result.stderr);
+                    if (result.stdout) process.stdout.write(redactSensitive(result.stdout));
+                    if (result.stderr) process.stderr.write(redactSensitive(result.stderr));
                     return { ok: result.ok, code: result.code, summary: result.ok ? "singbox rendered" : "singbox render failed" };
                 }
                 case "users": {

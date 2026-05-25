@@ -24,7 +24,7 @@ The deployment config and secret file at the repo root. It contains domains, dat
 
 ## First Owner Bootstrap
 
-The first owner setup flow. Run `ct admin bootstrap`, open the one-time URL, and choose the owner password in the browser. Tokens expire and are disabled after an owner exists.
+The first owner setup flow. Run `ct admin bootstrap`, read the setup page and one-time token from the root-only setup file over SSH, and choose the owner password in the browser. Tokens expire and are disabled after an owner exists.
 
 ## PASS / WARN / FAIL
 

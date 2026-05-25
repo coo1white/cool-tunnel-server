@@ -21,7 +21,7 @@ ct doctor
 ct admin bootstrap
 ```
 
-Open the printed bootstrap URL and create the first owner. There is no default admin password.
+`ct admin bootstrap` writes the setup page and one-time token to a root-only file and prints the exact `sudo cat ...` command to read it over SSH. Open the setup page, paste the token, create the first owner, then delete the file. There is no default admin password.
 
 ## Required Config
 

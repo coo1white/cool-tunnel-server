@@ -94,7 +94,7 @@
 # directive only fires for non-challenge paths.
 :80 {
     header -Server
-    redir https://{host}{uri} 308
+    redir https://{host}{path} 308
 }
 
 # ---------- 127.0.0.1:8443 — panel reverse-proxy ---------------------

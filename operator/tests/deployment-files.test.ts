@@ -206,6 +206,15 @@ test("Caddy panel proxy sets the only trusted Better Auth client IP header", asy
     expect(compose).toContain("proxy-header");
 });
 
+test("top-level ct exposes admin and Caddy redirects do not preserve query secrets", async () => {
+    const wrapper = await Bun.file("../ct").text();
+    const caddy = await Bun.file("../caddy/Caddyfile.tpl").text();
+
+    expect(wrapper).toContain("admin)        dispatch_via_operator admin");
+    expect(caddy).toContain("redir https://{host}{path} 308");
+    expect(caddy).not.toContain("redir https://{host}{uri} 308");
+});
+
 test("install path uses Better Auth first-owner token, not a default password", async () => {
     const install = await Bun.file("./install.ts").text();
     const update = await Bun.file("./update.ts").text();

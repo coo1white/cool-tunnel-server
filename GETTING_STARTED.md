@@ -53,7 +53,7 @@ cd /opt/cool-tunnel-server
 ct admin bootstrap
 ```
 
-Open the printed setup URL, choose the owner email/name/password in the browser, then sign in at:
+`ct admin bootstrap` writes the setup page and one-time token to a root-only file and prints the exact `sudo cat ...` command to read it over SSH. Open the setup page, paste the token, choose the owner email/name/password in the browser, delete the file, then sign in at:
 
 ```text
 https://<PANEL_DOMAIN>/admin

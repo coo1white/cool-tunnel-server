@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { hashBootstrapToken } from "../src/admin/bootstrap";
+import { bootstrapMaterialPath, hashBootstrapToken } from "../src/admin/bootstrap";
 import { loadAdminConfig } from "../src/admin/config";
 import { createAdminUserWithPassword, createAuth, createFirstOwnerWithBootstrapToken } from "../src/admin/auth";
 import { createAdminApp } from "../src/admin/server";
@@ -224,6 +224,228 @@ test("Better Auth login sets httpOnly session cookie and unlocks protected admin
         expect(session.status).toBe(200);
         expect(await session.json()).toMatchObject({ ok: true, user: { email: "owner@example.com", role: "owner" } });
         storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("browser login form posts without exposing credentials in URL", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const { app, storage } = createAdminApp(config);
+
+        const leaked = await app.request("/login?email=owner@example.com&password=super-secret");
+        expect(leaked.status).toBe(303);
+        expect(leaked.headers.get("location")).toBe("/login");
+        expect(leaked.headers.get("cache-control")).toBe("no-store");
+        expect(leaked.headers.get("referrer-policy")).toBe("no-referrer");
+        expect(await leaked.text()).not.toContain("super-secret");
+
+        const page = await app.request("/login");
+        const body = await page.text();
+        expect(page.status).toBe(200);
+        expect(page.headers.get("referrer-policy")).toBe("no-referrer");
+        expect(page.headers.get("content-security-policy")).toContain("script-src 'none'");
+        expect(page.headers.get("cache-control")).toBe("no-store");
+        expect(body).toContain('method="post"');
+        expect(body).toContain('action="/login"');
+        expect(body).toContain('name="csrf"');
+        expect(body).not.toContain("onsubmit=");
+        expect(body).not.toContain("signIn(");
+        expect(body).not.toContain("localStorage");
+        const csrfCookie = page.headers.get("set-cookie") ?? "";
+        expect(csrfCookie).toContain("ct_login_csrf=");
+        expect(csrfCookie).toContain("HttpOnly");
+        expect(csrfCookie).toContain("SameSite=Strict");
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("admin dashboard exact path requires an authenticated session", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const { app, storage } = createAdminApp(config);
+        const response = await app.request("/admin");
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/login");
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("all admin API routes require an authenticated session", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const { app, storage } = createAdminApp(config);
+        for (const [path, init] of [
+            ["/api/admin/session", undefined],
+            ["/api/admin/users", undefined],
+            ["/api/admin/doctor", { method: "POST" }],
+            ["/api/admin/actions/update", { method: "POST" }],
+        ] as const) {
+            const response = await app.request(path, init);
+            expect(response.status, path).toBe(401);
+            expect(await response.json()).toMatchObject({ ok: false, error: { code: "unauthorized" } });
+        }
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("server-side login fallback redirects with session cookie and generic failure", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const { app, storage, auth } = createAdminApp(config);
+        const tokenHash = await hashBootstrapToken("bootstrap-post-login-".padEnd(40, "x"), config.authSecret);
+        storage.createBootstrapToken(tokenHash, new Date(Date.now() + 60_000));
+        await createFirstOwnerWithBootstrapToken(auth, storage, {
+            tokenHash,
+            email: "owner@example.com",
+            name: "Owner",
+            password: "correct horse battery staple",
+        });
+
+        const page = await app.request("/login");
+        const pageBody = await page.text();
+        const csrf = pageBody.match(/name="csrf" value="([^"]+)"/)?.[1] ?? "";
+        const csrfCookie = (page.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+        expect(csrf).toStartWith("ctcsrf_");
+        expect(csrfCookie).toContain("ct_login_csrf=");
+
+        const success = await app.request("/login", {
+            method: "POST",
+            headers: {
+                "content-type": "application/x-www-form-urlencoded",
+                cookie: csrfCookie,
+            },
+            body: new URLSearchParams({
+                csrf,
+                email: "owner@example.com",
+                password: "correct horse battery staple",
+            }),
+        });
+        expect(success.status).toBe(303);
+        expect(success.headers.get("location")).toBe("/admin");
+        expect(success.headers.get("set-cookie") ?? "").toContain("ct-admin.session_token=");
+
+        const missingUser = await app.request("/login", {
+            method: "POST",
+            headers: {
+                "content-type": "application/x-www-form-urlencoded",
+                cookie: csrfCookie,
+            },
+            body: new URLSearchParams({
+                csrf,
+                email: "missing@example.com",
+                password: "wrong-password-value",
+            }),
+        });
+        expect(missingUser.status).toBe(401);
+        const failedBody = await missingUser.text();
+        expect(failedBody).toContain("Sign in failed. Check the email and password.");
+        expect(failedBody).not.toContain("missing@example.com");
+        expect(failedBody).not.toContain("wrong-password-value");
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("server-side login fallback rejects missing CSRF without checking credentials", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "http://localhost:9000" }));
+        const { app, storage } = createAdminApp(config);
+        const response = await app.request("/login", {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                email: "owner@example.com",
+                password: "wrong-password-value",
+            }),
+        });
+        expect(response.status).toBe(403);
+        const body = await response.text();
+        expect(body).toContain("Sign in expired. Reload the sign-in page and try again.");
+        expect(body).not.toContain("owner@example.com");
+        expect(body).not.toContain("wrong-password-value");
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("bootstrap setup URL is scrubbed into an httpOnly cookie", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, {
+            BETTER_AUTH_URL: "https://panel.example.com",
+            CT_ADMIN_SECURE_COOKIES: "true",
+        }));
+        const { app, storage } = createAdminApp(config);
+        const token = "ctbt_secretTokenValue1234567890abcdefghi";
+        const response = await app.request(`/setup/bootstrap?token=${token}`);
+        expect(response.status).toBe(303);
+        expect(response.headers.get("location")).toBe("/setup/bootstrap");
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+        const cookie = response.headers.get("set-cookie") ?? "";
+        expect(cookie).toContain("ct_bootstrap_token=");
+        expect(cookie).toContain("HttpOnly");
+        expect(cookie).toContain("SameSite=Strict");
+        expect(cookie).toContain("Secure");
+
+        const page = await app.request("/setup/bootstrap", {
+            headers: { cookie: `ct_bootstrap_token=${encodeURIComponent(token)}` },
+        });
+        const body = await page.text();
+        expect(body).toContain("A one-time bootstrap token is loaded for this browser.");
+        expect(body).not.toContain(token);
+        storage.close();
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("ct admin bootstrap writes secret material to root-only file and returns redacted JSON", async () => {
+    const { dir, dbPath } = tempDbPath();
+    try {
+        const config = loadAdminConfig(baseEnv(dbPath, { BETTER_AUTH_URL: "https://panel.example.com" }));
+        const { AdminTask } = await import("../src/tasks/admin");
+        const task = new AdminTask();
+        const oldArgv = process.argv;
+        let result;
+        try {
+            process.argv = ["bun", "ct-operator", "admin", "bootstrap"];
+            result = await task.run({
+                cwd: dir,
+                env: baseEnv(dbPath, { BETTER_AUTH_URL: "https://panel.example.com" }),
+                logger: { info() {}, warn() {}, error() {}, debug() {} },
+                json: true,
+                interactive: false,
+            });
+        } finally {
+            process.argv = oldArgv;
+        }
+        expect(result.ok).toBe(true);
+        const json = result.json as { setupPageUrl?: string; secretFile?: string; token?: string };
+        expect(json.token).toBeUndefined();
+        expect(json.setupPageUrl).toBe("https://<PANEL_DOMAIN>/setup/bootstrap");
+        expect(json.setupPageUrl).not.toContain("ctbt_");
+        expect(json.secretFile).toBe(bootstrapMaterialPath(config));
+        expect(statSync(bootstrapMaterialPath(config)).mode & 0o777).toBe(0o600);
+        const secretFile = await Bun.file(bootstrapMaterialPath(config)).text();
+        expect(secretFile).toContain("setup_page=https://panel.example.com/setup/bootstrap");
+        expect(secretFile).toContain("token=ctbt_");
+        expect(secretFile).not.toContain("/setup/bootstrap?token=");
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

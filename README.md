@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-1c5cdc)](./LICENSE)
 [![LTSC-Heng Draft](https://img.shields.io/badge/license--draft-LTSC--Heng-111111)](./LTSC-HENG-LICENSE-DRAFT.md)
-[![Latest release](https://img.shields.io/badge/release-v0.5.0-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.5.0)
+[![Latest release](https://img.shields.io/badge/release-v0.5.1-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.5.1)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
 
@@ -51,7 +51,7 @@ nano .env
 ./ct admin bootstrap
 ```
 
-Open the one-time setup URL printed by `ct admin bootstrap`, create the first owner, then sign in at:
+`ct admin bootstrap` writes the setup page and one-time token to a root-only file and prints the exact `sudo cat ...` command to read it over SSH. Open the setup page, paste the token, create the first owner, delete the file, then sign in at:
 
 ```text
 https://<PANEL_DOMAIN>/admin
@@ -73,7 +73,7 @@ ct recover         # diagnose/repair failed settle gates
 For an already installed VPS:
 
 ```sh
-sudo bash -lc 'set -euo pipefail; cd /opt/cool-tunnel-server; test -f .env || { echo "ERROR: .env is missing. Run: cd /opt/cool-tunnel-server && cp .env.example .env && nano .env && ./ct install"; exit 1; }; ./ct backup; ./ct update; ./ct doctor; echo; . ./.env; echo "Panel URL: https://${PANEL_DOMAIN}/admin"; echo "Create first owner if needed: ct admin bootstrap"'
+sudo bash -lc 'set -euo pipefail; cd /opt/cool-tunnel-server; test -f .env || { echo "ERROR: .env is missing. Run: cd /opt/cool-tunnel-server && cp .env.example .env && nano .env && ./ct install"; exit 1; }; ./ct backup; ./ct update; ./ct doctor; echo; echo "Panel URL: https://<PANEL_DOMAIN>/admin"; echo "Create first owner if needed: ct admin bootstrap"'
 ```
 
 Do not create a new `.env` on a VPS that was already working before; recover the old `.env` from backup instead.
@@ -101,4 +101,4 @@ The control plane is Bun/TypeScript for operator/admin/account work and Rust for
 | Understand the architecture | [docs/architecture.md](./docs/architecture.md) |
 | Look up terms | [docs/glossary.md](./docs/glossary.md) |
 
-Latest stable server release: `v0.5.0`.
+Latest stable server release: `v0.5.1`.
