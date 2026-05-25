@@ -62,19 +62,54 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
 
     app.get("/up", (c) => c.json({ ok: true, service: "ct-admin" }));
     app.get("/", (c) => c.redirect(storage.ownerExists() ? "/admin" : "/setup/bootstrap"));
-    app.get("/login", (c) => c.html(layout("Sign in", loginPage())));
+    app.get("/login", (c) => new URL(c.req.url).search ? redirectNoStore("/login") : loginResponse(c, config));
+    app.post("/login", async (c) => {
+        const form = await c.req.formData();
+        const csrf = String(form.get("csrf") ?? "");
+        const csrfCookie = parseCookie(c.req.header("cookie") ?? "", "ct_login_csrf");
+        if (!validLoginCsrf(csrf, csrfCookie)) {
+            return loginResponse(c, config, "Sign in expired. Reload the sign-in page and try again.", 403);
+        }
+        const response = await auth.handler(new Request(`${config.baseUrl}/api/auth/sign-in/email`, {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "x-forwarded-for": c.req.header("x-forwarded-for") ?? "",
+                cookie: c.req.header("cookie") ?? "",
+            },
+            body: JSON.stringify({
+                email: String(form.get("email") ?? ""),
+                password: String(form.get("password") ?? ""),
+                rememberMe: true,
+            }),
+        }));
+        if (!response.ok) {
+            return loginResponse(c, config, "Sign in failed. Check the email and password.", 401);
+        }
+        const headers = new Headers({ location: "/admin", "cache-control": "no-store" });
+        for (const cookie of response.headers.getSetCookie?.() ?? []) headers.append("set-cookie", cookie);
+        const joinedCookie = response.headers.get("set-cookie");
+        if (!headers.has("set-cookie") && joinedCookie) headers.append("set-cookie", joinedCookie);
+        headers.append("set-cookie", loginCsrfCookie("", config, 0));
+        return new Response(null, { status: 303, headers });
+    });
     app.get("/setup/bootstrap", (c) => {
         if (storage.ownerExists()) {
             return c.html(layout("Bootstrap Disabled", messagePage("Bootstrap Disabled", "An owner account already exists. Sign in to manage admin users.", "/login", "Sign in")), 403);
         }
-        return c.html(layout("Create Owner", bootstrapPage(c.req.query("token") ?? "")));
+        const queryToken = c.req.query("token");
+        if (queryToken) {
+            return bootstrapTokenCookieRedirect(queryToken, config);
+        }
+        const hasTokenCookie = parseCookie(c.req.header("cookie") ?? "", "ct_bootstrap_token") !== "";
+        return c.html(layout("Create Owner", bootstrapPage(hasTokenCookie)));
     });
     app.post("/setup/bootstrap", async (c) => {
         if (storage.ownerExists()) {
             return browserError(c, 403, "Bootstrap Disabled", "An owner account already exists. Sign in to manage admin users.", "/login", "Sign in");
         }
         const form = await c.req.formData();
-        const token = String(form.get("token") ?? "");
+        const token = String(form.get("token") ?? "").trim() || parseCookie(c.req.header("cookie") ?? "", "ct_bootstrap_token");
         const owner = validateOwnerInput({
             email: String(form.get("email") ?? ""),
             name: String(form.get("name") ?? ""),
@@ -92,7 +127,9 @@ export function createAdminApp(config: AdminConfig = loadAdminConfig()): AdminAp
             return browserError(c, 400, "Owner Bootstrap Failed", bootstrapFailureMessage(created.reason), "/setup/bootstrap", "Try again");
         }
         storage.audit(created.user.id, "bootstrap.owner_created", "user", created.user.id, { email: created.user.email, role: "owner" });
-        return c.html(layout("Owner Created", messagePage("Owner Created", "The first owner account is ready. Bootstrap is now disabled.", "/login", "Sign in")), 201);
+        const response = c.html(layout("Owner Created", messagePage("Owner Created", "The first owner account is ready. Bootstrap is now disabled.", "/login", "Sign in")), 201);
+        response.headers.append("set-cookie", bootstrapTokenCookie("", config, 0));
+        return response;
     });
 
     app.use("/admin/*", requireSession(auth));
@@ -221,9 +258,11 @@ function securityHeaders(): MiddlewareHandler {
         await next();
         c.header("X-Content-Type-Options", "nosniff");
         c.header("X-Frame-Options", "DENY");
-        c.header("Referrer-Policy", "same-origin");
+        c.header("Referrer-Policy", "no-referrer");
+        c.header("Cache-Control", "no-store");
         c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-        c.header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'");
+        const scriptSrc = c.req.path === "/login" ? "script-src 'none'" : "script-src 'self' 'unsafe-inline'";
+        c.header("Content-Security-Policy", `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'`);
     };
 }
 
@@ -233,7 +272,7 @@ function csrfProtection(config: AdminConfig): MiddlewareHandler {
             await next();
             return;
         }
-        if (c.req.path.startsWith("/api/auth/")) {
+        if (c.req.path.startsWith("/api/auth/") || c.req.path === "/login") {
             await next();
             return;
         }
@@ -326,6 +365,81 @@ function browserError(c: Context, status: number, title: string, message: string
     return c.html(layout(title, messagePage(title, message, href, label)), status as 400);
 }
 
+function loginResponse(c: Context, config: AdminConfig, error = "", status = 200): Response {
+    const csrf = generateFormToken();
+    const response = c.html(layout("Sign in", loginPage(csrf, error), { login: true }), status as 200);
+    response.headers.append("set-cookie", loginCsrfCookie(csrf, config, 15 * 60));
+    return response;
+}
+
+function redirectNoStore(location: string, status = 303): Response {
+    return new Response(null, {
+        status,
+        headers: {
+            location,
+            "cache-control": "no-store",
+            "referrer-policy": "no-referrer",
+        },
+    });
+}
+
+function bootstrapTokenCookieRedirect(token: string, config: AdminConfig): Response {
+    const headers = new Headers({
+        location: "/setup/bootstrap",
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+    });
+    headers.append("set-cookie", bootstrapTokenCookie(token, config, config.bootstrapTokenTtlMinutes * 60));
+    return new Response(null, { status: 303, headers });
+}
+
+function bootstrapTokenCookie(token: string, config: AdminConfig, maxAgeSeconds: number): string {
+    const parts = [
+        `ct_bootstrap_token=${encodeURIComponent(token)}`,
+        "Path=/setup/bootstrap",
+        "HttpOnly",
+        "SameSite=Strict",
+        `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
+    ];
+    if (config.secureCookies) parts.push("Secure");
+    return parts.join("; ");
+}
+
+function loginCsrfCookie(token: string, config: AdminConfig, maxAgeSeconds: number): string {
+    const parts = [
+        `ct_login_csrf=${encodeURIComponent(token)}`,
+        "Path=/login",
+        "HttpOnly",
+        "SameSite=Strict",
+        `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
+    ];
+    if (config.secureCookies) parts.push("Secure");
+    return parts.join("; ");
+}
+
+function generateFormToken(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    return `ctcsrf_${Buffer.from(bytes).toString("base64url")}`;
+}
+
+function validLoginCsrf(formToken: string, cookieToken: string): boolean {
+    return /^ctcsrf_[A-Za-z0-9_-]{32,128}$/.test(formToken) && formToken === cookieToken;
+}
+
+function parseCookie(header: string, key: string): string {
+    for (const part of header.split(";")) {
+        const [rawName, ...rawValue] = part.trim().split("=");
+        if (rawName === key) {
+            try {
+                return decodeURIComponent(rawValue.join("="));
+            } catch {
+                return "";
+            }
+        }
+    }
+    return "";
+}
+
 function actionForRoute(route: string): "render-caddyfile" | "render-singbox" | "restart-services" | "update" | null {
     const map: Record<string, "render-caddyfile" | "render-singbox" | "restart-services" | "update"> = {
         "render-caddyfile": "render-caddyfile",
@@ -351,7 +465,7 @@ function redactBoundary(result: { code: number; stdout: string; stderr: string }
     };
 }
 
-function layout(title: string, body: string): string {
+function layout(title: string, body: string, opts: { readonly login?: boolean } = {}): string {
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -380,45 +494,43 @@ pre{white-space:pre-wrap;overflow:auto;padding:12px;border-radius:6px;background
 </head>
 <body>
 <main>${body}</main>
-<script>
-async function signIn(form){
-  const data=Object.fromEntries(new FormData(form).entries());
-  const res=await fetch('/api/auth/sign-in/email',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...data,rememberMe:true})});
-  if(res.ok){location.href='/admin';return false}
-  document.querySelector('[data-error]').textContent='Sign in failed. Check the email, password, and server logs after repeated failures.';
-  return false;
-}
-async function signOut(){
-  await fetch('/api/auth/sign-out',{method:'POST'});
-  location.href='/login';
-}
-</script>
+${opts.login ? "" : clientScript()}
 </body>
 </html>`;
 }
 
-function loginPage(): string {
+function clientScript(): string {
+    return `<script>
+async function signOut(){
+  await fetch('/api/auth/sign-out',{method:'POST'});
+  location.href='/login';
+}
+</script>`;
+}
+
+function loginPage(csrf: string, error = ""): string {
     return `<div class="shell">
 <section class="panel">
 <h1>Cool Tunnel Admin</h1>
 <p class="muted">Sign in with an owner, admin, operator, or viewer account.</p>
-<form onsubmit="return signIn(this)">
+<form method="post" action="/login">
+<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label>Email<input name="email" type="email" autocomplete="email" required></label>
 <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="12"></label>
-<p data-error class="muted" role="alert"></p>
+<p data-error class="muted" role="alert">${escapeHtml(error)}</p>
 <button type="submit">Sign in</button>
 </form>
 </section>
 </div>`;
 }
 
-function bootstrapPage(token: string): string {
+function bootstrapPage(hasTokenCookie: boolean): string {
     return `<div class="shell">
 <section class="panel">
 <h1>Create First Owner</h1>
-<p class="muted">Use the one-time token from <span class="mono">ct admin bootstrap</span>. The token expires and is disabled after the first owner is created.</p>
+<p class="muted">${hasTokenCookie ? "A one-time bootstrap token is loaded for this browser. It expires and is disabled after the first owner is created." : "Use the one-time token from the root-only setup file created by ct admin bootstrap. It expires and is disabled after the first owner is created."}</p>
 <form method="post" action="/setup/bootstrap">
-<label>Bootstrap token<input name="token" autocomplete="one-time-code" value="${escapeHtml(token)}" required></label>
+<label>Bootstrap token<input name="token" autocomplete="one-time-code" ${hasTokenCookie ? "" : "required"}></label>
 <label>Name<input name="name" autocomplete="name" required maxlength="120"></label>
 <label>Email<input name="email" type="email" autocomplete="email" required></label>
 <label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label>

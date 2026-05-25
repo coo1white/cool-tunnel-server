@@ -2,6 +2,7 @@
 // First-owner bootstrap: one-time expiring token, never passwords.
 
 import { timingSafeEqual } from "node:crypto";
+import { dirname, join } from "node:path";
 import type { AdminConfig } from "./config";
 import type { AdminStorage } from "./storage";
 import { validateEmail } from "./config";
@@ -10,12 +11,16 @@ export interface BootstrapIssue {
     readonly token: string;
     readonly tokenId: string;
     readonly expiresAt: Date;
-    readonly setupUrl: string;
+    readonly setupPageUrl: string;
 }
 
 export function generateBootstrapToken(): string {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
-    return Buffer.from(bytes).toString("base64url");
+    return `ctbt_${Buffer.from(bytes).toString("base64url")}`;
+}
+
+export function bootstrapMaterialPath(config: AdminConfig): string {
+    return join(dirname(config.dbPath), "bootstrap-setup-url.txt");
 }
 
 export async function hashBootstrapToken(token: string, secret: string): Promise<string> {
@@ -52,7 +57,7 @@ export async function issueBootstrapToken(storage: AdminStorage, config: AdminCo
         token,
         tokenId,
         expiresAt,
-        setupUrl: `${config.baseUrl}/setup/bootstrap?token=${encodeURIComponent(token)}`,
+        setupPageUrl: `${config.baseUrl}/setup/bootstrap`,
     };
 }
 
@@ -62,7 +67,7 @@ export async function verifyAndConsumeBootstrapToken(
     token: string,
 ): Promise<{ ok: true; tokenId: string } | { ok: false; reason: "owner-exists" | "missing" | "used" | "expired" | "invalid" }> {
     if (storage.ownerExists()) return { ok: false, reason: "owner-exists" };
-    if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) return { ok: false, reason: "invalid" };
+    if (!/^ctbt_[A-Za-z0-9_-]{32,128}$/.test(token)) return { ok: false, reason: "invalid" };
     const hash = await hashBootstrapToken(token, config.authSecret);
     const status = storage.bootstrapTokenStatus(hash);
     if (status !== "valid") return { ok: false, reason: status };
@@ -75,7 +80,7 @@ export async function hashValidBootstrapToken(
     config: AdminConfig,
     token: string,
 ): Promise<{ ok: true; tokenHash: string } | { ok: false; reason: "invalid" }> {
-    if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) return { ok: false, reason: "invalid" };
+    if (!/^ctbt_[A-Za-z0-9_-]{32,128}$/.test(token)) return { ok: false, reason: "invalid" };
     return { ok: true, tokenHash: await hashBootstrapToken(token, config.authSecret) };
 }
 

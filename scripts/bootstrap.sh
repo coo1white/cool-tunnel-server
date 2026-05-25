@@ -283,11 +283,12 @@ NEXT
        ct install
 
   4. Create the first owner after ct install finishes:
-       cd ${INSTALL_DIR}
-       ct admin bootstrap
+     cd ${INSTALL_DIR}
+     ct admin bootstrap
 
-     Open the printed one-time URL, choose an owner password in
-     the browser, then sign in at:
+     Read the root-only setup file over SSH, open the setup page,
+     paste the token, choose an owner password in the browser,
+     delete the file, then sign in at:
        https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
 =================================================================
 EOF

@@ -47,7 +47,7 @@ function tag(sev: Severity): string {
 
 function emit(line: CheckLine): void {
     const padded = line.label.padEnd(14);
-    process.stdout.write(`  ${tag(line.severity)} ${padded} ${line.detail}\n`);
+    process.stdout.write(`  ${tag(line.severity)} ${padded} ${redactSensitive(line.detail)}\n`);
 }
 
 interface CheckCtx {
@@ -250,14 +250,14 @@ async function checkDns(c: CheckCtx): Promise<CheckLine> {
     const ipR = await capture($`curl -s4 --max-time 4 https://ifconfig.co`);
     const myIp = ipR.stdout.trim();
     if (resolved && resolved === myIp) {
-        return { group: G_STRUCT, label: "DNS", severity: "pass", detail: `${domain} -> ${resolved} (matches host IP)` };
+        return { group: G_STRUCT, label: "DNS", severity: "pass", detail: `configured DOMAIN resolves to ${resolved} (matches host IP)` };
     }
     if (resolved && myIp) {
         return {
             group: G_STRUCT,
             label: "DNS",
             severity: "fail",
-            detail: `${domain} resolves to ${resolved}, host IP is ${myIp}`,
+            detail: `configured DOMAIN resolves to ${resolved}, host IP is ${myIp}`,
             hint: `Update DNS A record to ${myIp}, then wait for propagation`,
         };
     }
@@ -266,7 +266,7 @@ async function checkDns(c: CheckCtx): Promise<CheckLine> {
         label: "DNS",
         severity: "warn",
         detail: "could not resolve DOMAIN or determine host IP",
-        hint: `dig +short A ${domain}; curl -s4 https://ifconfig.co`,
+        hint: `dig +short A "$DOMAIN"; curl -s4 https://ifconfig.co`,
     };
 }
 
@@ -311,7 +311,7 @@ async function checkAcmeCert(c: CheckCtx): Promise<CheckLine> {
             group: G_STRUCT,
             label: "ACME cert",
             severity: "fail",
-            detail: `could not retrieve cert from ${domain}:443`,
+            detail: "could not retrieve cert from configured PANEL_DOMAIN:443",
             hint: "docker compose logs --tail=40 caddy | grep -iE 'acme|cert'",
         };
     }
@@ -480,7 +480,7 @@ async function checkPanelPublicLatency(c: CheckCtx): Promise<CheckLine> {
             label: "Panel RTT",
             severity: "warn",
             detail: "could not measure public /up endpoint",
-            hint: `curl -4 -w '%{time_total}\\n' https://${domain}/up`,
+            hint: `curl -4 -w '%{time_total}\\n' "https://$PANEL_DOMAIN/up"`,
         };
     }
     const detail = `/up total=${t.totalMs}ms connect=${t.connectMs}ms tls=${t.tlsMs}ms ttfb=${t.ttfbMs}ms`;
@@ -490,7 +490,7 @@ async function checkPanelPublicLatency(c: CheckCtx): Promise<CheckLine> {
             label: "Panel RTT",
             severity: "warn",
             detail: `HTTP ${t.code}; ${detail}`,
-            hint: `curl -vk https://${domain}/up`,
+            hint: `curl -vk "https://$PANEL_DOMAIN/up"`,
         };
     }
     if (t.totalMs > 1500) {
@@ -871,7 +871,7 @@ export class DoctorTask implements Task {
                 line = await fn(c);
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                line = { group: G_ERR, label: fn.name, severity: "fail", detail: `check threw: ${msg}` };
+                line = { group: G_ERR, label: fn.name, severity: "fail", detail: `check threw: ${redactSensitive(msg)}` };
             }
             if (!grouped.has(line.group)) grouped.set(line.group, []);
             grouped.get(line.group)!.push(line);
@@ -901,8 +901,8 @@ export class DoctorTask implements Task {
             for (const r of remediation) {
                 const color = r.severity === "fail" ? COLOR.fail : COLOR.warn;
                 process.stdout.write(`\n  ${color}[${r.severity.toUpperCase()}] ${r.label}${RESET}\n`);
-                process.stdout.write(`    ${r.detail}\n`);
-                process.stdout.write(`    ${BOLD}->${RESET} ${r.hint}\n`);
+                process.stdout.write(`    ${redactSensitive(r.detail)}\n`);
+                process.stdout.write(`    ${BOLD}->${RESET} ${redactSensitive(r.hint ?? "")}\n`);
             }
             process.stdout.write("\n");
         }
@@ -912,7 +912,15 @@ export class DoctorTask implements Task {
             ok,
             code: ok ? 0 : 1,
             summary: `${pass}P/${warn}W/${fail}F`,
-            json: { pass, warn, fail, info, checks: [...grouped.values()].flat() },
+            json: { pass, warn, fail, info, checks: [...grouped.values()].flat().map(redactCheckLine) },
         };
     }
+}
+
+function redactCheckLine(line: CheckLine): CheckLine {
+    return {
+        ...line,
+        detail: redactSensitive(line.detail),
+        hint: line.hint ? redactSensitive(line.hint) : undefined,
+    };
 }

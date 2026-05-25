@@ -26,7 +26,7 @@ ct doctor
 ct admin bootstrap
 ```
 
-Open the printed bootstrap URL, create the owner, then sign in at `https://<PANEL_DOMAIN>/admin`.
+`ct admin bootstrap` writes the setup page and one-time token to a root-only file and prints the exact `sudo cat ...` command to read it over SSH. Open the setup page, paste the token, create the owner, delete the file, then sign in at `https://<PANEL_DOMAIN>/admin`.
 
 ## Update
 

@@ -595,15 +595,15 @@ async function printOwnerBootstrap(): Promise<void> {
 
 // ---------- success banner ------------------------------------------------
 
-function printSuccessBanner(env: InstallEnv): void {
+function printSuccessBanner(): void {
     const bold = ANSI.bold;
     const green = ANSI.green;
     const reset = ANSI.reset;
     process.stdout.write(`
 ${bold}${green}cool-tunnel-server is up.${reset}
 
-  Panel         https://${env.PANEL_DOMAIN}/admin
-  Subscription  https://${env.PANEL_DOMAIN}/api/v1/subscription/<token>
+  Panel         https://<PANEL_DOMAIN>/admin
+  Subscription  https://<PANEL_DOMAIN>/api/v1/subscription/<token>
                   (issued from the panel; clients import this URL
                   rather than constructing a per-account proxy URL
                   manually)
@@ -615,7 +615,7 @@ What to do next:
 
   2. Create the first owner:
        ${bold}./ct admin bootstrap${reset}
-       open the printed one-time setup URL and choose your password
+       read the root-only setup file, paste the token, and choose your password
 
   3. Import the subscription URL into the macOS client.
 
@@ -688,7 +688,7 @@ export async function runInstall(): Promise<number> {
         await installStep("Settle deployment", settleInstallDeployment);
         await installStep("Issue owner bootstrap", printOwnerBootstrap);
         installProgress.complete("install complete");
-        printSuccessBanner(loadedEnv);
+        printSuccessBanner();
     } finally {
         installProgress = null;
     }

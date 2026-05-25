@@ -34,3 +34,33 @@ test("redactSensitive masks JSON/PHP secret fields and UUIDs", () => {
     expect(out).not.toContain("11111111-2222-4333-8444-555555555555");
     expect(out).not.toContain("legacy-private");
 });
+
+test("redactSensitive masks credential-bearing query strings and auth headers", () => {
+    const out = redactSensitive([
+        "GET /login?email=user@example.test&password=not-for-logs HTTP/2",
+        "GET /setup/bootstrap?token=ctbt_secretTokenValue1234567890abcdef",
+        "Authorization: Bearer abc.def.secret-token-value",
+        "Cookie: ct-admin.session_token=session-secret; other=value",
+        "Set-Cookie: ct-admin.session_token=session-secret; HttpOnly",
+        "/callback?session_token=session-secret&api_key=api-secret",
+        "DATABASE_URL=mysql://user:secret-pass@db:3306/app",
+        "REDIS_URL=redis://:redis-secret@redis:6379/0",
+        "SOME_PRIVATE_KEY: private-key-secret",
+        "CT_TOKEN=token-secret",
+    ].join("\n"));
+
+    expect(out).toContain("password=<redacted>");
+    expect(out).toContain("token=<redacted>");
+    expect(out).toContain("Authorization: Bearer <redacted>");
+    expect(out).toContain("Cookie: <redacted>");
+    expect(out).toContain("Set-Cookie: <redacted>");
+    expect(out).toContain("session_token=<redacted>");
+    expect(out).toContain("api_key=<redacted>");
+    expect(out).not.toContain("not-for-logs");
+    expect(out).not.toContain("session-secret");
+    expect(out).not.toContain("api-secret");
+    expect(out).not.toContain("secret-pass");
+    expect(out).not.toContain("redis-secret");
+    expect(out).not.toContain("private-key-secret");
+    expect(out).not.toContain("token-secret");
+});
