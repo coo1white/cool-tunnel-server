@@ -1,11 +1,12 @@
 {
     "name": "redis",
-    "kind": "container-image",
-    "version": "7.4.8",
+    "kind": "retired-container-image",
+    "version": "retired-in-v0.5.2",
     "upstream": "https://hub.docker.com/_/redis",
     "verify": {
-        "command": ["bash", "-c", "REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli -h \"$REDIS_HOST\" -p \"$REDIS_PORT\" INFO Server | grep -i ^redis_version:"],
-        "expect_zero_exit": true
+        "command": ["bash", "-c", "test ! -f docker-compose.yml || ! grep -Eq '^[[:space:]]*redis:' docker-compose.yml"],
+        "expect_zero_exit": true,
+        "expect_no_version_line": true
     },
-    "note": "BSD-3. Retained for runtime/cache compatibility where existing core functionality still requires it. Verify runs `redis-cli INFO Server` and checks the pinned version. Auth is mandatory; REDISCLI_AUTH keeps the password out of argv."
+    "note": "Retired active runtime component. v0.5.2 removed the Laravel queue/cache/session stack; Better Auth sessions and control-plane state live in SQLite. This manifest remains only to document the retirement and to prevent a Redis service from reappearing in docker-compose.yml."
 }

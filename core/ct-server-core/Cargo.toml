@@ -7,7 +7,7 @@ license.workspace      = true
 repository.workspace   = true
 authors.workspace      = true
 publish.workspace      = true
-description = "Latency-sensitive engine for the Cool Tunnel Server admin panel — Caddyfile rendering. AGPL-3.0-only; see ../../LICENSE. Copyright (C) 2026 coolwhite LLC."
+description = "Internal Rust engine for Cool Tunnel Server protocol/runtime rendering. AGPL-3.0-only; see ../../LICENSE. Copyright (C) 2026 coolwhite LLC."
 readme      = "README.md"
 
 [[bin]]
@@ -30,8 +30,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "macros",
 # `BytesMut` network-frame buffers in daemon request handling.
 futures-core = "0.3"
 
-# Laravel-compatible AES-256-GCM decryption for the
-# proxy_accounts.password_cleartext_encrypted column.
+# Retained AES-256-GCM helper dependency for legacy compatibility paths.
 aes-gcm = "0.10"
 base64  = "0.22"
 

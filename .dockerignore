@@ -8,6 +8,7 @@
 .env.local
 operator/signing.key
 backups/
+data/
 
 # VCS + IDE noise.
 .git/
@@ -24,11 +25,33 @@ core/bin/
 **/target/
 core/Cargo.lock        # we want it in the image actually — see negation below
 
-# Bun local state.
-operator/node_modules/
+# JavaScript workspace local state.
+node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
+apps/*/.next/
+apps/*/dist/
+apps/*/*.tsbuildinfo
+packages/*/dist/
+operator/dist/
 singbox-core/node_modules/
+singbox-core/dist/
 singbox-core/bin/
-operator/bin/
+
+# Retired PHP panel local state from old checkouts.
+panel/vendor/
+panel/node_modules/
+panel/storage/app/*
+panel/storage/framework/cache/data/*
+panel/storage/framework/sessions/*
+panel/storage/framework/views/*
+panel/storage/logs/*
+panel/bootstrap/cache/*
+panel/public/storage
+panel/public/hot
+
+# Tests + dev fixtures (we don't run them inside the prod images).
+panel/tests/
 
 # Generated / one-off documentation outputs.
 *.tar.gz

@@ -18,13 +18,11 @@ if [[ "${CT_SKIP_OPERATOR_FETCH:-}" == "1" ]]; then
     exit 0
 fi
 
-# Deployed version — operator/package.json is the release source
-# (matches what `ct version` prints; see `make set-version`).
-VERSION=$(grep -E '^\s*"version"\s*:' operator/package.json 2>/dev/null \
-    | head -1 \
-    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)
+# Deployed version. v0.5.2 uses root package.json as the release
+# source of truth.
+VERSION=$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' package.json | head -1)
 if [[ -z "$VERSION" ]]; then
-    echo "fetch_operator_binary: cannot determine version from operator/package.json" >&2
+    echo "fetch_operator_binary: cannot determine version from package.json" >&2
     exit 1
 fi
 
@@ -61,23 +59,17 @@ curl_fetch() {
         "$@"
 }
 
-next_step() {
-    echo "fetch_operator_binary: next step: $*" >&2
-}
-
 # Fetch the manifest first. If the release doesn't exist yet (dev
 # branch ahead of any tag, or a release that hasn't been cut), this is
 # a no-op so a development checkout can keep running from source.
 SUMS=$(curl_fetch "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
 if [[ -z "$SUMS" ]]; then
     echo "fetch_operator_binary: no SHA256SUMS at ${URL_BASE} (release not published?). Skipping."
-    next_step "keep the existing operator binary, or publish release v${VERSION} and rerun ./scripts/fetch_operator_binary.sh"
     exit 0
 fi
 EXPECTED=$(echo "$SUMS" | awk -v t="$TARGET" '$2 == t || $2 == "*"t {print $1; exit}')
 if [[ -z "$EXPECTED" ]]; then
     echo "fetch_operator_binary: no entry for $TARGET in SHA256SUMS for v${VERSION}. Skipping."
-    next_step "publish the ${TARGET} asset for v${VERSION}, or run from source with bun"
     exit 0
 fi
 
@@ -95,14 +87,12 @@ echo "fetch_operator_binary: downloading ${TARGET} for v${VERSION}..."
 NEW="${BIN_DIR}/${TARGET}.new"
 if ! curl_fetch -o "$NEW" "${URL_BASE}/${TARGET}"; then
     echo "fetch_operator_binary: download failed for ${URL_BASE}/${TARGET}" >&2
-    next_step "check network/DNS from this host, then rerun ./scripts/fetch_operator_binary.sh"
     rm -f "$NEW"
     exit 1
 fi
 ACTUAL=$(sha256sum "$NEW" | awk '{print $1}')
 if [[ "$ACTUAL" != "$EXPECTED" ]]; then
     echo "fetch_operator_binary: hash mismatch (got $ACTUAL, want $EXPECTED)" >&2
-    next_step "delete ${NEW}, confirm SHA256SUMS belongs to v${VERSION}, then rerun ./scripts/fetch_operator_binary.sh"
     rm -f "$NEW"
     exit 1
 fi
@@ -112,7 +102,6 @@ if command -v gh >/dev/null 2>&1; then
         --signer-workflow .github/workflows/operator-release.yml \
         >/dev/null; then
         echo "fetch_operator_binary: GitHub artifact attestation verification failed" >&2
-        next_step "confirm the release asset was produced by .github/workflows/operator-release.yml, then rerun"
         rm -f "$NEW"
         exit 1
     fi

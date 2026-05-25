@@ -1,6 +1,6 @@
 {
   "name": "ct-operator",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Cool Tunnel Server operator CLI for self-hosted proxy server install, doctor, render, backup, restore, and update workflows.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -17,12 +17,14 @@
     "typecheck": "bunx tsc --noEmit",
     "start": "bun run src/index.ts"
   },
+  "dependencies": {
+    "@cool-tunnel/config": "workspace:*",
+    "@cool-tunnel/db": "workspace:*",
+    "@cool-tunnel/security": "workspace:*",
+    "@cool-tunnel/shared": "workspace:*"
+  },
   "devDependencies": {
     "@types/bun": "^1.1.0",
     "typescript": "^5.4.0"
-  },
-  "dependencies": {
-    "better-auth": "^1.6.11",
-    "hono": "^4.12.22"
   }
 }

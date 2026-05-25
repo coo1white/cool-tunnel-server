@@ -3,9 +3,8 @@
 //! `WireRequestV1` JSON-per-line, replies with `WireResponseV1`.
 //!
 //! Why a daemon at all (vs. one-shot CLI invocations)? The DB pool
-//! stays warm, which makes per-request latency roughly 5x lower —
-//! that matters for the "admin action → rendered config/reload
-//! visible" cycle operators click through repeatedly.
+//! stays warm, which makes per-request latency roughly 5x lower for
+//! internal control-plane calls.
 //!
 //! Pool lifecycle (post-perf/share-db-pool refactor): `serve()`
 //! constructs ONE `MySqlPool` at startup and holds it for the
@@ -14,8 +13,7 @@
 //! `db::connect()` — the daemon docstring claimed "the DB pool stays
 //! warm" but the code defeated it, paying ~30-50 ms of TCP+auth
 //! handshake per request. The shared pool restores the docstring's
-//! promise: the panel's "save → reload" round-trip drops by that
-//! same handshake cost.
+//! promise for repeated internal render/reload calls.
 
 use crate::contracts::{
     ContractBoundary, RecoveryScope, SemanticContract, PRINCIPLE_LOCAL_RECOVERY,
@@ -47,16 +45,16 @@ const MAX_REQUEST_LINE_BYTES: usize = 1 << 20; // 1 MiB
 /// # Project Decision Logic
 ///
 /// 8 KiB tracks the common page-size / socket-buffer sweet spot for
-/// small control-plane messages: honest panel requests complete in
+/// small control-plane messages: honest admin requests complete in
 /// one read, while hostile peers still need many scheduler turns to
 /// reach the 1 MiB hard cap. This keeps cooperative Tokio scheduling
 /// fair under contention.
 const MAX_REQUEST_READ_CHUNK_BYTES: usize = 8 * 1024;
 
-/// Concurrent-handler cap. The Bun admin runtime is the only legitimate
-/// client of this socket. 16 leaves headroom for parallel browser
-/// actions, doctor/update work, and internal probes while preventing a
-/// misbehaving local client from driving unbounded handler-task spawn.
+/// Concurrent-handler cap. The admin API is the legitimate client of
+/// this socket. 16 leaves headroom for queue + scheduler + status
+/// probes while preventing a
+/// misbehaving client from driving unbounded handler-task spawn.
 /// `main.rs` reads this when constructing the shared `Arc<Semaphore>`
 /// it passes into both `serve` and the `internal_metrics` registry
 /// (so the metrics endpoint can publish
@@ -67,7 +65,7 @@ pub const MAX_CONCURRENT_HANDLERS: usize = 16;
 /// of a request and stalls (network partition, suspended process,
 /// malicious holding pattern) would otherwise keep the handler task
 /// — and the semaphore permit — alive indefinitely. 30 s is generous
-/// (panel requests complete in tens of ms); this is a poison-pill
+/// (admin requests complete in tens of ms); this is a poison-pill
 /// detector, not a perf knob.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -75,7 +73,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// RAG agents should retrieve this constant before changing socket
 /// behavior; it encodes the consensus alignment between operator UX
-/// (panel saves should not spuriously fail) and availability defense
+/// (admin operations should not spuriously fail) and availability defense
 /// (one stalled peer must not retain memory or a semaphore forever).
 #[doc(alias = "daemon-rag-contract")]
 #[doc(alias = "daemon-self-healing-policy")]
@@ -95,7 +93,7 @@ const DAEMON_FRAME_POLICY: StaticDelimitedFramePolicy = StaticDelimitedFramePoli
 /// benefit only holds if malformed or slow clients fail at connection scope
 /// instead of poisoning process state. The JSON-line policy, semaphore cap,
 /// FSM hard reset, and typed wire errors all enforce the same game-theory
-/// posture: cooperative panel requests stay cheap; non-cooperative peers lose
+/// posture: cooperative admin requests stay cheap; non-cooperative peers lose
 /// only their own connection.
 #[doc(alias = "daemon-transport-rag-contract")]
 #[doc(alias = "daemon-consensus-contract")]
@@ -554,24 +552,20 @@ async fn handle(req: WireRequestV1, pool: &MySqlPool) -> Result<WireResponseV1> 
         // v0.4.0 — RenderCaddyfile / ReloadCaddy / CollectTraffic /
         // EnforceQuota are all wire-protocol dead letters:
         //
-        // - The panel's SingBoxConfigGenerator shells directly to
-        //   /usr/local/bin/singbox-core render-server; it does NOT
-        //   dispatch through the daemon's unix socket.
-        // - CaddyfileGenerator + the artisan caddy:reload path call
-        //   `ct-server-core caddyfile {render,reload}` (the CLI
-        //   subcommand), not this daemon wire path.
+        // - The admin API renders sing-box config through singbox-core;
+        //   it does NOT dispatch through the daemon's unix socket.
+        // - Caddyfile rendering uses the `ct-server-core caddyfile`
+        //   CLI subcommand, not this daemon wire path.
         // - CollectTraffic + EnforceQuota relied on sing-box's clash
         //   admin API, which sing-box VLESS+Reality does not expose.
         //
         // The WireRequestV1 enum variants stay in ct-protocol for
-        // wire compatibility — old panel builds and the macOS client
-        // both speak WireV1 — but every dispatch arm here returns
+        // wire compatibility, but every dispatch arm here returns
         // UnsupportedOperation so an out-of-band caller gets a clear
         // error rather than a silent no-op.
         WireRequestV1::RenderCaddyfile => Err(Error::UnsupportedOperation {
             operation: "render_caddyfile",
-            message:
-                "v0.4.0: panel-side SingBoxConfigGenerator renders directly via singbox-core; \
+            message: "v0.4.0: sing-box config renders directly via singbox-core; \
                       no daemon-side renderer remains. Use `ct-server-core caddyfile render` for \
                       Caddyfile-only renders.",
         }),

@@ -18,7 +18,7 @@
 # at the ~23-minute mark with zero steps run. `tag-version-check`
 # (the per-tag manifest assertion) stays on tag-push because
 # its whole purpose is to catch tags that diverge from the
-# operator/package.json version string.
+# root package.json version string.
 
 name: ci
 
@@ -79,11 +79,11 @@ jobs:
 
       # Compile-time SQL safety. SQLX_OFFLINE=true tells the
       # `sqlx::query!()` macros to read core/.sqlx/*.json
-      # (committed) instead of trying to open a live MariaDB.
+      # (committed) instead of trying to open a live legacy database.
       # A schema regression (column dropped / retyped / renamed)
       # that wasn't reflected in .sqlx/ fails the build here with
-      # "no cached data for query"; maintainers regenerate core/.sqlx
-      # from a trusted dev database and commit it.
+      # "no cached data for query"; the operator regenerates with
+      # `make sqlx-prepare` and commits.
       - run: cargo fmt --all -- --check
       - run: cargo build --release --workspace --locked
         env:
@@ -107,6 +107,24 @@ jobs:
         env:
           SQLX_OFFLINE: "true"
 
+  web-api:
+    name: admin monorepo (typecheck / test / build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: bun test apps/api/tests packages/db/tests packages/security/tests packages/config/tests
+      - run: pnpm run build
+
   shell:
     name: shell (shellcheck)
     runs-on: ubuntu-24.04
@@ -117,42 +135,43 @@ jobs:
         with:
           severity: warning
           scandir: ./scripts
-          additional_files: docker/panel/entrypoint.sh
 
   operator:
     name: operator (ct-operator typecheck + test)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    defaults:
-      run:
-        working-directory: operator
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
+          bun-version: 1.3.14
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - run: cd operator && bun run typecheck
+      - run: cd operator && bun test
 
   singbox-core:
     name: singbox-core (typecheck + test)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    defaults:
-      run:
-        working-directory: singbox-core
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
+          bun-version: 1.3.14
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - run: cd singbox-core && bun run typecheck
+      - run: cd singbox-core && bun test
 
   manifests:
-    name: manifests (jq parse)
+    name: manifests (jq parse + v0.5.2 metadata)
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -162,6 +181,14 @@ jobs:
           for f in manifests/*.json; do
               jq . "$f" > /dev/null \
                 || { echo "::error file=$f::invalid JSON"; exit 1; }
+          done
+          root_v=$(jq -r .version package.json)
+          for f in manifests/admin-api.upstream.json manifests/admin-web.upstream.json manifests/client-runtime.upstream.json; do
+              v=$(jq -r .version "$f")
+              if [[ "$v" != "$root_v" ]]; then
+                  echo "::error file=$f::manifest version $v does not match package.json $root_v"
+                  exit 1
+              fi
           done
 
   template:
@@ -207,9 +234,9 @@ jobs:
           set -euo pipefail
           rendered=$(mktemp)
           # Substitute every binding the v0.4.0 renderer emits. The
-          # Caddyfile shrinks to a layer4 SNI splitter (panel.* SNI →
-          # inner :8443, everything else → tcp/ct-singbox:443) plus
-          # the inner Caddy :8443 panel reverse-proxy. No more
+          # Caddyfile shrinks to a layer4 SNI splitter (PANEL_DOMAIN
+          # SNI → inner :8443, everything else → tcp/ct-singbox:443)
+          # plus the inner Caddy :8443 admin reverse-proxy. No more
           # cert-acquisition stub or proxy-domain ACME — Reality
           # replaces ACME on the proxy path; per-account credentials
           # live in /data/config/singbox.json (singbox-core render-

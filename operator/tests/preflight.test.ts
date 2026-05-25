@@ -101,33 +101,33 @@ test("classifyDiskSpace reports docker root pressure with the detected root path
 
 test("classifyStackUp: all required services running → ok", () => {
     const r = classifyStackUp(
-        ["panel", "caddy"],
-        new Set(["panel", "caddy", "singbox", "redis", "db"]),
+        ["admin-api", "admin-web", "caddy"],
+        new Set(["admin-api", "admin-web", "caddy", "singbox"]),
     );
     expect(r.ok).toBe(true);
     expect(r.missing).toEqual([]);
-    expect(r.runningCount).toBe(2);
+    expect(r.runningCount).toBe(3);
     expect(r.summary).toContain("stack is up");
 });
 
 test("classifyStackUp: some required missing → ok=true (partial) with summary", () => {
     const r = classifyStackUp(
-        ["panel", "caddy"],
-        new Set(["panel"]),
+        ["admin-api", "admin-web", "caddy"],
+        new Set(["admin-api"]),
     );
     expect(r.ok).toBe(true); // partial-up doesn't refuse to proceed
-    expect(r.missing).toEqual(["caddy"]);
+    expect(r.missing).toEqual(["admin-web", "caddy"]);
     expect(r.runningCount).toBe(1);
     expect(r.summary).toContain("partially up");
 });
 
 test("classifyStackUp: ALL required missing → ok=false with install.sh hint", () => {
     const r = classifyStackUp(
-        ["panel", "caddy"],
+        ["admin-api", "admin-web", "caddy"],
         new Set(),
     );
     expect(r.ok).toBe(false);
-    expect(r.missing).toEqual(["panel", "caddy"]);
+    expect(r.missing).toEqual(["admin-api", "admin-web", "caddy"]);
     expect(r.runningCount).toBe(0);
     expect(r.failure).toBeDefined();
     expect(r.failure!.diag).toContain("install.sh");
@@ -139,8 +139,8 @@ test("classifyStackUp: ALL required missing but other services running → still
     // services overlap, we treat it as entirely down even if other
     // services are running.
     const r = classifyStackUp(
-        ["panel"],
-        new Set(["redis", "db"]),
+        ["admin-api"],
+        new Set(["singbox", "caddy"]),
     );
     expect(r.ok).toBe(false);
     expect(r.runningCount).toBe(0);

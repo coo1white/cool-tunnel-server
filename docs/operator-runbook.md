@@ -1,47 +1,41 @@
 # Operator Runbook
 
-Short path for day-to-day VPS operations on a Cool Tunnel Server deployment.
+Short path for day-to-day VPS operations on a Cool Tunnel Server
+deployment. Use this runbook for install, update, backup, doctor, and
+failure recovery on a self-hosted proxy server.
 
 ## Goal
 
+Keep operations simple:
+
 ```text
-install -> doctor -> bootstrap owner -> use
+install -> doctor -> use
 backup -> update -> doctor
 doctor -> follow the remediation
 ```
 
-The production VPS should not be a place for long-lived source edits. Use `.env`, `ct`, and release tags as the control surface.
+The production VPS should not be a place for long-lived source edits.
+Use `.env`, the admin UI/API, and release tags as the control surface.
 
 ## Install
 
 ```bash
 apt update
-apt install -y ca-certificates curl git gnupg jq openssl ufw dnsutils chrony fail2ban unattended-upgrades
+apt install -y ca-certificates curl git gnupg jq openssl apache2-utils ufw dnsutils chrony fail2ban unattended-upgrades
 LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1white/cool-tunnel-server/releases/latest | sed 's#.*/##')"
 BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 cd /opt/cool-tunnel-server
 $EDITOR .env
 ct install
-ct doctor
-ct admin bootstrap
 ```
 
-`ct admin bootstrap` writes the setup page and one-time token to a root-only file and prints the exact `sudo cat ...` command to read it over SSH. Open the setup page, paste the token, create the owner, delete the file, then sign in at `https://<PANEL_DOMAIN>/admin`.
-
-## Admin Accounts
-
-Use the web panel at `/admin/users` for account lifecycle work. The panel supports user details, create/edit, role changes, disable/enable, protected deletes, password reset to a temporary password, and audit review at `/admin/audit`.
-
-The CLI mirrors emergency account actions without printing secrets:
+Verify:
 
 ```bash
-ct admin users list
-ct admin users disable user@example.com
-ct admin users enable user@example.com
-CT_ADMIN_TEMP_PASSWORD='replace-with-a-long-temporary-password' ct admin users reset-password user@example.com
+docker compose ps
+docker compose exec -T admin-api bun -e 'await fetch("http://127.0.0.1:9000/up").then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); })'
+./ct doctor
 ```
-
-Owners can manage every account. Admins can manage operator and viewer accounts. Operators cannot manage users, and viewers cannot mutate admin state.
 
 ## Update
 
@@ -52,7 +46,29 @@ ct update
 ct doctor
 ```
 
-`ct update` owns the release path: load release images, run migrations, render Caddy and sing-box config, restart affected services, and run health gates.
+`ct update` owns the release path: load release images, run
+migrations, render Caddy and sing-box config, restart affected
+services, and run the health gates.
+
+Verify after update:
+
+```bash
+docker compose exec -T admin-api bun -e 'await fetch("http://127.0.0.1:9000/up").then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); })'
+./ct doctor
+```
+
+If git state blocks the update and this is a normal production VPS,
+reset to published main:
+
+```bash
+cd /opt/cool-tunnel-server
+git fetch origin
+git checkout main
+git reset --hard origin/main
+./scripts/fetch_operator_binary.sh || true
+ct update
+ct doctor
+```
 
 ## Fix
 
@@ -71,23 +87,24 @@ git diff --stat
 git diff -- PATH
 ```
 
-If generated config looks stale:
+If you did not intentionally keep those edits, use the reset flow in
+the update section.
+
+If credentials or rendered config look stale:
 
 ```bash
 ct render singbox
-ct render caddyfile
-docker compose restart singbox caddy
-ct doctor
+docker compose restart singbox
+./ct doctor
 ```
 
 Useful logs:
 
 ```bash
-docker compose logs --tail=120 panel
+docker compose logs --tail=120 admin-api
+docker compose logs --tail=120 admin-web
 docker compose logs --tail=120 caddy
 docker compose logs --tail=120 singbox
-docker compose logs --tail=120 db
-docker compose logs --tail=120 redis
 ```
 
 If `ct update` reports a missing image bundle:
@@ -97,4 +114,6 @@ If `ct update` reports a missing image bundle:
 ct update
 ```
 
-If the bundle is absent from the GitHub release, the release is incomplete for that CPU architecture; publish the bundle instead of building on the VPS.
+If the bundle is absent from the GitHub release, the release is
+incomplete for that CPU architecture; publish the bundle instead of
+building on the VPS.

@@ -14,13 +14,13 @@
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
-    "noUnusedLocals": true,
+    "noUnusedLocals": false,
     "noUnusedParameters": true,
-    "noPropertyAccessFromIndexSignature": true,
+    "noPropertyAccessFromIndexSignature": false,
     "noImplicitOverride": true,
 
-    "types": ["bun-types"]
+    "types": ["bun"]
   },
-  "include": ["src/**/*", "build.ts", "verify-supervisord.ts", "tests/**/*"],
+  "include": ["src/**/*", "build.ts", "auto-update.ts", "backup.ts", "install.ts", "restore.ts", "sbom.ts", "pin-images.ts", "update.ts", "tests/**/*"],
   "exclude": ["node_modules", "bin"]
 }

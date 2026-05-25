@@ -5,12 +5,12 @@
 //! constructor-validated structs whose invariants the rest of the
 //! codebase can rely on without re-checking.
 //!
-//! v0.4.0 — the v0.3.x `ProxyAccount` and `UsageDelta` types were
+//! v0.4.0 — the v0.3.x ProxyAccount and UsageDelta types were
 //! deleted alongside the modules that constructed them
 //! (`db::active_proxy_accounts` + `metrics::collect`, both retired
 //! when sing-box VLESS+Reality replaced the clash-API-bearing naive
-//! stack). Account and operator state now lives in the Bun admin
-//! layer; per-user accounting moves to operator-side instrumentation.
+//! stack). Proxy-account storage lives in `packages/db` in v0.5.2;
+//! per-user accounting moves to operator-side instrumentation.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

@@ -4,7 +4,6 @@
 import { test, expect } from "bun:test";
 import {
     backfillPanelDomain,
-    backfillBetterAuthSecret,
     relocatePanelDomain,
     fixLegacyAppUrl,
     backfillSingboxDirectDefaults,
@@ -180,37 +179,6 @@ test("backfillSingboxDirectDefaults: fills missing timeout keys for existing str
     expect(r.content).toContain("SINGBOX_DIRECT_FALLBACK_DELAY=100ms");
 });
 
-// ---------- Phase 5: backfillBetterAuthSecret ----------
-
-test("backfillBetterAuthSecret: appends Better Auth secret when missing", () => {
-    const env = `DOMAIN=proxy.example.com
-`;
-    const r = backfillBetterAuthSecret(env, () => "auth-secret-".padEnd(43, "x"));
-
-    expect(r.change?.phase).toBe("better-auth-secret");
-    expect(r.content).toContain(`BETTER_AUTH_SECRET=${"auth-secret-".padEnd(43, "x")}`);
-});
-
-test("backfillBetterAuthSecret: no-op when key already exists", () => {
-    const env = `BETTER_AUTH_SECRET=${"existing-".padEnd(43, "x")}
-`;
-    const r = backfillBetterAuthSecret(env, () => "new-secret");
-
-    expect(r.change).toBeNull();
-    expect(r.content).toBe(env);
-});
-
-test("backfillBetterAuthSecret: replaces blank existing key", () => {
-    const env = `DOMAIN=proxy.example.com
-BETTER_AUTH_SECRET=
-`;
-    const r = backfillBetterAuthSecret(env, () => "auth-secret-".padEnd(43, "x"));
-
-    expect(r.change?.phase).toBe("better-auth-secret");
-    expect(r.content).toContain(`BETTER_AUTH_SECRET=${"auth-secret-".padEnd(43, "x")}`);
-    expect(r.content).not.toContain("BETTER_AUTH_SECRET=\n");
-});
-
 // ---------- migrateEnv (all phases) ----------
 
 test("migrateEnv: clean canonical .env is a full no-op", () => {
@@ -221,10 +189,10 @@ SINGBOX_DIRECT_DOMAIN_STRATEGY=prefer_ipv4
 SINGBOX_DIRECT_CONNECT_TIMEOUT=2s
 SINGBOX_DIRECT_FALLBACK_DELAY=100ms
 `;
-    const r = migrateEnv(env, () => "auth-secret-".padEnd(43, "x"));
-    expect(r.changes.map((c) => c.phase)).toEqual(["singbox-direct-defaults", "better-auth-secret"]);
+    const r = migrateEnv(env);
+    expect(r.changes.map((c) => c.phase)).toEqual(["singbox-direct-defaults"]);
     expect(r.content).toContain("SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only");
-    expect(r.content).toContain(`BETTER_AUTH_SECRET=${"auth-secret-".padEnd(43, "x")}`);
+    expect(r.content).not.toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
 });
 
 test("migrateEnv: pre-v0.0.33 legacy .env triggers all three phases", () => {
@@ -232,7 +200,7 @@ test("migrateEnv: pre-v0.0.33 legacy .env triggers all three phases", () => {
 APP_URL=https://\${DOMAIN}/admin
 ACME_EMAIL=ops@example.com
 `;
-    const r = migrateEnv(env, () => "auth-secret-".padEnd(43, "x"));
+    const r = migrateEnv(env);
     // Phase 1 (backfill) + Phase 3 (app-url-fix) fire; phase 2
     // doesn't because the freshly-inserted PANEL_DOMAIN already
     // precedes its reference. Phase 4 appends the persistent
@@ -241,10 +209,9 @@ ACME_EMAIL=ops@example.com
     expect(phases).toContain("panel-domain-backfill");
     expect(phases).toContain("app-url-fix");
     expect(phases).toContain("singbox-direct-defaults");
-    expect(phases).toContain("better-auth-secret");
     expect(r.content).toContain("PANEL_DOMAIN=panel.proxy.example.com");
     expect(r.content).toContain("APP_URL=https://${PANEL_DOMAIN}/admin");
-    expect(r.content).toContain(`BETTER_AUTH_SECRET=${"auth-secret-".padEnd(43, "x")}`);
+    expect(r.content).not.toContain("CT_BOOTSTRAP_ADMIN_PASSWORD");
 });
 
 test("migrateEnv: pre-v0.0.68 buggy migration triggers phase 2 only", () => {
@@ -253,24 +220,23 @@ APP_URL=https://\${PANEL_DOMAIN}/admin
 ACME_EMAIL=ops@example.com
 PANEL_DOMAIN=admin.example.com
 `;
-    const r = migrateEnv(env, () => "auth-secret-".padEnd(43, "x"));
+    const r = migrateEnv(env);
     expect(r.changes.map((c) => c.phase)).toEqual([
         "panel-domain-relocate",
         "singbox-direct-defaults",
-        "better-auth-secret",
     ]);
 });
 
-test("migrateEnv: preserves existing BETTER_AUTH_SECRET", () => {
+test("migrateEnv: preserves legacy CT_BOOTSTRAP_ADMIN_PASSWORD without creating one", () => {
     const env = `DOMAIN=proxy.example.com
 PANEL_DOMAIN=admin.example.com
 APP_URL=https://\${PANEL_DOMAIN}/admin
 SINGBOX_DIRECT_DOMAIN_STRATEGY=ipv4_only
 SINGBOX_DIRECT_CONNECT_TIMEOUT=2s
 SINGBOX_DIRECT_FALLBACK_DELAY=100ms
-BETTER_AUTH_SECRET=${"existing-".padEnd(43, "x")}
+CT_BOOTSTRAP_ADMIN_PASSWORD=existing-local-secret
 `;
-    const r = migrateEnv(env, () => "new-secret");
+    const r = migrateEnv(env);
 
     expect(r.changes).toEqual([]);
     expect(r.content).toBe(env);

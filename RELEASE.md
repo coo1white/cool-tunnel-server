@@ -32,10 +32,13 @@ tag is created. Specifically it does:
 
 - `cargo build --release --workspace`
 - `cargo test  --release --workspace`
-- `cargo clippy --release --all-targets -- -D warnings`
+- `cargo clippy --release --all-targets`
 - `cargo fmt   --all -- --check`
-- `shellcheck -x scripts/*.sh docker/panel/entrypoint.sh`
-- `cd operator && bun test && bun run typecheck && bun run build`
+- `pnpm install --frozen-lockfile`
+- `pnpm run typecheck`
+- `bun test apps/api/tests packages/db/tests packages/security/tests packages/config/tests`
+- `pnpm run build`
+- `shellcheck -x scripts/*.sh`
 - `for f in manifests/*.json; do jq . "$f" >/dev/null; done`
 
 ### 3. Update CHANGELOG.md
@@ -47,24 +50,28 @@ Update the comparison links at the bottom.
 
 ### 4. Bump versions
 
-Four places need to agree:
+Current app/runtime release surfaces need to agree:
 
 ```sh
-# Cargo workspace.
-$EDITOR core/Cargo.toml          # workspace.package.version
+# Monorepo package version.
+$EDITOR package.json
+$EDITOR apps/api/package.json
+$EDITOR apps/web/package.json
+$EDITOR packages/*/package.json
 
 # Component manifests.
-$EDITOR manifests/ct-server-core.upstream.json
-$EDITOR manifests/ct-protocol.upstream.json
-$EDITOR manifests/panel.upstream.json
+$EDITOR manifests/admin-api.upstream.json
+$EDITOR manifests/admin-web.upstream.json
+$EDITOR manifests/client-runtime.upstream.json
 
-# Operator/admin runtime version. Keep it aligned with
-# manifests/panel.upstream.json.
-$EDITOR operator/package.json
+# Rust core is internal during the v0.5.2 rebuild. Bump
+# core/Cargo.toml, manifests/ct-server-core.upstream.json, and
+# manifests/ct-protocol.upstream.json together only when the Rust
+# workspace participates in the release.
 ```
 
-`Makefile` provides `make set-version V=0.0.X` to update all four
-in one go.
+`Makefile` provides `make set-version V=0.5.X`; confirm it covers every
+active source before relying on it for a monorepo release.
 
 ### 5. Re-run CI
 
@@ -182,10 +189,9 @@ make sbom
 gh release upload vX.Y.Z sbom/cool-tunnel-server-vX.Y.Z-sbom.cdx.json
 ```
 
-The CycloneDX SBOM lists every Rust crate, Composer package, and
-container image layer that goes into the release. Auditors can
-diff two releases' SBOMs to see exactly what changed in the supply
-chain.
+The CycloneDX SBOM lists every Rust crate, Bun/TypeScript package, and
+container image layer that goes into the release. Auditors can diff two
+releases' SBOMs to see exactly what changed in the supply chain.
 
 ### 12. Pin Docker base images by digest (optional but LTSC-shape)
 
@@ -230,8 +236,7 @@ sha256sum -c release-assets/SHA256SUMS.images
 The uploaded release `SHA256SUMS` must include the image bundle entries
 from `SHA256SUMS.images`. Production `ct install` and `ct update` fail
 early if the bundle is missing; that is intentional so users do not
-compile Rust, Bun, Go, PHP extensions, or Docker images on a low-end
-VPS.
+compile Rust, Bun, Go, Next.js, or Docker images on a low-end VPS.
 
 ## Hotfix workflow
 

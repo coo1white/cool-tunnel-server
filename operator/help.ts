@@ -28,13 +28,12 @@ export const TOPICS: Record<string, Topic> = {
 working Cool Tunnel deployment. The whole path is:
 
   1. Run the Homebrew-style bootstrap command from README.md
-  2. Edit .env with your domain + secrets
-  3. Run ct install                 (idempotent; ~5-10 min)
-  4. Visit https://panel.<DOMAIN>/admin and log in
+  2. Edit .env with your domain, Better Auth secret, and Reality keys
+  3. Run ct install                 (idempotent; bundle-only)
+  4. Run ct admin bootstrap         (writes root-only setup material)
+  5. Visit https://panel.<DOMAIN>/setup once, then /login
 
-For the long-form tutorial (with prerequisites and detailed
-verification at each step), see README.md sections "First
-Deploy" and "Maintaining a Running Deployment".
+For the long-form tutorial, see README.md and docs/installation-debian.md.
 
 Next topic:  ./ct help install
 `,
@@ -42,105 +41,62 @@ Next topic:  ./ct help install
     "install": {
         title: "ct install — first-time bootstrap",
         body: `What it does:
-  - Verifies required tools are on PATH (docker, dig, curl, jq)
-  - Asks you to copy .env.example -> .env if missing, then
-    checks the file is mode 0600 (refuses to proceed otherwise)
-  - Cross-validates .env values: DOMAIN, ACME_EMAIL,
-    DB_PASSWORD, DB_ROOT_PASSWORD, REDIS_PASSWORD, PANEL_DOMAIN,
-    port 80/443 are free, DNS A record matches host IP
+  - Verifies required tools are on PATH (docker, curl, jq)
+  - Refuses to run without a mode-0600 .env
   - Loads the verified release Docker image bundle
-  - Brings the stack up; panel's entrypoint runs the first
-    migration + initial Caddyfile/sing-box render
-  - Waits for ACME (Let's Encrypt) to acquire the cert
-  - Runs health gates and reports PASS / WARN / FAIL
-  - Prints the next command for first-owner setup:
-    ct admin bootstrap
+  - Applies idempotent SQLite migrations for the admin API
+  - Renders Caddyfile and sing-box config via admin-api
+  - Starts admin-api, admin-web, singbox, and caddy
+  - Reminds you to run ct admin bootstrap for first-owner setup
 
-When to run:
-  - Fresh box, never deployed before
-  - After a backup -> restore cycle (idempotent)
-  - When something is so broken that 'ct update' refuses to
-    proceed and 'doctor' shows the stack as down
+Important security facts:
+  - No default credentials are created.
+  - Bootstrap setup material is written to a root-only local file by
+    ct admin bootstrap, never printed raw to normal output.
+  - Login and setup submit credentials by server-side POST.
 
 Common failure modes:
-  - Port 80/443 in use   -> kill the offender or change the
-                            Caddyfile bind addresses
-  - DNS does not match   -> update A record to host IP, wait
-                            for propagation
-  - ACME timeout         -> usually means the outside world
-                            cannot reach port 80 (firewall,
-                            cloud provider). Check
-                            'docker compose logs caddy'.
-  - Image bundle missing -> release asset is incomplete for this
-                            CPU architecture; run
-                            ./scripts/fetch_image_bundle.sh
+  - Port 80/443 in use   -> stop the conflicting service or change
+                            Caddy bind addresses intentionally
+  - DNS does not match   -> update A record to host IP, wait, retry
+  - Image bundle missing -> release asset is incomplete for this CPU;
+                            run ./scripts/fetch_image_bundle.sh
+  - Secret validation    -> set BETTER_AUTH_SECRET and Reality keys
+                            in .env, then rerun
 
 Idempotent: safe to re-run if anything fails halfway.
-
-Diagnostics on failure:
-  - Every step prints a numbered '==>' header
-  - Errors come with a 'Diagnostic:' block listing next steps
-  - 'ct doctor' run anytime gives the dashboard view
 
 Next topic:  ./ct help update
 `,
     },
     "update": {
-        title: "update — pull a new release and hot-swap",
+        title: "update — pull a new release and reconcile",
         body: `What it does:
   Pre-flight:
-    - Network reachable (GitHub release downloads)
-    - Disk headroom (>= 2 GB repo, >= 4 GB docker root);
-      safe temp cleanup runs automatically only when space is low
-    - Stack is up (panel + caddy running OR restarting; singbox
-      allowed transiently down, depends on panel-rendered config)
-    - Working tree clean (interactive stash/discard/abort if
-      uncommitted)
+    - Network reachable for GitHub release downloads
+    - Disk headroom for release image slices and docker load
+    - Existing stack state is reported but a down stack is reconciled
 
   Main flow:
-    - git pull --ff-only
-    - Auto-migrate legacy .env (PANEL_DOMAIN, APP_URL)
+    - git pull --ff-only when possible
     - Load the verified Docker image bundle for this release
-    - Bring the new panel image up, then caddy + singbox
-    - Wait for panel entrypoint sentinel
-    - Re-render Caddyfile and reload Caddy
-    - Let ct-singbox pick up the panel-rendered singbox.json
-    - Health gates (post-swap)
-
-When to run:
-  - After 'git pull' shows new commits on origin/main
-  - After a release tag (v0.0.X) is published
-  - Any time you want to deploy the latest main
+    - Apply idempotent SQLite migrations, including optional legacy
+      staging tables for v0.5.1 PHP/MariaDB exports
+    - Render Caddyfile and sing-box config through admin-api
+    - Recreate admin-api, admin-web, singbox, and caddy with
+      --no-build --pull never
 
 What it does NOT do:
-  - Touch the database (migrations are idempotent; existing
-    data preserved)
-  - Modify .env (auto-migration only adds missing keys)
-  - Roll back on failure (failed updates leave the new images
-    cached; old containers stay running until you re-run)
+  - Drop admin users, roles, proxy accounts, settings, or audit logs
+  - Print secrets, bootstrap tokens, UUIDs, or subscription URLs
+  - Compile Docker images on the VPS
+  - Roll back automatically on failure
 
-Common failure modes:
-  - Uncommitted changes  -> 'ct update' preflight offers
-                            stash / discard / abort
-  - Network unreachable  -> diagnostic block lists ping /
-                            dig / curl / proxy commands to try
-  - Disk full            -> auto-clean already removed safe temp
-                            and build cache; diagnostic lists
-                            the next manual commands
-  - Image bundle missing -> release asset is incomplete for this
-                            CPU architecture; run
-                            ./scripts/fetch_image_bundle.sh
-  - Health gate failed   -> diagnostic block gives the
-                            remediation command to run next
-
-If something goes sideways and the panel container restart-
-loops: 'docker compose logs panel' is the first place to look.
-Most restart loops are missing BETTER_AUTH_SECRET, invalid .env
-values, or a failed initial render before the Bun admin starts.
-
-Roll back if needed:
-  git checkout v0.0.96  # (or the prior known-good tag)
-      ./ct update
+Migration note:
+  v0.5.1 MariaDB data must be exported into the documented legacy_*
+  SQLite staging tables before ct admin migrate/ct update if you are
+  moving data from the PHP release. Already-migrated v0.5.2 SQLite
+  databases are migrated in place.
 
 Next topic:  ./ct help doctor
 `,
@@ -148,204 +104,79 @@ Next topic:  ./ct help doctor
     "doctor": {
         title: "doctor — health dashboard",
         body: `What it does:
-  Runs ~13 health checks against the live stack and prints a
+  Runs read-only checks against the live stack and prints a
   PASS / WARN / FAIL table grouped by area:
 
-    Prerequisites          docker compose, .env mode,
-                           Reality clock window
+    Prerequisites          docker compose, .env mode
     Structural             DNS, ports 80/443, ACME cert expiry
-    Application            /up endpoint, direct-dial config
-    Compose stack          5 services up, supervisord programs
+    Application            Hono /up endpoint, direct-dial config
+    Compose stack          admin-api, admin-web, caddy, singbox
     Resources              disk + RAM headroom
-    Info                   release version, admin users,
-                           retained Redis queue depth
+    Info                   release version, active proxy accounts
 
 When to run:
   - First thing when SSHing in to check a deployment
-  - Any time you suspect something is off
-  - Periodically (cron is fine; exit code is 0 on PASS/WARN,
-    1 on any FAIL)
+  - Before and after ct update
+  - After staging a v0.5.1 migration export
 
 What it does NOT do:
-  - Modify state of any kind. Read-only. Safe to run mid-
-    deploy, during an outage, or on a healthy box.
-  - Repair issues automatically. It prints the likely next command
-    for each WARN / FAIL row instead.
-
-Output anatomy:
-  - Table at top: rows like '  [PASS] Disk   repo 47G, ...'
-  - Summary line: 'N PASS, M WARN, K FAIL, J INFO'
-  - Remediation block: each WARN / FAIL gets a one-line hint
-    with the most-likely next-step commands
+  - Modify state. It is safe during deploys and outages.
+  - Repair issues automatically. It prints likely next commands.
 
 Exit codes:
-  0   - all-PASS or WARN-only (FAIL count is 0)
+  0   - all-PASS or WARN-only
   1   - one or more FAIL rows
 
 Next topic:  ./ct help auto-update
-`,
-    },
-    "recover": {
-        title: "recover — diagnose failed install/update gates",
-        body: `What it does:
-  Repairs the common post-install/update failures after containers are
-  mostly running.
-
-  Default mode:
-    ct recover
-    ct recover diagnose
-
-  This gathers:
-    - docker compose ps
-    - singbox render result
-    - credential-lock result
-    - admin/user count
-    - rendered VLESS user names
-    - recent panel/singbox error lines
-
-  Safe repair mode:
-    ct recover fix-stale-singbox
-    ct recover --fix-stale-singbox
-
-  This stops singbox, deletes the rendered /data/config/singbox.json,
-  asks the panel to render a fresh config from admin state, reruns
-  credential-lock, and brings singbox back up. It does not touch the
-  database, .env, Caddy, or ACME certs.
-
-When to run:
-  - Update fails with 'credential-lock drift'
-  - Install/update says singbox is running/starting for too long
-  - panel render actions fail
-  - Panel returns a 500 while managing admin users
-  - You need a compact evidence bundle before asking for help
-
-Common result:
-  DB active VLESS accounts: 0
-  Rendered VLESS users: 1
-
-  That means the rendered singbox.json is stale. Run:
-    ct recover fix-stale-singbox
-
-After recovery:
-  ./ct update
-  ./ct doctor
-
-Next topic:  ./ct help backup
 `,
     },
     "auto-update": {
         title: "auto-update — unattended release-pulling agent",
         body: `What it does:
   Checks origin/main for a newer release tag. If the deployed
-  version is older AND the running stack is currently healthy,
-  pulls main and runs the standard \`./ct update\` flow.
+  package.json version is older, it runs the standard ct update flow.
 
   The agent is DEFAULT-OFF. A fresh install never auto-upgrades.
   You opt in via:
 
     sudo ct auto-update enable
 
-  That drops a /etc/cron.daily/ct-auto-update symlink which runs
-  the agent in --quiet mode once a day (anacron-windowed at the
-  Debian default time, usually 06:25-07:00 UTC).
-
   Disable any time:
 
     sudo ct auto-update disable
 
-  Manual one-shot run (interactive, prints everything):
-
-    ct auto-update now
-    # or: ct auto-update      (defaults to \`now\`)
-    # or: make auto-update
-
-  Status:
-
-    ct auto-update status
-
-When to enable:
-  - You operate a small fleet and don't want to SSH into each box
-    every time we cut a patch release.
-  - Your deployment doesn't have a custom dev workflow that needs
-    manual coordination on every upgrade.
-  - You're comfortable with the agent waking up overnight and
-    re-rendering configs as part of its catch-up cycle.
-
-When NOT to enable:
-  - You pin to a specific release on purpose (don't want surprises).
-  - You have heavy customizations in /opt/cool-tunnel-server (the
-    agent uses --ff-only and refuses to upgrade if your working
-    tree has uncommitted changes -- but even so, opting in is
-    riskier on a customized box).
-  - You're in the middle of a multi-step deploy and don't want a
-    cron tick interrupting it.
-
 Safety properties:
   - flock'd: two concurrent runs can't race.
-  - Network-aware: aborts cleanly if origin is unreachable; will
-    retry on the next cron tick.
-  - Health-gated: refuses to upgrade an already-broken stack
-    (\`credential-lock\` guard pre-flight + \`panel\` running check).
-    Logic: an unattended agent should NEVER compound an existing
-    incident; rolling a new release on top of a broken
-    deployment usually makes diagnosis harder.
-  - Idempotent: re-running mid-upgrade picks up where it left off.
-  - Read-only when nothing to do: \`up to date\` early-exits with
-    no docker calls, no git changes.
-
-What it does NOT do:
-  - Roll back on failure. If the new release breaks the stack,
-    the agent exits non-zero with a clear "left at partial state"
-    message. Recovery starts with \`ct doctor\`, then the remediation
-    hints printed for any FAIL rows.
-  - Skip prereleases. Currently any tag on origin/main triggers
-    an upgrade. (We don't ship rcs; if we ever do, we'll add an
-    \`--stable-only\` flag and make it the default.)
-  - Notify externally. Logs to stdout/stderr; cron mails the root
-    user the daily output if your local cron is configured to.
+  - Network-aware: aborts cleanly if origin is unreachable.
+  - Uses the same bundle-only ct update path as manual operations.
+  - Read-only when nothing to do.
 
 Exit codes:
   0    up to date, OR upgraded successfully
-  1    upgrade attempted and failed (operator should investigate)
-  2    refused (stack unhealthy / no network / not a git checkout)
+  1    upgrade attempted and failed
+  2    refused (network / git checkout / configuration issue)
 
-Next topic:  ./ct help recover
+Next topic:  ./ct help backup
 `,
     },
     "backup": {
         title: "backup — full deployment snapshot",
         body: `What it does:
   Creates a single tarball containing:
-    - mariadb mysqldump (full schema + data)
-    - caddy_data volume (ACME certs + private keys)
-    - admin_data volume (Better Auth/admin SQLite state)
+    - admin.sqlite copied with SQLite VACUUM INTO
+    - caddy_data and caddy_etc volumes (ACME state and Caddyfile)
     - The current .env file
     - The manifest set
-    - The current Caddyfile template
+    - The Caddyfile template
 
-  Output filename:  backups/cool-tunnel-<UTC-timestamp>.tar.gz
-
-When to run:
-  - Before any major upgrade
-  - Periodically (cron daily is reasonable)
-  - Before destructive operations (drop_database, force-
-    rewrite history, swap hosting providers)
+  Output filename: backups/cool-tunnel-<UTC-timestamp>.tar.gz
 
 What it does NOT include:
   - Container images (reload the matching release image bundle first)
-  - The repo itself (re-clone from git on restore)
+  - The repo itself
   - Operating system / docker daemon state
 
-Use the canonical mode-0600 .env / db credentials, not -a /
---password on argv (the script uses MYSQL_PWD env). See the
-secrets-argv make target for the policy check.
-
-Idempotent: safe to run while the stack is live (uses
-mysqldump --single-transaction and briefly stops the Caddy/panel
-writers while their volumes are archived).
-
-To list existing backups:
-  ls -lh backups/
+The command redacts diagnostics and never puts passwords or tokens on argv.
 
 Next topic:  ./ct help restore
 `,
@@ -353,44 +184,22 @@ Next topic:  ./ct help restore
     "restore": {
         title: "restore — recover from a backup tarball",
         body: `What it does:
-  Reverses 'ct backup'. Given backups/cool-tunnel-<ts>.tar.gz:
-    - Refuses to run over an already-running stack
-    - Imports the mysqldump into mariadb (replacing current
-      schema; existing data is lost)
-    - Restores the caddy_data volume (ACME certs)
-    - Restores the admin_data volume (Better Auth/admin SQLite)
-    - Restores .env, manifests, and Caddyfile template
-    - Restarts the stack
-    - Health check
+  Given backups/cool-tunnel-<ts>.tar.gz:
+    - Refuses unsafe tar members before extraction
+    - Restores admin.sqlite to data/admin/admin.sqlite
+    - Restores Caddy data, .env, manifests, and Caddyfile template
+    - Loads the release image bundle
+    - Restarts admin-api, admin-web, singbox, and caddy
 
 When to run:
-  - Migrating to a new VPS (clone the repo, copy the backup
-    tarball, run 'ct restore <tarball>')
-  - Recovering from a catastrophic incident (DB corruption,
-    accidental rm -rf, etc.)
-  - Testing backup integrity in a staging environment
+  - Migrating to a new VPS
+  - Recovering from SQLite corruption or accidental file deletion
+  - Testing backup integrity in staging
 
 What it does NOT do:
-  - Selective restore (single table, single config file).
-    Use mysqldump + cp manually for partial restores.
-  - Rollback the running release. If the backup was taken
-    on v0.0.X and you currently run v0.0.Y, the restore
-    brings DB schema + config to v0.0.X; the panel image
-    stays at v0.0.Y unless you also 'git checkout v0.0.X'
-    and the matching release image bundle.
-
-DESTRUCTIVE: the import step drops + recreates the cool_tunnel
-database. There is no 'are you sure?' prompt -- run with care.
-
-Common failure modes:
-  - 'database already exists' on re-run -> known issue;
-    'ct restore' drops the DB first now, but very old tarballs
-    may carry a CREATE DATABASE statement that conflicts.
-  - panel does not start post-restore -> usually means the
-    .env in the tarball mismatches the current docker-
-    compose setup (e.g. old REDIS_PASSWORD).
-    Fix: edit .env to match current setup, then
-    'docker compose up -d --force-recreate panel'.
+  - Selective restore of one table or one setting
+  - Rebuild images locally
+  - Publish or expose restored secrets in logs
 
 Next topic:  ./ct help troubleshooting
 `,
@@ -399,54 +208,36 @@ Next topic:  ./ct help troubleshooting
         title: "Troubleshooting — common issues + diagnostic recipes",
         body: `Top issues, ranked by how often they bite operators:
 
-1. Panel container restart-loops
-   - 'docker compose logs --tail=120 panel | head -60'
-   - Look for: BETTER_AUTH_SECRET, invalid DOMAIN/PANEL_DOMAIN,
-     SQLite path/permission errors, or render failures.
+1. Admin API or web container restart-loops
+   - docker compose logs --tail=120 admin-api admin-web
+   - Check BETTER_AUTH_SECRET, BETTER_AUTH_URL, Reality keys, and
+     SQLite volume permissions.
 
 2. Caddy fails to acquire ACME cert
-   - 'docker compose logs --tail=80 caddy | grep -iE "acme|cert"'
-   - Most common: port 80 not reachable from outside (firewall,
-     cloud provider security group blocks).
-   - Test: from a DIFFERENT machine, curl http://<DOMAIN>/.well-
-     known/acme-challenge/test.
+   - docker compose logs --tail=80 caddy | grep -iE "acme|cert"
+   - Most common: port 80 unreachable from outside.
 
 3. DNS A record does not match host IP
-   - Visible in 'ct doctor' as a FAIL on the DNS check.
-   - 'dig +short A <DOMAIN>' to see what the world resolves
-     vs 'curl -s4 https://ifconfig.co' for the host's public IP.
-   - Update DNS, wait ~5-10 min for propagation, re-run doctor.
+   - Visible in ct doctor as a FAIL on the DNS check.
+   - Compare dig +short A <DOMAIN> with curl -s4 https://ifconfig.co.
 
-4. 'ct update' refuses to start ("stack is entirely down")
-   - You probably want 'ct install', not 'ct update'.
-   - But: 'docker compose ps' first to confirm.
+4. /up endpoint returns non-200 or connection-refused
+   - docker compose ps admin-api
+   - docker compose logs --tail=80 admin-api
 
-5. /up endpoint returns non-200 or connection-refused
-   - 'docker compose ps panel' -- is it running?
-   - 'docker compose logs --tail=80 panel' -- did the Bun admin server crash?
+5. Proxy clients fail after UUID rotation
+   - Re-import the masked subscription URL from the admin UI.
+   - Old UUIDs are accepted only during the configured grace window.
 
-6. Doctor shows FAIL
-   - Rerun and read the Remediation block.
-   - Check the service-specific log command printed there.
-
-7. 'git pull' blocked by uncommitted changes
-   - 'ct update' preflight offers s / d / a
-     (stash with label / discard / abort).
-   - Stash with label is recoverable: 'git stash pop'.
-
-8. Retained Redis queue depth growing
-   - 'doctor' shows this in the Info section.
-   - Means a retained background worker is stuck or overloaded.
-     Restart with:
-       docker compose restart panel
-     supervisord will re-spawn managed programs on container restart.
+6. Migration status is not current
+   - Run ct admin migrate.
+   - For v0.5.1 PHP data, stage exports into legacy_users,
+     legacy_proxy_accounts, and legacy_server_configs first.
 
 When asking for help, paste:
-  - The last 40 lines of the script's output
-  - 'docker compose ps' output
-  - The relevant container's last 40 log lines
-
-That's enough for almost any diagnosis.
+  - The last 40 lines of the command output
+  - docker compose ps output
+  - Relevant container logs with secrets redacted
 
 Topics:  ./ct help   (list all)
 `,

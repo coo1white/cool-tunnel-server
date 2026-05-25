@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/render.ts — one-shot config render subcommand.
 //
-// v0.4.0+ has two live render targets:
-//   - caddyfile: ct-server-core still owns the Caddyfile renderer.
-//   - singbox: Bun admin shells to singbox-core.
-// `haproxy` stays retired.
+// v0.5.2 render targets are owned by the Hono API boundary and run
+// inside the admin-api container. Rust remains internal for Caddyfile
+// rendering; singbox-core remains internal for sing-box JSON rendering.
 //
 // Usage:
 //   ct-operator render caddyfile [--if-changed]
@@ -14,8 +13,7 @@
 import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
-import { redactSensitive } from "../util/redact";
-import type { EnvMap } from "../util/env";
+import { renderScript } from "../../install";
 
 const TARGETS = ["caddyfile", "singbox"] as const;
 type Target = typeof TARGETS[number];
@@ -46,14 +44,6 @@ export function parseArgs(argv: readonly string[]): { target: Target; passthroug
     return { target, passthrough };
 }
 
-export function renderFailureSummary(target: Target, code: number, stdout: string, stderr: string, _env: EnvMap = {}): string {
-    const output = `${stdout}\n${stderr}`;
-    if (target === "singbox" && output.includes("rendered sing-box config missing")) {
-        return "singbox render failed: /data/config/singbox.json was not created. Run: ct recover diagnose";
-    }
-    return `${target} render failed (exit ${code}). Run: ct recover diagnose`;
-}
-
 export class RenderTask implements Task {
     readonly name = "render";
 
@@ -71,25 +61,27 @@ export class RenderTask implements Task {
         }
 
         ctx.logger.info(`rendering ${target} config`);
-        const r = target === "singbox"
-            ? await capture($`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts admin render-singbox ${passthrough}`)
-            : await capture($`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts admin render-caddyfile ${passthrough}`);
-        if (r.stdout) process.stdout.write(redactSensitive(r.stdout));
-        if (r.stderr) process.stderr.write(redactSensitive(r.stderr));
+        if (passthrough.length > 0) {
+            ctx.logger.warn("render passthrough flags are ignored by the v0.5.2 admin-api renderer");
+        }
+        const action = target === "caddyfile" ? "render-caddyfile" : "render-singbox";
+        const r = await capture($`docker compose run --rm --no-deps admin-api bun -e ${renderScript(action)}`);
+        if (r.stdout) process.stdout.write(r.stdout);
+        if (r.stderr) process.stderr.write(r.stderr);
         if (!r.ok) {
             return {
                 ok: false,
                 code: r.code || 1,
-                summary: renderFailureSummary(target, r.code, r.stdout, r.stderr, ctx.env),
+                summary: `${target} render failed (exit ${r.code})`,
             };
         }
         if (target === "singbox") {
-            const file = await capture($`docker compose exec -T panel test -s /data/config/singbox.json`);
+            const file = await capture($`docker compose run --rm --no-deps --entrypoint sh admin-api -c ${"test -s /data/config/singbox.json"}`);
             if (!file.ok) {
                 return {
                     ok: false,
                     code: 1,
-                    summary: "singbox render command exited 0 but /data/config/singbox.json is missing or empty. Run: ct recover diagnose",
+                    summary: "singbox render did not write /data/config/singbox.json",
                 };
             }
         }

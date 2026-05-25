@@ -17,7 +17,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Install Rust targets
         run: |
@@ -74,14 +74,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          mkdir -p runtime/checksums
           gh release download "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --pattern SHA256SUMS \
             --dir runtime/checksums \
-            --clobber
-          cat runtime/checksums/SHA256SUMS runtime/SHA256SUMS.runtime \
-            | awk 'NF && !seen[$2]++' \
-            > runtime/SHA256SUMS
+            --clobber || true
+          if [ -s runtime/checksums/SHA256SUMS ]; then
+            cat runtime/checksums/SHA256SUMS runtime/SHA256SUMS.runtime \
+              | awk 'NF && !seen[$2]++' \
+              > runtime/SHA256SUMS
+          else
+            cp runtime/SHA256SUMS.runtime runtime/SHA256SUMS
+          fi
           gh release upload "${GITHUB_REF_NAME}" runtime/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" \
             --clobber

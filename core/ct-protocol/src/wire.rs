@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// JSON wire types for the panel ↔ ct-server-core daemon channel.
+// JSON wire types for the admin ↔ ct-server-core daemon channel.
 //
 // Same shape as the macOS client's Request/Response/Event split, so
 // future cross-platform clients can reuse the dispatch idiom.
@@ -58,7 +58,7 @@ pub enum WireResponseV1 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WireEventV1 {
-    /// A reload landed; the panel can refresh its "last reloaded"
+    /// A reload landed; the admin UI can refresh its "last reloaded"
     /// timestamp without polling.
     CaddyReloaded { hash: String },
     /// An account hit its quota and was disabled.

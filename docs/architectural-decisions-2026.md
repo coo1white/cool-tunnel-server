@@ -2,7 +2,7 @@
 
 This repository previously carried a long historical audit manual for the retired PHP/Laravel/Filament panel. The current architecture is intentionally smaller:
 
-- Bun/TypeScript owns the operator CLI, admin web server, Better Auth integration, first-owner setup, roles, diagnostics, and docs.
+- Next.js owns the admin dashboard, Hono/Bun owns the admin API, and Bun/TypeScript owns the operator CLI.
 - SQLite is the default admin/account database.
 - MariaDB and Redis are retained only where existing core runtime behavior still requires them.
 - Rust remains the internal trusted core for protocol, render, daemon, and runtime logic.

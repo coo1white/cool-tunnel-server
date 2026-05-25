@@ -2,9 +2,9 @@
 
 COOL TUNNEL SERVER is the **server-side** companion to the
 [Cool Tunnel](https://github.com/coo1white/cool-tunnel) macOS client.
-It bundles a sing-box VLESS+Reality server runtime with a minimal
-Bun/Hono/Better Auth admin panel for owner bootstrap, account
-management, diagnostics, service actions, and config rendering.
+It runs a sing-box VLESS + Reality proxy runtime with a Next.js admin
+dashboard, Hono/Bun API, Better Auth sessions, SQLite storage, audit
+logs, proxy-account management, and config rendering.
 
 It is provided **as-is**, for educational and research purposes only.
 
@@ -14,8 +14,8 @@ This software is intended for legitimate uses such as:
 
 - Operating a personal proxy on infrastructure **you own** or are
   **explicitly authorised** to use.
-- Learning how sing-box VLESS+Reality, Caddy's SNI routing, and a
-  local Rust control-plane daemon interact in a small VPS deployment.
+- Learning how sing-box VLESS + Reality, Caddy SNI routing, and admin
+  control-plane boundaries interact.
 - Performing security research, auditing, and academic study of
   HTTPS-disguised proxy protocols.
 
@@ -37,10 +37,10 @@ and agree that:
    no preconfigured server, no embedded credentials, no directory of
    public servers, and contacts no remote service except the ACME
    directory (Let's Encrypt by default) you point it at.
-3. **You will keep credentials secret.** Account and proxy credentials
-   are stored in the configured account database; any cleartext
-   material shown during setup or provisioning must be protected like
-   SSH keys.
+3. **You will keep proxy credentials secret.** Admin passwords are
+   hashed, sessions are cookie-based, and subscription URLs/UUIDs are
+   bearer material. Anyone with those credentials can use or administer
+   the deployment within the permissions they grant.
 4. **You are responsible for your users.** If you create accounts for
    third parties, the terms of use you offer them, the data you log,
    and the lawful-intercept obligations of your jurisdiction are
@@ -86,11 +86,11 @@ licenses for anyone who downloaded them:
 - **v0.0.63 onward** — AGPL-3.0-only, Copyright (C) 2026 coolwhite LLC
 
 The third-party open-source components this stack builds and runs
-(Caddy, sing-box, Bun, Hono, Better Auth, the SQLx / hyper / tokio /
-redis crate families, MariaDB, Redis) retain their
-own upstream licences and must be preserved in any
-redistribution — see [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)
-and [NOTICE](./NOTICE).
+(Caddy, sing-box, Bun, Next.js, React, Hono, Better Auth, TypeScript,
+SQLite, and Rust/Cargo dependencies) retain their own upstream
+licences and must be preserved in any redistribution. See
+[THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md) and
+[NOTICE](./NOTICE).
 
 The Software is provided **without any warranty** — express or
 implied — including without limitation the warranties of
@@ -109,14 +109,13 @@ software.
 COOL TUNNEL SERVER, by design, processes proxy traffic on behalf of
 its users. The default configuration:
 
-- **Logs no request URLs or response bodies.** Only aggregate per-user
-  byte counters (uplink / downlink) and connection counts are recorded
-  for quota enforcement.
-- **Keeps the Rust core behind local-only process/socket boundaries.**
-- **Uses VLESS+Reality camouflage**, so unauthenticated probes do not
-  receive an admin or proxy-management surface.
-- **Stores no payment data, real names, or device identifiers.** The
-  panel only asks for an admin email used for ACME registration.
+- **Logs no request URLs or response bodies by default.**
+- **Redacts passwords, cookies, tokens, UUIDs, subscription URLs,
+  database URLs, and private keys in diagnostics and operator output.**
+- **Stores no payment data, real names, device identifiers, telemetry,
+  analytics, or hidden phone-home state.**
+- **Uses a token-gated first-owner setup flow with no default
+  credentials and no public signup by default.**
 
 The operator can choose to log more (e.g. enable Caddy access logs)
 or less. Any additional logging beyond the defaults is entirely the
@@ -129,15 +128,14 @@ COOL TUNNEL SERVER builds and runs the following third-party software
 unmodified. Their licenses are reproduced or referenced in
 [NOTICE](./NOTICE) and must be preserved in any redistribution:
 
-- [Caddy](https://github.com/caddyserver/caddy) — Apache-2.0
-  (stock; ACME provider only — manages the TLS cert via Let's
-  Encrypt and writes it to a shared volume that sing-box reads)
-- [sing-box](https://github.com/SagerNet/sing-box) — GPL-3.0
-  (the actively-maintained proxy runtime we use; bundled as a
-  separate process, not statically linked)
-- [Bun](https://github.com/oven-sh/bun) — MIT
-- [Hono](https://github.com/honojs/hono) — MIT
-- [Better Auth](https://github.com/better-auth/better-auth) — MIT
+- [Caddy](https://github.com/caddyserver/caddy) - Apache-2.0
+- [sing-box](https://github.com/SagerNet/sing-box) - GPL-3.0
+- [Bun](https://github.com/oven-sh/bun) - MIT
+- [Next.js](https://github.com/vercel/next.js) - MIT
+- [React](https://github.com/facebook/react) - MIT
+- [Hono](https://github.com/honojs/hono) - MIT
+- [Better Auth](https://github.com/better-auth/better-auth) - MIT
+- [TypeScript](https://github.com/microsoft/TypeScript) - Apache-2.0
 
 ## Reporting security issues
 

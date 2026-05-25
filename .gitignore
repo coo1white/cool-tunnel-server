@@ -2,11 +2,42 @@
 .env
 .env.*.local
 
-# Bun/TypeScript runtime artifacts
-operator/node_modules/
+# JavaScript workspace build artifacts.
+node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
+apps/*/.next/
+apps/*/*.tsbuildinfo
+apps/*/dist/
+packages/*/dist/
+operator/dist/
 singbox-core/node_modules/
+singbox-core/dist/
 singbox-core/bin/
-operator/bin/
+
+# Retired PHP panel artifacts from old checkouts.
+panel/vendor/
+panel/node_modules/
+panel/frankenphp
+panel/.phpunit.cache/
+panel/storage/app/*
+!panel/storage/app/.gitkeep
+panel/storage/framework/cache/data/*
+!panel/storage/framework/cache/data/.gitkeep
+panel/storage/framework/cache/*.php
+panel/storage/framework/sessions/*
+!panel/storage/framework/sessions/.gitkeep
+panel/storage/framework/views/*
+!panel/storage/framework/views/.gitkeep
+panel/storage/logs/*
+!panel/storage/logs/.gitkeep
+panel/bootstrap/cache/*
+!panel/bootstrap/cache/.gitkeep
+panel/public/storage
+panel/public/hot
+panel/public/css/
+panel/public/js/
+panel/public/vendor/
 
 # Generated Caddyfile (lives in a Docker volume in prod; locally we
 # don't want to commit a rendered file with secrets in it).
@@ -22,6 +53,7 @@ caddy/Caddyfile.rendered
 backups/
 diagnostics/
 release-assets/
+data/
 *.tar
 *.tar.gz
 
@@ -41,5 +73,6 @@ core/bin/
 .claude/
 state/
 results/
+panel/.env.bak*
 # Audit reports are VPS evidence, not git history (compliance via VPS file retention)
 docs/audits/

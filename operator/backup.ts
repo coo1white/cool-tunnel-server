@@ -1,185 +1,74 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
-// operator/backup.ts — `ct backup` implementation.
-//
-// Snapshot the deployment's state into a single timestamped tarball
-// under ./backups/. Contents:
-//   - db.sql                 mariadb-dump (consistent, single-tx)
-//   - caddy_data.tgz         caddy ACME state (cert + private keys)
-//   - admin_data.tgz         Better Auth/admin SQLite state
-//   - .env                   secrets + tenant config
-//   - manifests/             release manifest set
-//
-// File mode is 0600 (operator-only) per the round-9 DR audit; the
-// tarball contains auth/database secrets and persisted state —
-// world-readable mode is a confidentiality bug.
-//
-// Single-flight: re-execs itself under `flock -n` so two concurrent
-// backups (or a concurrent install / update / restore) can't race.
-// Per-project lock means parallel deployments on the same host
-// (e.g. /opt/ct-prod and /opt/ct-staging) don't serialise against
-// each other — matches scripts/lib.sh::acquire_op_lock.
 
-import { mkdirSync, rmSync, chmodSync, mkdtempSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { backupAdminSqlite } from "@cool-tunnel/db";
+import { bootstrapMaterialPath, loadAdminConfig } from "@cool-tunnel/config";
 import { $, capture } from "./src/util/sh";
-import { loadDotenv } from "./src/util/env";
 import { composeProjectName, serviceRunning } from "./src/util/compose";
 import { die, makeTerm } from "./src/util/term";
 import { acquireOpLock, LOCK_HELD_MARKER } from "./src/util/op-lock";
 import { ensureRepoRoot } from "./src/util/repo-root";
+import { loadDotenv, mergeEnv } from "./src/util/env";
 
-const { step, ok, warn } = makeTerm();
+const { step, ok } = makeTerm();
 
-export function backupDatabaseFailureHint(stderr: string): string {
-    const detail = stderr.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 3).join(" / ");
-    if (/Access denied/i.test(stderr)) {
-        return "MariaDB rejected DB_ROOT_PASSWORD from .env. Check DB_ROOT_PASSWORD matches the running ct-db container, then run: docker compose logs --tail=80 db";
-    }
-    if (/Unknown database/i.test(stderr)) {
-        return "DB_DATABASE from .env does not exist in MariaDB. Check DB_DATABASE in .env and run: docker compose exec -T db mariadb -u root -e 'SHOW DATABASES;'";
-    }
-    if (/Can't connect|Connection refused|Name or service not known|Temporary failure/i.test(stderr)) {
-        return "ct-db is not reachable. Run: docker compose ps db && docker compose logs --tail=80 db";
-    }
-    return detail || "Run: docker compose ps db && docker compose logs --tail=80 db";
-}
-
-async function dumpDatabase(env: Record<string, string>, dest: string): Promise<void> {
-    const dbPw = env["DB_ROOT_PASSWORD"] ?? "";
-    const dbName = env["DB_DATABASE"] ?? "cooltunnel";
-    step("Dump MariaDB (consistent snapshot)");
-    // Pass the password via MYSQL_PWD env so it never lands in argv
-    // (visible in `ps -ef`). mariadb-dump auto-reads it when no -p
-    // is given. v0.0.17 supply-chain hygiene.
-    const r = await capture(
-        $`docker compose exec -T -e MYSQL_PWD=${dbPw} db mariadb-dump --single-transaction --quick --routines --triggers -u root ${dbName} > ${dest}`,
-    );
-    if (!r.ok) {
-        die(
-            `mariadb-dump failed (exit ${r.code})`,
-            backupDatabaseFailureHint(r.stderr),
-        );
-    }
-    ok("db.sql written");
-}
-
-async function snapshotVolume(volumeName: string, tmpDir: string, destName: string, label: string, serviceToQuiesce: "caddy" | "panel"): Promise<void> {
-    step(`Snapshot ${volumeName} volume (${label})`);
-    // Quiesce the writer first: Caddy may be renewing cert files,
-    // and panel owns the SQLite WAL under admin_data.
-    const wasRunning = await serviceRunning(serviceToQuiesce);
-    if (wasRunning) {
-        const stopped = await capture($`docker compose stop ${serviceToQuiesce}`);
-        if (!stopped.ok) {
-            die(
-                `could not stop ${serviceToQuiesce} before backing up ${volumeName}`,
-                stopped.stderr.split("\n")[0] || `Run: docker compose logs --tail=80 ${serviceToQuiesce}`,
-            );
-        }
-    }
-    let r;
+async function snapshotVolume(volumeName: string, tmpDir: string, destName: string): Promise<void> {
+    const wasRunning = await serviceRunning("caddy");
+    if (wasRunning) await capture($`docker compose stop caddy`);
+    let result;
     try {
         const cwd = process.cwd();
-        r = await capture(
+        result = await capture(
             $`docker run --pull never --rm --entrypoint sh -v ${`${volumeName}:/data:ro`} -v ${`${cwd}/${tmpDir}:/out`} cool-tunnel-server-caddy:latest -c ${`cd /data && tar czf /out/${destName} .`}`,
         );
     } finally {
-        if (wasRunning) {
-            const started = await capture($`docker compose start ${serviceToQuiesce}`);
-            if (!started.ok) {
-                warn(`${serviceToQuiesce} did not restart after backup snapshot: ${started.stderr.split("\n")[0] || `exit ${started.code}`}`);
-                warn(`run: docker compose start ${serviceToQuiesce} && docker compose logs --tail=80 ${serviceToQuiesce}`);
-            }
-        }
+        if (wasRunning) await capture($`docker compose start caddy`);
     }
-    if (!r.ok) {
-        die(`tar of ${volumeName} volume failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
-    }
-    ok(`${destName} written (from volume ${volumeName})`);
+    if (!result.ok) die(`tar of ${volumeName} failed`, result.stderr.split("\n")[0] ?? "");
 }
 
-async function bundleTarball(outPath: string, tmpDir: string): Promise<void> {
-    step(`Bundle into ${outPath}`);
-    const r = await capture(
-        $`tar -czf ${outPath} -C ${tmpDir} db.sql caddy_data.tgz admin_data.tgz -C .. .env manifests caddy/Caddyfile.tpl`,
-    );
-    if (!r.ok) {
-        die(`tar bundle failed (exit ${r.code})`, r.stderr.split("\n")[0] ?? "");
-    }
-    chmodSync(outPath, 0o600);
-}
-
-// Exported entrypoint so the standalone CLI here and the
-// operator/src/tasks/backup.ts wrapper share one implementation.
 export async function runBackup(): Promise<number> {
-    // The tarball contains .env (BETTER_AUTH_SECRET, DB_ROOT_PASSWORD,
-    // REDIS_PASSWORD) and persisted runtime state. World-readable would
-    // let any other user on the host recover secrets. Mode 0600 on the
-    // tarball + intermediate tmp/* files.
     process.umask(0o077);
-
-    // Resolve cwd to repo root so relative paths (.env, manifests,
-    // caddy/) resolve correctly when invoked from anywhere.
-    // `ensureRepoRoot` is /$bunfs-safe; see its
-    // docstring for the dev-vs-compiled-binary detection.
     ensureRepoRoot(import.meta.url);
+    if (!Bun.which("docker")) die("required command 'docker' is not on PATH", "Install Docker and retry.");
+    if (!process.env[LOCK_HELD_MARKER]) await acquireOpLock();
 
-    // Pre-flight checks. Bash original calls require_file / require_docker
-    // before locking; we do the same.
-    const envExists = await Bun.file(".env").exists();
-    if (!envExists) {
-        die("required file '.env' is missing", `cp .env.example .env  &&  $EDITOR .env`);
-    }
-    if (!Bun.which("docker")) {
-        die("required command 'docker' is not on PATH", "Install per docs/installation-debian.md");
-    }
-
-    // Single-flight lock via flock re-exec. Skip when already in
-    // the locked child.
-    if (!process.env[LOCK_HELD_MARKER]) {
-        await acquireOpLock();
-    }
-
-    const loaded = await loadDotenv([".env"]);
-    const env = loaded?.env ?? {};
-
-    const ts = new Date()
-        .toISOString()
-        .replace(/\.\d+Z$/, "Z")
-        .replace(/:/g, "-");
+    const dotenv = await loadDotenv([".env"]);
+    const config = loadAdminConfig(mergeEnv(process.env as Record<string, string>, dotenv?.env ?? null));
+    const ts = new Date().toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");
     const out = `backups/cool-tunnel-${ts}.tar.gz`;
     mkdirSync("backups", { recursive: true });
     mkdirSync("tmp", { recursive: true });
     const tmpDir = mkdtempSync("tmp/backup-");
 
     try {
-        await dumpDatabase(env, `${tmpDir}/db.sql`);
+        step("Snapshot admin SQLite database");
+        backupAdminSqlite(config.dbPath, `${tmpDir}/admin.sqlite`);
+        ok("admin.sqlite written");
 
+        step("Snapshot Caddy ACME state");
         const project = await composeProjectName();
-        const caddyDataVolume = `${project}_caddy_data`;
-        await snapshotVolume(caddyDataVolume, tmpDir, "caddy_data.tgz", "ACME certificates + private keys", "caddy");
+        await snapshotVolume(`${project}_caddy_data`, tmpDir, "caddy_data.tgz");
+        ok("caddy_data.tgz written");
 
-        const adminDataVolume = `${project}_admin_data`;
-        await snapshotVolume(adminDataVolume, tmpDir, "admin_data.tgz", "Better Auth/admin SQLite state", "panel");
-
-        await bundleTarball(out, tmpDir);
-
-        const ls = await capture($`ls -lh ${out}`);
-        const sizeAndPath = ls.ok
-            ? ls.stdout.split(/\s+/).slice(4, 6).join(" ").trim()
-            : out;
-        ok(`wrote ${sizeAndPath} (mode 0600 — operator-only)`);
-    } finally {
-        try {
-            rmSync(tmpDir, { recursive: true, force: true });
-        } catch {
-            // best effort
+        step(`Bundle into ${out}`);
+        const material = bootstrapMaterialPath(config);
+        const tar = await capture(
+            $`tar -czf ${out} -C ${tmpDir} admin.sqlite caddy_data.tgz -C .. .env manifests caddy/Caddyfile.tpl package.json pnpm-lock.yaml`,
+        );
+        if (!tar.ok) die(`tar bundle failed (exit ${tar.code})`, tar.stderr.split("\n")[0] ?? "");
+        chmodSync(out, 0o600);
+        ok(`wrote ${out} (mode 0600)`);
+        if (await Bun.file(material).exists()) {
+            ok(`bootstrap material remains root-only at ${material}`);
         }
+    } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
     }
     return 0;
 }
 
 if (import.meta.main) {
-    const code = await runBackup();
-    process.exit(code);
+    process.exit(await runBackup());
 }

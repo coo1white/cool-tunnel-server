@@ -35,7 +35,7 @@ exists.
 | **A** | `a_connections.sh` | sing-box's TCP backlog + HTTP/2 multiplexing under 100/500/1000 concurrent CONNECT requests |
 | **B** | `b_throughput.sh` | RSS ceiling under sustained traffic (iperf3 over CONNECT for 60s) |
 | **E** | `e_cert_renewal.sh` | cert-mtime → render-hash chain reloads sing-box on Caddy renewal |
-| **F** | `f_failure_recovery.sh` | Kill sing-box / Redis / MariaDB; what stays up, what auto-recovers |
+| **F** | `f_failure_recovery.sh` | Kill sing-box / admin-api / admin-web; what stays up, what auto-recovers |
 
 A, B, E, and F are plan slots. The old C and G scripts were retired
 with the pre-v0.4 revocation and Naive/basic-auth runtime. New live
@@ -83,12 +83,12 @@ release tagging.
 
 The stress harness assumes:
 
-- The full stack is up: `docker compose ps` shows all 5
+- The full stack is up: `docker compose ps` shows all 4
   containers `Up`.
-- `.env` is populated (DOMAIN, DB_*, REDIS_*).
-- A Bun admin/operator command for stress provisioning exists that
-  idempotently creates a `stress-runner` proxy account and
-  prints `{"id": …, "uuid": …}` JSON.
+- `.env` is populated (`DOMAIN`, `PANEL_DOMAIN`, `ACME_EMAIL`,
+  `BETTER_AUTH_SECRET`, and Reality keys).
+- Use `ct admin bootstrap` to create or recover an owner, then create
+  a `stress-runner` proxy account through the admin UI/API.
 
 Tests that need workload generators (wrk, vegeta, iperf3) bring
 them up via ephemeral containers attached to the project's

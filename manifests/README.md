@@ -3,65 +3,51 @@
 Upstream-pin manifests — one JSON file per swappable component.
 
 This is the **component-as-machine-part** model. Every replaceable
-piece of the stack (Rust core, ct-protocol crate, panel, MariaDB,
-Redis, ...) is described by exactly one `*.upstream.json` here. The
-format is shared across server and every Rust-cored client via
-`ct-protocol::components`, so a manifest you write here can be
-consumed unchanged by a future iOS / Android / Windows / Linux
-desktop client.
+piece of the current stack (Caddy, admin API, admin web, Rust core,
+ct-protocol crate, client runtime catalog, and deployment guards) is
+described by a `*.upstream.json` file here. Retired component manifests
+may remain with `kind: retired-*` so release audits can keep old
+services from reappearing by accident.
 
 ## What lives here
 
 | File | Component | Why pinned |
 | --- | --- | --- |
 | `caddy.upstream.json` | Stock Caddy 2 + `mholt/caddy-l4` (xcaddy build) | ACME + SNI router; reads cert from shared volume |
-| `ct-server-core.upstream.json` | The Rust engine binary | Versioned alongside the operator/admin layer |
+| `admin-api.upstream.json` | Bun/Hono API container | Better Auth, RBAC, SQLite, subscription output, status, and render boundary |
+| `admin-web.upstream.json` | Next.js admin container | Operator dashboard |
+| `ct-server-core.upstream.json` | Internal Rust engine binary | Release compatibility and daemon/protocol internals |
 | `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform contract |
-| `panel.upstream.json` | The Bun/Hono admin panel container | Boot-check via Bun admin doctor |
 | `client-runtime.upstream.json` | Portable client runtime catalog | Server-owned `sing-box` + `cool-tunnel-core` package for macOS today and future Android / Windows / iOS / Linux clients |
-| `mariadb.upstream.json` | The DB container | Major-version drift is a flag |
-| `redis.upstream.json` | Runtime cache/compatibility container | Same |
+| `mariadb.upstream.json` | Retired DB container | Historical marker; v0.5.2 uses SQLite |
+| `redis.upstream.json` | Retired cache/queue container | Historical marker; v0.5.2 has no Redis runtime |
 | `credential-lock.upstream.json` | Credential-lock guard | Deployment invariant |
 | `doh-resolver.upstream.json` | DoH resolver reachability | Captive-portal / poisoner catch |
 
 ## OK / NG check
 
 ```sh
-# From inside the panel container, or anywhere ct-server-core is on PATH.
-ct-server-core component check --manifests /srv/manifests
+ct doctor
 ```
 
-Output is a one-line-per-component status table:
-
-```
- OK  ct-protocol             pinned=0.0.1                installed=0.0.1
- OK  ct-server-core          pinned=0.0.1                installed=0.0.1
- OK  mariadb                 pinned=11                   installed=11.4.2
- OK  panel                   pinned=0.0.1                installed=ct-admin
- OK  redis                   pinned=7-alpine             installed=redis-cli 7.2
-```
-
-Use `ct doctor` or `ct-server-core component check` to refresh the
-same data from the deployed stack.
+`ct doctor` is the supported deployed-stack health gate. It checks the
+Docker services, admin API status, SQLite schema, rendered config, SNI
+routing, and release assets.
 
 ## Updating a component
 
 1. Bump the `version` in the relevant `*.upstream.json`.
 2. (For containers) update the corresponding base image tag in
    `docker/<service>/Dockerfile` or `docker-compose.yml`.
-3. (For Rust workspace crates) bump in `core/Cargo.toml`'s
-   `workspace.package.version`.
-4. `ct update` rebuilds, runs `component check`, and reports any
-   NG before swapping the running container.
-
-If `component check` reports NG after the swap, `ct update` rolls
-back the image and surfaces the diagnostic.
+3. (For app/package versions) keep `package.json`, app/package
+   package manifests, and app manifests aligned.
+4. `ct update` loads release images, migrates SQLite, renders config,
+   restarts the stack, and reports any FAIL through `ct doctor`.
 
 ## Why JSON, not TOML / YAML?
 
-Because the same files are read by Rust (server + every client) and
-Bun/TypeScript (operator/admin tooling). JSON is the lowest common
-denominator.
+Because the same files are read by release tooling, the operator, and
+client/runtime consumers. JSON is the lowest common denominator.
 
 ## Portable Runtime Catalog
 

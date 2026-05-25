@@ -71,7 +71,8 @@ AI-generated patches must preserve these invariants:
 - Operator-health observability remains separate from per-user analytics.
 - Config rendering must fail before writing or reloading partial output.
 - All network-boundary failures must be typed, recoverable, and documented.
-- Boundary traits must stay small enough that generated tests can mock them without live Docker, MariaDB, Redis, or public internet.
+- Boundary traits must stay small enough that generated tests can mock
+  them without live Docker, SQLite files, or public internet.
 
 ## Suggested Property Tests
 

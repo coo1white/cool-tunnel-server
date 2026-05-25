@@ -57,5 +57,15 @@ export function mergeEnv(base: EnvMap, overlay: EnvMap | null): EnvMap {
     for (const [k, v] of Object.entries(base)) {
         if (v !== undefined) out[k] = v;
     }
+    if (out["PANEL_DOMAIN"]) {
+        const betterAuthUrl = out["BETTER_AUTH_URL"];
+        const appUrl = out["APP_URL"];
+        if (betterAuthUrl !== undefined) out["BETTER_AUTH_URL"] = expandEnvRefs(betterAuthUrl, out);
+        if (appUrl !== undefined) out["APP_URL"] = expandEnvRefs(appUrl, out);
+    }
     return out;
+}
+
+function expandEnvRefs(value: string, env: EnvMap): string {
+    return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, key: string) => env[key] ?? "");
 }

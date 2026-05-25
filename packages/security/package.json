@@ -1,0 +1,17 @@
+{
+  "name": "@cool-tunnel/security",
+  "version": "0.5.2",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test tests"
+  },
+  "dependencies": {
+    "@cool-tunnel/shared": "workspace:*"
+  }
+}

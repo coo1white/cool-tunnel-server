@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Shared `SQLx` pool and DB queries.
+//! Shared SQLx pool and DB queries.
 //!
 //! COMPILE-TIME SQL TYPE CHECKING (v0.0.11+).
 //!
@@ -9,15 +9,14 @@
 //! `SQLX_OFFLINE=true` to validate every query against that
 //! frozen metadata at `cargo check` time. Schema regressions
 //! (column dropped, retyped, renamed) fail the build, never
-//! production. See `docs/sqlx-offline.md` and the
-//! `make sqlx-prepare` target.
+//! production. See `docs/sqlx-offline.md`.
 //!
-//! Type-mapping notes for the retained `MariaDB` core tables:
-//!   - unsigned integer IDs are cast to `i64` at the struct boundary;
-//!     primary-key IDs in any plausible deployment are nowhere near
-//!     2^63 so the cast is lossless.
-//!   - `TINYINT(1)` values become `i8`; we compare `!= 0` for bools.
-//!   - nullable timestamp columns return
+//! Type-mapping notes:
+//!   - Unsigned id columns return `u64`. We cast to `i64` at the
+//!     struct boundary; primary-key IDs in any plausible deployment are
+//!     nowhere near 2^63 so the cast is lossless.
+//!   - `TINYINT(1)` returns `i8`. We compare `!= 0` for bool fields.
+//!   - Nullable timestamp columns return
 //!     `Option<chrono::DateTime<chrono::Utc>>` with the chrono feature.
 
 use crate::domain::ServerConfig;
@@ -30,7 +29,7 @@ use std::time::Duration;
 pub async fn connect(database_url: &Option<String>) -> Result<MySqlPool> {
     // Resolve connection options. Prefer URL-style (`--database-url`
     // or `DATABASE_URL`) when present; otherwise build options from
-    // the discrete `DB_*` env vars supplied by the deployment.
+    // the discrete `DB_*` env vars retained for legacy Rust paths.
     //
     // The discrete-vars path was previously formatted into a
     // `mysql://user:pass@host:port/db` URL and re-parsed by sqlx,
@@ -62,9 +61,9 @@ pub async fn connect(database_url: &Option<String>) -> Result<MySqlPool> {
 }
 
 /// Build typed sqlx connection options from the discrete `DB_*`
-/// env vars supplied by the deployment. Pure over an env-var lookup
-/// closure so the v0.0.25 regression test can inject values without
-/// mutating the process environment.
+/// env vars retained for legacy Rust paths. Pure over an env-var lookup
+/// closure so the v0.0.25 regression test can inject values
+/// without mutating the process environment.
 fn options_from_env<F>(get: F) -> MySqlConnectOptions
 where
     F: Fn(&str) -> Option<String>,
@@ -134,7 +133,7 @@ mod tests {
 
     #[test]
     fn defaults_match_compose_env_block() {
-        // No env vars at all → docker-compose's panel env block has
+        // No env vars at all -> legacy compose env blocks used
         // DB_HOST=db, DB_PORT=3306; defaults must agree so a stripped
         // .env doesn't drift the rendered config off the compose
         // network's reachable host.

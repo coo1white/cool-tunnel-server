@@ -11,26 +11,21 @@
 //      after APP_URL=https://${PANEL_DOMAIN}/admin, leaving compose
 //      with "The PANEL_DOMAIN variable is not set" warnings on
 //      every invocation.
-//   3. Substitute `APP_URL=https?://${DOMAIN}` → `…${PANEL_DOMAIN}`.
+//   3. Substitute `APP_URL=https?://${DOMAIN}` → `…${PANEL_DOMAIN}`
+//      (the pre-v0.0.68 APP_URL shape causes Livewire 3 419s).
 //   4. Backfill sing-box direct outbound dial defaults so old VPSes
 //      pick up the persistent IPv4-only renderer behaviour.
-//   5. Backfill `BETTER_AUTH_SECRET` for Better Auth cookie/session
-//      signing. First-owner creation uses one-time tokens, not a
-//      default password.
 //
 // Pure: each function takes `.env` text in, returns the new text +
 // a Change descriptor describing what (if anything) was rewritten.
 // I/O happens in the caller (operator/update.ts).
-
-import { ensureAdminAuthSecret, generateAdminAuthSecret } from "./bootstrap-admin";
 
 export interface EnvChange {
     readonly phase:
         | "panel-domain-backfill"
         | "panel-domain-relocate"
         | "app-url-fix"
-        | "singbox-direct-defaults"
-        | "better-auth-secret";
+        | "singbox-direct-defaults";
     readonly summary: string;
 }
 
@@ -214,39 +209,11 @@ export function backfillSingboxDirectDefaults(content: string): { content: strin
     };
 }
 
-// ---------- Phase 5: Better Auth secret ----------
-
-export function backfillBetterAuthSecret(
-    content: string,
-    generate: () => string = generateAdminAuthSecret,
-): { content: string; change: EnvChange | null } {
-    const ensured = ensureAdminAuthSecret(content, generate);
-    if (!ensured.changed) {
-        return { content, change: null };
-    }
-
-    const contentWithNote = ensured.content.replace(
-        /^BETTER_AUTH_SECRET=/m,
-        "# Bun/Hono admin auth secret. Keep private; used to sign Better Auth sessions.\nBETTER_AUTH_SECRET=",
-    );
-
-    return {
-        content: contentWithNote,
-        change: {
-            phase: "better-auth-secret",
-            summary: "added BETTER_AUTH_SECRET to .env",
-        },
-    };
-}
-
-// ---------- Composer ----------
+// ---------- Migration composer ----------
 
 // Run all phases in order on a .env body. Each phase is
 // idempotent — a no-op on already-canonical input.
-export function migrateEnv(
-    content: string,
-    generateAuthSecret: () => string = generateAdminAuthSecret,
-): EnvMigrationResult {
+export function migrateEnv(content: string): EnvMigrationResult {
     const changes: EnvChange[] = [];
     let warning: string | undefined;
     let cur = content;
@@ -267,10 +234,6 @@ export function migrateEnv(
     const p4 = backfillSingboxDirectDefaults(cur);
     cur = p4.content;
     if (p4.change) changes.push(p4.change);
-
-    const p5 = backfillBetterAuthSecret(cur, generateAuthSecret);
-    cur = p5.content;
-    if (p5.change) changes.push(p5.change);
 
     return { content: cur, changes, warning };
 }

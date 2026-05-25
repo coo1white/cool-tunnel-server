@@ -2,7 +2,7 @@
 // Component-as-machine-part model.
 //
 // Every replaceable piece of the Cool Tunnel stack — Rust core,
-// ct-protocol crate, sing-box engine, Caddy, the panel — is described
+// ct-protocol crate, sing-box engine, Caddy, admin API/web — is described
 // by a `ComponentManifestV1`. The manifest
 // pins what we expect to find; a platform-specific verifier reports
 // whether what's installed matches.
@@ -10,9 +10,8 @@
 // The manifest is the same shape on every platform: server and
 // every Rust-cored client (macOS today, iOS / Android / Windows /
 // Linux desktop tomorrow) link the same struct definitions. That
-// means a "Components" page in the panel and a "Components" tab in
-// the macOS client render the same data, and the OK/NG semantics
-// are identical.
+// means an admin "Components" page and a client "Components" tab can
+// render the same data, and the OK/NG semantics are identical.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -21,7 +20,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ComponentManifestV1 {
     /// Stable slug — `singbox`, `caddy`, `ct-server-core`,
-    /// `ct-protocol`, `panel`, etc.
+    /// `ct-protocol`, `admin-api`, etc.
     pub name: String,
 
     /// What kind of artifact — different verifiers handle each.
@@ -58,13 +57,13 @@ pub enum ComponentKindV1 {
     Binary,
     /// A Cargo crate inside our workspace.
     RustCrate,
-    /// A Docker / OCI image (the panel container, the caddy container).
+    /// A Docker / OCI image (the admin-api container, the caddy container).
     ContainerImage,
-    /// A legacy PHP package / Composer dependency.
+    /// Retired package kind retained for manifest compatibility.
     PhpPackage,
     /// External DoH-over-HTTPS endpoint reachability check.
     /// The verifier reads the LIVE `ServerConfig.doh_resolver` URL
-    /// (panel-editable, not the manifest's value) and dispatches an
+    /// (admin-editable, not the manifest's value) and dispatches an
     /// RFC 8484 binary `DoH` query for `example.com IN A`. A
     /// non-zero ANCOUNT in the response means the resolver
     /// answered a real query — covers the v0.0.22 survival case
@@ -90,8 +89,8 @@ pub struct VerifySpecV1 {
     /// Liveness-probe declaration. True when the verifier
     /// legitimately has no version line to print — TCP-open
     /// (`bash -c 'exec 3<>/dev/tcp/host/port'`), HTTP reachability
-    /// (`curl -sIo /dev/null …`), or another command with no stable
-    /// version line. When true, the soft version
+    /// (`curl -sIo /dev/null …`), artisan-boot (`php artisan
+    /// --version > /dev/null`). When true, the soft version
     /// matcher is skipped; any verify-passed result is OK
     /// regardless of stdout content. False / unset preserves the
     /// pre-v0.0.37 behaviour exactly: a non-empty first stdout
@@ -256,8 +255,8 @@ mod tests {
     #[test]
     fn doh_endpoint_kind_round_trips_through_json() {
         // The v0.0.22 DohEndpoint variant must serialise as the
-        // kebab-case "doh-endpoint" — both the panel UI's
-        // "Components" tab and the manifest file use this form.
+        // kebab-case "doh-endpoint" — both the admin UI and the
+        // manifest file use this form.
         // A regression to PascalCase ("DohEndpoint") would
         // silently break manifest parsing on every release.
         let m = ComponentManifestV1 {
@@ -283,7 +282,7 @@ mod tests {
     // Pin the field-name AND the snake_case enum representation so
     // future status consumers keep seeing the same JSON contract.
     #[test]
-    fn component_status_json_pins_legacy_visible_keys() {
+    fn component_status_json_pins_consumer_visible_keys() {
         let s = ComponentStatusV1 {
             name: "caddy".into(),
             installed_version: Some("v2.8.4".into()),
@@ -295,7 +294,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&j).unwrap_or(serde_json::Value::Null);
         assert!(
             v.get("state").is_some(),
-            "panel reads `state` for OK/NG count: {j}"
+            "consumer reads `state` for OK/NG count: {j}"
         );
         assert_eq!(
             v["state"], "ok",
@@ -306,7 +305,7 @@ mod tests {
 
         // And the four NG-class variants must serialise as their
         // documented snake_case forms — anything else also breaks
-        // the panel's OK/NG count.
+        // the consumer's OK/NG count.
         for (variant, wire) in [
             (ComponentStateV1::VersionMismatch, "version_mismatch"),
             (ComponentStateV1::VerifyFailed, "verify_failed"),

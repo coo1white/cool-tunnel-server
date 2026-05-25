@@ -11,9 +11,6 @@ import type { RunContext } from "../runner/context";
 import { $, capture, which } from "../util/sh";
 import { loadDotenv, mergeEnv, type EnvMap } from "../util/env";
 import { parseDfAvailableKb } from "../util/preflight";
-import { credentialLockCheck, credentialLockCheckCommand, renderSingboxConfigCommand } from "../util/credential-control";
-import { redactSensitive } from "../util/redact";
-import { requireSecret } from "../admin/config";
 
 type Severity = "pass" | "warn" | "fail" | "info";
 
@@ -47,7 +44,7 @@ function tag(sev: Severity): string {
 
 function emit(line: CheckLine): void {
     const padded = line.label.padEnd(14);
-    process.stdout.write(`  ${tag(line.severity)} ${padded} ${redactSensitive(line.detail)}\n`);
+    process.stdout.write(`  ${tag(line.severity)} ${padded} ${line.detail}\n`);
 }
 
 interface CheckCtx {
@@ -57,17 +54,23 @@ interface CheckCtx {
 
 type CheckFn = (c: CheckCtx) => Promise<CheckLine>;
 type ComposePsRow = Record<string, string>;
+export interface ServiceHealthRow {
+    readonly service: string;
+    readonly state: string;
+    readonly health: string;
+}
 type DirectDialCheck = {
     readonly ok: boolean;
-    readonly detail: string;
-};
-type SupervisordCheck = {
-    readonly severity: Severity;
     readonly detail: string;
 };
 type RealityInvalidCheck = {
     readonly severity: Severity;
     readonly detail: string;
+};
+type MigrationCheck = {
+    readonly severity: Severity;
+    readonly detail: string;
+    readonly hint?: string;
 };
 
 export function opensslSClientArgs(domain: string): string[] {
@@ -95,6 +98,45 @@ export function indexComposeRowsByService(output: string): Map<string, ComposePs
     }
 
     return rowsByService;
+}
+
+export function parseComposePsRows(output: string): Map<string, ServiceHealthRow> {
+    const rows = new Map<string, ServiceHealthRow>();
+    for (const line of output.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+            const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+            const service = parsed["Service"];
+            if (typeof service !== "string" || service === "" || rows.has(service)) continue;
+            rows.set(service, {
+                service,
+                state: String(parsed["State"] ?? ""),
+                health: String(parsed["Health"] ?? ""),
+            });
+        } catch {
+            // Ignore malformed compose rows; the caller reports missing services.
+        }
+    }
+    return rows;
+}
+
+export function serviceReady(row: ServiceHealthRow | undefined): boolean {
+    if (!row) return false;
+    return row.state === "running" && (row.health === "" || row.health === "healthy");
+}
+
+export function describeUnreadyServices(
+    rows: Map<string, ServiceHealthRow>,
+    services: readonly string[],
+): string {
+    const out: string[] = [];
+    for (const service of services) {
+        const row = rows.get(service);
+        if (!row) out.push(`${service}=missing`);
+        else if (!serviceReady(row)) out.push(`${service}=${row.state}${row.health ? `/${row.health}` : ""}`);
+    }
+    return out.join(",");
 }
 
 function stringFromPath(record: Record<string, unknown>, path: readonly string[]): string {
@@ -125,20 +167,6 @@ export function checkDirectDialOutbound(direct: Record<string, unknown>): Direct
     return { ok: false, detail: `no direct dial domain strategy (${timing})` };
 }
 
-export function checkSupervisordStatusOutput(output: string): SupervisordCheck {
-    const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
-    const total = lines.length;
-    const running = lines.filter((l) => l.split(/\s+/)[1] === "RUNNING").length;
-
-    if (total > 0 && running === total) {
-        return { severity: "pass", detail: `${running}/${total} programs running` };
-    }
-    if (running > 0) {
-        return { severity: "warn", detail: `${running}/${total} programs running` };
-    }
-    return { severity: "fail", detail: `0/${total} programs running` };
-}
-
 export function checkRecentRealityInvalidOutput(output: string): RealityInvalidCheck {
     const lines = output
         .split("\n")
@@ -155,18 +183,37 @@ export function checkRecentRealityInvalidOutput(output: string): RealityInvalidC
     };
 }
 
-export function summarizeCredentialLockOutput(stdout: string, stderr: string): string {
-    const lines = [stdout, stderr].join("\n")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-    if (lines.length === 0) {
-        return `credential-lock exited non-zero with no output; run: ${credentialLockCheckCommand().join(" ")}`;
+export function classifyMigrationStatus(raw: string): MigrationCheck {
+    try {
+        const status = JSON.parse(raw) as {
+            ok?: boolean;
+            currentVersion?: number;
+            requiredVersion?: number;
+            legacyPhpDetected?: boolean;
+            message?: string;
+        };
+        const current = Number(status.currentVersion ?? 0);
+        const required = Number(status.requiredVersion ?? 0);
+        const suffix = required > 0 ? `schema ${current}/${required}` : `schema ${current}`;
+        if (status.ok === true) {
+            return {
+                severity: status.legacyPhpDetected ? "warn" : "pass",
+                detail: `${suffix}; ${status.message ?? "SQLite schema is current."}`,
+                hint: status.legacyPhpDetected ? "ct admin migrate && ct doctor" : undefined,
+            };
+        }
+        return {
+            severity: "fail",
+            detail: `${suffix}; ${status.message ?? "SQLite schema is not current."}`,
+            hint: "ct admin migrate && ct doctor",
+        };
+    } catch {
+        return {
+            severity: "fail",
+            detail: "could not parse migration status",
+            hint: "ct admin migrate && docker compose logs --tail=80 admin-api",
+        };
     }
-
-    const drift = lines.find((line) => /credential-lock drift/i.test(line));
-    const detail = redactSensitive(drift ?? lines.find((line) => !/^\[/.test(line)) ?? lines[0]!);
-    return detail.length > 180 ? `${detail.slice(0, 177)}...` : detail;
 }
 
 // ---------- individual checks (port of doctor.sh) -------------------------
@@ -214,26 +261,6 @@ async function checkEnvFile(c: CheckCtx): Promise<CheckLine> {
     }
 }
 
-async function checkBetterAuthSecret(c: CheckCtx): Promise<CheckLine> {
-    try {
-        requireSecret(c.env);
-        return {
-            group: G_PREREQ,
-            label: "Auth secret",
-            severity: "pass",
-            detail: "BETTER_AUTH_SECRET present and long enough",
-        };
-    } catch (error) {
-        return {
-            group: G_PREREQ,
-            label: "Auth secret",
-            severity: "fail",
-            detail: error instanceof Error ? error.message : String(error),
-            hint: "Run: ./ct update  # auto-migrates BETTER_AUTH_SECRET into .env",
-        };
-    }
-}
-
 async function checkDns(c: CheckCtx): Promise<CheckLine> {
     const domain = c.env["DOMAIN"];
     if (!domain) {
@@ -250,14 +277,14 @@ async function checkDns(c: CheckCtx): Promise<CheckLine> {
     const ipR = await capture($`curl -s4 --max-time 4 https://ifconfig.co`);
     const myIp = ipR.stdout.trim();
     if (resolved && resolved === myIp) {
-        return { group: G_STRUCT, label: "DNS", severity: "pass", detail: `configured DOMAIN resolves to ${resolved} (matches host IP)` };
+        return { group: G_STRUCT, label: "DNS", severity: "pass", detail: `${domain} -> ${resolved} (matches host IP)` };
     }
     if (resolved && myIp) {
         return {
             group: G_STRUCT,
             label: "DNS",
             severity: "fail",
-            detail: `configured DOMAIN resolves to ${resolved}, host IP is ${myIp}`,
+            detail: `${domain} resolves to ${resolved}, host IP is ${myIp}`,
             hint: `Update DNS A record to ${myIp}, then wait for propagation`,
         };
     }
@@ -266,7 +293,7 @@ async function checkDns(c: CheckCtx): Promise<CheckLine> {
         label: "DNS",
         severity: "warn",
         detail: "could not resolve DOMAIN or determine host IP",
-        hint: `dig +short A "$DOMAIN"; curl -s4 https://ifconfig.co`,
+        hint: `dig +short A ${domain}; curl -s4 https://ifconfig.co`,
     };
 }
 
@@ -311,7 +338,7 @@ async function checkAcmeCert(c: CheckCtx): Promise<CheckLine> {
             group: G_STRUCT,
             label: "ACME cert",
             severity: "fail",
-            detail: "could not retrieve cert from configured PANEL_DOMAIN:443",
+            detail: `could not retrieve cert from ${domain}:443`,
             hint: "docker compose logs --tail=40 caddy | grep -iE 'acme|cert'",
         };
     }
@@ -358,7 +385,7 @@ async function probeCertificateEnddate(domain: string): Promise<string> {
     const timeout = new Promise<Uint8Array>((resolve) => {
         setTimeout(() => resolve(new Uint8Array()), 6000);
     });
-    const out = await Promise.race([new Response(x509.stdout).bytes(), timeout]);
+    const out = await Promise.race([new Response(x509.stdout).arrayBuffer().then((buf) => new Uint8Array(buf)), timeout]);
     if (out.length === 0) {
         sClient.kill();
         x509.kill();
@@ -368,19 +395,19 @@ async function probeCertificateEnddate(domain: string): Promise<string> {
 
 async function checkUpEndpoint(_c: CheckCtx): Promise<CheckLine> {
     const r = await capture(
-        $`curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:9000/up`,
+        $`docker compose exec -T admin-api bun -e ${"const r = await fetch('http://127.0.0.1:9000/up'); process.stdout.write(String(r.status));"}`,
     );
     const code = r.stdout.trim() || "000";
     if (code === "200") {
-        return { group: G_APP, label: "/up endpoint", severity: "pass", detail: "HTTP 200 from Bun/Hono admin" };
+        return { group: G_APP, label: "/up endpoint", severity: "pass", detail: "HTTP 200 from Hono admin API" };
     }
     if (code === "000") {
         return {
             group: G_APP,
             label: "/up endpoint",
             severity: "fail",
-            detail: "connection failed (port 9000 not reachable)",
-            hint: "docker compose ps panel; docker compose logs --tail=60 panel",
+            detail: "connection failed (admin-api did not answer)",
+            hint: "docker compose ps admin-api; docker compose logs --tail=60 admin-api",
         };
     }
     return {
@@ -388,7 +415,41 @@ async function checkUpEndpoint(_c: CheckCtx): Promise<CheckLine> {
         label: "/up endpoint",
         severity: "fail",
         detail: `HTTP ${code} (expected 200)`,
-        hint: "docker compose logs --tail=60 panel",
+        hint: "docker compose logs --tail=60 admin-api",
+    };
+}
+
+async function checkAdminMigration(_c: CheckCtx): Promise<CheckLine> {
+    const snippet = `
+        import { loadAdminConfig } from "./packages/config/src/index.ts";
+        import { AdminStore, migrateAdminDb, openAdminDb } from "./packages/db/src/index.ts";
+        const config = loadAdminConfig(process.env);
+        const { db } = openAdminDb(config.dbPath);
+        migrateAdminDb(db);
+        const store = new AdminStore(db, config);
+        store.ensureDefaults(config);
+        process.stdout.write(JSON.stringify(store.migrationStatus()));
+        db.close();
+    `;
+    const r = await capture(
+        $`docker compose exec -T admin-api bun -e ${snippet}`,
+    );
+    if (!r.ok || !r.stdout.trim()) {
+        return {
+            group: G_APP,
+            label: "Migration",
+            severity: "fail",
+            detail: "could not inspect admin SQLite schema",
+            hint: "ct admin migrate && docker compose logs --tail=80 admin-api",
+        };
+    }
+    const checked = classifyMigrationStatus(r.stdout.trim().split("\n").at(-1) ?? "");
+    return {
+        group: G_APP,
+        label: "Migration",
+        severity: checked.severity,
+        detail: checked.detail,
+        hint: checked.hint,
     };
 }
 
@@ -468,46 +529,52 @@ async function checkVpsEgressLatency(_c: CheckCtx): Promise<CheckLine> {
     return { group: G_LATENCY, label: "VPS egress", severity: "pass", detail };
 }
 
-async function checkPanelPublicLatency(c: CheckCtx): Promise<CheckLine> {
+async function checkAdminPublicLatency(c: CheckCtx): Promise<CheckLine> {
     const domain = c.env["PANEL_DOMAIN"] || (c.env["DOMAIN"] ? `panel.${c.env["DOMAIN"]}` : "");
     if (!domain) {
-        return { group: G_LATENCY, label: "Panel RTT", severity: "warn", detail: "skipped (PANEL_DOMAIN and DOMAIN unset)" };
+        return { group: G_LATENCY, label: "Admin RTT", severity: "warn", detail: "skipped (PANEL_DOMAIN and DOMAIN unset)" };
     }
     const t = await curlTiming(`https://${domain}/up`);
     if (!t) {
         return {
             group: G_LATENCY,
-            label: "Panel RTT",
+            label: "Admin RTT",
             severity: "warn",
             detail: "could not measure public /up endpoint",
-            hint: `curl -4 -w '%{time_total}\\n' "https://$PANEL_DOMAIN/up"`,
+            hint: `curl -4 -w '%{time_total}\\n' https://${domain}/up`,
         };
     }
     const detail = `/up total=${t.totalMs}ms connect=${t.connectMs}ms tls=${t.tlsMs}ms ttfb=${t.ttfbMs}ms`;
     if (t.code !== "200") {
         return {
             group: G_LATENCY,
-            label: "Panel RTT",
+            label: "Admin RTT",
             severity: "warn",
             detail: `HTTP ${t.code}; ${detail}`,
-            hint: `curl -vk "https://$PANEL_DOMAIN/up"`,
+            hint: `curl -vk https://${domain}/up`,
         };
     }
     if (t.totalMs > 1500) {
         return {
             group: G_LATENCY,
-            label: "Panel RTT",
+            label: "Admin RTT",
             severity: "warn",
             detail,
-            hint: "High panel RTT means client-to-VPS route is slow before the tunnel does any work",
+            hint: "High admin RTT means client-to-VPS route is slow before the tunnel does any work",
         };
     }
-    return { group: G_LATENCY, label: "Panel RTT", severity: "pass", detail };
+    return { group: G_LATENCY, label: "Admin RTT", severity: "pass", detail };
 }
 
 async function checkSingboxDirectStrategy(_c: CheckCtx): Promise<CheckLine> {
+    const script = `
+        const { readFileSync } = await import("node:fs");
+        const config = JSON.parse(readFileSync("/data/config/singbox.json", "utf8"));
+        const direct = (config.outbounds ?? []).find((outbound) => outbound?.type === "direct" && outbound?.tag === "direct");
+        if (direct) process.stdout.write(JSON.stringify(direct));
+    `;
     const r = await capture(
-        $`docker compose exec -T panel jq -rc '.outbounds[]? | select(.type=="direct" and .tag=="direct")' /data/config/singbox.json`,
+        $`docker compose exec -T admin-api bun -e ${script}`,
     );
     if (!r.ok || !r.stdout.trim()) {
         return {
@@ -515,7 +582,7 @@ async function checkSingboxDirectStrategy(_c: CheckCtx): Promise<CheckLine> {
             label: "Direct dial",
             severity: "warn",
             detail: "could not read rendered direct outbound",
-            hint: "docker compose exec -T panel jq '.outbounds' /data/config/singbox.json",
+            hint: "ct render singbox; docker compose logs --tail=60 admin-api singbox",
         };
     }
     try {
@@ -537,15 +604,13 @@ async function checkSingboxDirectStrategy(_c: CheckCtx): Promise<CheckLine> {
             label: "Direct dial",
             severity: "warn",
             detail: "rendered direct outbound is not valid JSON",
-            hint: "docker compose exec -T panel jq '.outbounds' /data/config/singbox.json",
+            hint: "ct render singbox; docker compose logs --tail=60 admin-api singbox",
         };
     }
 }
 
 async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
-    // v0.4.0+: caddy + singbox + panel + db + redis. Caddy is the
-    // public SNI splitter; singbox is the VLESS+Reality proxy behind it.
-    const services = ["caddy", "singbox", "panel", "db", "redis"];
+    const services = ["admin-api", "admin-web", "caddy", "singbox"];
     const ps = await capture($`docker compose ps --format json`);
     if (!ps.ok || !ps.stdout.trim()) {
         return {
@@ -594,59 +659,6 @@ async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
         severity: "warn",
         detail: msg,
         hint: `docker compose ps; docker compose logs --tail=40 ${tail}`,
-    };
-}
-
-async function checkSupervisord(_c: CheckCtx): Promise<CheckLine> {
-    const r = await capture($`docker compose exec -T panel supervisorctl -c /etc/supervisord.conf status`);
-    if (!r.ok) {
-        return {
-            group: G_COMPOSE,
-            label: "Supervisord",
-            severity: "warn",
-            detail: "could not query supervisorctl in panel",
-            hint: "docker compose ps panel; docker compose exec panel supervisorctl -c /etc/supervisord.conf status",
-        };
-    }
-    const checked = checkSupervisordStatusOutput(r.stdout);
-    if (checked.severity === "pass") {
-        return { group: G_COMPOSE, label: "Supervisord", severity: "pass", detail: checked.detail };
-    }
-    if (checked.severity === "warn") {
-        return {
-            group: G_COMPOSE,
-            label: "Supervisord",
-            severity: "warn",
-            detail: checked.detail,
-            hint: "docker compose exec panel supervisorctl -c /etc/supervisord.conf status",
-        };
-    }
-    return {
-        group: G_COMPOSE,
-        label: "Supervisord",
-        severity: "fail",
-        detail: checked.detail,
-        hint: "docker compose logs --tail=80 panel",
-    };
-}
-
-async function checkCredentialLock(_c: CheckCtx): Promise<CheckLine> {
-    const r = await credentialLockCheck();
-    if (r.ok) {
-        return {
-            group: G_COMPOSE,
-            label: "Cred lock",
-            severity: "pass",
-            detail: "DB credentials match rendered singbox.json",
-        };
-    }
-
-    return {
-        group: G_COMPOSE,
-        label: "Cred lock",
-        severity: "fail",
-        detail: summarizeCredentialLockOutput(r.stdout, r.stderr),
-        hint: `ct recover diagnose; ${renderSingboxConfigCommand().join(" ")}; ${credentialLockCheckCommand().join(" ")}`,
     };
 }
 
@@ -773,78 +785,49 @@ async function checkRam(_c: CheckCtx): Promise<CheckLine> {
 
 async function infoReleaseVersion(_c: CheckCtx): Promise<CheckLine> {
     const r = await capture(
-        $`docker compose exec -T panel ct-server-core --json version`,
+        $`docker compose exec -T admin-api bun -e ${"const r = await fetch('http://127.0.0.1:9000/up'); const j = await r.json(); process.stdout.write(String(j.version ?? '?'));"}`,
     );
-    let v = "?";
-    if (r.ok && r.stdout.trim()) {
-        try {
-            const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
-            if (typeof parsed["version"] === "string" && parsed["version"] !== "") {
-                v = parsed["version"];
-            }
-        } catch {
-            v = "?";
-        }
-    }
+    const v = r.ok && r.stdout.trim() ? r.stdout.trim() : "?";
     return { group: G_INFO, label: "Release", severity: "info", detail: `v${v}` };
 }
 
-async function infoActiveUsers(_c: CheckCtx): Promise<CheckLine> {
-    const r = await capture($`docker compose exec -T panel bun run /opt/cool-tunnel/operator/src/index.ts admin users list --json`);
-    if (!r.ok || !r.stdout.trim()) {
-        return { group: G_INFO, label: "Admins", severity: "info", detail: "unknown" };
-    }
-    try {
-        const parsed = JSON.parse(r.stdout) as { users?: unknown[] };
-        return { group: G_INFO, label: "Admins", severity: "info", detail: `${parsed.users?.length ?? 0} admin accounts` };
-    } catch {
-        return { group: G_INFO, label: "Admins", severity: "info", detail: "unknown" };
-    }
-}
-
-async function infoRedisQueueDepth(c: CheckCtx): Promise<CheckLine> {
-    const pw = c.env["REDIS_PASSWORD"];
-    if (!pw) {
-        return { group: G_INFO, label: "Redis queue", severity: "info", detail: "skipped (REDIS_PASSWORD unset in .env)" };
-    }
-    // v0.1.14 hardened against the v0.1.12 bug class. Pre-fix the
-    // password was interpolated INTO a `bash -c "..."` quoted string
-    // (`-e REDISCLI_AUTH=${pw}`). Bun shell-escaped it as a single
-    // arg, but bash then re-parsed the resulting command line; a
-    // password containing `$`, backtick, or `"` would corrupt
-    // tokenisation. Now `docker compose exec -e REDISCLI_AUTH`
-    // takes no value — it imports REDISCLI_AUTH from the calling
-    // shell's env, which Bun's $.env() sets cleanly. The secret
-    // never appears in argv.
+async function infoActiveProxyAccounts(_c: CheckCtx): Promise<CheckLine> {
+    const snippet = `
+        import { loadAdminConfig } from "./packages/config/src/index.ts";
+        import { AdminStore, migrateAdminDb, openAdminDb } from "./packages/db/src/index.ts";
+        const config = loadAdminConfig(process.env);
+        const { db } = openAdminDb(config.dbPath);
+        migrateAdminDb(db);
+        const store = new AdminStore(db, config);
+        store.ensureDefaults(config);
+        const status = store.statusSummary();
+        process.stdout.write(String(status.activeProxyAccountCount));
+        db.close();
+    `;
     const r = await capture(
-        $`docker compose exec -T -e REDISCLI_AUTH redis redis-cli XLEN cool_tunnel:admin`
-            .env({ ...process.env, REDISCLI_AUTH: pw })
-            .quiet(),
+        $`docker compose exec -T admin-api bun -e ${snippet}`,
     );
-    const depth = r.ok && r.stdout.trim() ? r.stdout.trim() : "?";
-    return { group: G_INFO, label: "Redis queue", severity: "info", detail: `${depth} (cool_tunnel:admin stream)` };
+    const n = r.ok ? r.stdout.replace(/\s+/g, "") : "?";
+    return { group: G_INFO, label: "Active proxy", severity: "info", detail: `${n || "?"} proxy accounts enabled` };
 }
 
 const CHECKS: CheckFn[] = [
     checkComposeAvailable,
     checkEnvFile,
-    checkBetterAuthSecret,
     checkDns,
     checkPorts,
     checkAcmeCert,
     checkUpEndpoint,
+    checkAdminMigration,
     checkSingboxDirectStrategy,
     checkVpsEgressLatency,
-    checkPanelPublicLatency,
+    checkAdminPublicLatency,
     checkContainerHealth,
-    checkSupervisord,
-    checkCredentialLock,
     checkRecentRealityInvalid,
     checkDisk,
     checkRam,
     infoReleaseVersion,
-    infoActiveUsers,
-    infoRedisQueueDepth,
+    infoActiveProxyAccounts,
 ];
 
 // ---------- Task ----------------------------------------------------------
@@ -871,7 +854,7 @@ export class DoctorTask implements Task {
                 line = await fn(c);
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                line = { group: G_ERR, label: fn.name, severity: "fail", detail: `check threw: ${redactSensitive(msg)}` };
+                line = { group: G_ERR, label: fn.name, severity: "fail", detail: `check threw: ${msg}` };
             }
             if (!grouped.has(line.group)) grouped.set(line.group, []);
             grouped.get(line.group)!.push(line);
@@ -901,8 +884,8 @@ export class DoctorTask implements Task {
             for (const r of remediation) {
                 const color = r.severity === "fail" ? COLOR.fail : COLOR.warn;
                 process.stdout.write(`\n  ${color}[${r.severity.toUpperCase()}] ${r.label}${RESET}\n`);
-                process.stdout.write(`    ${redactSensitive(r.detail)}\n`);
-                process.stdout.write(`    ${BOLD}->${RESET} ${redactSensitive(r.hint ?? "")}\n`);
+                process.stdout.write(`    ${r.detail}\n`);
+                process.stdout.write(`    ${BOLD}->${RESET} ${r.hint}\n`);
             }
             process.stdout.write("\n");
         }
@@ -912,15 +895,7 @@ export class DoctorTask implements Task {
             ok,
             code: ok ? 0 : 1,
             summary: `${pass}P/${warn}W/${fail}F`,
-            json: { pass, warn, fail, info, checks: [...grouped.values()].flat().map(redactCheckLine) },
+            json: { pass, warn, fail, info, checks: [...grouped.values()].flat() },
         };
     }
-}
-
-function redactCheckLine(line: CheckLine): CheckLine {
-    return {
-        ...line,
-        detail: redactSensitive(line.detail),
-        hint: line.hint ? redactSensitive(line.hint) : undefined,
-    };
 }

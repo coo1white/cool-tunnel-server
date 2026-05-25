@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Per-key fixed-window debouncer + leading-edge throttle with
-//! trailing flush. Used by [`crate::redis_bridge`] to collapse a
-//! burst of revocation messages — bulk admin updates can fire dozens
-//! per second — down to one rendered config update per window.
+//! trailing flush. Retained for internal runtime callers that need to
+//! collapse bursts of render/reload events down to one config update
+//! per window.
 //!
 //! Two primitives, both single-threaded by design (wrap in
 //! `tokio::sync::Mutex` to share across tasks):
@@ -20,7 +20,7 @@
 //!    This is the right shape for "render the latest config" — the
 //!    operator gets an immediate write AND the final write reflects
 //!    the last save in the burst. Without the trailing flush, the
-//!    last admin update could be silently held back for `window` ms;
+//!    last admin save could be silently held back for `window` ms;
 //!    with only the trailing flush, every burst pays one window of
 //!    latency before the user sees anything.
 //!
@@ -29,7 +29,7 @@
 //! `100ms` is the default — same as the client's anomaly debouncer.
 //! The Caddy admin-socket reload itself takes ~30 ms, so anything
 //! shorter than ~50ms means consecutive reload calls overlap; anything
-//! longer than ~250ms makes bulk admin updates feel laggy in the UI.
+//! longer than ~250ms makes bulk admin saves feel laggy in the UI.
 //! 100 ms hits the right middle.
 
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ pub const DEFAULT_WINDOW: Duration = Duration::from_millis(100);
 /// per-account / per-event-type work and is exercised by the
 /// stress tests.
 #[derive(Debug)]
-#[allow(dead_code)] // Debouncer is library-style; in v0.0.3 only the Coalescer is wired into redis_bridge
+#[allow(dead_code)] // Debouncer is library-style; only Coalescer is wired today.
 pub struct Debouncer<K> {
     window: Duration,
     last_admitted: HashMap<K, Instant>,
@@ -150,9 +150,8 @@ impl<K: Eq + Hash> Default for Debouncer<K> {
 pub enum Decision {
     /// Fire the action now. No trailing flush is needed — this is the
     /// first event after a quiet period and nothing is queued.
-    /// Currently unused by `redis_bridge` (it always returns
-    /// `FireNowAndScheduleFlush` for leading edges); reserved for
-    /// future callers that want a one-shot leading-only fire.
+    /// Currently unused by production callers; reserved for future
+    /// callers that want a one-shot leading-only fire.
     #[allow(dead_code)]
     FireNow,
     /// Suppress the event. A trailing flush is already scheduled for
@@ -438,9 +437,9 @@ mod tests {
         assert_eq!(fires, 2, "100k events collapse to ≤ 2 reloads");
     }
 
-    /// Concurrent stress: the way `redis_bridge` actually uses the
-    /// Coalescer is `Arc<std::sync::Mutex<Coalescer>>` shared
-    /// between many tasks (each pubsub message). This test simulates
+    /// Concurrent stress: production callers can wrap the Coalescer in
+    /// `Arc<std::sync::Mutex<Coalescer>>` shared between many tasks.
+    /// This test simulates
     /// 64 tokio tasks racing to admit 1,000 events each into the same
     /// coalescer and verifies the FireNow* count is ≤ 2 per window
     /// regardless of contention.

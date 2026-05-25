@@ -1,22 +1,20 @@
 cool-tunnel-server
 Copyright (C) 2026 coolwhite LLC. All Rights Reserved.
 
-The original code in this repository — the Bun/TypeScript operator
-and admin panel under operator/, the Rust crates under core/, the
-Dockerfiles, the sing-box config template, the upstream-pin manifests
-under manifests/, the helper scripts under scripts/, and the
-documentation under docs/ — is licensed under the GNU Affero General
-Public License v3.0 only (AGPL-3.0-only). See LICENSE.
+The original code in this repository - the Next.js admin frontend,
+Hono/Bun admin API, shared TypeScript packages, operator CLI, Rust core,
+Dockerfiles, manifests, scripts, and documentation - is licensed under
+the GNU Affero General Public License v3.0 only (AGPL-3.0-only). See
+LICENSE.
 
-cool-tunnel-server is operated and maintained by coolwhite LLC.
-This project belongs to the community: coolwhite LLC chooses
-transparency over profit, and freedom over control.
+cool-tunnel-server is operated and maintained by coolwhite LLC. This
+project belongs to the community: coolwhite LLC chooses transparency
+over profit, and freedom over control.
 
-This product builds and runs the following third-party software,
-unmodified, via Docker images and language-specific package managers.
-Each retains its own copyright and licence; the licences must be
-preserved in any redistribution of the resulting stack. The full
-text of every applicable licence is reproduced or referenced in
+This product builds and runs third-party software, unmodified, via
+Docker images and language-specific package managers. Each retains its
+own copyright and licence; those notices must be preserved in any
+redistribution. The complete list is maintained in
 THIRD_PARTY_LICENSES.md.
 
 ------------------------------------------------------------------------
@@ -24,81 +22,50 @@ THIRD_PARTY_LICENSES.md.
 * Caddy (https://github.com/caddyserver/caddy)
   Copyright the Caddy Authors.
   Licensed under the Apache License, Version 2.0.
-  Stock Caddy 2 (no plugins) used as the ACME provider only. Binds
-  :80 for HTTP-01 challenges; manages the TLS certificate for the
-  operator's domain via Let's Encrypt; stores the cert in a shared
-  Docker volume that sing-box reads. We chose Caddy here because
-  its CertMagic-based ACME implementation is the most reliable in
-  the Go ecosystem.
+  Used as the public :80/:443 front door with the caddy-l4 module. Caddy
+  handles HTTP-01 redirects, panel-domain ACME, and SNI routing to
+  admin-web or sing-box.
 
 * sing-box (https://github.com/SagerNet/sing-box)
   Copyright SagerNet and contributors.
   Licensed under the GNU General Public License, Version 3.0.
-  Actively-maintained Go reimplementation of the NaiveProxy server
-  protocol with multi-user basic_auth, HTTP/3, and a clash-style
-  management API for hot config reload. Reads its TLS certificate
-  from the shared Caddy volume (Caddy does ACME, sing-box does
-  TLS termination + the actual proxy). Bundled as a separate
-  process / image; not statically linked with this proprietary
-  code, so its GPL-3 stays scoped to its own image. Replaces the
-  unmaintained klzgrad/forwardproxy plugin we depended on in
-  v0.0.1.
+  Used as the VLESS + Reality proxy runtime. Bundled as a separate
+  process/image, not statically linked with this repository's code.
 
-* NaiveProxy (https://github.com/klzgrad/naiveproxy)
-  Copyright klzgrad and contributors.
-  Licensed under the BSD-3-Clause License.
-  Historical client-side runtime from the pre-v0.4 server line. It is
-  not bundled in the current VLESS+Reality server image.
-
-* Hono (https://github.com/honojs/hono)
-  Copyright the Hono contributors.
+* Bun (https://github.com/oven-sh/bun)
   Licensed under the MIT License.
-  HTTP framework for the Bun admin panel.
+  Used to run and compile the admin API, operator, and singbox-core
+  TypeScript tools.
 
-* Better Auth (https://github.com/better-auth/better-auth)
-  Copyright the Better Auth contributors.
-  Licensed under the MIT License.
-  Account and session security for the Bun admin panel.
+* Next.js, React, Hono, Better Auth, TypeScript, and related pnpm
+  packages retain their upstream licences. The exact dependency graph
+  is recorded in pnpm-lock.yaml.
 
-* Cargo dependencies (see core/Cargo.lock for the full graph): tokio,
-  serde, serde_json, sqlx, hyper, hyper-util, hyperlocal, http-body-util,
-  bytes, reqwest, redis, aes-gcm, base64, chrono, tracing,
-  tracing-subscriber, sha2, hex, hmac, clap, futures-core, and their
-  transitive dependencies. Each is distributed under its own licence
-  (predominantly MIT or Apache-2.0); see crates.io for canonical
-  licence text per crate.
+* Rust/Cargo dependencies retain their upstream licences. The exact
+  dependency graph is recorded in core/Cargo.lock.
 
-* MariaDB (https://mariadb.org/) — GPL-2.0 (server). Bundled as the
-  upstream mariadb:11 OCI image, unmodified.
+* Docker base images retain their upstream licences and packaged distro
+  notices: caddy:2.11.3, oven/bun:1.3.14-alpine, rust:1.88.0-alpine,
+  and alpine:3.20/3.21.
 
-* Redis (https://redis.io/) — BSD-3-Clause for redis 7.x stable.
-  Bundled as the upstream redis:7-alpine OCI image, unmodified.
-
-* Docker base images: alpine:3.20, rust:1.88-alpine, oven/bun:1.3.14-alpine,
-  mariadb:11, redis:7-alpine. Each retains its own upstream licence.
+The PHP/Laravel/Filament, MariaDB, Redis, Composer, and NaiveProxy-era
+server surfaces from v0.5.1 and earlier are retired in v0.5.2. They are
+mentioned only where needed for migration history and are not active
+runtime dependencies.
 
 ------------------------------------------------------------------------
 
-Redistribution of the resulting Docker images, the Cargo workspace,
-or any compiled binary derived from this repository requires
-preservation of this NOTICE file, the LICENSE file, the
-THIRD_PARTY_LICENSES.md file, and any per-component LICENSE.txt files
-shipped inside the upstream containers — verbatim, in their entirety.
+Redistribution of Docker images, the TypeScript workspaces, Rust
+binaries, or compiled artifacts derived from this repository requires
+preservation of this NOTICE file, LICENSE, THIRD_PARTY_LICENSES.md, and
+any per-component licence files shipped inside upstream containers.
 
-GPL-3.0 (sing-box): you must also distribute (or offer to
-distribute, on request) the corresponding sing-box source code
-under the same licence terms. Pinning the upstream version in
-manifests/sing-box.upstream.json + linking to the upstream tag in
-this NOTICE is sufficient because we ship sing-box unmodified; if
-you ever modify sing-box's source you must distribute your modified
-source under GPL-3.0. AGPL-3.0-only (cool-tunnel-server's own
-license) is GPL-3-compatible — running sing-box as a separate
-process from ct-server-core remains the cleanest model.
+GPL-3.0 (sing-box): if you modify sing-box, you must distribute or offer
+the corresponding modified sing-box source under GPL-3.0. Shipping the
+unmodified upstream binary with a pinned source reference is sufficient
+for the stock release.
 
-AGPL-3.0-only § 13 — Network-source-disclosure (cool-tunnel-server
-itself): if you operate a modified version of cool-tunnel-server
-Server as a network service (e.g. a paid proxy hosted for users),
-you must make the modified source code available to those users.
-Pin the upstream tag and offer the source URL. Running the stock
-images without modification means you're redistributing our source
-unmodified — already satisfied by linking to this repository.
+AGPL-3.0-only section 13: if you operate a modified version of
+cool-tunnel-server as a network service, you must make the modified
+source code available to those users. Running the stock images
+unmodified is already satisfied by linking to this repository.

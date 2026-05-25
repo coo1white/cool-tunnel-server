@@ -2,8 +2,8 @@
 #
 # Tiny singbox-core carrier image for release installs.
 #
-# The panel and ct-singbox Dockerfiles only need an image they can COPY
-# /usr/local/bin/singbox-core from. Release installs fetch the verified
+# The admin API and ct-singbox Dockerfiles only need an image they can
+# COPY /usr/local/bin/singbox-core from. Release installs fetch the verified
 # binary asset and build this scratch image locally, avoiding Bun,
 # TypeScript, and compile work on low-resource VPS hosts.
 

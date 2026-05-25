@@ -17,7 +17,7 @@ verification — the rules are the same everywhere.
 `ct-protocol` is that shared rulebook. It's `no_std`-compatible,
 zero-`unsafe`, and carries no I/O — anything that touches the network
 or filesystem lives in the platform's own core crate. The current
-server line emits panel-pinned SubscriptionManifestV2 JSON for
+server line emits admin-pinned SubscriptionManifestV2 JSON for
 VLESS+Reality; the older ProfileV1 / SubscriptionManifestV1 structs
 remain in this crate as compatibility types until a Rust V2 mirror
 lands. That makes the crate trivially embeddable in:
@@ -38,10 +38,10 @@ ships in a server release first; clients pick it up via `cargo update`.
 
 - `SubscriptionManifestV1` / `ProfileV1` — compatibility structs for
   pre-v0.4 clients. Current VLESS+Reality subscriptions are v2 and
-  are pinned by the panel tests until `SubscriptionManifestV2` lands
+  are pinned by the admin tests until `SubscriptionManifestV2` lands
   here.
 - `WireRequestV1` / `WireResponseV1` / `WireEventV1` — JSON-over-
-  unix-socket protocol the panel uses to talk to `ct-server-core`'s
+  unix-socket protocol the admin runtime uses to talk to `ct-server-core`'s
   daemon mode.
 - `AntiTrackingFeature` — enum of mitigations (`HideIp`, `HideVia`,
   `ProbeResistance`, `DohResolver`, `Http3`).

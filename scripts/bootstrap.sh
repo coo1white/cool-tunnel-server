@@ -41,43 +41,6 @@ log()  { printf '%s==>%s %s\n' "$c_blue" "$c_off" "$*"; }
 warn() { printf '%s!! %s%s\n' "$c_yellow" "$*" "$c_off" >&2; }
 die()  { printf '%s!!! %s%s\n' "$c_red" "$*" "$c_off" >&2; exit 1; }
 
-safe_last_command() {
-    local cmd="${1:-}"
-    case "$cmd" in
-        *openssl*rand*|*sed\ -i*PASSWORD*|*BETTER_AUTH_SECRET*|*DB_PASSWORD*|*DB_ROOT_PASSWORD*|*REDIS_PASSWORD*)
-            printf '<secret-bearing command hidden>'
-            ;;
-        *)
-            printf '%s' "$cmd"
-            ;;
-    esac
-}
-
-bootstrap_failure_hint() {
-    local code="$1" line="$2" cmd="$3"
-    printf '\n%s!!! bootstrap failed%s (exit %s at line %s)\n' "$c_red" "$c_off" "$code" "$line" >&2
-    printf '    command: %s\n' "$(safe_last_command "$cmd")" >&2
-    printf '    next: re-run from a clean shell after checking the failed component above.\n' >&2
-    printf '    diagnostics after clone: cd %s && ct doctor\n' "$INSTALL_DIR" >&2
-
-    case "$cmd" in
-        *apt-get\ update*|*apt-get\ install*)
-            printf '    common fix: apt-get update && apt-get install -y ca-certificates curl gnupg git jq dnsutils apache2-utils openssl\n' >&2
-            ;;
-        *download.docker.com*|*docker.gpg*|*docker-ce*)
-            printf '    common fix: check DNS/TLS to download.docker.com, then re-run bootstrap.\n' >&2
-            ;;
-        *git\ clone*|*git\ -C*fetch*|*git\ -C*reset*)
-            printf '    common fix: check REPO_URL/BRANCH and GitHub reachability with: git ls-remote %s %s\n' "$REPO_URL" "$BRANCH" >&2
-            ;;
-        *systemctl\ restart\ docker*|*docker\ buildx*)
-            printf '    common fix: inspect Docker with: systemctl status docker --no-pager && journalctl -u docker -n 80 --no-pager\n' >&2
-            ;;
-    esac
-}
-
-trap 'code=$?; bootstrap_failure_hint "$code" "$LINENO" "$BASH_COMMAND"; exit "$code"' ERR
-
 explain_and_pause() {
     cat <<EOF
 
@@ -86,7 +49,7 @@ cool-tunnel-server bootstrap will:
   - install Docker CE + Compose v2 if Docker is missing
   - clone or fast-forward ${REPO_URL} into ${INSTALL_DIR}
   - fetch the signed ct-operator binary when available
-  - create ${INSTALL_DIR}/.env with generated secrets if it is missing
+  - create ${INSTALL_DIR}/.env with a generated admin secret if it is missing
 
 It will not start the proxy stack unless AUTO_INSTALL=1 is set.
 EOF
@@ -216,30 +179,22 @@ else
     warn "repo dispatcher ./ct is missing or not executable; use ./scripts/install.sh as fallback"
 fi
 
-# ---------- 4. .env scaffold (auto-generate strong secrets) ----------------
+# ---------- 4. .env scaffold ------------------------------------------------
 
 if [ ! -f .env ]; then
     cp .env.example .env
     # Tighten before secrets land in this file. `cp` inherits the
-    # operator's umask (0022 on Debian → 0644), but install.sh's
-    # R2-1 audit gate refuses to proceed on a world-readable .env
-    # (auth + DB credentials would leak via the filesystem).
-    # Without this chmod the very next step blocks the operator
-    # with a confusing "world-readable / try: chmod 0600 .env"
-    # message on a file THIS script just created.
+    # operator's umask (0022 on Debian -> 0644), but install refuses
+    # to proceed on a world-readable .env because Better Auth and
+    # Reality secrets live there.
     chmod 0600 .env
     log "scaffolded $INSTALL_DIR/.env (mode 0600)"
 
-    # generate random passwords for any unset/changeme placeholder
-    gen_pass() { openssl rand -base64 30 | tr -d '/=+' | cut -c1-32; }
-    for key in DB_PASSWORD DB_ROOT_PASSWORD REDIS_PASSWORD; do
-        if grep -qE "^${key}=(\"\"|''|changeme.*)?$" .env 2> /dev/null; then
-            new_val=$(gen_pass)
-            # shellcheck disable=SC2002  # readability over UUOC
-            sed -i "s|^${key}=.*|${key}=${new_val}|" .env
-            log "  generated ${key}"
-        fi
-    done
+    if grep -qE '^BETTER_AUTH_SECRET=(""|'"''"'|changeme.*)?$' .env 2> /dev/null; then
+        auth_secret="$(openssl rand -base64 48 | tr -d '\n')"
+        sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=${auth_secret}|" .env
+        log "  generated BETTER_AUTH_SECRET"
+    fi
 
     if [ -n "${DOMAIN:-}" ]; then
         sed -i "s|^DOMAIN=.*|DOMAIN=${DOMAIN}|" .env
@@ -275,7 +230,9 @@ NEXT
        PANEL_DOMAIN=    # your panel domain, e.g. panel.proxy.example.com
        ACME_EMAIL=      # for Let's Encrypt cert issuance
 
-     Random secrets for DB/Redis were generated.
+     BETTER_AUTH_SECRET was generated if it was empty.
+     Generate and set REALITY_PRIVATE_KEY / REALITY_PUBLIC_KEY before
+     production install.
 
   3. Run the 8-step install (numbered output, "↳ try:" hints
      on every failure):
@@ -283,13 +240,13 @@ NEXT
        ct install
 
   4. Create the first owner after ct install finishes:
-     cd ${INSTALL_DIR}
-     ct admin bootstrap
+       ct admin bootstrap
 
-     Read the root-only setup file over SSH, open the setup page,
-     paste the token, choose an owner password in the browser,
-     delete the file, then sign in at:
-       https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/admin
+     Read the root-only setup file it prints on the VPS, open:
+       https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/setup
+
+     After the owner is created, sign in at:
+       https://\${PANEL_DOMAIN:-panel.\${DOMAIN}}/login
 =================================================================
 EOF
 

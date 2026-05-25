@@ -38,8 +38,8 @@ From then on, implemented operator commands such as `./ct doctor` and
 ### From source
 
 ```bash
+pnpm install --frozen-lockfile
 cd operator
-bun install
 bun run build                    # linux-x64 by default
 bun run build:linux-arm64
 bun run build:darwin-arm64
@@ -49,7 +49,7 @@ bun run build all                # every target
 Bun must be installed (`curl -fsSL https://bun.sh/install | bash`).
 The compiled binary bundles the Bun runtime (~60-90 MB depending on
 target). It is *not* a Bun runtime replacement — the host still needs
-the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
+the tools it shells out to (`docker`, `journalctl`, `openssl`, etc.).
 
 ## Commands
 
@@ -57,7 +57,7 @@ the tools it shells out to (`docker`, `journalctl`, `redis-cli`, etc.).
 |--------------------|------------------------------------------------------------------------|
 | `ct doctor`        | PASS/WARN/FAIL health dashboard. No state mutation. |
 | `ct render caddyfile` | Re-render the Caddyfile via `ct-server-core`. |
-| `ct render singbox` | Re-render `/data/config/singbox.json` via the panel renderer. |
+| `ct render singbox` | Re-render `/data/config/singbox.json` through the admin API/core boundary. |
 | `ct backup`        | Snapshot DB, `.env`, manifests, and ACME state. |
 | `ct restore <tarball>` | Restore a deployment from a backup tarball. |
 | `ct update`        | Pull, load release images, render, hot-swap, and verify the deployment. |

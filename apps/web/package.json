@@ -1,0 +1,20 @@
+{
+  "name": "@cool-tunnel/web",
+  "version": "0.5.2",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cool-tunnel/shared": "workspace:*",
+    "lucide-react": "0.468.0",
+    "next": "15.5.18",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  }
+}

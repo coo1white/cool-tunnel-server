@@ -1,0 +1,7 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "operator"
+  - "singbox-core"
+allowBuilds:
+  sharp: true

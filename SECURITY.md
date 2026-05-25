@@ -1,161 +1,117 @@
-# Security policy
+# Security Policy
 
-cool-tunnel-server is a self-hosted proxy stack. By design it
-processes traffic on behalf of users and holds the credential store
-that authorises that traffic. Vulnerabilities in this codebase
-matter and we treat reports seriously.
+cool-tunnel-server is a self-hosted proxy stack. It processes user
+traffic and stores credentials for the admin and proxy-account control
+plane, so vulnerabilities matter and reports are treated seriously.
 
-## Supported versions
+## Supported Versions
 
-We patch security issues on a rolling-LTSC cadence. The supported
-matrix at any time is the **most recent two minor release lines**:
+Security patches follow the active release line. During the v0.x period,
+operators should run the newest published release unless a release page
+states a longer support window.
 
-| Version line | Status | Security patches | Bug fixes | Feature work |
-| --- | --- | --- | --- | --- |
-| `0.0.x` (current) | **Pre-release / active** | yes | yes | yes |
-| earlier (no minors yet) | n/a | — | — | — |
+| Version line | Status | Security patches |
+| --- | --- | --- |
+| `0.5.x` | active | yes |
+| older lines | upgrade required | no, unless a release advisory says otherwise |
 
-Once we cut `0.1.0`, the policy becomes:
+## Reporting A Vulnerability
 
-| Version line | Status | Security patches | Bug fixes | Feature work |
-| --- | --- | --- | --- | --- |
-| `0.1.x` (current) | active | yes | yes | yes |
-| `0.0.x` (legacy) | maintained | yes (for 90 days after `0.1.0`) | no | no |
-
-Older lines are unsupported and operators MUST upgrade. Each
-release page on GitHub spells out the supported-until date for that
-line explicitly.
-
-## Reporting a vulnerability
-
-**Please do NOT open a public GitHub issue for security
-vulnerabilities.** Use one of these channels instead:
-
-- [GitHub Security Advisory][gh-advisory] — preferred. Fully
-  private, lets us coordinate a fix and credit you in the advisory.
-- Email — TBD; once we publish a contact address we will sign
-  the announcement with the same key the v0.1+ tags will be
-  signed with.
+Do not open a public GitHub issue for security vulnerabilities. Use
+[GitHub Security Advisories][gh-advisory] instead.
 
 [gh-advisory]: https://github.com/coo1white/cool-tunnel-server/security/advisories/new
 
-When you report, please include:
+Please include:
 
-1. The version (commit SHA + tag if any) you saw the issue on.
-2. A minimal reproduction or proof-of-concept.
-3. Your assessment of impact (what an attacker could do).
-4. Any mitigations or workarounds you've identified.
+1. Version or commit SHA.
+2. A minimal reproduction or proof of concept.
+3. Expected impact.
+4. Any mitigation you already identified.
 
-We'll acknowledge within **72 hours** and aim to ship a fix or
-mitigation within **14 days** for critical issues, **30 days** for
-high, **90 days** for medium / low.
+We aim to acknowledge within 72 hours and ship a fix or mitigation
+within 14 days for critical issues, 30 days for high issues, and 90
+days for medium or low issues.
 
-## What we consider in-scope
+## In Scope
 
 | Category | Examples |
 | --- | --- |
-| **Auth bypass** | Bypassing VLESS UUID auth; bypassing the panel admin login |
-| **Privilege escalation** | A proxy user reaching the admin panel or DB; a `viewer` role bypassing protected Hono route checks |
-| **Credential disclosure** | Cleartext password leak via tracing, logs, error responses; subscription HMAC tokens persisted in any log file |
-| **Memory safety** | Anything reachable from untrusted input that triggers UB in Rust (we `forbid(unsafe_code)`) |
-| **Cryptographic weakness** | Wrong AEAD nonce reuse, weak HMAC verification, broken cert pinning, weak Reality key handling |
-| **Supply-chain integrity** | A pinned manifest's verifier passing on a tampered binary |
-| **Denial-of-service** | An unauthed CONNECT or panel request that takes down sing-box / panel / db |
-| **Information leak via probe** | An unauthed probe that fingerprints us as a proxy despite probe-resistance settings |
-| **Cover-site invariant violation** | Any wire-level shape that distinguishes cool-tunnel-server from a static-website host of the same hosting class — distinct status, response time, body length, headers (`Server`, `X-Powered-By`), missing/present validators (`ETag`, `Last-Modified`) on `/api/v1/subscription/<garbage>` vs `/random-path`, 429 vs 200 on rate-limit hit, or exception traces under any failure mode. (v0.0.14 lifted this to a hard release-blocking property.) |
+| Auth bypass | Bypassing Better Auth admin login, sessions, or proxy UUID auth |
+| Privilege escalation | Viewer/operator/admin role boundaries failing server-side |
+| Credential disclosure | Passwords, cookies, bootstrap tokens, subscription URLs, UUIDs, database paths, or private keys in logs/errors/HTML |
+| Storage safety | Migration bugs that silently drop users, roles, settings, or proxy-account data |
+| Cryptography | Weak session secrets, broken token hashing, weak Reality key validation |
+| Supply chain | A manifest verifier accepting tampered release artifacts |
+| Denial of service | Unauthenticated requests taking down admin-api, admin-web, Caddy, or sing-box |
+| Fingerprinting | Public routes leaking proxy-specific headers, traces, or distinct error bodies |
 
-## What's out of scope
+## Out Of Scope
 
 | Category | Why |
 | --- | --- |
-| Operator misconfiguration | The `.env` file is the operator's responsibility (passwords, DOMAIN, etc.) |
-| Issues in sing-box itself | Report to SagerNet/sing-box |
-| Issues in the macOS client | Report to coo1white/cool-tunnel |
-| Censorship-system specific fingerprinting that requires a known censor's cooperation | This is research, not a vulnerability |
-| Reports requiring a privileged network position (passive global adversary, ISP-level MitM) | Outside the proxy's threat model |
+| Operator misconfiguration | The operator owns domain, DNS, firewall, and `.env` choices |
+| Vulnerabilities in sing-box itself | Report upstream to SagerNet/sing-box |
+| Client app issues | Report to the relevant client repository |
+| Reports requiring a privileged global network position | Outside the server threat model |
 
-## Coordinated disclosure
+## Defensive Defaults
 
-We follow a 90-day default disclosure window. If you intend to
-publicly disclose, please coordinate with us so we can ship a fix
-first. We're happy to credit reporters in the advisory and the
-release notes.
+The v0.5.2 stack ships with these active controls:
 
-## Defensive defaults
+- Next.js admin UI talks only to the Hono API.
+- Hono API owns auth, sessions, authorization, admin APIs, audit logs,
+  settings, proxy-account management, and migration status.
+- Better Auth session cookies are httpOnly, SameSite=Lax, and Secure in
+  production after HTTPS validation.
+- Public signup is disabled by default and there are no default
+  credentials.
+- Login and setup credentials are submitted through server-side POST,
+  never credential-bearing URLs.
+- Login/setup query strings are scrubbed, and sensitive responses use
+  no-store/no-referrer headers.
+- Login pages use restrictive CSP; credential-bearing scripts are not
+  required.
+- Bootstrap material is written to a root-only file and is not printed
+  as normal terminal output.
+- Caddy HTTP redirects use query-stripping paths.
+- Secret redaction is centralized in `packages/security` and is used by
+  API logs, operator output, doctor diagnostics, shell errors, and tests.
+- SQLite migrations in `packages/db` are idempotent and preserve
+  upgrade data where migration fixtures exist.
+- Rust code keeps `unsafe_code = "deny"` and strict clippy lints.
+- Container services drop unnecessary privileges in the compose/runtime
+  configuration.
+- No telemetry, analytics, tracking, phone-home behavior, or hidden
+  external calls are part of the admin runtime.
 
-The server ships with:
+## Test Coverage
 
-- `forbid(unsafe_code)` and `deny(clippy::unwrap_used,
-  clippy::expect_used, clippy::panic, clippy::todo,
-  clippy::unimplemented)` workspace-wide.
-- Better Auth owns password hashing, signed httpOnly cookie sessions,
-  session storage, and email/password login security.
-- Admin role checks stay close to protected Hono routes and use the
-  small owner/admin/operator/viewer model.
-- Constant-time HMAC verification for bootstrap token hashes and
-  byte-wise comparison via `aes-gcm` 0.10's tag check in Rust.
-- **TLS 1.3 only** on the proxy listener (`min_version =
-  max_version = "1.3"` in the rendered sing-box config). No
-  legacy-protocol fallback surface.
-- DNS-over-HTTPS for the proxy's outbound resolution.
-- **Secret redaction in diagnostics and logs** masks subscription
-  URLs, bootstrap setup tokens, UUIDs, Better Auth secrets, database
-  passwords, Redis passwords, and secret-looking JSON fields.
-- **No engine-fingerprint headers** in cover-site responses
-  (v0.0.14): `Server: Caddy` stripped via `header -Server` in the
-  Caddyfile; the Bun admin server does not emit framework banners.
-- **Login rate limiting** is enabled in Better Auth. It keys on the
-  `X-Forwarded-For` value set by the Caddy panel proxy; do not expose
-  the panel container port directly to the public internet.
-- **Network isolation**: `ct-net` carries the public-facing Caddy,
-  panel, and sing-box traffic; `ct-data` is internal-only for db,
-  redis, and panel. A compromised db or redis cannot phone home.
-- **Refuse-to-boot guards** on missing `BETTER_AUTH_SECRET` — fail
-  loudly with a remediation hint rather than falling back to a
-  deterministic default.
-- **First-owner bootstrap** uses expiring one-time tokens. Raw tokens
-  are not logged, passwords are never generated or printed, and
-  bootstrap is disabled automatically once an owner exists.
-- **Atomic config write fsyncs the parent directory after rename**
-  (`core/ct-server-core/src/singbox/mod.rs`, v0.0.15). Power loss
-  between rename and the next implicit sync no longer reverts
-  the directory entry — sing-box never loads a stale
-  config.json on next boot.
-- **Caddyfile-injection guard at the binding site** (v0.0.16).
-  `template::caddyfile_validate` rejects any
-  operator-controlled value containing `\n`/`\r`/`{`/`}`/`"`
-  before render — closes the class of attack where a hostile
-  DOMAIN breaks out of `{{ .Domain }}:8443 { … }` and injects
-  a Caddy admin endpoint.
-- **`cap_drop: [ALL]` + `security_opt: no-new-privileges` on
-  every container** (v0.0.17). caddy + sing-box add back
-  `NET_BIND_SERVICE` for privileged ports; nothing else needs
-  any capability. RCE in any container can no longer wield raw
-  capabilities even if the exploited binary ran as root.
-- **Browser-side hardening on `/admin`** via Hono middleware emits
-  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: same-origin`,
-  `Permissions-Policy` (deny camera/microphone/geolocation/
-  payment/usb), and a constrained Content Security Policy.
-- **Admin mutations use CSRF/origin checks** for browser actions
-  outside Better Auth's own `/api/auth/*` handlers.
+Security-sensitive behavior is covered in:
 
-## Test coverage
+- `apps/api/tests`: login/setup/session, protected routes, role checks,
+  signup-disabled behavior, CSRF/action checks, audit logging, and
+  subscription masking.
+- `packages/db/tests`: migrations, bootstrap tokens, role/last-owner
+  rules, proxy accounts, settings, and legacy import fixtures.
+- `packages/security/tests`: redaction, validation, token/password
+  helpers, and sensitive-output guards.
+- `packages/config/tests`: production config validation and safe defaults.
+- `operator/tests`: `ct admin`, bootstrap file permissions, update/doctor
+  migration messaging, backups/restores, docs command drift, and redacted
+  shell output.
 
-- **`core/ct-server-core` Rust unit tests**: 64 passing across
-  workspace as of v0.0.20.
-- **`operator/tests/`**: Bun tests cover admin bootstrap, login,
-  route protection, role authorization, migrations, redaction,
-  deployment file guards, and operator workflows.
+Run the release gate from the repository root:
 
-## Audit-ability
+```bash
+make ci
+```
 
-- **Reproducible builds**: every release tag pins to specific
-  upstream image tags, Cargo.lock, and Bun lockfiles. See `RELEASE.md`
-  for the bit-for-bit reproduction recipe.
-- **SBOM**: every release ships a CycloneDX SBOM under `sbom/` of
-  the Cargo workspace, Bun dependency graph, and Docker image
-  layers. Generate locally with `make sbom`.
-- **Manifest verifier**: `ct-server-core component check` walks
-  `manifests/*.upstream.json` and prints OK/NG for every component
-  on every release. The same check runs in CI.
+## Auditability
+
+- Release manifests under `manifests/` pin component versions.
+- `make manifest-lockstep` verifies app/package/Rust/manifest version
+  alignment.
+- `make stale-reference-scan` rejects active references to retired admin
+  runtime surfaces.
+- `make sbom` generates release SBOM material through the operator tools.

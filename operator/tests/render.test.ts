@@ -5,7 +5,7 @@
 // retired and produces a friendly hint for old runbooks.
 
 import { test, expect } from "bun:test";
-import { parseArgs, renderFailureSummary } from "../src/tasks/render";
+import { parseArgs } from "../src/tasks/render";
 
 test("parseArgs accepts caddyfile", () => {
     const r = parseArgs(["bun", "operator", "render", "caddyfile"]);
@@ -70,18 +70,4 @@ test("parseArgs errors when render verb missing from argv", () => {
     const r = parseArgs(["bun", "operator", "doctor"]);
     expect(typeof r).toBe("string");
     expect(r as string).toContain("command missing");
-});
-
-test("renderFailureSummary gives a recovery command for unknown render failures", () => {
-    const summary = renderFailureSummary("caddyfile", 1, "", "ct-server-core exited 1");
-
-    expect(summary).toContain("caddyfile render failed");
-    expect(summary).toContain("ct recover diagnose");
-});
-
-test("render task redacts command output before printing", async () => {
-    const body = await Bun.file("./src/tasks/render.ts").text();
-
-    expect(body).toContain("redactSensitive(r.stdout)");
-    expect(body).toContain("redactSensitive(r.stderr)");
 });
