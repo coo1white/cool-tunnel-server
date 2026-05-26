@@ -41,10 +41,16 @@ test("monorepo installs use the root pnpm lockfile instead of nested Bun install
     const release = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
     const makefile = await Bun.file(repoPath("Makefile")).text();
     const singboxRelease = await Bun.file(repoPath("scripts/build_release_singbox_core_assets.sh")).text();
+    const adminApiDockerfile = await Bun.file(repoPath("docker/admin-api/Dockerfile")).text();
+    const adminWebDockerfile = await Bun.file(repoPath("docker/admin-web/Dockerfile")).text();
 
     for (const body of [ci, audit, release, makefile]) {
         expect(body).toContain("pnpm install --frozen-lockfile");
         expect(body).not.toContain("bun install --frozen-lockfile");
+    }
+    for (const body of [adminApiDockerfile, adminWebDockerfile]) {
+        expect(body).toContain("npm install -g pnpm@11.1.1");
+        expect(body).not.toContain("bun install -g pnpm");
     }
     expect(singboxRelease).toContain("install --frozen-lockfile");
     expect(singboxRelease).not.toContain("bun install --frozen-lockfile");
