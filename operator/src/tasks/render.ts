@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // operator/src/tasks/render.ts — one-shot config render subcommand.
 //
-// v0.5.2 render targets are owned by the Hono API boundary and run
+// Render targets are owned by the Hono API boundary and run
 // inside the admin-api container. Rust remains internal for Caddyfile
 // rendering; singbox-core remains internal for sing-box JSON rendering.
 //
@@ -62,7 +62,7 @@ export class RenderTask implements Task {
 
         ctx.logger.info(`rendering ${target} config`);
         if (passthrough.length > 0) {
-            ctx.logger.warn("render passthrough flags are ignored by the v0.5.2 admin-api renderer");
+            ctx.logger.warn("render passthrough flags are ignored by the admin-api renderer");
         }
         const action = target === "caddyfile" ? "render-caddyfile" : "render-singbox";
         const r = await capture($`docker compose run --rm --no-deps admin-api bun -e ${renderScript(action)}`);

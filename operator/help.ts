@@ -95,7 +95,7 @@ What it does NOT do:
 Migration note:
   v0.5.1 MariaDB data must be exported into the documented legacy_*
   SQLite staging tables before ct admin migrate/ct update if you are
-  moving data from the PHP release. Already-migrated v0.5.2 SQLite
+  moving data from the PHP release. Already-migrated SQLite
   databases are migrated in place.
 
 Next topic:  ./ct help doctor

@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "ct-protocol"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "ct-server-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "aes-gcm",
  "base64",

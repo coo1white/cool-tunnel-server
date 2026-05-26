@@ -44,7 +44,10 @@ test("redactSensitive masks credential-bearing query strings and auth headers", 
         "Set-Cookie: ct-admin.session_token=session-secret; HttpOnly",
         "/callback?session_token=session-secret&api_key=api-secret",
         "DATABASE_URL=mysql://user:secret-pass@db:3306/app",
+        "DB_URL=postgres://admin:db-secret@db:5432/app",
         "REDIS_URL=redis://:redis-secret@redis:6379/0",
+        "https://user:url-secret@example.com/private",
+        "bearer standalone-secret-token",
         "SOME_PRIVATE_KEY: private-key-secret",
         "CT_TOKEN=token-secret",
     ].join("\n"));
@@ -60,6 +63,9 @@ test("redactSensitive masks credential-bearing query strings and auth headers", 
     expect(out).not.toContain("session-secret");
     expect(out).not.toContain("api-secret");
     expect(out).not.toContain("secret-pass");
+    expect(out).not.toContain("db-secret");
+    expect(out).not.toContain("url-secret");
+    expect(out).not.toContain("standalone-secret-token");
     expect(out).not.toContain("redis-secret");
     expect(out).not.toContain("private-key-secret");
     expect(out).not.toContain("token-secret");

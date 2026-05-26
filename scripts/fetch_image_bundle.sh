@@ -58,12 +58,32 @@ curl_fetch() {
 
 SUMS=$(curl_fetch "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
 if [[ -z "$SUMS" ]]; then
-    echo "fetch_image_bundle: no SHA256SUMS at ${URL_BASE} (release not published?)."
+    echo "fetch_image_bundle: no SHA256SUMS at ${URL_BASE}."
+    echo "fetch_image_bundle: expected a published release with checksums. Retrying is safe after the release workflow finishes."
     exit 2
 fi
 sha_for() {
     echo "$SUMS" | awk -v t="$1" '$2 == t || $2 == "*"t {print $1; exit}'
 }
+
+release_entry_available() {
+    local target="$1"
+    [[ -n "$(sha_for "$target")" ]]
+}
+
+explain_missing_bundle() {
+    echo "fetch_image_bundle: release v${VERSION} does not include a prebuilt image bundle for ${OS}-${ARCH}."
+    echo "fetch_image_bundle: expected one of these checksum entries:"
+    echo "  - ${BOM_TARGET}"
+    echo "  - ${LEGACY_TARGET}"
+    echo "fetch_image_bundle: this install/update path is bundle-only and does not build Docker images locally."
+    echo "fetch_image_bundle: retrying is safe after maintainers publish the missing release assets."
+}
+
+if ! release_entry_available "$BOM_TARGET" && ! release_entry_available "$LEGACY_TARGET"; then
+    explain_missing_bundle
+    exit 2
+fi
 
 verify_file() {
     local file="$1"

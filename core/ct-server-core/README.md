@@ -2,7 +2,7 @@
 
 Internal Rust engine for Cool Tunnel Server protocol and runtime logic.
 
-The v0.5.2 Next.js/Hono admin stack handles browser UI, auth,
+The Next.js/Hono admin stack handles browser UI, auth,
 sessions, and SQLite persistence. This binary owns the parts where
 strict types, structured errors, and direct syscalls still matter:
 

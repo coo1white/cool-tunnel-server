@@ -18,8 +18,7 @@ if [[ "${CT_SKIP_OPERATOR_FETCH:-}" == "1" ]]; then
     exit 0
 fi
 
-# Deployed version. v0.5.2 uses root package.json as the release
-# source of truth.
+# Deployed version. Root package.json is the release source of truth.
 VERSION=$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' package.json | head -1)
 if [[ -z "$VERSION" ]]; then
     echo "fetch_operator_binary: cannot determine version from package.json" >&2

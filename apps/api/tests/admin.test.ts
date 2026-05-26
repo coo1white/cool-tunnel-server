@@ -217,6 +217,42 @@ test("login form scrubs query strings and posts credentials server-side", async 
     expect(failedBody).toContain("Sign in failed. Check the email and password.");
     expect(failedBody).not.toContain("missing@example.com");
     expect(failedBody).not.toContain("wrong-password-value");
+
+    for (let i = 0; i < 5; i++) {
+      const pageAttempt = await f.app.request("/login");
+      const attemptBody = await pageAttempt.text();
+      const attemptCsrf = attemptBody.match(/name="csrf" value="([^"]+)"/)?.[1] ?? "";
+      const attemptCookie = pageAttempt.headers.get("set-cookie")?.split(";")[0] ?? "";
+      const attempt = await f.app.request("/login", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie: attemptCookie,
+          "x-forwarded-for": "198.51.100.55",
+          origin: "http://localhost:9000",
+          referer: "http://localhost:9000/login",
+        },
+        body: new URLSearchParams({ csrf: attemptCsrf, email: "missing@example.com", password: "wrong-password-value" }),
+      });
+      expect(attempt.status).toBe(401);
+    }
+    const blockedPage = await f.app.request("/login");
+    const blockedBody = await blockedPage.text();
+    const blockedCsrf = blockedBody.match(/name="csrf" value="([^"]+)"/)?.[1] ?? "";
+    const blockedCookie = blockedPage.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const blocked = await f.app.request("/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: blockedCookie,
+        "x-forwarded-for": "198.51.100.55",
+        origin: "http://localhost:9000",
+        referer: "http://localhost:9000/login",
+      },
+      body: new URLSearchParams({ csrf: blockedCsrf, email: "owner@example.com", password: "correct horse battery staple" }),
+    });
+    expect(blocked.status).toBe(429);
+    expect(await blocked.text()).not.toContain("correct horse");
   } finally {
     closeFixture(f);
   }
@@ -342,6 +378,12 @@ test("settings validation, status, audit, migrations, and action boundary", asyn
 
     const noCsrf = await f.app.request("/api/render", { method: "POST", headers: { cookie: ownerSession.cookie } });
     expect(noCsrf.status).toBe(403);
+    const forgedCsrf = await f.app.request("/api/render", {
+      method: "POST",
+      headers: { cookie: ownerSession.cookie, "x-csrf-token": "0".repeat(32), "content-type": "application/json" },
+      body: JSON.stringify({ target: "singbox" }),
+    });
+    expect(forgedCsrf.status).toBe(403);
     expect(isCoreAction("doctor")).toBe(true);
     expect(isCoreAction("rm -rf /")).toBe(false);
   } finally {

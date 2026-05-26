@@ -19,7 +19,7 @@
 #
 # Reproducibility contract: each test depends ONLY on:
 #   - the live stack as currently brought up by docker compose
-#   - admin owner/session setup handled through the v0.5.2 admin API
+#   - admin owner/session setup handled through the admin API
 #   - one stress-test proxy account auto-provisioned on first run
 #     (username "stress-runner", regenerated each invocation)
 # Nothing on the host (no rust, no cargo). All workload generators

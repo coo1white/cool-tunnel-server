@@ -1,6 +1,6 @@
 # SQLx Offline Mode
 
-The active v0.5.2 admin runtime stores state in SQLite through
+The active admin runtime stores state in SQLite through
 `packages/db`. Rust remains internal for protocol/config/runtime work.
 
 This page is retained for the remaining `core/ct-server-core`
@@ -19,7 +19,7 @@ If a Rust query changes and `core/.sqlx/` no longer matches, cargo
 fails with a cached-query metadata error. That is intentional: fix the
 Rust query or refresh the metadata on a maintainer host before merging.
 
-There is no active root `make sqlx-prepare` target in v0.5.2. The
+There is no active root `make sqlx-prepare` target. The
 previous prepare helper was removed with the PHP admin runtime. If a
 future Rust change needs fresh metadata, maintainers should recreate the
 minimal schema fixture for `core/ct-server-core/src/db.rs`, run

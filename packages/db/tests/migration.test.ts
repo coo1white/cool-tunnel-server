@@ -77,7 +77,7 @@ test("proxy account UUID rotates with previous UUID grace", () => {
     realityDestHost: "www.microsoft.com",
     realityShortIds: [""],
     antiTrackingDohResolver: "https://dns.alidns.com/dns-query",
-    version: "0.5.2",
+    version: "0.5.3",
   });
   store.ensureDefaults();
   const actor = store.createUser(null, {
@@ -91,6 +91,32 @@ test("proxy account UUID rotates with previous UUID grace", () => {
   const rotated = store.regenerateProxyUuid(actor, account.id);
   expect(rotated.uuid).not.toBe(account.uuid);
   expect(rotated.previousUuidValidUntil).toBeTruthy();
+});
+
+test("audit details minimize personal and secret fields", () => {
+  const { db } = openAdminDb(":memory:");
+  migrateAdminDb(db);
+  const store = new AdminStore(db);
+  const owner = store.createUser(null, {
+    email: "owner@example.com",
+    username: "owner",
+    name: "Owner",
+    passwordHash: "hash",
+    role: "owner",
+  });
+  const target = store.createUser(owner, {
+    email: "delete-me@example.com",
+    username: "delete-me",
+    name: "Delete Me",
+    passwordHash: "hash",
+    role: "viewer",
+  });
+  store.deleteUser(owner, target.id);
+  const audit = store.listAudit(10).map((entry) => entry.detail ?? "").join("\n");
+  expect(audit).not.toContain("owner@example.com");
+  expect(audit).not.toContain("delete-me@example.com");
+  expect(audit).not.toContain("hash");
+  expect(audit).toContain("targetUsername");
 });
 
 test("legacy PHP staging migration is idempotent and preserves users accounts and settings", () => {

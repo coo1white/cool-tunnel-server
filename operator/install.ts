@@ -62,7 +62,7 @@ async function renderInitialConfig(): Promise<void> {
 }
 
 async function startStack(): Promise<void> {
-    step("Start v0.5.2 stack");
+    step("Start Cool Tunnel stack");
     const up = await capture($`docker compose up -d --no-build --pull never --remove-orphans admin-api admin-web singbox caddy`);
     if (!up.ok) die("compose up failed", up.stderr.split("\n").slice(0, 5).join("\n"));
     ok("admin-api, admin-web, singbox, and caddy started");

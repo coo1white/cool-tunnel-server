@@ -74,7 +74,7 @@ export class AdminTask implements Task {
         const args = (ctx.env["_CT_OPERATOR_ADMIN_ARGS"] ?? "").split("\n").filter(Boolean);
         const sub = args[0] ?? "help";
         if (sub === "serve") {
-            ctx.logger.error("ct admin serve was removed in v0.5.2; run the Better-T-Stack admin API/web apps instead.");
+            ctx.logger.error("ct admin serve was removed; run the Better-T-Stack admin API/web apps instead.");
             return { ok: false, code: 2 };
         }
         const dotenv = await loadDotenv([`${ctx.cwd}/.env`]);

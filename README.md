@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-1c5cdc)](./LICENSE)
 [![LTSC-Heng Draft](https://img.shields.io/badge/license--draft-LTSC--Heng-111111)](./LTSC-HENG-LICENSE-DRAFT.md)
-[![Latest release](https://img.shields.io/badge/release-v0.5.2-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.5.2)
+[![Latest release](https://img.shields.io/badge/release-v0.5.3-1c5cdc)](https://github.com/coo1white/cool-tunnel-server/releases/tag/v0.5.3)
 [![CI](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/ci.yml)
 [![Audit](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/coo1white/cool-tunnel-server/actions/workflows/audit.yml)
 
@@ -211,12 +211,16 @@ something fails.
 
 ## Release
 
-Latest stable server release: `v0.5.2`.
+Latest stable server release: `v0.5.3`.
 
 Server releases own the runtime assets used by clients:
 
 - server package/source release;
 - `SHA256SUMS`;
+- `ct-operator-linux-x64` and `ct-operator-linux-arm64`;
+- `ct-server-core-linux-*` and `singbox-core-linux-*`;
+- per-architecture `cool-tunnel-server-images-linux-*.bom.json`
+  plus image slice assets for VPS `ct install` and `ct update`;
 - `sing-box` runtime asset;
 - `cool-tunnel-core` runtime asset.
 

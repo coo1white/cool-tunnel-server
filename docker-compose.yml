@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Cool Tunnel Server v0.5.2 runtime.
+# Cool Tunnel Server v0.5.3 runtime.
 #
 # Control plane:
 #   admin-web  Next.js admin dashboard. Talks only to admin-api.
@@ -14,7 +14,7 @@
 #
 # SQLite is the default storage. There is no PHP/Laravel/Filament,
 # MariaDB, Redis, public signup, telemetry, or credential-bearing URL
-# login flow in the v0.5.2 runtime.
+# login flow in the current runtime.
 
 x-svc-hardening: &svc-hardening
   cap_drop:

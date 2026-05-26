@@ -555,7 +555,7 @@ export class AdminStore {
       if (!token.ok) throw new StoreError("invalid_bootstrap_token", bootstrapFailureMessage(token.reason), 403);
       if (input.role !== "owner") throw new StoreError("invalid_role", "First bootstrap user must be an owner.");
       const user = this.insertUser(null, input);
-      this.audit(user.id, "bootstrap.owner.created", "user", user.id, { email: user.email, username: user.username });
+      this.audit(user.id, "bootstrap.owner.created", "user", user.id, { username: user.username });
       return user;
     })();
   }
@@ -627,7 +627,7 @@ export class AdminStore {
     if (actor.role !== "owner") throw new StoreError("forbidden", "Only owners can delete users.", 403);
     this.assertLastOwnerPreserved(target, "__deleted__" as AdminRole, "disabled");
     this.db.query("DELETE FROM user WHERE id = ?").run(id);
-    this.audit(actor.id, "user.deleted", "user", id, { targetRole: target.role, targetEmail: target.email });
+    this.audit(actor.id, "user.deleted", "user", id, { targetRole: target.role, targetUsername: target.username });
   }
 
   markLogin(userId: string): void {
@@ -868,7 +868,7 @@ export class AdminStore {
         ? legacyDetected && !legacyMigrated
           ? "SQLite schema is current; legacy PHP staging tables are present and need `ct admin migrate`."
           : "SQLite schema is current."
-        : "Run `ct admin migrate` before starting the v0.5.2 admin runtime.",
+        : "Run `ct admin migrate` before starting the admin runtime.",
     };
   }
 
@@ -961,7 +961,7 @@ export class AdminStore {
       throw uniqueOrDatabaseError(e, "duplicate_user", "A user with that email or username already exists.");
     }
     const user = this.requireUser(id);
-    this.audit(actor?.id ?? null, "user.created", "user", user.id, { email: user.email, username: user.username, role: user.role });
+    this.audit(actor?.id ?? null, "user.created", "user", user.id, { username: user.username, role: user.role });
     return user;
   }
 

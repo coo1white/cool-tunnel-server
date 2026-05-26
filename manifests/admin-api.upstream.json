@@ -1,11 +1,15 @@
 {
   "name": "admin-api",
   "kind": "container-image",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "upstream": "https://github.com/coo1white/cool-tunnel-server",
   "verify": {
-    "command": ["bun", "-e", "await fetch('http://127.0.0.1:9000/up').then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); })"],
+    "command": [
+      "bun",
+      "-e",
+      "await fetch('http://127.0.0.1:9000/up').then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); })"
+    ],
     "expect_zero_exit": true
   },
-  "note": "AGPL-3.0-only admin API code (Copyright (C) 2026 coolwhite LLC). Built from apps/api and docker/admin-api/Dockerfile. This is the v0.5.2 replacement for the retired PHP admin panel: Hono on Bun, Better Auth, RBAC, SQLite migrations, subscription output, status, audit history, and render action boundaries. Runtime health is checked through the local /up endpoint and by ct doctor."
+  "note": "AGPL-3.0-only admin API code (Copyright (C) 2026 coolwhite LLC). Built from apps/api and docker/admin-api/Dockerfile. This is the active replacement for the retired PHP admin panel: Hono on Bun, Better Auth, RBAC, SQLite migrations, subscription output, status, audit history, and render action boundaries. Runtime health is checked through the local /up endpoint and by ct doctor."
 }
