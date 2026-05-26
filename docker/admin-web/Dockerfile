@@ -21,6 +21,7 @@ RUN pnpm --filter @cool-tunnel/web typecheck \
 FROM ${CT_BUN_IMAGE} AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache nodejs
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web ./apps/web
 COPY --from=deps /app/packages/shared ./packages/shared
