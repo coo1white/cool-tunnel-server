@@ -34,6 +34,9 @@ before relying on a version bump as a compatibility signal.
 - Made missing prebuilt Docker image bundles fail with an actionable
   message naming the expected BOM or legacy bundle checksum entries and
   confirming that retrying is safe after assets are published.
+- Fixed admin API/web Docker image bundle builds by running pnpm through
+  Node instead of Bun during dependency installation, avoiding Bun's
+  missing `node:sqlite` builtin shim while keeping the API runtime on Bun.
 - Removed release-specific wording from active install/restore/render
   messages so future updates do not present stale version names.
 

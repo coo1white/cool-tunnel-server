@@ -8,7 +8,8 @@ FROM ${CT_BUN_IMAGE} AS deps
 WORKDIR /app
 ENV PNPM_HOME=/pnpm
 ENV PATH=/pnpm:$PATH
-RUN bun install -g pnpm@11.1.1
+RUN apk add --no-cache nodejs npm \
+    && npm install -g pnpm@11.1.1
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
