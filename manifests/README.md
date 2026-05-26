@@ -19,8 +19,8 @@ services from reappearing by accident.
 | `ct-server-core.upstream.json` | Internal Rust engine binary | Release compatibility and daemon/protocol internals |
 | `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform contract |
 | `client-runtime.upstream.json` | Portable client runtime catalog | Server-owned `sing-box` + `cool-tunnel-core` package for macOS today and future Android / Windows / iOS / Linux clients |
-| `mariadb.upstream.json` | Retired DB container | Historical marker; v0.5.2 uses SQLite |
-| `redis.upstream.json` | Retired cache/queue container | Historical marker; v0.5.2 has no Redis runtime |
+| `mariadb.upstream.json` | Retired DB container | Historical marker; current runtime uses SQLite |
+| `redis.upstream.json` | Retired cache/queue container | Historical marker; current runtime has no Redis runtime |
 | `credential-lock.upstream.json` | Credential-lock guard | Deployment invariant |
 | `doh-resolver.upstream.json` | DoH resolver reachability | Captive-portal / poisoner catch |
 

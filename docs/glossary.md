@@ -108,7 +108,7 @@ pin data.
 
 ## SQLite
 
-The default v0.5.2 control-plane database. It is stored in the
+The default control-plane database. It is stored in the
 `./data/admin/admin.sqlite` on the host and bind-mounted into admin-api
 as `/data/admin/admin.sqlite`.
 

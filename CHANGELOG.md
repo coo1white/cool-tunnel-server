@@ -14,6 +14,42 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.3] - 2026-05-26 - Security, privacy, and release-readiness hardening
+
+### Changed
+
+- Made admin API CSRF tokens derive from the server-side auth secret
+  and session material instead of user-visible identity alone.
+- Improved release documentation so VPS install/update readiness names
+  the operator, core, checksum, and image-bundle assets that must be
+  present for a complete server release.
+- Updated active release metadata, package versions, Rust workspace
+  versions, and manifests to `0.5.3`.
+
+### Fixed
+
+- Added a privacy-preserving `/login` POST throttle in front of the
+  Better Auth email sign-in flow so repeated browser login failures are
+  blocked without storing plaintext email addresses or IP addresses.
+- Made missing prebuilt Docker image bundles fail with an actionable
+  message naming the expected BOM or legacy bundle checksum entries and
+  confirming that retrying is safe after assets are published.
+- Removed release-specific wording from active install/restore/render
+  messages so future updates do not present stale version names.
+
+### Security
+
+- Normalized Better Auth login failure logs to a generic
+  `authentication failed` message to avoid user-enumeration hints.
+- Broadened central redaction for bearer tokens, credential-bearing
+  URLs, database URL aliases, SQLite URLs, and common deployment secret
+  keys.
+- Minimized audit-log details for user create/delete/bootstrap actions
+  by avoiding email addresses in event payloads while preserving useful
+  usernames, roles, and action metadata.
+
+---
+
 ## [0.5.2] - 2026-05-26 - Better-T-Stack control-plane rebuild
 
 ### Added

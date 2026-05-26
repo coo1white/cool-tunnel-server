@@ -1,4 +1,4 @@
-# cool-tunnel-server v0.5.2 -- monorepo operator + developer Makefile.
+# cool-tunnel-server v0.5.3 -- monorepo operator + developer Makefile.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -45,7 +45,7 @@ client-runtime-manifest: ## verify portable client runtime catalog
 	@scripts/verify-client-runtime-manifest.sh
 
 .PHONY: manifest-lockstep
-manifest-lockstep: client-runtime-manifest ## verify v0.5.2 app/package manifests are aligned
+manifest-lockstep: client-runtime-manifest ## verify app/package manifests are aligned
 	@root_v=$$(jq -r '.version' package.json); \
 	core_v=$$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' core/Cargo.toml | head -1); \
 	for f in apps/api/package.json apps/web/package.json packages/shared/package.json packages/security/package.json packages/config/package.json packages/db/package.json operator/package.json singbox-core/package.json; do \
@@ -210,7 +210,7 @@ build-detached: ## maintainer/dev only: build release images in tmux
 
 .PHONY: set-version
 set-version: ## bump package, Rust, app/package, and app manifest versions; pass V=X.Y.Z
-	@test -n "$(V)" || { echo 'usage: make set-version V=0.5.2' >&2; exit 2; }
+	@test -n "$(V)" || { echo 'usage: make set-version V=0.5.3' >&2; exit 2; }
 	@for f in package.json apps/api/package.json apps/web/package.json packages/shared/package.json packages/security/package.json packages/config/package.json packages/db/package.json operator/package.json singbox-core/package.json; do \
 		tmp="$${f}.tmp"; jq --arg v "$(V)" '.version = $$v' "$$f" > "$$tmp" && mv "$$tmp" "$$f"; \
 	done

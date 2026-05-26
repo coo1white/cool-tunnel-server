@@ -140,7 +140,7 @@ test("classifyMigrationStatus makes stale schema actionable", () => {
         ok: false,
         currentVersion: 3,
         requiredVersion: 5,
-        message: "Run `ct admin migrate` before starting the v0.5.2 admin runtime.",
+        message: "Run `ct admin migrate` before starting the admin runtime.",
     }));
 
     expect(checked.severity).toBe("fail");

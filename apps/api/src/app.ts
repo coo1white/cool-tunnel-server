@@ -71,6 +71,9 @@ class HttpError extends Error {
 const LOGIN_CSRF_COOKIE = "ct_login_csrf";
 const BOOTSTRAP_COOKIE = "ct_bootstrap_token";
 const SUBSCRIPTION_TTL_SECONDS = 60 * 60 * 24 * 7;
+const LOGIN_THROTTLE_WINDOW_MS = 60_000;
+const LOGIN_THROTTLE_MAX = 5;
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
 export function createApiApp(options: ApiAppOptions): ApiApp {
   const auth = options.auth ?? createAuth(options.config);
@@ -102,6 +105,10 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     if (!validLoginCsrf(csrf, csrfCookie)) {
       return loginResponse(c, "Sign in expired. Reload the sign-in page and try again.", 403);
     }
+    const throttle = checkLoginThrottle(c, options.config);
+    if (!throttle.ok) {
+      return loginResponse(c, "Too many sign-in attempts. Wait a minute and try again.", 429);
+    }
     const response = await auth.handler(new Request(`${options.config.baseUrl}/api/auth/sign-in/email`, {
       method: "POST",
       headers: {
@@ -118,8 +125,10 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       }),
     }));
     if (!response.ok) {
+      recordFailedLogin(throttle.key);
       return loginResponse(c, "Sign in failed. Check the email and password.", 401);
     }
+    clearLoginThrottle(throttle.key);
     const headers = new Headers({
       location: "/dashboard",
       "cache-control": "no-store",
@@ -167,12 +176,12 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   app.get("/api/v1/subscription/:token", async (c) => subscriptionResponse(c, store));
 
   app.use("/api/*", requireSession(auth));
-  app.use("/api/*", requireApiCsrf());
+  app.use("/api/*", requireApiCsrf(options.config));
 
   app.get("/api/me", (c) => ok(c, {
     user: c.get("session").user,
     permissions: permissionsFor(c.get("session").user),
-    csrfToken: csrfTokenForSession(c.get("session")),
+    csrfToken: csrfTokenForSession(c.get("session"), options.config),
   }));
 
   app.get("/api/users", requirePermission("users:read"), (c) => ok(c, { users: store.listUsers() }));
@@ -322,11 +331,11 @@ function csrfProtection(config: AdminConfig): MiddlewareHandler {
   };
 }
 
-function requireApiCsrf(): MiddlewareHandler<{ Variables: Vars }> {
+function requireApiCsrf(config: AdminConfig): MiddlewareHandler<{ Variables: Vars }> {
   return async (c, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
     const csrf = c.req.header("x-csrf-token");
-    if (csrf !== csrfTokenForSession(c.get("session"))) throw new HttpError(403, "csrf", "CSRF token mismatch.");
+    if (csrf !== csrfTokenForSession(c.get("session"), config)) throw new HttpError(403, "csrf", "CSRF token mismatch.");
     return next();
   };
 }
@@ -501,9 +510,40 @@ function appendSetCookies(headers: Headers, response: Response): void {
   }
 }
 
-function csrfTokenForSession(session: CurrentSession): string {
+function csrfTokenForSession(session: CurrentSession, config: Pick<AdminConfig, "authSecret">): string {
   const token = String(session.session.token ?? session.session.id ?? session.user.id);
-  return createHmac("sha256", session.user.id).update(token).digest("hex").slice(0, 32);
+  return createHmac("sha256", config.authSecret).update(`${session.user.id}:${token}`).digest("hex").slice(0, 32);
+}
+
+function loginThrottleKey(c: Context, config: AdminConfig): string {
+  const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+  const remote = forwarded || c.req.header("x-real-ip") || "unknown";
+  return createHmac("sha256", config.authSecret).update(remote).digest("hex").slice(0, 24);
+}
+
+function checkLoginThrottle(c: Context, config: AdminConfig): { ok: true; key: string } | { ok: false; key: string } {
+  const key = loginThrottleKey(c, config);
+  const current = loginAttempts.get(key);
+  const now = Date.now();
+  if (!current || current.resetAt <= now) {
+    loginAttempts.set(key, { count: 0, resetAt: now + LOGIN_THROTTLE_WINDOW_MS });
+    return { ok: true, key };
+  }
+  return current.count >= LOGIN_THROTTLE_MAX ? { ok: false, key } : { ok: true, key };
+}
+
+function recordFailedLogin(key: string): void {
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_THROTTLE_WINDOW_MS });
+    return;
+  }
+  loginAttempts.set(key, { ...current, count: current.count + 1 });
+}
+
+function clearLoginThrottle(key: string): void {
+  loginAttempts.delete(key);
 }
 
 function permissionsFor(user: CurrentSession["user"]): Permission[] {

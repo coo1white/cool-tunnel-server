@@ -108,11 +108,16 @@ export function createAuth(config: AdminConfig) {
             return String(arg);
           }
         })].join(" ");
-        const line = `[better-auth] ${level}: ${redactSensitive(rendered).replace(/("email"\s*:\s*")[^"]+(")/gi, "$1<redacted>$2")}\n`;
+        const line = `[better-auth] ${level}: ${normalizeAuthLog(redactSensitive(rendered).replace(/("email"\s*:\s*")[^"]+(")/gi, "$1<redacted>$2"))}\n`;
         if (level === "error" || level === "warn" || config.appEnv === "development") process.stderr.write(line);
       },
     },
   });
+}
+
+function normalizeAuthLog(message: string): string {
+  if (/user not found|invalid password|invalid credentials/i.test(message)) return "authentication failed";
+  return message;
 }
 
 export async function getCurrentSession(auth: AuthInstance, headers: Headers): Promise<CurrentSession | null> {

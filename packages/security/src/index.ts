@@ -7,6 +7,7 @@ const SECRET_ENV_KEYS = [
   "APP_PREVIOUS_KEYS",
   "DB_PASSWORD",
   "DB_ROOT_PASSWORD",
+  "MYSQL_PASSWORD",
   "REDIS_PASSWORD",
   "MYSQL_PWD",
   "REDISCLI_AUTH",
@@ -20,8 +21,14 @@ const SECRET_ENV_KEYS = [
   "COOKIE",
   "AUTHORIZATION",
   "DATABASE_URL",
+  "DB_URL",
   "REDIS_URL",
+  "SQLITE_URL",
   "REALITY_PRIVATE_KEY",
+  "REALITY_PUBLIC_KEY",
+  "ACME_EMAIL",
+  "PANEL_DOMAIN",
+  "DOMAIN",
 ];
 
 const SECRET_JSON_KEYS = [
@@ -121,11 +128,13 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 
 export function redactSensitive(text: string): string {
   let out = text;
-  out = out.replace(/\b([A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|DATABASE_URL|REDIS_URL)[A-Z0-9_]*\s*[:=]\s*)[^\s&,'"\\}<>]+/gi, "$1<redacted>");
+  out = out.replace(/\b([A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|DATABASE_URL|DB_URL|SQLITE_URL|REDIS_URL)[A-Z0-9_]*\s*[:=]\s*)[^\s&,'"\\}<>]+/gi, "$1<redacted>");
   out = out.replace(/\b(authorization:\s*bearer\s+)[A-Za-z0-9._~+/=-]{10,}/gi, "$1<redacted>");
+  out = out.replace(/\b(bearer\s+)[A-Za-z0-9._~+/=-]{10,}/gi, "$1<redacted>");
   out = out.replace(/\b(cookie:\s*)[^\r\n]+/gi, "$1<redacted>");
   out = out.replace(/\b(set-cookie:\s*)[^\r\n]+/gi, "$1<redacted>");
   out = out.replace(/\b(mysql|mariadb|postgres|postgresql|redis|sqlite):\/\/[^\s'"<>]+/gi, "$1://<redacted>");
+  out = out.replace(/\b(https?:\/\/)[^:@\s'"<>\/]+:[^@\s'"<>\/]+@/gi, "$1<redacted>@");
   out = out.replace(/(https?:\/\/[^\s'"<>]+\/api\/v1\/subscription\/)[A-Za-z0-9_-]+/g, "$1<redacted>");
   out = out.replace(/(\/api\/v1\/subscription\/)[A-Za-z0-9_-]+/g, "$1<redacted>");
   out = out.replace(/(\/setup(?:\/bootstrap)?\?token=)[A-Za-z0-9_-]+/g, "$1<redacted>");

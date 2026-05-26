@@ -380,7 +380,7 @@ free -h
 
 ### b. Confirm the runtime tuning knobs
 
-The shipped defaults are already sized for a 1 GB box. The v0.5.2
+The shipped defaults are already sized for a 1 GB box. The current
 runtime has no MariaDB, Redis, PHP worker pool, Laravel queue, or
 FrankenPHP tuning surface. Persistent admin state lives at
 `./data/admin/admin.sqlite` on the host and is bind-mounted into

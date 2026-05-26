@@ -171,7 +171,7 @@ jobs:
       - run: cd singbox-core && bun test
 
   manifests:
-    name: manifests (jq parse + v0.5.2 metadata)
+    name: manifests (jq parse + release metadata)
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

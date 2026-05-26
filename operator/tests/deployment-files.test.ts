@@ -96,6 +96,17 @@ test("prebuilt core release path wraps release binary as runtime source image", 
     expect(assetDockerfile).not.toContain("cargo chef");
 });
 
+test("image bundle fetcher explains missing release assets without building locally", async () => {
+    const body = await Bun.file(repoPath("scripts/fetch_image_bundle.sh")).text();
+
+    expect(body).toContain("expected one of these checksum entries");
+    expect(body).toContain("cool-tunnel-server-images-${OS}-${ARCH}.bom.json");
+    expect(body).toContain("cool-tunnel-server-images-${OS}-${ARCH}.tar.gz");
+    expect(body).toContain("does not build Docker images locally");
+    expect(body).toContain("retrying is safe");
+    expect(body).not.toContain("docker build");
+});
+
 test("prebuilt singbox-core release path wraps release binary for admin-api and singbox images", async () => {
     const buildScript = await Bun.file(repoPath("scripts/build_release_singbox_core_assets.sh")).text();
     const dockerfile = await Bun.file(repoPath("docker/singbox-core/prebuilt.Dockerfile")).text();

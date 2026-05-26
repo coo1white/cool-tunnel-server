@@ -34,7 +34,7 @@ account counts, and the runtime actions that require shell-side doctor
 checks.
 
 MariaDB and Redis manifests are retained as retired-component markers.
-They are not active services in v0.5.2; their verify commands assert
+They are not active services; their verify commands assert
 that the retired services have not been reintroduced to Compose.
 
 ## Updating Pins

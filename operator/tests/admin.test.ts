@@ -99,7 +99,7 @@ test("admin serve is disabled in the operator CLI", async () => {
         const result = await new AdminTask().run(ctx);
         expect(result.ok).toBe(false);
         expect(result.code).toBe(2);
-        expect(logs.map((entry) => entry.msg).join("\n")).toContain("ct admin serve was removed in v0.5.2");
+        expect(logs.map((entry) => entry.msg).join("\n")).toContain("ct admin serve was removed");
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
