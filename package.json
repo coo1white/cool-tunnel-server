@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
-    "test": "bun test apps/api/tests packages/db/tests packages/security/tests packages/config/tests operator/tests singbox-core/tests",
+    "test": "bun test apps/api/tests apps/web/tests packages/db/tests packages/security/tests packages/config/tests operator/tests singbox-core/tests",
     "build": "bun run --filter '@cool-tunnel/api' build && bun run --filter '@cool-tunnel/web' build && bun run --filter 'ct-operator' build",
     "api:test": "bun test apps/api/tests packages/db/tests packages/security/tests packages/config/tests",
     "web:build": "bun run --cwd apps/web build",

@@ -69,8 +69,8 @@ ts-typecheck: ## typecheck apps and packages
 	pnpm --filter @cool-tunnel/db typecheck
 
 .PHONY: ts-test
-ts-test: ## run API and shared package tests
-	bun test apps/api/tests packages/db/tests packages/security/tests packages/config/tests
+ts-test: ## run API, web, and shared package tests
+	bun test apps/api/tests apps/web/tests packages/db/tests packages/security/tests packages/config/tests
 
 .PHONY: web-build
 web-build: ## build the Next.js admin frontend

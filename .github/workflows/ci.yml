@@ -101,7 +101,7 @@ jobs:
           run_install: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
-      - run: bun test apps/api/tests packages/db/tests packages/security/tests packages/config/tests
+      - run: bun test apps/api/tests apps/web/tests packages/db/tests packages/security/tests packages/config/tests
       - run: pnpm run build
 
   shell:
