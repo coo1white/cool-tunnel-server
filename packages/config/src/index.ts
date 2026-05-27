@@ -31,7 +31,6 @@ export interface AdminConfig {
   readonly publicSignup: boolean;
   readonly secureCookies: boolean;
   readonly bootstrapTokenTtlMinutes: number;
-  readonly coreSocket: string;
   readonly caddyfilePath: string;
   readonly caddyfileTemplate: string;
   readonly singboxConfigPath: string;
@@ -160,7 +159,6 @@ export function loadAdminConfig(env: EnvMap = process.env as EnvMap): AdminConfi
     publicSignup: parseBool(envValue(env, "CT_PUBLIC_SIGNUP"), false),
     secureCookies,
     bootstrapTokenTtlMinutes: ttl,
-    coreSocket: validateSafePath(envValue(env, "CT_CORE_SOCKET") || "/run/cool-tunnel/core.sock", "CT_CORE_SOCKET"),
     caddyfilePath: validateSafePath(envValue(env, "CADDYFILE_PATH") || "/etc/caddy/Caddyfile", "CADDYFILE_PATH"),
     caddyfileTemplate: validateSafePath(envValue(env, "CADDYFILE_TEMPLATE") || "/srv/caddy/Caddyfile.tpl", "CADDYFILE_TEMPLATE"),
     singboxConfigPath: validateSafePath(envValue(env, "SINGBOX_CONFIG_PATH") || "/data/config/singbox.json", "SINGBOX_CONFIG_PATH"),

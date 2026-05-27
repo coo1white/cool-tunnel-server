@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { chmodSync } from "node:fs";
 import { $, capture, runStreaming } from "./src/util/sh";
 import { die, makeTerm } from "./src/util/term";
 import { dieWithDiag } from "./src/util/diag";
@@ -10,6 +11,7 @@ import { runAutoTempClean, formatAutoTempCleanSummary } from "./src/util/disk-cl
 import { waitFor } from "./src/util/wait";
 import { ensureRepoRoot } from "./src/util/repo-root";
 import { parseComposePsRows, describeUnreadyServices, type ServiceHealthRow } from "./src/tasks/doctor";
+import { migrateEnv } from "./src/util/env-migrate";
 import { renderScript } from "./install";
 import { loadAdminConfig } from "@cool-tunnel/config";
 import { AdminStore, migrateAdminDb, openAdminDb } from "@cool-tunnel/db";
@@ -39,6 +41,20 @@ async function gitPullFfOnly(): Promise<void> {
         return;
     }
     if (pull.stdout) process.stdout.write(pull.stdout);
+}
+
+async function migrateEnvFile(): Promise<void> {
+    step("Auto-migrate legacy .env");
+    const before = await Bun.file(".env").text();
+    const result = migrateEnv(before);
+    if (result.warning) warn(result.warning);
+    if (result.changes.length === 0) {
+        ok(".env already current");
+        return;
+    }
+    await Bun.write(".env", result.content);
+    chmodSync(".env", 0o600);
+    for (const change of result.changes) ok(`migrated .env: ${change.summary}`);
 }
 
 async function migrateAndReport(): Promise<void> {
@@ -109,6 +125,7 @@ export async function runUpdate(): Promise<number> {
 
     await preflight();
     await gitPullFfOnly();
+    await migrateEnvFile();
 
     step("Prepare prebuilt Docker image bundle");
     const bundle = await runStreaming($`./scripts/fetch_image_bundle.sh`);

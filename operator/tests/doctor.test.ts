@@ -153,7 +153,6 @@ test("classifyMigrationStatus reports current schema as pass", () => {
         ok: true,
         currentVersion: 5,
         requiredVersion: 5,
-        legacyPhpDetected: false,
         message: "SQLite schema is current.",
     }));
 

@@ -5,30 +5,24 @@
 # future iOS / Android / Windows / Linux desktop) can depend on. The
 # server is the canonical source of the wire format, and any new
 # client just adds `ct-protocol` to its Cargo.toml to interoperate.
+# Clients fetch a matching version of this crate from the server's
+# published release tag via Cargo.lock.
 #
 #  core/
-#   ├── ct-protocol/        Pure-Rust shared types, no async, no I/O.
-#   │                       What every client links against.
-#   └── ct-server-core/     Internal runtime/protocol/rendering crate.
-#                           Admin auth, sessions, and storage live in
-#                           apps/api and packages/db.
+#   └── ct-protocol/        Pure-Rust shared types, no async, no I/O.
+#                           What every client links against.
 
 [workspace]
 resolver = "2"
 members = [
     "ct-protocol",
-    "ct-server-core",
 ]
 
 [workspace.package]
 version       = "0.5.3"
 edition       = "2021"
-# 1.85 introduced edition2024 (needed by clap_lex 1.1); some sqlx
-# transitives (icu_*) further require 1.86; v0.0.49's cargo-chef
-# install pulls cargo-platform 0.3.2 under --locked, which requires
-# 1.88 — that's the binding floor. Must match
-# core/rust-toolchain.toml::channel and the FROM lines in
-# docker/core/Dockerfile.
+# Pinned to 1.88 to match core/rust-toolchain.toml::channel and the
+# toolchain clients use when they fetch and build this crate.
 rust-version  = "1.88"
 # GNU Affero General Public License v3.0 ONLY — copyleft with the
 # network-source-disclosure clause (§ 13). Anyone running modified
@@ -60,34 +54,3 @@ opt-level     = 3
 lto           = "fat"
 codegen-units = 1
 strip         = "symbols"
-panic         = "abort"
-
-# release-small: lower peak compile-time RAM (~1.5–2 GB drops to
-# ~600–900 MB) at the cost of a slightly larger and slightly slower
-# binary. Use this on a 1 vCPU / 1 GB VPS where install.sh would
-# otherwise OOM during `cargo build --release`.
-#
-# How it differs from `release`:
-#   - lto = "off"        no global link-time merge; this is the
-#                        single biggest peak-RAM saving — fat LTO
-#                        loads every crate's bitcode at once.
-#   - codegen-units = 16 lets rustc parallelise across CPUs without
-#                        each unit being its own monolith. On a 1
-#                        vCPU box this still serialises in practice;
-#                        the win is per-unit RAM staying small.
-#   - opt-level = "s"    optimise for size, not speed. Worth ~5-15%
-#                        runtime; the binary is request/response so
-#                        the latency budget is dominated by network
-#                        and DB, not CPU.
-#
-# Build with:
-#   docker compose build --build-arg CARGO_PROFILE=release-small core-builder
-# or set in .env:
-#   CT_CORE_BUILD_PROFILE=release-small
-[profile.release-small]
-inherits      = "release"
-opt-level     = "s"
-lto           = "off"
-codegen-units = 16
-strip         = "symbols"
-panic         = "abort"

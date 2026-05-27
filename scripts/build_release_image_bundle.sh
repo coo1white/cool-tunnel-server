@@ -3,7 +3,7 @@
 # Build release Docker image bundles locally.
 #
 # Maintainer flow:
-#   1. Build ct-server-core and singbox-core Linux assets.
+#   1. Build singbox-core Linux assets.
 #   2. Run this script on a Docker host with enough CPU/RAM.
 #   3. Upload cool-tunnel-server-images-*.bom.json plus the
 #      cool-tunnel-server-image-linux-* component parts to the release.
@@ -26,7 +26,6 @@ cd "$(dirname "$0")/.." || exit 1
 
 OUT_DIR="${OUT_DIR:-release-assets}"
 PLATFORMS="${PLATFORMS:-linux/amd64 linux/arm64}"
-CORE_IMAGE="${CT_CORE_IMAGE:-cool-tunnel-server-core:latest}"
 SINGBOX_CORE_IMAGE="${CT_SINGBOX_CORE_IMAGE:-cool-tunnel-server-singbox-core:latest}"
 CT_CADDY_BUILDER_IMAGE="${CT_CADDY_BUILDER_IMAGE:-caddy:2.11.3-builder}"
 CT_CADDY_RUNTIME_IMAGE="${CT_CADDY_RUNTIME_IMAGE:-caddy:2.11.3-alpine}"
@@ -56,7 +55,7 @@ require_file() {
     local path="$1"
     if [[ ! -f "$path" ]]; then
         echo "missing required file: $path" >&2
-        echo "run ./scripts/build_release_core_assets.sh and ./scripts/build_release_singbox_core_assets.sh first" >&2
+        echo "run ./scripts/build_release_singbox_core_assets.sh first" >&2
         exit 1
     fi
 }
@@ -308,14 +307,9 @@ build_one() {
         return 0
     fi
 
-    require_file "${OUT_DIR}/ct-server-core-${suffix}"
     require_file "${OUT_DIR}/singbox-core-${suffix}"
 
     echo "==> preparing prebuilt carrier images (${platform})"
-    build_carrier "$platform" "$suffix" "ct-server-core" \
-        docker/core/prebuilt.Dockerfile \
-        "${OUT_DIR}/ct-server-core-${suffix}" \
-        "$CORE_IMAGE"
     build_carrier "$platform" "$suffix" "singbox-core" \
         docker/singbox-core/prebuilt.Dockerfile \
         "${OUT_DIR}/singbox-core-${suffix}" \

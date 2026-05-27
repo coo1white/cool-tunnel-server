@@ -90,8 +90,6 @@ export interface MigrationStatus {
   currentVersion: number;
   requiredVersion: number;
   ok: boolean;
-  legacyPhpDetected: boolean;
-  legacyMigrationAvailable: boolean;
   message: string;
 }
 

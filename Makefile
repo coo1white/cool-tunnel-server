@@ -52,7 +52,7 @@ manifest-lockstep: client-runtime-manifest ## verify app/package manifests are a
 		v=$$(jq -r '.version' "$$f"); \
 		if [ "$$v" != "$$root_v" ]; then echo "$$f version drift: $$v != $$root_v" >&2; exit 1; fi; \
 	done; \
-	for f in manifests/admin-api.upstream.json manifests/admin-web.upstream.json manifests/client-runtime.upstream.json manifests/ct-protocol.upstream.json manifests/ct-server-core.upstream.json; do \
+	for f in manifests/admin-api.upstream.json manifests/admin-web.upstream.json manifests/client-runtime.upstream.json manifests/ct-protocol.upstream.json; do \
 		v=$$(jq -r '.version' "$$f"); \
 		if [ "$$v" != "$$root_v" ]; then echo "$$f version drift: $$v != $$root_v" >&2; exit 1; fi; \
 	done; \
@@ -69,8 +69,8 @@ ts-typecheck: ## typecheck apps and packages
 	pnpm --filter @cool-tunnel/db typecheck
 
 .PHONY: ts-test
-ts-test: ## run API and shared package tests
-	bun test apps/api/tests packages/db/tests packages/security/tests packages/config/tests
+ts-test: ## run API, web, and shared package tests
+	bun test apps/api/tests apps/web/tests packages/db/tests packages/security/tests packages/config/tests
 
 .PHONY: web-build
 web-build: ## build the Next.js admin frontend
@@ -195,7 +195,7 @@ status: ## one-shot compose and image status
 
 .PHONY: clean-images
 clean-images: ## remove local cool-tunnel-server runtime images
-	@for img in cool-tunnel-server-core cool-tunnel-server-singbox-core cool-tunnel-server-caddy cool-tunnel-server-singbox cool-tunnel-server-admin-api cool-tunnel-server-admin-web; do \
+	@for img in cool-tunnel-server-singbox-core cool-tunnel-server-caddy cool-tunnel-server-singbox cool-tunnel-server-admin-api cool-tunnel-server-admin-web; do \
 		docker image rm -f "$$img:latest" 2>/dev/null && echo "removed $$img:latest" || echo "$$img:latest not present"; \
 	done
 
@@ -216,7 +216,7 @@ set-version: ## bump package, Rust, app/package, and app manifest versions; pass
 	done
 	@sed -i.bak -E 's/^version[[:space:]]*=[[:space:]]*"[^"]+"/version       = "$(V)"/' core/Cargo.toml
 	@sed -i.bak -E 's/export const SINGBOX_CORE_VERSION = "[^"]+"/export const SINGBOX_CORE_VERSION = "$(V)"/' singbox-core/src/version.ts
-	@for f in manifests/admin-api.upstream.json manifests/admin-web.upstream.json manifests/ct-protocol.upstream.json manifests/ct-server-core.upstream.json manifests/client-runtime.upstream.json; do \
+	@for f in manifests/admin-api.upstream.json manifests/admin-web.upstream.json manifests/ct-protocol.upstream.json manifests/client-runtime.upstream.json; do \
 		tmp="$${f}.tmp"; jq --arg v "$(V)" '.version = $$v' "$$f" > "$$tmp" && mv "$$tmp" "$$f"; \
 	done
 	@tmp=manifests/client-runtime.upstream.json.tmp; jq --arg v "$(V)" '.authority.release_tag = ("v" + $$v)' manifests/client-runtime.upstream.json > "$$tmp" && mv "$$tmp" manifests/client-runtime.upstream.json

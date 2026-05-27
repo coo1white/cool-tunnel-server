@@ -64,10 +64,9 @@ $EDITOR manifests/admin-api.upstream.json
 $EDITOR manifests/admin-web.upstream.json
 $EDITOR manifests/client-runtime.upstream.json
 
-# Rust core is internal during the v0.5.2 rebuild. Bump
-# core/Cargo.toml, manifests/ct-server-core.upstream.json, and
-# manifests/ct-protocol.upstream.json together only when the Rust
-# workspace participates in the release.
+# Shared Rust crate. Bump core/Cargo.toml and
+# manifests/ct-protocol.upstream.json together every release so clients
+# can fetch a ct-protocol version that matches the published tag.
 ```
 
 `Makefile` provides `make set-version V=0.5.X`; confirm it covers every
@@ -101,39 +100,31 @@ git push origin vX.Y.Z
 
 ### 8. Build release binaries locally
 
-Build the Linux `ct-server-core` and `singbox-core` assets before
-publishing the release. Use mirror overrides when Docker Hub or Alpine
-CDN routing is poor:
+Build the Linux `singbox-core` assets before publishing the release.
+Use mirror overrides when Docker Hub or Alpine CDN routing is poor:
 
 ```sh
 BUILDER=rootless \
-CT_RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.88.0-alpine \
 CT_ALPINE_BASE_IMAGE=public.ecr.aws/docker/library/alpine:3.20 \
 CT_ALPINE_REPOSITORY_BASE=https://mirrors.aliyun.com/alpine \
-./scripts/build_release_core_assets.sh
 ./scripts/build_release_singbox_core_assets.sh
 ./scripts/build_release_image_bundle.sh
 ```
 
 The script writes:
 
-- `release-assets/ct-server-core-linux-x64`
-- `release-assets/ct-server-core-linux-arm64`
 - `release-assets/singbox-core-linux-x64`
 - `release-assets/singbox-core-linux-arm64`
 - `release-assets/cool-tunnel-server-images-linux-x64.tar.gz`
 - `release-assets/cool-tunnel-server-images-linux-arm64.tar.gz`
-- `release-assets/SHA256SUMS.core`
 - `release-assets/SHA256SUMS.singbox-core`
 - `release-assets/SHA256SUMS.images`
 
 Verify the assets before upload:
 
 ```sh
-file release-assets/ct-server-core-linux-*
 file release-assets/singbox-core-linux-*
 ls -lh release-assets/cool-tunnel-server-images-linux-*.tar.gz
-sha256sum -c release-assets/SHA256SUMS.core
 sha256sum -c release-assets/SHA256SUMS.singbox-core
 sha256sum -c release-assets/SHA256SUMS.images
 ```
@@ -162,8 +153,6 @@ Upload locally built core assets first, then let GitHub's
 
 - `ct-operator-linux-x64`
 - `ct-operator-linux-arm64`
-- `ct-server-core-linux-x64`
-- `ct-server-core-linux-arm64`
 - `singbox-core-linux-x64`
 - `singbox-core-linux-arm64`
 - `cool-tunnel-server-images-linux-x64.tar.gz`
@@ -172,7 +161,6 @@ Upload locally built core assets first, then let GitHub's
 
 ```sh
 gh release upload vX.Y.Z \
-    release-assets/ct-server-core-linux-* \
     release-assets/singbox-core-linux-* \
     release-assets/cool-tunnel-server-images-linux-*.tar.gz \
     --clobber
@@ -223,12 +211,10 @@ For a given tag `vX.Y.Z`:
 git checkout vX.Y.Z
 
 # Build Linux release binaries and runtime images on a maintainer host.
-./scripts/build_release_core_assets.sh
 ./scripts/build_release_singbox_core_assets.sh
 ./scripts/build_release_image_bundle.sh
 
 # Verify every checksum file before upload.
-sha256sum -c release-assets/SHA256SUMS.core
 sha256sum -c release-assets/SHA256SUMS.singbox-core
 sha256sum -c release-assets/SHA256SUMS.images
 ```

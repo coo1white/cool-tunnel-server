@@ -31,7 +31,7 @@ test("pickCdxgen returns null when nothing is available", () => {
 
 test("extractCargoVersion reads the first version line", () => {
     const toml = `[workspace]
-members = ["ct-server-core"]
+members = ["ct-protocol"]
 
 [workspace.package]
 version = "0.1.15"
@@ -42,7 +42,7 @@ edition = "2021"
 
 test("extractCargoVersion returns null for a TOML without a version", () => {
     const toml = `[workspace]
-members = ["ct-server-core"]
+members = ["ct-protocol"]
 `;
     expect(extractCargoVersion(toml)).toBeNull();
 });
@@ -62,10 +62,9 @@ test("buildCombinedManifest x-references list covers every per-tool SBOM", () =>
     const refs = m["x-references"];
     expect(refs).toContain("cargo.cdx.json");
     expect(refs).toContain("typescript.cdx.json");
-    expect(refs).toContain("cool-tunnel-server-core.cdx.json");
     expect(refs).toContain("cool-tunnel-server-caddy.cdx.json");
     expect(refs).toContain("cool-tunnel-server-singbox.cdx.json");
     expect(refs).toContain("cool-tunnel-server-admin-api.cdx.json");
     expect(refs).toContain("cool-tunnel-server-admin-web.cdx.json");
-    expect(refs).toHaveLength(7);
+    expect(refs).toHaveLength(6);
 });

@@ -27,7 +27,6 @@ const DOCKER_IMAGES = [
     "cool-tunnel-server-singbox",
     "cool-tunnel-server-admin-api",
     "cool-tunnel-server-admin-web",
-    "cool-tunnel-server-core",
 ] as const;
 
 // Pick the first usable cdxgen invocation. Returns null when none
@@ -89,7 +88,6 @@ export function buildCombinedManifest(opts: {
         "x-references": [
             "cargo.cdx.json",
             "typescript.cdx.json",
-            "cool-tunnel-server-core.cdx.json",
             "cool-tunnel-server-caddy.cdx.json",
             "cool-tunnel-server-singbox.cdx.json",
             "cool-tunnel-server-admin-api.cdx.json",

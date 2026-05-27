@@ -18,14 +18,14 @@ cool-tunnel-server/
 │   ├── src/util/                    compose/env/preflight helpers
 │   └── tests/                       Bun unit tests
 ├── core/
-│   ├── ct-protocol/                 Rust shared wire/profile schemas
-│   └── ct-server-core/              internal runtime/protocol/rendering logic
+│   └── ct-protocol/                 Rust shared wire/profile/subscription
+│                                    crate; clients fetch it from the
+│                                    server's published release tag
 ├── singbox-core/                    Bun/TypeScript sing-box manager
 ├── docker/
 │   ├── admin-api/                   Hono API image
 │   ├── admin-web/                   Next.js admin image
 │   ├── caddy/                       Caddy with SNI routing
-│   ├── core/                        Rust core build image
 │   └── singbox/                     sing-box runtime
 ├── caddy/Caddyfile.tpl              public SNI splitter + admin proxy
 ├── manifests/                       component/version manifests
@@ -57,8 +57,8 @@ caddy
   `-- proxy SNI ------------------> singbox
 
 operator ./ct  --> Docker Compose, backups, migrations, render, doctor
-admin-api      --> Rust/sing-box render actions through explicit boundaries
-core           --> internal protocol/config/render/runtime logic only
+admin-api      --> sing-box render actions through explicit boundaries
+core           --> ct-protocol shared crate, published for clients
 ```
 
 The main boundaries are deliberately boring:
@@ -69,7 +69,9 @@ The main boundaries are deliberately boring:
 - `packages/shared`, `packages/config`, `packages/security`, and
   `packages/db` own reusable TypeScript contracts and helpers.
 - `operator` owns host-level lifecycle commands exposed through `./ct`.
-- `core` owns Rust internals. It does not own web auth, browser
-  sessions, or admin storage.
+- `core` holds the `ct-protocol` shared Rust crate (wire/profile/
+  subscription types). The server is its canonical source; clients fetch
+  a matching version from the published release tag. It does not own web
+  auth, browser sessions, or admin storage.
 - `caddy` owns public `:80` and `:443`, ACME, query-stripping redirects,
   and SNI routing.

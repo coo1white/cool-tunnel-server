@@ -43,11 +43,10 @@ jobs:
           mkdir -p release-assets
           gh release download "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --pattern 'ct-server-core-linux-*' \
             --pattern 'singbox-core-linux-*' \
             --dir release-assets \
             --clobber
-          chmod +x release-assets/ct-server-core-linux-* release-assets/singbox-core-linux-*
+          chmod +x release-assets/singbox-core-linux-*
 
       - name: Build image bundle assets
         run: |

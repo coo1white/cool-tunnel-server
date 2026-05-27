@@ -147,7 +147,7 @@ test("makeArrowProgress can repaint a held tty progress line", async () => {
         },
     });
 
-    progress.advance("Build ct-server-core");
+    progress.advance("Build singbox-core");
     progress.hold();
     await new Promise((resolve) => setTimeout(resolve, 310));
     progress.release();

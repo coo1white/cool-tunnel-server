@@ -26,11 +26,11 @@ Version records for replaceable runtime pieces. See
 `docs/components.md` for the current source-of-truth files and health
 gates.
 
-## ct-server-core
+## ct-protocol
 
-The Rust control-plane binary. It owns Caddyfile rendering,
-panel-domain resolution, the daemon wire path, and the deterministic
-daemon FSM.
+The shared Rust crate (`core/ct-protocol`) holding the wire, profile,
+and subscription-manifest types. The server is its canonical source;
+every client fetches a matching version from the published release tag.
 
 ## docker compose
 
@@ -83,11 +83,6 @@ The hostname for the admin UI, usually `panel.<DOMAIN>`.
 ## Reality
 
 The sing-box TLS camouflage mode used by the VLESS proxy path.
-
-## Rule Maker
-
-The connection-local FSM inside `ct-server-core`. See
-`docs/daemon-fsm.md`.
 
 ## sing-box
 
