@@ -295,6 +295,7 @@ export class AdminStore {
   regenerateProxyUuid(actor: AdminUser, id: string): ProxyAccountSecretView {
     const current = this.getProxyAccount(id);
     if (!current) throw new StoreError("not_found", "Proxy account not found.", 404);
+    if (!current.uuid) throw new StoreError("database_error", "Proxy account is missing its UUID.", 500);
     const uuid = crypto.randomUUID();
     const secret = randomToken(32);
     const ts = nowIso();

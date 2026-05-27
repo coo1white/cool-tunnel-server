@@ -2,6 +2,17 @@
 
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import {
+  AuditResponseSchema,
+  MeResponseSchema,
+  ProxyAccountResponseSchema,
+  ProxyAccountsResponseSchema,
+  SettingsResponseSchema,
+  StatusResponseSchema,
+  UserResponseSchema,
+  UsersResponseSchema,
+  z,
+} from "@cool-tunnel/shared";
 import type {
   AdminUser,
   AuditEntry,
@@ -9,11 +20,12 @@ import type {
   ProxyAccount,
   ProxyAccountSecretView,
   ServerSettings,
+  SessionUser,
   StatusSummary,
 } from "@cool-tunnel/shared";
 
 export interface ApiSession {
-  user: AdminUser;
+  user: SessionUser;
   permissions: Permission[];
   csrfToken: string;
 }
@@ -25,7 +37,7 @@ export interface ActionState {
 
 const apiOrigin = process.env.CT_API_INTERNAL_ORIGIN ?? "http://127.0.0.1:9000";
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiFetch<T>(path: string, init: RequestInit = {}, schema?: z.ZodType<T>): Promise<T> {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore.toString();
   const requestHeaders = new Headers(init.headers);
@@ -44,11 +56,17 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     const err = data.error as { message?: string; code?: string } | undefined;
     throw new Error(err?.message ?? `Request failed: ${response.status}`);
   }
-  return data as T;
+  if (!schema) return data as T;
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) {
+    const detail = parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
+    throw new Error(`API contract mismatch for ${path}: ${detail}`);
+  }
+  return parsed.data;
 }
 
 export async function getSession(): Promise<ApiSession> {
-  const data = await apiFetch<{ user: AdminUser; permissions: Permission[]; csrfToken: string }>("/api/me");
+  const data = await apiFetch<{ user: SessionUser; permissions: Permission[]; csrfToken: string }>("/api/me", {}, MeResponseSchema);
   return data;
 }
 
@@ -70,31 +88,31 @@ export async function apiMutation<T>(path: string, body: Record<string, unknown>
 }
 
 export async function listUsers(): Promise<AdminUser[]> {
-  return (await apiFetch<{ users: AdminUser[] }>("/api/users")).users;
+  return (await apiFetch<{ users: AdminUser[] }>("/api/users", {}, UsersResponseSchema)).users;
 }
 
 export async function getUser(id: string): Promise<AdminUser> {
-  return (await apiFetch<{ user: AdminUser }>(`/api/users/${encodeURIComponent(id)}`)).user;
+  return (await apiFetch<{ user: AdminUser }>(`/api/users/${encodeURIComponent(id)}`, {}, UserResponseSchema)).user;
 }
 
 export async function listProxyAccounts(): Promise<ProxyAccount[]> {
-  return (await apiFetch<{ accounts: ProxyAccount[] }>("/api/proxy-accounts")).accounts;
+  return (await apiFetch<{ accounts: ProxyAccount[] }>("/api/proxy-accounts", {}, ProxyAccountsResponseSchema)).accounts;
 }
 
 export async function getProxyAccount(id: string): Promise<ProxyAccountSecretView> {
-  return (await apiFetch<{ account: ProxyAccountSecretView }>(`/api/proxy-accounts/${encodeURIComponent(id)}`)).account;
+  return (await apiFetch<{ account: ProxyAccountSecretView }>(`/api/proxy-accounts/${encodeURIComponent(id)}`, {}, ProxyAccountResponseSchema)).account;
 }
 
 export async function getSettings(): Promise<ServerSettings> {
-  return (await apiFetch<{ settings: ServerSettings }>("/api/settings")).settings;
+  return (await apiFetch<{ settings: ServerSettings }>("/api/settings", {}, SettingsResponseSchema)).settings;
 }
 
 export async function getStatus(): Promise<StatusSummary> {
-  return (await apiFetch<{ status: StatusSummary }>("/api/status")).status;
+  return (await apiFetch<{ status: StatusSummary }>("/api/status", {}, StatusResponseSchema)).status;
 }
 
 export async function listAudit(): Promise<AuditEntry[]> {
-  return (await apiFetch<{ audit: AuditEntry[] }>("/api/audit")).audit;
+  return (await apiFetch<{ audit: AuditEntry[] }>("/api/audit", {}, AuditResponseSchema)).audit;
 }
 
 export async function logout(): Promise<void> {

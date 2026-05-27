@@ -8,6 +8,7 @@ const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const nextConfig = {
   poweredByHeader: false,
   outputFileTracingRoot: repoRoot,
+  transpilePackages: ["@cool-tunnel/shared"],
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${apiOrigin}/api/:path*` },
