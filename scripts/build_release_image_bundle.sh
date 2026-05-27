@@ -34,7 +34,13 @@ CT_GOSUMDB="${CT_GOSUMDB:-sum.golang.org}"
 CT_ALPINE_RUNTIME_IMAGE="${CT_ALPINE_RUNTIME_IMAGE:-alpine:3.21}"
 CT_ALPINE_REPOSITORY_BASE="${CT_ALPINE_REPOSITORY_BASE:-}"
 CT_BUILD_FULL_IMAGE_BUNDLE="${CT_BUILD_FULL_IMAGE_BUNDLE:-0}"
-CT_IMAGE_BOM_PART_SIZE_MB="${CT_IMAGE_BOM_PART_SIZE_MB:-95}"
+# Each image component is published as ONE release asset whenever it fits
+# under this threshold; only components larger than it are split into
+# numbered parts. Default 250 MiB keeps every current image (largest is
+# admin-web at ~180 MiB) as a single asset, which keeps the release asset
+# list small. The fetch path still streams part-by-part, so peak transient
+# install disk is bounded by this size; raise it only with that in mind.
+CT_IMAGE_BOM_PART_SIZE_MB="${CT_IMAGE_BOM_PART_SIZE_MB:-250}"
 RUNTIME_IMAGES=(
     "cool-tunnel-server-caddy:latest"
     "cool-tunnel-server-singbox:latest"
