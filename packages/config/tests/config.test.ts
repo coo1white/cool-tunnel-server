@@ -37,3 +37,17 @@ test("test config has safe defaults and no public signup", () => {
   expect(cfg.secureCookies).toBe(false);
   expect(cfg.baseUrl).toBe("http://localhost:9000");
 });
+
+test("production refuses to disable secure cookies", () => {
+  expect(() => loadAdminConfig({
+    CT_ADMIN_ENV: "production",
+    BETTER_AUTH_SECRET: SECRET,
+    BETTER_AUTH_URL: "https://panel.example.com",
+    DOMAIN: "proxy.example.com",
+    PANEL_DOMAIN: "panel.example.com",
+    ACME_EMAIL: "ops@example.com",
+    REALITY_PRIVATE_KEY: "A".repeat(43),
+    REALITY_PUBLIC_KEY: "B".repeat(43),
+    CT_ADMIN_SECURE_COOKIES: "false",
+  })).toThrow("cannot be disabled in production");
+});

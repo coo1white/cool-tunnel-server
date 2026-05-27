@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Activity, ClipboardList, Gauge, LogOut, Settings, Users } from "lucide-react";
 import type { Permission } from "@cool-tunnel/shared";
 import { getSession, has } from "./api";
@@ -23,6 +24,7 @@ export async function AdminShell({ children, title, subtitle, action }: {
   action?: React.ReactNode;
 }) {
   const session = await getSession();
+  if (session.user.mustChangePassword) redirect("/change-password");
   return (
     <div className="shell">
       <aside className="sidebar">

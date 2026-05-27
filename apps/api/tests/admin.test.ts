@@ -296,6 +296,7 @@ test("protected routes and role authorization enforce viewer/operator/admin/owne
         name: "Viewer",
         password: "correct horse battery staple",
         role: "viewer",
+        mustChangePassword: false,
       }),
     });
     expect(createViewer.status).toBe(201);
@@ -481,5 +482,82 @@ test("production secure cookies require https", () => {
     }).toThrow("https://");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("forced password change gates the API until the user rotates their password", async () => {
+  const f = await ownerFixture();
+  try {
+    const ownerSession = await signIn(f.app);
+    const created = await f.app.request("/api/users", {
+      method: "POST",
+      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "tempuser@example.com",
+        username: "tempuser",
+        name: "Temp User",
+        password: "initial temp password",
+        role: "operator",
+        mustChangePassword: true,
+      }),
+    });
+    expect(created.status).toBe(201);
+
+    const session = await signIn(f.app, "tempuser@example.com", "initial temp password");
+    expect(session.csrf).not.toBe("");
+
+    const blocked = await f.app.request("/api/proxy-accounts", { headers: { cookie: session.cookie } });
+    expect(blocked.status).toBe(403);
+    expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe("password_change_required");
+
+    const me = await f.app.request("/api/me", { headers: { cookie: session.cookie } });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { user: { mustChangePassword: boolean } }).user.mustChangePassword).toBe(true);
+
+    const wrong = await f.app.request("/api/me/password", {
+      method: "POST",
+      headers: { cookie: session.cookie, "x-csrf-token": session.csrf, "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword: "not the password", newPassword: "a fresh strong password" }),
+    });
+    expect(wrong.status).toBe(400);
+    expect(((await wrong.json()) as { error: { code: string } }).error.code).toBe("invalid_current_password");
+
+    const reuse = await f.app.request("/api/me/password", {
+      method: "POST",
+      headers: { cookie: session.cookie, "x-csrf-token": session.csrf, "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword: "initial temp password", newPassword: "initial temp password" }),
+    });
+    expect(reuse.status).toBe(400);
+    expect(((await reuse.json()) as { error: { code: string } }).error.code).toBe("password_reused");
+
+    const changed = await f.app.request("/api/me/password", {
+      method: "POST",
+      headers: { cookie: session.cookie, "x-csrf-token": session.csrf, "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword: "initial temp password", newPassword: "a fresh strong password" }),
+    });
+    expect(changed.status).toBe(200);
+
+    const unblocked = await f.app.request("/api/proxy-accounts", { headers: { cookie: session.cookie } });
+    expect(unblocked.status).toBe(200);
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("auth audit events capture the client IP", () => {
+  const f = tempFixture();
+  try {
+    const owner = f.store.createUser(null, {
+      email: "ip-owner@example.com",
+      username: "ipowner",
+      name: "IP Owner",
+      passwordHash: "x",
+      role: "owner",
+    });
+    f.store.markLogin(owner.id, "198.51.100.7");
+    const events = f.store.listAudit(20).filter((e) => e.action === "auth.login");
+    expect(events.some((e) => (e.detail ?? "").includes("198.51.100.7"))).toBe(true);
+  } finally {
+    closeFixture(f);
   }
 });

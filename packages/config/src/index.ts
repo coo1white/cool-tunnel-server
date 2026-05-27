@@ -120,6 +120,9 @@ export function loadAdminConfig(env: EnvMap = process.env as EnvMap): AdminConfi
   if (appEnv === "production" && secureCookies && url.protocol !== "https:") {
     throw new Error("BETTER_AUTH_URL/APP_URL must use https:// in production when secure admin cookies are enabled");
   }
+  if (appEnv === "production" && !secureCookies) {
+    throw new Error("CT_ADMIN_SECURE_COOKIES cannot be disabled in production; admin session cookies must be Secure.");
+  }
   const ttl = Number(envValue(env, "CT_ADMIN_BOOTSTRAP_TOKEN_TTL_MINUTES") || "15");
   if (!Number.isInteger(ttl) || ttl < 1 || ttl > 120) {
     throw new Error("CT_ADMIN_BOOTSTRAP_TOKEN_TTL_MINUTES must be an integer from 1 to 120");
@@ -144,7 +147,7 @@ export function loadAdminConfig(env: EnvMap = process.env as EnvMap): AdminConfi
 
   return {
     appEnv,
-    host: envValue(env, "CT_ADMIN_HOST") || "0.0.0.0",
+    host: envValue(env, "CT_ADMIN_HOST") || "127.0.0.1",
     port,
     panelDomain,
     domain,

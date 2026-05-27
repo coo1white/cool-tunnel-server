@@ -18,6 +18,23 @@ export async function logoutAction(): Promise<void> {
   await apiLogout();
 }
 
+export async function changePasswordAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const newPassword = String(formData.get("newPassword") ?? "");
+  if (newPassword !== String(formData.get("confirmPassword") ?? "")) {
+    return { ok: false, message: "New password and confirmation do not match." };
+  }
+  try {
+    await apiMutation("/api/me/password", {
+      currentPassword: String(formData.get("currentPassword") ?? ""),
+      newPassword,
+    });
+  } catch (error) {
+    return stateError(error);
+  }
+  revalidatePath("/", "layout");
+  redirect("/dashboard");
+}
+
 export async function createUserAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   let createdId: string;
   try {

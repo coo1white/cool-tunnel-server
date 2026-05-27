@@ -42,6 +42,7 @@ import {
   redactSensitive,
   validatePassword,
   validBootstrapTokenShape,
+  verifyPassword,
 } from "@cool-tunnel/security";
 import { createAuth, getCurrentSession, type AuthInstance, type CurrentSession } from "./auth";
 import { isCoreAction, runCoreAction, type BoundaryResult, type CoreAction } from "./core-boundary";
@@ -161,7 +162,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     appendSetCookies(headers, response);
     headers.append("set-cookie", cookieHeader(LOGIN_CSRF_COOKIE, "", { maxAge: 0, sameSite: "Strict", httpOnly: true }, options.config));
     const userId = (await response.clone().json().catch(() => null) as { user?: { id?: string } } | null)?.user?.id;
-    if (userId) store.markLogin(userId);
+    if (userId) store.markLogin(userId, clientIp(c));
     return new Response(null, { status: 303, headers });
   });
 
@@ -201,6 +202,29 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
 
   app.use("/api/*", requireSession(auth));
   app.use("/api/*", requireApiCsrf(options.config));
+
+  // When an account is flagged to change its password (e.g. after an admin
+  // reset), block the rest of the API until it is rotated. Only the session
+  // probe, logout, and the self-service change endpoint stay reachable.
+  app.use("/api/*", async (c, next) => {
+    if (!c.get("session").user.mustChangePassword) return next();
+    const path = c.req.path;
+    if (path === "/api/me" || path === "/api/logout" || path === "/api/me/password") return next();
+    throw new HttpError(403, "password_change_required", "Change your password before continuing.", false, "/change-password");
+  });
+
+  app.post("/api/me/password", async (c) => {
+    const body = await safeJson(c);
+    const currentPassword = String(body.currentPassword ?? "");
+    const newPassword = String(body.newPassword ?? "");
+    if (!validatePassword(newPassword)) throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
+    const userId = c.get("session").user.id;
+    const hash = store.getOwnPasswordHash(userId);
+    if (!hash || !(await verifyPassword(currentPassword, hash))) throw new HttpError(400, "invalid_current_password", "Current password is incorrect.");
+    if (await verifyPassword(newPassword, hash)) throw new HttpError(400, "password_reused", "Choose a password you have not used before.");
+    store.changeOwnPassword(userId, await hashPassword(newPassword), String(c.get("session").session.token ?? ""), clientIp(c));
+    return ok(c);
+  });
 
   app.get("/api/me", (c) => ok(c, {
     user: c.get("session").user,
@@ -305,7 +329,8 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       },
       body: "{}",
     }));
-    store.audit(c.get("session").user.id, "auth.logout", "user", c.get("session").user.id, {});
+    const ip = clientIp(c);
+    store.audit(c.get("session").user.id, "auth.logout", "user", c.get("session").user.id, ip ? { ip } : {});
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: response.headers,
@@ -546,6 +571,11 @@ function loginThrottleKey(c: Context, config: AdminConfig): string {
   const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
   const remote = forwarded || c.req.header("x-real-ip") || "unknown";
   return createHmac("sha256", config.authSecret).update(remote).digest("hex").slice(0, 24);
+}
+
+function clientIp(c: Context): string | null {
+  const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || c.req.header("x-real-ip") || null;
 }
 
 function checkLoginThrottle(c: Context, config: AdminConfig): { ok: true; key: string } | { ok: false; key: string } {
