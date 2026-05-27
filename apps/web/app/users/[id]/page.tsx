@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AdminShell, PermissionDenied, StatusPill } from "../../../src/ui";
+import { ActionForm } from "../../../src/action-form";
 import { getSession, getUser, has } from "../../../src/api";
 import { updateUserAction, userCommandAction } from "../../../src/actions";
 
@@ -16,7 +17,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         <h2>Account</h2>
         <p><StatusPill value={user.status} /> <span className="muted">{user.role}</span></p>
         {has("users:update", session) ? (
-          <form className="form" action={updateUserAction}>
+          <ActionForm className="form" action={updateUserAction}>
             <input type="hidden" name="id" value={user.id} />
             <div className="grid cols-3">
               <div className="field"><label>Email</label><input name="email" type="email" defaultValue={user.email} required /></div>
@@ -43,19 +44,19 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
               <label className="checkbox"><input name="mustChangePassword" type="checkbox" defaultChecked={user.mustChangePassword} /> Require password change</label>
             </div>
             <button className="btn" type="submit">Save user</button>
-          </form>
+          </ActionForm>
         ) : <PermissionDenied />}
       </section>
 
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Actions</h2>
-        <form className="toolbar" action={userCommandAction}>
+        <ActionForm className="toolbar" action={userCommandAction}>
           <input type="hidden" name="id" value={user.id} />
           {has("users:disable", session) && <button className="btn secondary" name="command" value={user.status === "active" ? "disable" : "enable"}>{user.status === "active" ? "Disable" : "Enable"}</button>}
-          {has("users:reset-password", session) && <input name="password" type="password" placeholder="New temporary password" />}
+          {has("users:reset-password", session) && <input name="password" type="password" minLength={12} placeholder="New temporary password" />}
           {has("users:reset-password", session) && <button className="btn secondary" name="command" value="reset-password">Reset password</button>}
           {has("users:delete", session) && <button className="btn danger" name="command" value="delete">Delete</button>}
-        </form>
+        </ActionForm>
       </section>
     </AdminShell>
   );

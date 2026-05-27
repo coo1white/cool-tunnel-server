@@ -2,6 +2,7 @@
 
 import { Play, RotateCw } from "lucide-react";
 import { AdminShell, StatusPill } from "../../src/ui";
+import { ActionForm } from "../../src/action-form";
 import { getStatus } from "../../src/api";
 import { runAction } from "../../src/actions";
 
@@ -31,12 +32,12 @@ export default async function StatusPage() {
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Operations</h2>
-        <form className="toolbar" action={runAction}>
+        <ActionForm className="toolbar" action={runAction}>
           <button className="btn secondary" name="command" value="doctor"><Play size={16} /> Doctor</button>
           <button className="btn secondary" name="command" value="render-singbox"><RotateCw size={16} /> Render sing-box</button>
           <button className="btn secondary" name="command" value="render-caddyfile"><RotateCw size={16} /> Render Caddyfile</button>
           <button className="btn danger" name="command" value="restart">Restart</button>
-        </form>
+        </ActionForm>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Migration</h2>

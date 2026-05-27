@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AdminShell, PermissionDenied } from "../../src/ui";
+import { ActionForm } from "../../src/action-form";
 import { getSession, getSettings, has } from "../../src/api";
 import { updateSettingsAction } from "../../src/actions";
 
@@ -10,7 +11,7 @@ export default async function SettingsPage() {
   return (
     <AdminShell title="Settings" subtitle="Domain and runtime config">
       {!has("settings:update", session) ? <PermissionDenied message="Your role can view settings, but cannot change them." /> : (
-        <form className="card form" action={updateSettingsAction}>
+        <ActionForm className="card form" action={updateSettingsAction}>
           <div className="grid cols-3">
             <div className="field"><label>Proxy domain</label><input name="domain" defaultValue={settings.domain} required /></div>
             <div className="field"><label>Panel domain</label><input name="panelDomain" defaultValue={settings.panelDomain} required /></div>
@@ -29,7 +30,7 @@ export default async function SettingsPage() {
           </div>
           <p className="muted">Reality public key is configured in the runtime environment and is intentionally not editable here.</p>
           <button className="btn" type="submit">Save settings</button>
-        </form>
+        </ActionForm>
       )}
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Render State</h2>
