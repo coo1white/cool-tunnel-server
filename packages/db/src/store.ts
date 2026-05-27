@@ -84,15 +84,22 @@ export class AdminStore {
     return row ? rowToUser(row) : null;
   }
 
-  getUserByLogin(login: string): (AdminUser & { passwordHash: string }) | null {
-    const trimmed = login.trim();
-    const row = this.db.query<Record<string, unknown>, [string, string]>(
-      `SELECT user.*, account.password AS password_hash
-       FROM user JOIN account ON account.userId = user.id AND account.providerId = 'credential'
-       WHERE user.email = ? OR user.username = ?`,
-    ).get(trimmed.toLowerCase(), trimmed);
-    if (!row) return null;
-    return { ...rowToUser(row), passwordHash: String(row.password_hash ?? "") };
+  getOwnPasswordHash(userId: string): string | null {
+    if (!validateId(userId)) return null;
+    const row = this.db.query<{ password: string | null }, [string]>(
+      "SELECT password FROM account WHERE userId = ? AND providerId = 'credential'",
+    ).get(userId);
+    return row?.password ?? null;
+  }
+
+  changeOwnPassword(userId: string, passwordHash: string, keepSessionToken: string, ip?: string | null): void {
+    const ts = nowIso();
+    this.db.query("UPDATE account SET password = ?, updatedAt = ? WHERE userId = ? AND providerId = 'credential'").run(passwordHash, ts, userId);
+    this.db.query("UPDATE user SET mustChangePassword = 0, updatedAt = ? WHERE id = ?").run(ts, userId);
+    // Revoke every other session for this user; keep the caller's current one so
+    // they stay signed in after rotating a forced/temporary password.
+    this.db.query("DELETE FROM session WHERE userId = ? AND token != ?").run(userId, keepSessionToken);
+    this.audit(userId, "user.password_changed", "user", userId, ip ? { ip } : {});
   }
 
   createUser(actor: AdminUser | null, input: CreateUserInput): AdminUser {
@@ -181,10 +188,10 @@ export class AdminStore {
     this.audit(actor.id, "user.deleted", "user", id, { targetRole: target.role, targetUsername: target.username });
   }
 
-  markLogin(userId: string): void {
+  markLogin(userId: string, ip?: string | null): void {
     const ts = nowIso();
     this.db.query("UPDATE user SET lastLoginAt = ?, updatedAt = ? WHERE id = ?").run(ts, ts, userId);
-    this.audit(userId, "auth.login", "user", userId, {});
+    this.audit(userId, "auth.login", "user", userId, ip ? { ip } : {});
   }
 
   async createBootstrapToken(config: Pick<AdminConfig, "authSecret">, ttlMinutes = 15): Promise<{ token: string; expiresAt: string; pathHint: string }> {
@@ -442,10 +449,6 @@ export class AdminStore {
     const signed = account.subscriptionSecret ? `${account.id}.${account.subscriptionSecret}` : account.id;
     const sig = createHmac("sha256", secret).update(signed).digest("hex");
     return Buffer.from(`${account.id}.${sig}`).toString("base64url");
-  }
-
-  async subscriptionTokenStrong(account: { id: string; subscriptionSecret: string | null }, secret = this.config?.authSecret ?? ""): Promise<string | null> {
-    return this.subscriptionToken(account, secret);
   }
 
   async resolveSubscriptionToken(token: string): Promise<Record<string, unknown> | null> {

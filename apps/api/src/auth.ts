@@ -8,6 +8,11 @@ import { hashPassword, redactSensitive, verifyPassword } from "@cool-tunnel/secu
 
 export type AuthInstance = ReturnType<typeof createAuth>;
 
+// Hard ceiling on session lifetime. The sliding 7-day expiry (with daily
+// refresh) can otherwise extend indefinitely while a session stays active;
+// this caps the total age regardless of activity.
+const SESSION_ABSOLUTE_MAX_MS = 1000 * 60 * 60 * 24 * 30;
+
 export interface CurrentSession {
   readonly user: {
     readonly id: string;
@@ -123,6 +128,9 @@ function normalizeAuthLog(message: string): string {
 export async function getCurrentSession(auth: AuthInstance, headers: Headers): Promise<CurrentSession | null> {
   const session = await auth.api.getSession({ headers });
   if (!session) return null;
+  const rawSession = session.session as Record<string, unknown>;
+  const createdAt = Date.parse(String(rawSession.createdAt ?? ""));
+  if (Number.isFinite(createdAt) && Date.now() - createdAt > SESSION_ABSOLUTE_MAX_MS) return null;
   const rawUser = session.user as Record<string, unknown>;
   const status = rawUser.status === "disabled" ? "disabled" : "active";
   if (status !== "active") return null;
