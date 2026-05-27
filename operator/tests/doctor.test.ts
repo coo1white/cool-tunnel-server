@@ -6,8 +6,10 @@ import {
     checkDirectDialOutbound,
     classifyMigrationStatus,
     checkRecentRealityInvalidOutput,
+    describeUnreadyServices,
     indexComposeRowsByService,
     opensslSClientArgs,
+    parseComposePsRows,
     recentRealityLogArgs,
 } from "../src/tasks/doctor";
 
@@ -35,6 +37,30 @@ test("indexComposeRowsByService keeps the first row for duplicate services", () 
     ].join("\n");
 
     expect(indexComposeRowsByService(rows).get("singbox")?.["State"]).toBe("running");
+});
+
+test("parseComposePsRows reads a single JSON array (older compose output)", () => {
+    const arrayOutput = JSON.stringify([
+        { Service: "caddy", State: "running", Health: "healthy" },
+        { Service: "admin-api", State: "running", Health: "" },
+        { Service: "admin-web", State: "running", Health: "" },
+        { Service: "singbox", State: "running", Health: "healthy" },
+    ]);
+    const rows = parseComposePsRows(arrayOutput);
+    expect(rows.size).toBe(4);
+    expect(rows.get("caddy")?.health).toBe("healthy");
+    // A healthy array-formatted stack must NOT be reported as unready.
+    expect(describeUnreadyServices(rows, ["admin-api", "admin-web", "singbox", "caddy"])).toBe("");
+});
+
+test("parseComposePsRows still reads NDJSON output", () => {
+    const ndjson = [
+        JSON.stringify({ Service: "caddy", State: "running", Health: "healthy" }),
+        JSON.stringify({ Service: "admin-api", State: "exited", Health: "" }),
+    ].join("\n");
+    const rows = parseComposePsRows(ndjson);
+    expect(rows.size).toBe(2);
+    expect(describeUnreadyServices(rows, ["admin-api"])).toBe("admin-api=exited");
 });
 
 test("checkDirectDialOutbound accepts current domain_resolver strategy shape", () => {

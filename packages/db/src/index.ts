@@ -29,6 +29,7 @@ import {
 import type { AdminConfig } from "@cool-tunnel/config";
 import {
   auditDetail,
+  constantTimeEqual,
   generateBootstrapToken,
   hashBootstrapToken,
   maskSubscriptionUrl,
@@ -919,7 +920,7 @@ export class AdminStore {
     const secret = String(row.subscriptionSecret ?? "");
     const signed = secret ? `${id}.${secret}` : id;
     const expected = createHmac("sha256", this.config.authSecret).update(signed).digest("hex");
-    if (expected !== sig) return null;
+    if (!constantTimeEqual(expected, sig ?? "")) return null;
     return row;
   }
 
@@ -1066,7 +1067,12 @@ function normalizeProxyInput(input: CreateProxyAccountInput): Required<CreatePro
   if (!Number.isInteger(clientDefaultLocalPort) || clientDefaultLocalPort < 1024 || clientDefaultLocalPort > 65535) {
     throw new StoreError("invalid_port", "Local SOCKS port must be 1024-65535.");
   }
-  const expiresAt = input.expiresAt === undefined || input.expiresAt === null || input.expiresAt === "" ? null : new Date(input.expiresAt).toISOString();
+  let expiresAt: string | null = null;
+  if (input.expiresAt !== undefined && input.expiresAt !== null && input.expiresAt !== "") {
+    const parsed = Date.parse(input.expiresAt);
+    if (Number.isNaN(parsed)) throw new StoreError("invalid_expires_at", "Expiry must be a valid date.");
+    expiresAt = new Date(parsed).toISOString();
+  }
   return {
     username,
     label,

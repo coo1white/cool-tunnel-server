@@ -9,7 +9,7 @@ import { checkDiskSpace, checkNetwork, checkStackUp } from "./src/util/preflight
 import { runAutoTempClean, formatAutoTempCleanSummary } from "./src/util/disk-cleanup";
 import { waitFor } from "./src/util/wait";
 import { ensureRepoRoot } from "./src/util/repo-root";
-import { parseComposePsRows, describeUnreadyServices } from "./src/tasks/doctor";
+import { parseComposePsRows, describeUnreadyServices, type ServiceHealthRow } from "./src/tasks/doctor";
 import { renderScript } from "./install";
 import { loadAdminConfig } from "@cool-tunnel/config";
 import { AdminStore, migrateAdminDb, openAdminDb } from "@cool-tunnel/db";
@@ -76,7 +76,7 @@ async function reloadRuntime(): Promise<void> {
 
 async function waitForRuntimeReady(): Promise<void> {
     step("Wait for services to become healthy");
-    let lastRows = new Map();
+    let lastRows = new Map<string, ServiceHealthRow>();
     const ready = await waitFor({
         label: "Cool Tunnel services",
         maxAttempts: Number(process.env["CT_UPDATE_SETTLE_ATTEMPTS"] ?? 30),

@@ -357,6 +357,69 @@ test("proxy accounts, subscription URL masking, and manifest endpoint work", asy
   }
 });
 
+test("proxy account rejects an unparseable expiresAt with 400 (not 500)", async () => {
+  const f = await ownerFixture();
+  try {
+    const ownerSession = await signIn(f.app);
+    const headers = { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" };
+    const bad = await f.app.request("/api/proxy-accounts", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ username: "bob", expiresAt: "soon" }),
+    });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error?: { code?: string } }).error?.code).toBe("invalid_expires_at");
+
+    const good = await f.app.request("/api/proxy-accounts", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ username: "carol", expiresAt: "2099-01-01T00:00:00.000Z" }),
+    });
+    expect(good.status).toBe(201);
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("audit endpoint tolerates a non-numeric ?limit instead of 500", async () => {
+  const f = await ownerFixture();
+  try {
+    const ownerSession = await signIn(f.app);
+    const audit = await f.app.request("/api/audit?limit=abc", { headers: { cookie: ownerSession.cookie } });
+    expect(audit.status).toBe(200);
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("subscription endpoint rejects a token with a forged signature", async () => {
+  const f = await ownerFixture();
+  try {
+    const ownerSession = await signIn(f.app);
+    const created = await f.app.request("/api/proxy-accounts", {
+      method: "POST",
+      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      body: JSON.stringify({ username: "dave" }),
+    });
+    const account = (await created.json()) as { account: { subscriptionUrl: string } };
+    const realPath = new URL(account.account.subscriptionUrl).pathname;
+    const realToken = realPath.split("/").pop() ?? "";
+    const decoded = Buffer.from(realToken.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const id = decoded.split(".", 2)[0] ?? "";
+    const forged = Buffer.from(`${id}.${"0".repeat(64)}`).toString("base64url");
+
+    const ok = await f.app.request(realPath);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toContain("application/json");
+
+    const bad = await f.app.request(`/api/v1/subscription/${forged}`);
+    expect(bad.status).toBe(200);
+    expect(bad.headers.get("content-type")).toContain("text/html");
+  } finally {
+    closeFixture(f);
+  }
+});
+
 test("settings validation, status, audit, migrations, and action boundary", async () => {
   const f = await ownerFixture();
   try {

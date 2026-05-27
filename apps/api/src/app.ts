@@ -26,6 +26,7 @@ import {
   type AdminRole,
 } from "@cool-tunnel/shared";
 import {
+  constantTimeEqual,
   hashBootstrapToken,
   hashPassword,
   randomToken,
@@ -73,7 +74,21 @@ const BOOTSTRAP_COOKIE = "ct_bootstrap_token";
 const SUBSCRIPTION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const LOGIN_THROTTLE_WINDOW_MS = 60_000;
 const LOGIN_THROTTLE_MAX = 5;
+const LOGIN_THROTTLE_MAX_KEYS = 10_000;
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function pruneLoginAttempts(now: number): void {
+  for (const [key, entry] of loginAttempts) {
+    if (entry.resetAt <= now) loginAttempts.delete(key);
+  }
+  // Hard cap so a flood of distinct client IPs within one window (X-Forwarded-For
+  // is attacker-controlled) cannot grow the Map without bound. Drop oldest first.
+  while (loginAttempts.size > LOGIN_THROTTLE_MAX_KEYS) {
+    const oldest = loginAttempts.keys().next().value;
+    if (oldest === undefined) break;
+    loginAttempts.delete(oldest);
+  }
+}
 
 export function createApiApp(options: ApiAppOptions): ApiApp {
   const auth = options.auth ?? createAuth(options.config);
@@ -287,7 +302,10 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       headers: response.headers,
     });
   });
-  app.get("/api/audit", requirePermission("audit:read"), (c) => ok(c, { audit: store.listAudit(Number(c.req.query("limit") ?? "100")) }));
+  app.get("/api/audit", requirePermission("audit:read"), (c) => {
+    const parsed = Number(c.req.query("limit"));
+    return ok(c, { audit: store.listAudit(Number.isFinite(parsed) ? parsed : 100) });
+  });
 
   app.notFound((c) => {
     if (c.req.path.startsWith("/api/")) return apiError(c, new HttpError(404, "not_found", "Route was not found."));
@@ -334,8 +352,8 @@ function csrfProtection(config: AdminConfig): MiddlewareHandler {
 function requireApiCsrf(config: AdminConfig): MiddlewareHandler<{ Variables: Vars }> {
   return async (c, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
-    const csrf = c.req.header("x-csrf-token");
-    if (csrf !== csrfTokenForSession(c.get("session"), config)) throw new HttpError(403, "csrf", "CSRF token mismatch.");
+    const csrf = c.req.header("x-csrf-token") ?? "";
+    if (!constantTimeEqual(csrf, csrfTokenForSession(c.get("session"), config))) throw new HttpError(403, "csrf", "CSRF token mismatch.");
     return next();
   };
 }
@@ -376,7 +394,7 @@ async function subscriptionResponse(c: Context<{ Variables: Vars }>, store: Admi
   const row = await store.resolveSubscriptionToken(requiredParam(c, "token"));
   if (!row) return coverSiteResponse(c);
   const account = rowToSubscriptionAccount(row);
-  if (!account.enabled || (account.expiresAt && Date.parse(account.expiresAt) <= Date.now())) return coverSiteResponse(c);
+  if (!account.enabled || (account.expiresAt && !(Date.parse(account.expiresAt) > Date.now()))) return coverSiteResponse(c);
   const settings = store.getSettings();
   if (!account.uuid || !settings.realityPublicKey || !settings.realityDestHost) return coverSiteResponse(c);
   const protocols = account.enabledProtocols.length > 0 ? account.enabledProtocols : DEFAULT_PROTOCOL_KEYS;
@@ -493,7 +511,7 @@ function cookieHeader(
 }
 
 function validLoginCsrf(value: string, cookieValue: string): boolean {
-  return value.startsWith("ctcsrf_") && value.length > 24 && value === cookieValue;
+  return value.startsWith("ctcsrf_") && value.length > 24 && constantTimeEqual(value, cookieValue);
 }
 
 function trustedHeaderOrFallback(value: string | undefined, fallback: string): string {
@@ -523,8 +541,9 @@ function loginThrottleKey(c: Context, config: AdminConfig): string {
 
 function checkLoginThrottle(c: Context, config: AdminConfig): { ok: true; key: string } | { ok: false; key: string } {
   const key = loginThrottleKey(c, config);
-  const current = loginAttempts.get(key);
   const now = Date.now();
+  pruneLoginAttempts(now);
+  const current = loginAttempts.get(key);
   if (!current || current.resetAt <= now) {
     loginAttempts.set(key, { count: 0, resetAt: now + LOGIN_THROTTLE_WINDOW_MS });
     return { ok: true, key };

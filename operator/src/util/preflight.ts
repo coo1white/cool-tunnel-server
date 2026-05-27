@@ -92,22 +92,14 @@ export const DEFAULT_DISK_THRESHOLDS: DiskSpaceThresholds = {
 export function parseDfAvailableKb(dfOutput: string): number | null {
     const lines = dfOutput.split("\n");
     if (lines.length < 2) return null;
-    const row = lines[1]!.trim().split(/\s+/);
     // df -k columns: Filesystem | 1K-blocks | Used | Available | Use% | Mounted on
-    // On some hosts the Filesystem name wraps to a second line — we
-    // tolerate that by reading col 3 (Available) when the row has 5
-    // tokens (no Filesystem name) and col 3 when the row has 6.
-    // Either way it's column "Available" relative to a row with the
-    // numeric trio.
-    if (row.length >= 6) {
-        const n = parseInt(row[3]!, 10);
-        return Number.isFinite(n) ? n : null;
-    }
-    if (row.length === 5) {
-        const n = parseInt(row[2]!, 10);
-        return Number.isFinite(n) ? n : null;
-    }
-    return null;
+    // When the Filesystem name is long, GNU df wraps it onto its own line and
+    // puts the numeric columns on the next line. Join the data rows (everything
+    // after the header) so the six fields line up regardless of wrapping.
+    const tokens = lines.slice(1).join(" ").trim().split(/\s+/).filter(Boolean);
+    if (tokens.length < 6) return null;
+    const n = parseInt(tokens[3]!, 10);
+    return Number.isFinite(n) ? n : null;
 }
 
 export function kbToGb(kb: number): number {

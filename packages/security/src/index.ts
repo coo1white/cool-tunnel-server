@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { timingSafeEqual } from "node:crypto";
+
 import type { AdminRole } from "@cool-tunnel/shared";
 
 const SECRET_ENV_KEYS = [
@@ -110,6 +112,18 @@ export async function hmacSha256Hex(value: string, secret: string): Promise<stri
   return Buffer.from(sig).toString("hex");
 }
 
+/**
+ * Constant-time string comparison. Returns false (without leaking timing) when
+ * lengths differ. Use for any secret/credential equality check — HMAC
+ * signatures, CSRF tokens — where a plain `===`/`!==` is a timing oracle.
+ */
+export function constantTimeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, "utf8");
+  const bBuf = Buffer.from(b, "utf8");
+  if (aBuf.length !== bBuf.length) return false;
+  return timingSafeEqual(aBuf, bBuf);
+}
+
 export async function hashPassword(password: string): Promise<string> {
   return Bun.password.hash(password, {
     algorithm: "argon2id",
@@ -129,7 +143,9 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 export function redactSensitive(text: string): string {
   let out = text;
   out = out.replace(/\b([A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|DATABASE_URL|DB_URL|SQLITE_URL|REDIS_URL)[A-Z0-9_]*\s*[:=]\s*)[^\s&,'"\\}<>]+/gi, "$1<redacted>");
-  out = out.replace(/\b(authorization:\s*bearer\s+)[A-Za-z0-9._~+/=-]{10,}/gi, "$1<redacted>");
+  out = out.replace(/\b(authorization:\s*)(\S+)(\s+[^\r\n]+)?/gi, (_m, p1, scheme, creds) =>
+    creds ? `${p1}${scheme} <redacted>` : `${p1}<redacted>`,
+  );
   out = out.replace(/\b(bearer\s+)[A-Za-z0-9._~+/=-]{10,}/gi, "$1<redacted>");
   out = out.replace(/\b(cookie:\s*)[^\r\n]+/gi, "$1<redacted>");
   out = out.replace(/\b(set-cookie:\s*)[^\r\n]+/gi, "$1<redacted>");
@@ -151,8 +167,8 @@ export function redactSensitive(text: string): string {
     out = out.replace(new RegExp(`\\b(${key})="[^"]*"`, "g"), '$1="<redacted>"');
   }
   for (const key of SECRET_JSON_KEYS) {
-    out = out.replace(new RegExp(`("${key}"\\s*:\\s*")[^"]*(")`, "gi"), "$1<redacted>$2");
-    out = out.replace(new RegExp(`('${key}'\\s*=>\\s*')[^']*(')`, "gi"), "$1<redacted>$2");
+    out = out.replace(new RegExp(`("${key}"\\s*:\\s*")(?:\\\\.|[^"\\\\])*(")`, "gi"), "$1<redacted>$2");
+    out = out.replace(new RegExp(`('${key}'\\s*=>\\s*')(?:\\\\.|[^'\\\\])*(')`, "gi"), "$1<redacted>$2");
   }
   return out;
 }
@@ -177,7 +193,7 @@ export function auditDetail(detail: Record<string, unknown> = {}): string {
 
 export function maskSubscriptionUrl(url: string | null | undefined): string | null {
   if (!url) return null;
-  return url.replace(/\/api\/v1\/subscription\/[A-Za-z0-9_-]+$/, "/api/v1/subscription/<redacted>");
+  return url.replace(/(\/api\/v1\/subscription\/)[A-Za-z0-9_-]+/, "$1<redacted>");
 }
 
 export function validateEmail(value: string): boolean {

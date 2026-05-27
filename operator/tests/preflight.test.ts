@@ -30,12 +30,9 @@ test("parseDfAvailableKb tolerates a wrapped Filesystem name", () => {
 /some/very/long/device-mapper/lv-name
               50000000 10000000  35000000  23% /
 `;
-    // Our parser reads row 2 — the wrap case the bash original
-    // doesn't handle either. We accept that limitation as a known
-    // edge case; just verify the standard path stays correct.
-    // (Test purely documents current behaviour; if we ever upgrade
-    // the parser to handle wraps, this assertion can flip.)
-    expect(parseDfAvailableKb(out)).toBeNull();
+    // The parser joins the data rows so the Available column still lines up
+    // even when the long device name wraps onto its own line.
+    expect(parseDfAvailableKb(out)).toBe(35000000);
 });
 
 test("parseDfAvailableKb returns null on a non-numeric Available column", () => {
