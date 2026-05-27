@@ -4,7 +4,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { apiMutation, logout as apiLogout } from "./api";
+import { apiMutation, logout as apiLogout, stateError, type ActionState } from "./api";
 
 function value(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -18,94 +18,128 @@ export async function logoutAction(): Promise<void> {
   await apiLogout();
 }
 
-export async function createUserAction(formData: FormData): Promise<void> {
-  const created = await apiMutation<{ user: { id: string } }>("/api/users", {
-    email: value(formData, "email"),
-    username: value(formData, "username"),
-    name: value(formData, "name"),
-    password: String(formData.get("password") ?? ""),
-    role: value(formData, "role"),
-    mustChangePassword: checked(formData, "mustChangePassword"),
-  });
-  revalidatePath("/users");
-  redirect(`/users/${created.user.id}`);
-}
-
-export async function updateUserAction(formData: FormData): Promise<void> {
-  const id = value(formData, "id");
-  await apiMutation(`/api/users/${encodeURIComponent(id)}`, {
-    email: value(formData, "email"),
-    username: value(formData, "username"),
-    name: value(formData, "name"),
-    role: value(formData, "role"),
-    status: value(formData, "status"),
-    mustChangePassword: checked(formData, "mustChangePassword"),
-  }, "PATCH");
-  revalidatePath("/users");
-  revalidatePath(`/users/${id}`);
-}
-
-export async function userCommandAction(formData: FormData): Promise<void> {
-  const id = value(formData, "id");
-  const command = value(formData, "command");
-  if (command === "delete") {
-    await apiMutation(`/api/users/${encodeURIComponent(id)}`, {}, "DELETE");
-    revalidatePath("/users");
-    redirect("/users");
+export async function createUserAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  let createdId: string;
+  try {
+    const created = await apiMutation<{ user: { id: string } }>("/api/users", {
+      email: value(formData, "email"),
+      username: value(formData, "username"),
+      name: value(formData, "name"),
+      password: String(formData.get("password") ?? ""),
+      role: value(formData, "role"),
+      mustChangePassword: checked(formData, "mustChangePassword"),
+    });
+    createdId = created.user.id;
+  } catch (error) {
+    return stateError(error);
   }
-  if (command === "reset-password") {
-    await apiMutation(`/api/users/${encodeURIComponent(id)}/reset-password`, { password: String(formData.get("password") ?? "") });
-  } else {
-    await apiMutation(`/api/users/${encodeURIComponent(id)}/${command}`);
+  revalidatePath("/users");
+  redirect(`/users/${createdId}`);
+}
+
+export async function updateUserAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const id = value(formData, "id");
+  try {
+    await apiMutation(`/api/users/${encodeURIComponent(id)}`, {
+      email: value(formData, "email"),
+      username: value(formData, "username"),
+      name: value(formData, "name"),
+      role: value(formData, "role"),
+      status: value(formData, "status"),
+      mustChangePassword: checked(formData, "mustChangePassword"),
+    }, "PATCH");
+  } catch (error) {
+    return stateError(error);
   }
   revalidatePath("/users");
   revalidatePath(`/users/${id}`);
+  return { ok: true, message: "User updated." };
 }
 
-export async function createProxyAccountAction(formData: FormData): Promise<void> {
-  await apiMutation("/api/proxy-accounts", {
-    username: value(formData, "username"),
-    label: value(formData, "label") || null,
-    enabled: checked(formData, "enabled"),
-    clientDefaultLocalPort: Number(value(formData, "clientDefaultLocalPort") || "1080"),
-    enabledProtocols: ["vless_reality"],
-    expiresAt: value(formData, "expiresAt") || null,
-  });
-  revalidatePath("/users");
-}
-
-export async function proxyCommandAction(formData: FormData): Promise<void> {
+export async function userCommandAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const id = value(formData, "id");
   const command = value(formData, "command");
-  if (command === "delete") {
-    await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}`, {}, "DELETE");
-  } else {
-    await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}/${command}`);
+  try {
+    if (command === "delete") {
+      await apiMutation(`/api/users/${encodeURIComponent(id)}`, {}, "DELETE");
+    } else if (command === "reset-password") {
+      await apiMutation(`/api/users/${encodeURIComponent(id)}/reset-password`, { password: String(formData.get("password") ?? "") });
+    } else {
+      await apiMutation(`/api/users/${encodeURIComponent(id)}/${command}`);
+    }
+  } catch (error) {
+    return stateError(error);
   }
   revalidatePath("/users");
+  revalidatePath(`/users/${id}`);
+  if (command === "delete") redirect("/users");
+  return { ok: true, message: command === "reset-password" ? "Temporary password set." : "User updated." };
 }
 
-export async function updateSettingsAction(formData: FormData): Promise<void> {
-  await apiMutation("/api/settings", {
-    domain: value(formData, "domain"),
-    panelDomain: value(formData, "panelDomain"),
-    acmeEmail: value(formData, "acmeEmail"),
-    acmeDirectory: value(formData, "acmeDirectory"),
-    antiTrackingHideIp: checked(formData, "antiTrackingHideIp"),
-    antiTrackingHideVia: checked(formData, "antiTrackingHideVia"),
-    antiTrackingProbeResistance: checked(formData, "antiTrackingProbeResistance"),
-    antiTrackingDohResolver: value(formData, "antiTrackingDohResolver"),
-    realityDestHost: value(formData, "realityDestHost"),
-    realityShortIds: value(formData, "realityShortIds").split(",").map((part) => part.trim()),
-  }, "PATCH");
+export async function createProxyAccountAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    await apiMutation("/api/proxy-accounts", {
+      username: value(formData, "username"),
+      label: value(formData, "label") || null,
+      enabled: checked(formData, "enabled"),
+      clientDefaultLocalPort: Number(value(formData, "clientDefaultLocalPort") || "1080"),
+      enabledProtocols: ["vless_reality"],
+      expiresAt: value(formData, "expiresAt") || null,
+    });
+  } catch (error) {
+    return stateError(error);
+  }
+  revalidatePath("/users");
+  return { ok: true, message: "Proxy account created." };
+}
+
+export async function proxyCommandAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const id = value(formData, "id");
+  const command = value(formData, "command");
+  try {
+    if (command === "delete") {
+      await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}`, {}, "DELETE");
+    } else {
+      await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}/${command}`);
+    }
+  } catch (error) {
+    return stateError(error);
+  }
+  revalidatePath("/users");
+  return { ok: true, message: command === "delete" ? "Proxy account deleted." : "Proxy account updated." };
+}
+
+export async function updateSettingsAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    await apiMutation("/api/settings", {
+      domain: value(formData, "domain"),
+      panelDomain: value(formData, "panelDomain"),
+      acmeEmail: value(formData, "acmeEmail"),
+      acmeDirectory: value(formData, "acmeDirectory"),
+      antiTrackingHideIp: checked(formData, "antiTrackingHideIp"),
+      antiTrackingHideVia: checked(formData, "antiTrackingHideVia"),
+      antiTrackingProbeResistance: checked(formData, "antiTrackingProbeResistance"),
+      antiTrackingDohResolver: value(formData, "antiTrackingDohResolver"),
+      realityDestHost: value(formData, "realityDestHost"),
+      realityShortIds: value(formData, "realityShortIds").split(",").map((part) => part.trim()),
+    }, "PATCH");
+  } catch (error) {
+    return stateError(error);
+  }
   revalidatePath("/settings");
   revalidatePath("/status");
+  return { ok: true, message: "Settings saved." };
 }
 
-export async function runAction(formData: FormData): Promise<void> {
+export async function runAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const command = value(formData, "command");
   const body = command === "render-caddyfile" ? { target: "caddyfile" } : command === "render-singbox" ? { target: "singbox" } : {};
   const path = command === "doctor" ? "/api/doctor/run" : command.startsWith("render-") ? "/api/render" : `/api/actions/${command}`;
-  await apiMutation(path, body);
+  try {
+    await apiMutation(path, body);
+  } catch (error) {
+    return stateError(error);
+  }
   revalidatePath("/status");
+  return { ok: true, message: `${command} complete.` };
 }

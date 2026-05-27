@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import { AdminShell, PermissionDenied, StatusPill } from "../../src/ui";
+import { ActionForm } from "../../src/action-form";
 import { getSession, has, listProxyAccounts, listUsers } from "../../src/api";
 import { createProxyAccountAction, proxyCommandAction } from "../../src/actions";
 
@@ -39,7 +40,7 @@ export default async function UsersPage() {
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Proxy Accounts</h2>
         {has("proxy-accounts:write", session) && (
-          <form className="form" action={createProxyAccountAction}>
+          <ActionForm className="form" action={createProxyAccountAction}>
             <div className="grid cols-3">
               <div className="field"><label>Username</label><input name="username" required /></div>
               <div className="field"><label>Label</label><input name="label" /></div>
@@ -50,7 +51,7 @@ export default async function UsersPage() {
               <label className="checkbox"><input name="enabled" type="checkbox" defaultChecked /> Enabled</label>
               <button className="btn" type="submit"><Plus size={16} /> Create proxy account</button>
             </div>
-          </form>
+          </ActionForm>
         )}
         {accounts.length === 0 ? <div className="empty">No proxy accounts yet.</div> : (
           <table>
@@ -63,12 +64,12 @@ export default async function UsersPage() {
                   <td className="muted">{account.subscriptionUrlMasked ?? "Unavailable"}</td>
                   <td>
                     {has("proxy-accounts:write", session) && (
-                      <form className="toolbar" action={proxyCommandAction}>
+                      <ActionForm className="toolbar" action={proxyCommandAction}>
                         <input type="hidden" name="id" value={account.id} />
                         <button className="btn secondary" name="command" value={account.enabled ? "disable" : "enable"} type="submit">{account.enabled ? "Disable" : "Enable"}</button>
                         <button className="btn secondary" name="command" value="regenerate-uuid" type="submit"><RotateCcw size={16} /> UUID</button>
                         <button className="btn danger" name="command" value="delete" type="submit"><Trash2 size={16} /></button>
-                      </form>
+                      </ActionForm>
                     )}
                   </td>
                 </tr>

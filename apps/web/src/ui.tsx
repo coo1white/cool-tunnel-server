@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
-import { Activity, ClipboardList, Gauge, LogOut, Settings, UserRoundCog, Users } from "lucide-react";
+import { Activity, ClipboardList, Gauge, LogOut, Settings, Users } from "lucide-react";
 import type { Permission } from "@cool-tunnel/shared";
 import { getSession, has } from "./api";
 import { logoutAction } from "./actions";
+
+export { Notice, PermissionDenied, StatusPill } from "./components";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge, permission: "dashboard:read" as Permission },
@@ -47,22 +49,4 @@ export async function AdminShell({ children, title, subtitle, action }: {
       </main>
     </div>
   );
-}
-
-export function PermissionDenied({ message = "Your role cannot use this action." }: { message?: string }) {
-  return (
-    <div className="empty">
-      <UserRoundCog size={28} />
-      <p>{message}</p>
-    </div>
-  );
-}
-
-export function StatusPill({ value }: { value: string }) {
-  return <span className={`status ${value}`}>{value}</span>;
-}
-
-export function Notice({ state }: { state?: { ok: boolean; message: string } }) {
-  if (!state?.message) return null;
-  return <p className={`notice ${state.ok ? "info" : "error"}`}>{state.message}</p>;
 }
