@@ -178,6 +178,13 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(restore).not.toContain("docker run --rm");
 });
 
+test("update wires the legacy .env auto-migration step", async () => {
+    const update = await Bun.file(operatorPath("update.ts")).text();
+    expect(update).toContain('from "./src/util/env-migrate"');
+    expect(update).toContain("migrateEnv(");
+    expect(update).toContain("Auto-migrate legacy .env");
+});
+
 test("update force-recreates services after loading same-tag release images", async () => {
     const update = await Bun.file(operatorPath("update.ts")).text();
 
