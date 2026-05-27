@@ -116,6 +116,30 @@ test("runAutoTempClean can force unused Docker cleanup even with good headroom",
     expect(formatAutoTempCleanSummary(r)).toContain("temp cleanup complete");
 });
 
+test("runAutoTempClean cleans when disk is tight but above hard minimums", async () => {
+    const measurements = [
+        { repoGb: 7, dockerGb: 7, dockerRoot: "/var/lib/docker" },
+        { repoGb: 9, dockerGb: 10, dockerRoot: "/var/lib/docker" },
+    ];
+    const ran: string[] = [];
+
+    const r = await runAutoTempClean({
+        thresholds: { minRepoGb: 2, minDockerGb: 4 },
+        commands: [dockerPrune],
+        cleanWhenTight: true,
+        cleanRepoCache: () => null,
+        measure: async () => measurements.shift()!,
+        run: async (cmd) => {
+            ran.push(formatCleanupCommand(cmd));
+            return { ok: true, code: 0, stdout: "", stderr: "" };
+        },
+    });
+
+    expect(ran).toEqual(["docker builder prune -f"]);
+    expect(r.disk.ok).toBe(true);
+    expect(formatAutoTempCleanSummary(r)).toContain("temp cleanup complete");
+});
+
 test("runAutoTempClean preserves the low-disk failure when cleanup is not enough", async () => {
     const r = await runAutoTempClean({
         thresholds: { minRepoGb: 2, minDockerGb: 4 },

@@ -37,6 +37,7 @@ export interface AutoTempCleanOptions {
     readonly commands?: readonly CleanupCommand[];
     readonly cleanRepoCache?: (space: DiskSpaceMeasurement, thresholds: DiskSpaceThresholds) => CleanupStepResult | null;
     readonly forceDockerCleanup?: boolean;
+    readonly cleanWhenTight?: boolean;
     readonly measure?: () => Promise<DiskSpaceMeasurement>;
     readonly run?: (cmd: CleanupCommand) => Promise<ShResult>;
 }
@@ -110,11 +111,13 @@ export async function runAutoTempClean(
     const cleanRepoCache = opts.cleanRepoCache ?? cleanupRepoBuildCache;
     const commands = opts.commands ?? DEFAULT_CLEANUP_COMMANDS;
     const forceDockerCleanup = opts.forceDockerCleanup ?? false;
+    const cleanWhenTight = opts.cleanWhenTight ?? false;
 
     const before = await measure();
     const steps: CleanupStepResult[] = [];
     const beforeDisk = classifyDiskSpace(before, thresholds);
-    if (beforeDisk.ok && !forceDockerCleanup) {
+    const tight = before.repoGb < thresholds.minRepoGb * 4 || before.dockerGb < thresholds.minDockerGb * 2;
+    if (beforeDisk.ok && !forceDockerCleanup && !(cleanWhenTight && tight)) {
         return {
             before,
             after: before,

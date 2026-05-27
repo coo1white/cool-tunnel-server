@@ -741,7 +741,7 @@ async function checkDisk(_c: CheckCtx): Promise<CheckLine> {
             label: "Disk",
             severity: "warn",
             detail: `repo ${repoGb}G, docker ${dockerGb}G (tight)`,
-            hint: "docker system prune -af  # reclaim 1-5 GB typical",
+            hint: "./ct update auto-prunes safe caches when disk is tight; manual fallback: docker system prune -af",
         };
     }
     return { group: G_RES, label: "Disk", severity: "pass", detail: `repo ${repoGb}G, docker ${dockerGb}G` };
