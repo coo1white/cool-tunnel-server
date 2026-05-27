@@ -63,7 +63,7 @@ test("admin web runtime includes node for next start", async () => {
 
     expect(body).toContain("FROM ${CT_BUN_IMAGE} AS runtime");
     expect(body).toContain("RUN apk add --no-cache nodejs");
-    expect(body).toContain('CMD ["bun", "--cwd", "apps/web", "run", "start", "--", "-H", "0.0.0.0", "-p", "3000"]');
+    expect(body).toContain('CMD ["bun", "run", "--cwd", "apps/web", "start", "--", "-H", "0.0.0.0", "-p", "3000"]');
 });
 
 test("operator linux x64 release binary uses baseline CPU target", async () => {

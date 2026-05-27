@@ -27,4 +27,4 @@ COPY --from=deps /app/apps/web ./apps/web
 COPY --from=deps /app/packages/shared ./packages/shared
 COPY --from=deps /app/tsconfig.base.json ./tsconfig.base.json
 EXPOSE 3000
-CMD ["bun", "--cwd", "apps/web", "run", "start", "--", "-H", "0.0.0.0", "-p", "3000"]
+CMD ["bun", "run", "--cwd", "apps/web", "start", "--", "-H", "0.0.0.0", "-p", "3000"]
