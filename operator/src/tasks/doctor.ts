@@ -209,7 +209,6 @@ export function classifyMigrationStatus(raw: string): MigrationCheck {
             ok?: boolean;
             currentVersion?: number;
             requiredVersion?: number;
-            legacyPhpDetected?: boolean;
             message?: string;
         };
         const current = Number(status.currentVersion ?? 0);
@@ -217,9 +216,8 @@ export function classifyMigrationStatus(raw: string): MigrationCheck {
         const suffix = required > 0 ? `schema ${current}/${required}` : `schema ${current}`;
         if (status.ok === true) {
             return {
-                severity: status.legacyPhpDetected ? "warn" : "pass",
+                severity: "pass",
                 detail: `${suffix}; ${status.message ?? "SQLite schema is current."}`,
-                hint: status.legacyPhpDetected ? "ct admin migrate && ct doctor" : undefined,
             };
         }
         return {

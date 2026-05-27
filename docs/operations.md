@@ -245,43 +245,17 @@ subscription tokens, same Reality credentials, and same SSL certs.
 
 ---
 
-## Migrating v0.5.1 to v0.5.2
+## Migrating from the retired PHP runtime
 
-v0.5.2 is a control-plane rebuild. It replaces the old PHP admin
-runtime with `apps/web` plus `apps/api`, and replaces MariaDB/Redis
+v0.5.2 was a control-plane rebuild. It replaced the old PHP admin
+runtime with `apps/web` plus `apps/api`, and replaced MariaDB/Redis
 control-plane storage with SQLite at `./data/admin/admin.sqlite`.
 
-Before touching a live v0.5.1 VPS, run `ct backup` and copy the backup
-off-server. Preserve `.env`, `caddy_data`, Reality keys, release
-manifests, and the old database export until `ct doctor` is clean on
-v0.5.2.
-
-What the v0.5.2 importer can migrate after a maintainer stages the data
-into SQLite `legacy_*` tables:
-
-- `legacy_users` -> Better Auth users/accounts, including email,
-  username, role, active/disabled state, password hash, and
-  must-change-password flag when present;
-- `legacy_proxy_accounts` -> proxy accounts, including username, UUID,
-  previous UUID grace, subscription secret, label, enabled state,
-  local port, enabled protocols, expiry, last-seen, and timestamps;
-- `legacy_server_configs` -> domain, panel domain, ACME settings,
-  anti-tracking settings, DoH resolver, Reality keys, Reality
-  destination, short IDs, and render metadata.
-
-Maintainer action required:
-
-1. Export the v0.5.1 data into the expected `legacy_users`,
-   `legacy_proxy_accounts`, and `legacy_server_configs` staging tables.
-2. Run `ct admin migrate` so `packages/db` imports those rows into the
-   active SQLite schema.
-3. Run `ct update`, then `ct doctor`.
-4. Re-render and spot-check subscriptions for active users.
-
-Not migrated automatically: Redis cache/session/queue state, old
-framework internals, failed job rows, and any custom app source edits.
-Those belonged to the retired runtime and should be reviewed manually
-only if a maintainer knows they carry business data.
+There is no automated importer from the retired PHP/Laravel runtime:
+fresh deployments start on the native SQLite schema, and `ct admin
+migrate` only brings that schema to the required version. If you still
+operate a pre-rebuild VPS, run `ct backup` first, then provision a clean
+v0.5.x install and recreate accounts through `ct admin` and the admin UI.
 
 ---
 

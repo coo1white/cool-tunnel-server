@@ -14,7 +14,7 @@ import {
   tokenFingerprint, validateId, validateName, validateUrl,
 } from "@cool-tunnel/security";
 import { StoreError } from "./errors.ts";
-import { normalizeJsonStringList, normalizeProtocols, tableExists } from "./helpers.ts";
+import { normalizeJsonStringList, normalizeProtocols } from "./helpers.ts";
 import type { CreateProxyAccountInput, CreateUserInput, UpdateProxyAccountInput, UpdateUserInput } from "./types.ts";
 
 export class AdminStore {
@@ -405,20 +405,12 @@ export class AdminStore {
   migrationStatus(): MigrationStatus {
     const row = this.db.query<{ value: string }, []>("SELECT value FROM schema_meta WHERE key = 'schema_version'").get();
     const currentVersion = Number(row?.value ?? "0");
-    const legacyDetected = tableExists(this.db, "legacy_users")
-      || tableExists(this.db, "legacy_proxy_accounts")
-      || tableExists(this.db, "legacy_server_configs");
-    const legacyMigrated = Boolean(this.db.query<{ id: number }, []>("SELECT id FROM legacy_php_migration WHERE id = 1").get());
     return {
       currentVersion,
       requiredVersion: REQUIRED_SCHEMA_VERSION,
       ok: currentVersion >= REQUIRED_SCHEMA_VERSION,
-      legacyPhpDetected: legacyDetected && !legacyMigrated,
-      legacyMigrationAvailable: true,
       message: currentVersion >= REQUIRED_SCHEMA_VERSION
-        ? legacyDetected && !legacyMigrated
-          ? "SQLite schema is current; legacy PHP staging tables are present and need `ct admin migrate`."
-          : "SQLite schema is current."
+        ? "SQLite schema is current."
         : "Run `ct admin migrate` before starting the admin runtime.",
     };
   }

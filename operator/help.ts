@@ -231,8 +231,6 @@ Next topic:  ./ct help troubleshooting
 
 6. Migration status is not current
    - Run ct admin migrate.
-   - For v0.5.1 PHP data, stage exports into legacy_users,
-     legacy_proxy_accounts, and legacy_server_configs first.
 
 When asking for help, paste:
   - The last 40 lines of the command output
