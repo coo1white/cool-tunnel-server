@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { expect, test } from "bun:test";
-import { maskSensitive, redactSensitive } from "../src/index";
+import { constantTimeEqual, maskSensitive, maskSubscriptionUrl, redactSensitive } from "../src/index";
 
 test("redacts free-form secrets, URLs, cookies, and UUIDs", () => {
   const text = [
@@ -22,6 +22,39 @@ test("redacts free-form secrets, URLs, cookies, and UUIDs", () => {
   expect(redacted).not.toContain("plain-secret-token");
   expect(redacted).not.toContain("abc123SECRET");
   expect(redacted).not.toContain("123e4567");
+});
+
+test("redacts non-Bearer Authorization schemes (Basic, token)", () => {
+  const basic = redactSensitive("Authorization: Basic dXNlcjpzdXBlci1zZWNyZXQ=");
+  expect(basic).toBe("Authorization: Basic <redacted>");
+  expect(basic).not.toContain("dXNlcjpzdXBlci1zZWNyZXQ=");
+  const scheme = redactSensitive("authorization: Digest realm-creds-here");
+  expect(scheme).toBe("authorization: Digest <redacted>");
+  const bare = redactSensitive("Authorization: raw-token-no-scheme");
+  expect(bare).toBe("Authorization: <redacted>");
+});
+
+test("redacts JSON secret values containing escaped quotes without leaking the tail", () => {
+  const redacted = redactSensitive('{"password":"ab\\"cd","ok":"keep"}');
+  expect(redacted).not.toContain("cd");
+  expect(redacted).toContain('"password":"<redacted>"');
+  expect(redacted).toContain('"ok":"keep"');
+});
+
+test("maskSubscriptionUrl masks the token even with a trailing query or fragment", () => {
+  expect(maskSubscriptionUrl("https://p/api/v1/subscription/TOKENSECRET?x=1")).toBe(
+    "https://p/api/v1/subscription/<redacted>?x=1",
+  );
+  expect(maskSubscriptionUrl("https://p/api/v1/subscription/TOKENSECRET")).toBe(
+    "https://p/api/v1/subscription/<redacted>",
+  );
+});
+
+test("constantTimeEqual matches only equal strings and is length-safe", () => {
+  expect(constantTimeEqual("abc123", "abc123")).toBe(true);
+  expect(constantTimeEqual("abc123", "abc124")).toBe(false);
+  expect(constantTimeEqual("abc", "abcd")).toBe(false);
+  expect(constantTimeEqual("", "")).toBe(true);
 });
 
 test("masks object details recursively", () => {

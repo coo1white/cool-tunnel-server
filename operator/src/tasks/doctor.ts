@@ -81,42 +81,62 @@ export function recentRealityLogArgs(): string[] {
     return ["compose", "logs", "--since=10m", "--no-color", "singbox"];
 }
 
-export function indexComposeRowsByService(output: string): Map<string, ComposePsRow> {
-    const rowsByService = new Map<string, ComposePsRow>();
-    for (const line of output.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+// `docker compose ps --format json` emits NDJSON (one object per line) on
+// newer Compose, but some v2 builds emit a single JSON array. Support both so
+// the health gate and doctor do not falsely report a healthy stack as down.
+export function parseComposeJsonRecords(output: string): Record<string, unknown>[] {
+    const trimmed = output.trim();
+    if (!trimmed) return [];
+    const records: Record<string, unknown>[] = [];
+    const pushIfObject = (value: unknown): void => {
+        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+            records.push(value as Record<string, unknown>);
+        }
+    };
+    if (trimmed.startsWith("[")) {
         try {
-            const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-            const service = parsed["Service"];
-            if (typeof service === "string" && service !== "" && !rowsByService.has(service)) {
-                rowsByService.set(service, parsed as ComposePsRow);
+            const arr = JSON.parse(trimmed);
+            if (Array.isArray(arr)) {
+                for (const entry of arr) pushIfObject(entry);
+                return records;
             }
         } catch {
-            // Ignore malformed compose rows; the health check reports missing services below.
+            // Fall through to line-by-line parsing.
         }
     }
+    for (const line of trimmed.split("\n")) {
+        const l = line.trim();
+        if (!l) continue;
+        try {
+            pushIfObject(JSON.parse(l));
+        } catch {
+            // Ignore malformed compose rows; callers report missing services.
+        }
+    }
+    return records;
+}
 
+export function indexComposeRowsByService(output: string): Map<string, ComposePsRow> {
+    const rowsByService = new Map<string, ComposePsRow>();
+    for (const parsed of parseComposeJsonRecords(output)) {
+        const service = parsed["Service"];
+        if (typeof service === "string" && service !== "" && !rowsByService.has(service)) {
+            rowsByService.set(service, parsed as ComposePsRow);
+        }
+    }
     return rowsByService;
 }
 
 export function parseComposePsRows(output: string): Map<string, ServiceHealthRow> {
     const rows = new Map<string, ServiceHealthRow>();
-    for (const line of output.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-            const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-            const service = parsed["Service"];
-            if (typeof service !== "string" || service === "" || rows.has(service)) continue;
-            rows.set(service, {
-                service,
-                state: String(parsed["State"] ?? ""),
-                health: String(parsed["Health"] ?? ""),
-            });
-        } catch {
-            // Ignore malformed compose rows; the caller reports missing services.
-        }
+    for (const parsed of parseComposeJsonRecords(output)) {
+        const service = parsed["Service"];
+        if (typeof service !== "string" || service === "" || rows.has(service)) continue;
+        rows.set(service, {
+            service,
+            state: String(parsed["State"] ?? ""),
+            health: String(parsed["Health"] ?? ""),
+        });
     }
     return rows;
 }
