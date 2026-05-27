@@ -12,7 +12,7 @@ sources:
 | --- | --- |
 | Caddy | `docker/caddy/Dockerfile` |
 | sing-box | `singbox-core/singbox.upstream.json`, `docker/singbox/Dockerfile` |
-| Rust core | `core/Cargo.toml`, `core/rust-toolchain.toml`, `docker/core/Dockerfile` |
+| ct-protocol (shared Rust crate) | `core/Cargo.toml`, `core/ct-protocol/`, `manifests/ct-protocol.upstream.json` |
 | Admin API | `apps/api/package.json`, `docker/admin-api/Dockerfile` |
 | Admin web | `apps/web/package.json`, `docker/admin-web/Dockerfile` |
 | Shared packages | `packages/*/package.json`, `pnpm-lock.yaml` |

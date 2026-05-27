@@ -3,7 +3,7 @@
 Upstream-pin manifests — one JSON file per swappable component.
 
 This is the **component-as-machine-part** model. Every replaceable
-piece of the current stack (Caddy, admin API, admin web, Rust core,
+piece of the current stack (Caddy, admin API, admin web, the
 ct-protocol crate, client runtime catalog, and deployment guards) is
 described by a `*.upstream.json` file here. Retired component manifests
 may remain with `kind: retired-*` so release audits can keep old
@@ -16,8 +16,7 @@ services from reappearing by accident.
 | `caddy.upstream.json` | Stock Caddy 2 + `mholt/caddy-l4` (xcaddy build) | ACME + SNI router; reads cert from shared volume |
 | `admin-api.upstream.json` | Bun/Hono API container | Better Auth, RBAC, SQLite, subscription output, status, and render boundary |
 | `admin-web.upstream.json` | Next.js admin container | Operator dashboard |
-| `ct-server-core.upstream.json` | Internal Rust engine binary | Release compatibility and daemon/protocol internals |
-| `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform contract |
+| `ct-protocol.upstream.json` | The Rust shared crate | Cross-platform client/server contract; clients fetch a matching version from the published release tag |
 | `client-runtime.upstream.json` | Portable client runtime catalog | Server-owned `sing-box` + `cool-tunnel-core` package for macOS today and future Android / Windows / iOS / Linux clients |
 | `mariadb.upstream.json` | Retired DB container | Historical marker; current runtime uses SQLite |
 | `redis.upstream.json` | Retired cache/queue container | Historical marker; current runtime has no Redis runtime |

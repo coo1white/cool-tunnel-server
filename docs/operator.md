@@ -56,7 +56,7 @@ the tools it shells out to (`docker`, `journalctl`, `openssl`, etc.).
 | Command            | What it does                                                           |
 |--------------------|------------------------------------------------------------------------|
 | `ct doctor`        | PASS/WARN/FAIL health dashboard. No state mutation. |
-| `ct render caddyfile` | Re-render the Caddyfile via `ct-server-core`. |
+| `ct render caddyfile` | Re-render the Caddyfile through the admin API/core boundary. |
 | `ct render singbox` | Re-render `/data/config/singbox.json` through the admin API/core boundary. |
 | `ct backup`        | Snapshot DB, `.env`, manifests, and ACME state. |
 | `ct restore <tarball>` | Restore a deployment from a backup tarball. |

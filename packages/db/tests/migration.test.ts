@@ -65,7 +65,6 @@ test("proxy account UUID rotates with previous UUID grace", () => {
     publicSignup: false,
     secureCookies: false,
     bootstrapTokenTtlMinutes: 15,
-    coreSocket: "/tmp/core.sock",
     caddyfilePath: "/tmp/Caddyfile",
     caddyfileTemplate: "/tmp/Caddyfile.tpl",
     singboxConfigPath: "/tmp/singbox.json",

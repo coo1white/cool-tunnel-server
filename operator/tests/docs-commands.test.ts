@@ -30,21 +30,6 @@ test("bootstrap script advertises and explains the Homebrew-style flow", async (
     expect(text).toContain("/usr/local/bin/ct exists and is not a symlink");
 });
 
-test("core Dockerfile uses the baked Rust toolchain without network rustup sync", async () => {
-    const toolchain = await Bun.file(repoPath("core/rust-toolchain.toml")).text();
-    const dockerfile = await Bun.file(repoPath("docker/core/Dockerfile")).text();
-    const channel = toolchain.match(/^channel\s*=\s*"([^"]+)"/m)?.[1];
-
-    expect(channel).toBeTruthy();
-    expect(dockerfile).toContain(`ARG CT_RUST_BASE_IMAGE=rust:${channel}-alpine`);
-    expect(dockerfile).toContain("FROM ${CT_RUST_BASE_IMAGE} AS chef");
-    expect(dockerfile).toContain("FROM ${CT_RUST_BASE_IMAGE} AS sqlx-prepare");
-    expect(dockerfile).toContain(`ENV RUSTUP_TOOLCHAIN=${channel}`);
-    expect(dockerfile).toContain(`rustup target list --installed | grep -qx "\${RUST_TARGET}"`);
-    expect(dockerfile).not.toContain(`rustup target add "\${RUST_TARGET}" &&`);
-    expect(dockerfile).toContain(`rustup component list --installed | grep -qx "\${component}"`);
-});
-
 test("README current release badge and text match root package version", async () => {
     const readme = await Bun.file(repoPath("README.md")).text();
     const rootPackage = await Bun.file(repoPath("package.json")).json() as { version?: string };

@@ -193,8 +193,8 @@ deployment.
 
 The control plane is the Better-T-Stack monorepo: `apps/web`,
 `apps/api`, `packages/shared`, `packages/db`, `packages/security`,
-`packages/config`, the TypeScript operator CLI, `singbox-core`, and
-Rust `ct-server-core`. See [docs/architecture.md](./docs/architecture.md)
+`packages/config`, the TypeScript operator CLI, `singbox-core`, and the
+shared Rust `ct-protocol` crate. See [docs/architecture.md](./docs/architecture.md)
 for diagrams and design rationale.
 
 ## Project Rule
@@ -218,7 +218,7 @@ Server releases own the runtime assets used by clients:
 - server package/source release;
 - `SHA256SUMS`;
 - `ct-operator-linux-x64` and `ct-operator-linux-arm64`;
-- `ct-server-core-linux-*` and `singbox-core-linux-*`;
+- `singbox-core-linux-*`;
 - per-architecture `cool-tunnel-server-images-linux-*.bom.json`
   plus image slice assets for VPS `ct install` and `ct update`;
 - `sing-box` runtime asset;

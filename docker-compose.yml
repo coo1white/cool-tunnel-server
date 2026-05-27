@@ -32,16 +32,6 @@ x-utf8-env: &utf8-env
   LC_ALL: C.UTF-8
 
 services:
-  core-builder:
-    build:
-      context: .
-      dockerfile: docker/core/Dockerfile
-      target: runtime
-      args:
-        CARGO_PROFILE: ${CT_CORE_BUILD_PROFILE:-release}
-    image: cool-tunnel-server-core:latest
-    profiles: ["build-only"]
-
   caddy:
     <<: *svc-hardening
     build:

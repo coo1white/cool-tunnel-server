@@ -72,42 +72,17 @@ test("operator linux x64 release binary uses baseline CPU target", async () => {
     expect(body).not.toContain("bun-linux-x64-modern");
 });
 
-test("release workflow publishes prebuilt core assets with checksums", async () => {
+test("release workflow publishes prebuilt singbox-core assets with checksums", async () => {
     const body = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
-    expect(body).toContain("Build prebuilt ct-server-core assets");
     expect(body).toContain("Build prebuilt singbox-core assets");
-    expect(body).toContain("operator/bin/ct-server-core-linux-x64");
-    expect(body).toContain("operator/bin/ct-server-core-linux-arm64");
     expect(body).toContain("operator/bin/singbox-core-linux-*");
     expect(body).toContain("sha256sum ct-operator-* > SHA256SUMS.generated");
     expect(body).toContain('github.event.inputs.scope != \'operator-only\'');
-    expect(body).toContain("sha256sum ct-server-core-* singbox-core-* >> SHA256SUMS.generated");
-    expect(body).toContain("operator/bin/ct-server-core-*");
+    expect(body).toContain("sha256sum singbox-core-* >> SHA256SUMS.generated");
     expect(body).toContain("operator/bin/singbox-core-*");
-});
-
-test("prebuilt core release path wraps release binary as runtime source image", async () => {
-    const buildScript = await Bun.file(repoPath("scripts/build_release_core_assets.sh")).text();
-    const dockerfile = await Bun.file(repoPath("docker/core/prebuilt.Dockerfile")).text();
-    const assetDockerfile = await Bun.file(repoPath("docker/core/release-asset.Dockerfile")).text();
-    const install = await Bun.file(operatorPath("install.ts")).text();
-    const update = await Bun.file(operatorPath("update.ts")).text();
-
-    expect(dockerfile).toContain("FROM scratch AS runtime");
-    expect(dockerfile).toContain("COPY ct-server-core /usr/local/bin/ct-server-core");
-    expect(dockerfile).not.toContain("docker/dockerfile:");
-    expect(dockerfile).not.toContain("ENTRYPOINT");
-    expect(await Bun.file(repoPath("docker/core/Dockerfile")).text()).toContain("CT_RUST_BASE_IMAGE");
-    expect(install).not.toContain("./scripts/fetch_core_binary.sh");
-    expect(update).not.toContain("./scripts/fetch_core_binary.sh");
-    expect(buildScript).toContain("docker buildx build");
-    expect(buildScript).toContain("docker/core/release-asset.Dockerfile");
-    expect(buildScript).toContain("linux/amd64");
-    expect(buildScript).toContain("linux/arm64");
-    expect(buildScript).toContain("CT_ALPINE_REPOSITORY_BASE");
-    expect(buildScript).toContain("SHA256SUMS.core");
-    expect(assetDockerfile).toContain("cargo build --release --locked --bin ct-server-core");
-    expect(assetDockerfile).not.toContain("cargo chef");
+    // The retired Rust server daemon must not reappear in the release path;
+    // ct-protocol is consumed by clients as a source crate, not a binary asset.
+    expect(body).not.toContain("ct-server-core");
 });
 
 test("image bundle fetcher explains missing release assets without building locally", async () => {

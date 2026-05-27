@@ -46,14 +46,14 @@ HTTPS listener and reverse-proxies to `admin-web:3000`.
 | `packages/config` | Runtime env parsing and admin API config. |
 | `operator` | TypeScript `ct` CLI for install, update, doctor, backup, restore, render, and admin recovery. |
 | `singbox-core` | TypeScript sing-box renderer, installer, and supervisor. |
-| `core` | Rust `ct-protocol` and `ct-server-core`. |
+| `core` | Rust `ct-protocol`, the shared wire/profile/subscription crate clients fetch from the server's published release tag. |
 
 ## Render And Reload
 
 - `admin-api` writes sing-box input from SQLite state.
 - `singbox-core render-server` renders `/data/config/singbox.json`.
 - `ct-singbox` watches that file and respawns sing-box when it changes.
-- `ct-server-core caddyfile render` renders `/etc/caddy/Caddyfile`.
+- `admin-api` renders `/etc/caddy/Caddyfile` from SQLite state through the core boundary.
 - `ct update` reloads Caddy from the host-side operator.
 
 There is no clash API or HAProxy reload path in the current runtime.
