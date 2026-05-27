@@ -203,6 +203,14 @@ test("install and update require prebuilt Docker image bundles instead of VPS bu
     expect(restore).not.toContain("docker run --rm");
 });
 
+test("update force-recreates services after loading same-tag release images", async () => {
+    const update = await Bun.file(operatorPath("update.ts")).text();
+
+    expect(update).toContain("--force-recreate");
+    expect(update).toContain("--pull never");
+    expect(update).toContain("waitForRuntimeReady");
+});
+
 test("admin SQLite is a host bind mount shared by operator and API", async () => {
     const compose = await Bun.file(repoPath("docker-compose.yml")).text();
     const envExample = await Bun.file(repoPath(".env.example")).text();

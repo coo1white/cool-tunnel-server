@@ -66,7 +66,7 @@ async function reloadRuntime(): Promise<void> {
     ok("configs rendered");
 
     step("Recreate services");
-    const up = await capture($`docker compose up -d --no-build --pull never --remove-orphans ${runtimeServices}`);
+    const up = await capture($`docker compose up -d --no-build --pull never --force-recreate --remove-orphans ${runtimeServices}`);
     if (!up.ok) die("compose up failed", up.stderr.split("\n").slice(0, 5).join("\n"));
     const reload = await capture($`docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`);
     if (!reload.ok) warn("Caddy reload failed after recreate; container restart may already have loaded config");
