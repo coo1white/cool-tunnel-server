@@ -20,9 +20,18 @@ import type {
   ServerSettings,
 } from "@cool-tunnel/shared";
 import {
+  AuditResponseSchema,
   DEFAULT_PROTOCOL_KEYS,
+  MeResponseSchema,
+  ProxyAccountResponseSchema,
+  ProxyAccountsResponseSchema,
+  SettingsResponseSchema,
+  StatusResponseSchema,
+  UserResponseSchema,
+  UsersResponseSchema,
   hasPermission,
   roleAtLeast,
+  z,
   type AdminRole,
 } from "@cool-tunnel/shared";
 import {
@@ -197,9 +206,9 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     user: c.get("session").user,
     permissions: permissionsFor(c.get("session").user),
     csrfToken: csrfTokenForSession(c.get("session"), options.config),
-  }));
+  }, 200, MeResponseSchema));
 
-  app.get("/api/users", requirePermission("users:read"), (c) => ok(c, { users: store.listUsers() }));
+  app.get("/api/users", requirePermission("users:read"), (c) => ok(c, { users: store.listUsers() }, 200, UsersResponseSchema));
   app.post("/api/users", requirePermission("users:create"), async (c) => {
     const actor = c.get("session").user;
     const body = await safeJson(c);
@@ -216,12 +225,12 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       role,
       mustChangePassword: body.mustChangePassword !== false,
     };
-    return ok(c, { user: store.createUser(actor as AdminUser, input) }, 201);
+    return ok(c, { user: store.createUser(actor as AdminUser, input) }, 201, UserResponseSchema);
   });
   app.get("/api/users/:id", requirePermission("users:read"), (c) => {
     const user = store.getUser(requiredParam(c, "id"));
     if (!user) throw new HttpError(404, "not_found", "User was not found.");
-    return ok(c, { user });
+    return ok(c, { user }, 200, UserResponseSchema);
   });
   app.patch("/api/users/:id", requirePermission("users:update"), async (c) => {
     const body = await safeJson(c);
@@ -232,48 +241,48 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     if (body.role !== undefined) input.role = parseRole(body.role);
     if (body.status !== undefined) input.status = body.status === "disabled" ? "disabled" : "active";
     if (body.mustChangePassword !== undefined) input.mustChangePassword = Boolean(body.mustChangePassword);
-    return ok(c, { user: store.updateUser(c.get("session").user as AdminUser, requiredParam(c, "id"), input) });
+    return ok(c, { user: store.updateUser(c.get("session").user as AdminUser, requiredParam(c, "id"), input) }, 200, UserResponseSchema);
   });
-  app.post("/api/users/:id/enable", requirePermission("users:disable"), (c) => ok(c, { user: store.enableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) }));
-  app.post("/api/users/:id/disable", requirePermission("users:disable"), (c) => ok(c, { user: store.disableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) }));
+  app.post("/api/users/:id/enable", requirePermission("users:disable"), (c) => ok(c, { user: store.enableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) }, 200, UserResponseSchema));
+  app.post("/api/users/:id/disable", requirePermission("users:disable"), (c) => ok(c, { user: store.disableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) }, 200, UserResponseSchema));
   app.post("/api/users/:id/reset-password", requirePermission("users:reset-password"), async (c) => {
     const body = await safeJson(c);
     const password = String(body.password ?? "");
     if (!validatePassword(password)) throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
-    return ok(c, { user: store.resetPassword(c.get("session").user as AdminUser, requiredParam(c, "id"), await hashPassword(password)) });
+    return ok(c, { user: store.resetPassword(c.get("session").user as AdminUser, requiredParam(c, "id"), await hashPassword(password)) }, 200, UserResponseSchema);
   });
   app.delete("/api/users/:id", requirePermission("users:delete"), (c) => {
     store.deleteUser(c.get("session").user as AdminUser, requiredParam(c, "id"));
     return ok(c);
   });
 
-  app.get("/api/proxy-accounts", requirePermission("proxy-accounts:read"), (c) => ok(c, { accounts: store.listProxyAccounts() }));
+  app.get("/api/proxy-accounts", requirePermission("proxy-accounts:read"), (c) => ok(c, { accounts: store.listProxyAccounts() }, 200, ProxyAccountsResponseSchema));
   app.post("/api/proxy-accounts", requirePermission("proxy-accounts:write"), async (c) => {
     const input = parseProxyInput(await safeJson(c));
-    return ok(c, { account: store.createProxyAccount(c.get("session").user as AdminUser, input) }, 201);
+    return ok(c, { account: store.createProxyAccount(c.get("session").user as AdminUser, input) }, 201, ProxyAccountResponseSchema);
   });
   app.get("/api/proxy-accounts/:id", requirePermission("proxy-accounts:read"), (c) => {
     const account = store.getProxyAccount(requiredParam(c, "id"));
     if (!account) throw new HttpError(404, "not_found", "Proxy account was not found.");
-    return ok(c, { account: redactProxyAccountFor(c.get("session").user.role, account as unknown as Record<string, unknown>) });
+    return ok(c, { account: redactProxyAccountFor(c.get("session").user.role, account as unknown as Record<string, unknown>) }, 200, ProxyAccountResponseSchema);
   });
   app.patch("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), async (c) => ok(c, {
     account: store.updateProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"), parseProxyInput(await safeJson(c), true)),
-  }));
-  app.post("/api/proxy-accounts/:id/enable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), true) }));
-  app.post("/api/proxy-accounts/:id/disable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), false) }));
-  app.post("/api/proxy-accounts/:id/regenerate-uuid", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.regenerateProxyUuid(c.get("session").user as AdminUser, requiredParam(c, "id")) }));
+  }, 200, ProxyAccountResponseSchema));
+  app.post("/api/proxy-accounts/:id/enable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), true) }, 200, ProxyAccountResponseSchema));
+  app.post("/api/proxy-accounts/:id/disable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), false) }, 200, ProxyAccountResponseSchema));
+  app.post("/api/proxy-accounts/:id/regenerate-uuid", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.regenerateProxyUuid(c.get("session").user as AdminUser, requiredParam(c, "id")) }, 200, ProxyAccountResponseSchema));
   app.delete("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), (c) => {
     store.deleteProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"));
     return ok(c);
   });
 
-  app.get("/api/settings", requirePermission("settings:read"), (c) => ok(c, { settings: store.getSettings() }));
+  app.get("/api/settings", requirePermission("settings:read"), (c) => ok(c, { settings: store.getSettings() }, 200, SettingsResponseSchema));
   app.patch("/api/settings", requirePermission("settings:update"), async (c) => {
     const settings = await safeJson(c) as Partial<ServerSettings>;
-    return ok(c, { settings: store.updateSettings(c.get("session").user as AdminUser, settings) });
+    return ok(c, { settings: store.updateSettings(c.get("session").user as AdminUser, settings) }, 200, SettingsResponseSchema);
   });
-  app.get("/api/status", requirePermission("status:read"), (c) => ok(c, { status: store.statusSummary() }));
+  app.get("/api/status", requirePermission("status:read"), (c) => ok(c, { status: store.statusSummary() }, 200, StatusResponseSchema));
   app.post("/api/doctor/run", requirePermission("ops:doctor"), async (c) => coreActionResponse(c, "doctor", store, options.config));
   app.post("/api/render", requirePermission("ops:render"), async (c) => {
     const body: Record<string, unknown> = await safeJson(c).catch(() => ({}));
@@ -304,7 +313,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   });
   app.get("/api/audit", requirePermission("audit:read"), (c) => {
     const parsed = Number(c.req.query("limit"));
-    return ok(c, { audit: store.listAudit(Number.isFinite(parsed) ? parsed : 100) });
+    return ok(c, { audit: store.listAudit(Number.isFinite(parsed) ? parsed : 100) }, 200, AuditResponseSchema);
   });
 
   app.notFound((c) => {
@@ -646,8 +655,17 @@ function actionForRoute(value: string): CoreAction | null {
   }
 }
 
-function ok<T extends object = Record<string, never>>(c: Context, payload = {} as T, status = 200): Response {
-  return c.json({ ok: true, ...payload } satisfies ApiOk<T>, status as 200 | 201 | 500);
+function ok<T extends object = Record<string, never>>(c: Context, payload = {} as T, status = 200, schema?: z.ZodTypeAny): Response {
+  let data = payload;
+  if (schema) {
+    const parsed = schema.safeParse(payload);
+    if (!parsed.success) {
+      const detail = parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
+      throw new HttpError(500, "contract_violation", `Response payload did not match the API contract: ${detail}`, false);
+    }
+    data = parsed.data;
+  }
+  return c.json({ ok: true, ...data } satisfies ApiOk<T>, status as 200 | 201 | 500);
 }
 
 function apiError(c: Context, error: HttpError): Response {
