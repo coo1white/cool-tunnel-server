@@ -14,6 +14,24 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.9] - 2026-05-28 - Live container health on the dashboard
+
+### Changed
+
+- The dashboard Services panel now shows live runtime-container health.
+  The admin API queries the Docker Engine API over its mounted socket for
+  `caddy`, `singbox`, and `admin-web` and reports running / degraded
+  (unhealthy, starting, restarting, paused) / stopped, or `unknown` when
+  Docker can't be reached. The check is best-effort and time-bounded so
+  `/api/status` never hangs or fails if the socket is unavailable.
+
+### Removed
+
+- The retired `ct-server-core` ("rust-core") daemon no longer appears in
+  the dashboard service list.
+
+---
+
 ## [0.5.8] - 2026-05-28 - Interactive admin password prompt
 
 ### Changed
@@ -11783,7 +11801,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.9...HEAD
+[0.5.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.5...v0.5.6
