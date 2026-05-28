@@ -434,12 +434,13 @@ export class AdminStore {
       activeProxyAccountCount: accounts.filter((account) => account.status === "active").length,
       settingsReady: settings.domain !== "" && settings.realityPublicKey !== "",
       migration: this.migrationStatus(),
+      // Only the two services the API can vouch for from inside the process.
+      // Runtime container health (caddy, singbox, admin-web) is merged in by
+      // the API layer via the Docker socket; the retired rust-core daemon is
+      // intentionally gone.
       services: [
         { name: "api", status: "running", detail: "Hono admin API is responding." },
         { name: "sqlite", status: "running", detail: "SQLite database opened with migrations applied." },
-        { name: "rust-core", status: "unknown", detail: "Run doctor for Rust/core process checks." },
-        { name: "singbox", status: "unknown", detail: "Run doctor for sing-box runtime checks." },
-        { name: "caddy", status: "unknown", detail: "Run doctor for Caddy runtime checks." },
       ],
     };
   }

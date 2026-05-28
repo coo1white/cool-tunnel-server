@@ -46,6 +46,7 @@ import {
 } from "@cool-tunnel/security";
 import { createAuth, getCurrentSession, type AuthInstance, type CurrentSession } from "./auth";
 import { isCoreAction, runCoreAction, type BoundaryResult, type CoreAction } from "./core-boundary";
+import { containerServices } from "./docker";
 
 type Vars = {
   store: AdminStore;
@@ -306,7 +307,12 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     const settings = await safeJson(c) as Partial<ServerSettings>;
     return ok(c, { settings: store.updateSettings(c.get("session").user as AdminUser, settings) }, 200, SettingsResponseSchema);
   });
-  app.get("/api/status", requirePermission("status:read"), (c) => ok(c, { status: store.statusSummary() }, 200, StatusResponseSchema));
+  app.get("/api/status", requirePermission("status:read"), async (c) => {
+    const summary = store.statusSummary();
+    // Merge live runtime-container health (best-effort; never throws).
+    summary.services = [...summary.services, ...(await containerServices())];
+    return ok(c, { status: summary }, 200, StatusResponseSchema);
+  });
   app.post("/api/doctor/run", requirePermission("ops:doctor"), async (c) => coreActionResponse(c, "doctor", store, options.config));
   app.post("/api/render", requirePermission("ops:render"), async (c) => {
     const body: Record<string, unknown> = await safeJson(c).catch(() => ({}));
