@@ -115,7 +115,7 @@ What `ct update` does, in plain terms:
 2. **Locks** so no one else can run an update at the same time.
 3. **Pulls** the latest code from GitHub (`git pull --ff-only`).
 4. **Auto-migrates** legacy `.env` shape if needed (idempotent).
-5. **Loads** the verified Docker image BOM/slices for the release.
+5. **Loads** the verified Docker image bundle for the release.
 6. **Migrates** the admin SQLite database and reports the schema status.
 7. **Re-renders** the Caddyfile and sing-box config through the
    `admin-api` render boundary.
@@ -402,7 +402,7 @@ For operators who want to understand the exact sequence:
 3. `git pull --ff-only` to the latest tag on `main`.
 4. Auto-migrates legacy `.env` shape (PANEL_DOMAIN placement, APP_URL
    hostname) if needed; idempotent on already-canonical files.
-5. Loads the verified Docker image BOM/slices for the release.
+5. Loads the verified Docker image bundle for the release.
 6. Runs SQLite migrations through the shared DB package.
 7. Re-renders the Caddyfile and sing-box config through `admin-api`.
 8. Recreates `admin-api`, `admin-web`, `singbox`, and `caddy`.

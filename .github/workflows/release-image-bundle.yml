@@ -72,19 +72,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          shopt -s nullglob
           tag="${GITHUB_REF_NAME}"
           suffix="${suffix}"
-          assets=(
-            release-assets/cool-tunnel-server-images-${suffix}.bom.json \
-            release-assets/cool-tunnel-server-image-${suffix}-*.tar.gz \
-            release-assets/cool-tunnel-server-image-${suffix}-*.tar.gz.part-* \
-          )
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "::error::no image assets matched suffix ${suffix}"
+          bundle="release-assets/cool-tunnel-server-images-${suffix}.tar.gz"
+          if [ ! -f "$bundle" ]; then
+            echo "::error::combined image bundle not found: ${bundle}"
             exit 1
           fi
-          gh release upload "$tag" "${assets[@]}" \
+          gh release upload "$tag" "$bundle" \
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
 
@@ -116,8 +111,6 @@ jobs:
         with:
           name: image-bundle-${{ env.suffix }}
           path: |
-            release-assets/cool-tunnel-server-images-${{ env.suffix }}.bom.json
-            release-assets/cool-tunnel-server-image-${{ env.suffix }}-*.tar.gz
-            release-assets/cool-tunnel-server-image-${{ env.suffix }}-*.tar.gz.part-*
+            release-assets/cool-tunnel-server-images-${{ env.suffix }}.tar.gz
             release-assets/SHA256SUMS.images
           retention-days: 14
