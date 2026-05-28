@@ -14,6 +14,21 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.7] - 2026-05-28 - One combined image bundle per platform
+
+### Changed
+
+- Release publishes a single `cool-tunnel-server-images-<platform>.tar.gz`
+  per platform instead of one tarball per runtime image plus a BOM,
+  cutting the release asset count roughly in half. `ct install` / `ct
+  update` download and `docker load` the one bundle. This is backward
+  compatible: `fetch_image_bundle.sh` already falls back to the combined
+  bundle, so already-deployed installs load it with no change. Hosts too
+  small to hold the full archive can opt back into the per-image
+  streaming layout at build time with `CT_BUILD_IMAGE_BOM=1`.
+
+---
+
 ## [0.5.6] - 2026-05-28 - Restore the admin CLI in the compiled binary
 
 ### Fixed
@@ -11754,7 +11769,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.4...v0.5.5
 [0.4.22]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.21...v0.4.22
