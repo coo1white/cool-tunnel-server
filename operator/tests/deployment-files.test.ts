@@ -30,8 +30,9 @@ test("release workflows avoid floating Bun and fragile asset merges", async () =
     expect(clientRuntime).not.toContain("bun-version: latest");
     expect(clientRuntime).toContain("--clobber || true");
     expect(clientRuntime).toContain("cp runtime/SHA256SUMS.runtime runtime/SHA256SUMS");
-    expect(imageBundle).toContain("shopt -s nullglob");
-    expect(imageBundle).toContain('if [ "${#assets[@]}" -eq 0 ]');
+    // The image-bundle upload guards against a missing combined bundle with an
+    // explicit existence check rather than a fragile glob array.
+    expect(imageBundle).toContain('if [ ! -f "$bundle" ]');
     expect(audit).toContain("ARG CT_CADDY_RUNTIME_IMAGE=");
 });
 
@@ -287,4 +288,25 @@ test("admin task imports workspace packages with literal specifiers so they bund
     expect(admin).toContain('import("@cool-tunnel/security")');
     expect(admin).not.toMatch(/import\(`@cool-tunnel\//);
     expect(admin).not.toContain("packageName(");
+});
+
+test("release publishes one combined image bundle per platform by default", async () => {
+    const buildScript = await Bun.file(repoPath("scripts/build_release_image_bundle.sh")).text();
+    const workflow = await Bun.file(repoPath(".github/workflows/release-image-bundle.yml")).text();
+
+    // Default output is a single cool-tunnel-server-images-<suffix>.tar.gz per
+    // platform; the per-image streaming BOM is opt-in for tiny-disk hosts. The
+    // retired CT_BUILD_FULL_IMAGE_BUNDLE flag must not linger.
+    expect(buildScript).toContain("write_full_bundle");
+    expect(buildScript).toContain('CT_BUILD_IMAGE_BOM="${CT_BUILD_IMAGE_BOM:-0}"');
+    expect(buildScript).not.toContain("CT_BUILD_FULL_IMAGE_BUNDLE");
+
+    // The workflow uploads the combined bundle, not per-image parts/BOM.
+    expect(workflow).toContain("release-assets/cool-tunnel-server-images-${suffix}.tar.gz");
+    expect(workflow).not.toContain("cool-tunnel-server-image-${suffix}-*.tar.gz.part-*");
+    expect(workflow).not.toContain("cool-tunnel-server-images-${suffix}.bom.json");
+
+    // The fetch path still understands both layouts (backward compatible).
+    const fetchScript = await Bun.file(repoPath("scripts/fetch_image_bundle.sh")).text();
+    expect(fetchScript).toContain("load_legacy_bundle");
 });

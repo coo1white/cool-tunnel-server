@@ -5,21 +5,25 @@
 # Maintainer flow:
 #   1. Build singbox-core Linux assets.
 #   2. Run this script on a Docker host with enough CPU/RAM.
-#   3. Upload cool-tunnel-server-images-*.bom.json plus the
-#      cool-tunnel-server-image-linux-* component parts to the release.
+#   3. Upload the single cool-tunnel-server-images-<suffix>.tar.gz per
+#      platform to the release.
 #
 # Emergency/repack flow:
 #   CT_REPACK_LOADED_IMAGES=1 PLATFORMS=linux/amd64 ./scripts/build_release_image_bundle.sh
 #   verifies that the runtime images are already loaded locally, then
-#   writes only the BOM/sliced archives. This is useful when the base
-#   images were built in a prior clean run and only tiny baked runtime
-#   files were patched locally; it intentionally skips all network pulls
-#   and image builds.
+#   writes only the bundle archive. This is useful when the base images
+#   were built in a prior clean run and only tiny baked runtime files
+#   were patched locally; it intentionally skips all network pulls and
+#   image builds.
 #
-# VPS installs then download a verified image BOM and load each
-# component one at a time. This avoids Rust, Bun/Next.js, Go/xcaddy,
-# and Docker Hub pulls on low-resource machines without requiring one
-# giant archive to fit on disk.
+# By default each platform publishes ONE combined image bundle
+# (cool-tunnel-server-images-<suffix>.tar.gz); the VPS downloads it and
+# `docker load`s it in a single step, which keeps the release asset list
+# short. For disk-constrained hosts that cannot hold the full archive,
+# set CT_BUILD_IMAGE_BOM=1 to instead emit the per-image streaming BOM
+# (cool-tunnel-server-images-<suffix>.bom.json + per-component parts),
+# which the fetch path loads one bounded part at a time. The fetch
+# script (scripts/fetch_image_bundle.sh) understands both layouts.
 
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -33,8 +37,12 @@ CT_GOPROXY="${CT_GOPROXY:-https://proxy.golang.org,direct}"
 CT_GOSUMDB="${CT_GOSUMDB:-sum.golang.org}"
 CT_ALPINE_RUNTIME_IMAGE="${CT_ALPINE_RUNTIME_IMAGE:-alpine:3.21}"
 CT_ALPINE_REPOSITORY_BASE="${CT_ALPINE_REPOSITORY_BASE:-}"
-CT_BUILD_FULL_IMAGE_BUNDLE="${CT_BUILD_FULL_IMAGE_BUNDLE:-0}"
-# Each image component is published as ONE release asset whenever it fits
+# Default: one combined cool-tunnel-server-images-<suffix>.tar.gz per
+# platform. Set CT_BUILD_IMAGE_BOM=1 to emit the per-image streaming BOM
+# instead (for hosts too small to hold the full archive).
+CT_BUILD_IMAGE_BOM="${CT_BUILD_IMAGE_BOM:-0}"
+# When the per-image BOM is enabled, each image component is published as
+# ONE asset whenever it fits
 # under this threshold; only components larger than it are split into
 # numbered parts. Default 250 MiB keeps every current image (largest is
 # admin-web at ~180 MiB) as a single asset, which keeps the release asset
@@ -287,9 +295,33 @@ write_image_bom() {
     echo "==> wrote ${bom}"
 }
 
+write_full_bundle() {
+    local suffix="$1"
+    local asset="${OUT_DIR}/cool-tunnel-server-images-${suffix}.tar.gz"
+    rm -f "$asset"
+    echo "==> saving combined image bundle ${asset}"
+    docker save "${RUNTIME_IMAGES[@]}" | gzip -n > "$asset"
+    chmod 0644 "$asset"
+    ls -lh "$asset"
+    sha256sum "$asset"
+    GENERATED_IMAGE_ASSETS+=("$asset")
+}
+
+# Emit the platform's image assets: one combined bundle by default, or the
+# per-image streaming BOM when CT_BUILD_IMAGE_BOM=1.
+write_image_assets() {
+    local platform="$1"
+    local suffix="$2"
+    if [[ "$CT_BUILD_IMAGE_BOM" == "1" ]]; then
+        write_image_bom "$platform" "$suffix"
+    else
+        write_full_bundle "$suffix"
+    fi
+}
+
 build_one() {
     local platform="$1"
-    local suffix asset
+    local suffix
     require_native_builder "$platform"
 
     case "$platform" in
@@ -309,7 +341,7 @@ build_one() {
                 return 1
             fi
         done
-        write_image_bom "$platform" "$suffix"
+        write_image_assets "$platform" "$suffix"
         return 0
     fi
 
@@ -331,18 +363,7 @@ build_one() {
     CT_ALPINE_REPOSITORY_BASE="$CT_ALPINE_REPOSITORY_BASE" \
         docker compose build caddy singbox admin-api admin-web
 
-    write_image_bom "$platform" "$suffix"
-
-    if [[ "$CT_BUILD_FULL_IMAGE_BUNDLE" == "1" ]]; then
-        asset="${OUT_DIR}/cool-tunnel-server-images-${suffix}.tar.gz"
-        rm -f "$asset"
-        echo "==> saving legacy full bundle ${asset}"
-        docker save "${RUNTIME_IMAGES[@]}" | gzip -n > "$asset"
-        chmod 0644 "$asset"
-        ls -lh "$asset"
-        sha256sum "$asset"
-        GENERATED_IMAGE_ASSETS+=("$asset")
-    fi
+    write_image_assets "$platform" "$suffix"
 }
 
 for platform in $PLATFORMS; do
