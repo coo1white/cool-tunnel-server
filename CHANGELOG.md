@@ -12,6 +12,15 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+### Added
+
+- Tag-triggered release automation: pushing a `v*` tag now creates the
+  GitHub release (marked latest) and builds/uploads every release asset —
+  operator binaries, `singbox-core`, the macOS client runtime, and both
+  Docker image bundles — in dependency order via a single orchestrator
+  workflow, replacing the previous manual release creation and per-platform
+  image-bundle dispatch.
+
 ---
 
 ## [0.5.4] - 2026-05-27 - Runtime contract validation and admin auth hardening

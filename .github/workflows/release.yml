@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Tag-triggered release orchestrator.
+#
+# On a `v*` tag push this creates the GitHub release (marked latest) and then
+# drives the asset pipelines in dependency order via `workflow_call`:
+#
+#   create-release -> operator -> client-runtime -> image-bundle (amd64, arm64)
+#
+# Ordering rationale:
+#   - operator-release uploads `singbox-core-*`, which the image-bundle build
+#     downloads as a prebuilt input, so image bundles must run after it.
+#   - the asset jobs each merge into a shared `SHA256SUMS`, so they are
+#     serialized (and the two image-bundle platforms run one at a time) to
+#     avoid clobbering each other.
+#
+# A release created with GITHUB_TOKEN does NOT emit `release: published`
+# (GitHub's recursion guard), so the called workflows are invoked directly
+# here rather than via the event. Their existing `release: published` and
+# `workflow_dispatch` triggers are retained for manual/recovery use and do
+# not double-run for token-created releases.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert package.json matches the tag
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          actual="$(jq -r .version package.json)"
+          if [ "$actual" != "$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} implies ${version}, but package.json is ${actual}"
+            exit 1
+          fi
+
+      - name: Assemble release notes from CHANGELOG
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            index($0, "## [" ver "]") == 1 { grab = 1; next }
+            grab && index($0, "## [") == 1 { grab = 0 }
+            grab { print }
+          ' CHANGELOG.md | sed -e 's/[[:space:]]*$//' -e '/^---$/d' > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            printf '%s\n' "Release ${GITHUB_REF_NAME}." > release-notes.md
+          fi
+          echo "----- release notes -----"
+          cat release-notes.md
+
+      - name: Create or publish the release (marked latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$tag" --notes-file release-notes.md --verify-tag --latest
+          fi
+
+  operator:
+    needs: create-release
+    uses: ./.github/workflows/operator-release.yml
+    secrets: inherit
+
+  client-runtime:
+    needs: operator
+    uses: ./.github/workflows/client-runtime-release.yml
+    secrets: inherit
+
+  image-bundle:
+    needs: client-runtime
+    strategy:
+      max-parallel: 1
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    uses: ./.github/workflows/release-image-bundle.yml
+    with:
+      platform: ${{ matrix.platform }}
+    secrets: inherit

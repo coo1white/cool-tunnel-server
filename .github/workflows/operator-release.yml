@@ -25,6 +25,7 @@ name: ct-operator release
 on:
   release:
     types: [published]
+  workflow_call:
   workflow_dispatch:
     inputs:
       scope:
