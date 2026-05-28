@@ -12,6 +12,10 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+---
+
+## [0.5.5] - 2026-05-28 - Operator and admin-web deployment fixes
+
 ### Added
 
 - Tag-triggered release automation: pushing a `v*` tag now creates the
@@ -20,6 +24,25 @@ before relying on a version bump as a compatibility signal.
   Docker image bundles — in dependency order via a single orchestrator
   workflow, replacing the previous manual release creation and per-platform
   image-bundle dispatch.
+
+### Fixed
+
+- `ct` dispatcher now resolves its own path through symlinks, so the
+  documented `sudo ln -sf "$(pwd)/ct" /usr/local/bin/ct` install works.
+  Previously `SCRIPT_DIR` resolved to `/usr/local/bin`, so every operator
+  subcommand failed with `sed: can't read /usr/local/bin/package.json` and
+  a missing-binary error.
+- `ct backup` again bundles the repo-root files (`.env`, `manifests`,
+  `caddy/Caddyfile.tpl`, `package.json`, `pnpm-lock.yaml`). The staging
+  directory is two levels deep, so the previous relative `tar -C ..`
+  resolved to `tmp/` and aborted with `package.json: Cannot stat`; it now
+  uses an absolute repo-root `-C`.
+- admin-web no longer proxies `/up` and `/api/*` to the dev fallback
+  `127.0.0.1:9000`. Next.js freezes `rewrites()` destinations at build
+  time, so the Docker image now sets `CT_API_INTERNAL_ORIGIN` during
+  `next build`. Previously the public `/up` health probe returned HTTP 500
+  (ECONNREFUSED inside the container) even though `admin-api` was healthy,
+  surfacing as a `ct doctor` Admin RTT warning.
 
 ---
 
@@ -11716,7 +11739,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.22...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.4...v0.5.5
 [0.4.22]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.21...v0.4.22
 [0.4.21]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.20...v0.4.21
 [0.4.20]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.19...v0.4.20
