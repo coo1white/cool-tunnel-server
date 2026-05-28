@@ -245,3 +245,14 @@ test("install path avoids public fixed admin credentials", async () => {
         expect(body).not.toContain("cool-tunnel-server-2026");
     }
 });
+
+test("backup bundles repo-root files via an absolute -C, not a fragile relative ..", async () => {
+    const backup = await Bun.file(operatorPath("backup.ts")).text();
+
+    // tmpDir is `tmp/backup-XXXXXX` (two levels deep), so a relative
+    // `-C ..` lands in `tmp/`, not the repo root, and tar dies with
+    // "package.json: Cannot stat: No such file or directory".
+    expect(backup).toContain("const repoRoot = process.cwd();");
+    expect(backup).toContain("-C ${repoRoot} .env manifests caddy/Caddyfile.tpl package.json pnpm-lock.yaml");
+    expect(backup).not.toContain("-C .. .env");
+});
