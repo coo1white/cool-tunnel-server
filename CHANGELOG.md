@@ -14,6 +14,21 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.6] - 2026-05-28 - Restore the admin CLI in the compiled binary
+
+### Fixed
+
+- `ct admin` subcommands (`bootstrap`, `create-owner`, `users`, `migrate`)
+  no longer crash with `Cannot find module '@cool-tunnel/config' from
+  '/$bunfs/root/ct-operator-...'`. `loadAdminPackages()` built its import
+  specifiers with a helper function, so `bun build --compile` could not see
+  them as static strings and never bundled `@cool-tunnel/config`, `db`, or
+  `security` into the operator binary. Switching to string-literal
+  specifiers bundles them. This restores the documented first-owner
+  registration path on a real VPS.
+
+---
+
 ## [0.5.5] - 2026-05-28 - Operator and admin-web deployment fixes
 
 ### Added
@@ -11739,7 +11754,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.4...v0.5.5
 [0.4.22]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.21...v0.4.22
 [0.4.21]: https://github.com/coo1white/cool-tunnel-server/compare/v0.4.20...v0.4.21
