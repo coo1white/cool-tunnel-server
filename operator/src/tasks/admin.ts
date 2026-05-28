@@ -267,11 +267,16 @@ function isStoreError(value: unknown): value is StoreErrorLike {
 }
 
 async function loadAdminPackages(): Promise<AdminPackages> {
-    const packageName = (name: string) => `@cool-tunnel/${name}`;
+    // Specifiers MUST be string literals. `bun build --compile` only bundles
+    // dynamic imports it can resolve statically; a computed specifier (a
+    // template string built from a variable) is invisible to the bundler, so
+    // the packages are absent from the compiled binary and every `ct admin`
+    // subcommand dies at runtime with `Cannot find module '@cool-tunnel/config'
+    // from '/$bunfs/root/ct-operator-...'`.
     const [config, db, security] = await Promise.all([
-        import(packageName("config")) as Promise<Pick<AdminPackages, "bootstrapMaterialPath" | "loadAdminConfig">>,
-        import(packageName("db")) as Promise<Pick<AdminPackages, "openAdminDb" | "migrateAdminDb" | "AdminStore" | "StoreError">>,
-        import(packageName("security")) as Promise<Pick<AdminPackages, "hashPassword" | "redactSensitive" | "validatePassword" | "validateRole">>,
+        import("@cool-tunnel/config") as unknown as Promise<Pick<AdminPackages, "bootstrapMaterialPath" | "loadAdminConfig">>,
+        import("@cool-tunnel/db") as unknown as Promise<Pick<AdminPackages, "openAdminDb" | "migrateAdminDb" | "AdminStore" | "StoreError">>,
+        import("@cool-tunnel/security") as unknown as Promise<Pick<AdminPackages, "hashPassword" | "redactSensitive" | "validatePassword" | "validateRole">>,
     ]);
     return {
         bootstrapMaterialPath: config.bootstrapMaterialPath,

@@ -273,3 +273,18 @@ test("admin-web image bakes CT_API_INTERNAL_ORIGIN at build time for next rewrit
     expect(dockerfile).toContain("ARG CT_API_INTERNAL_ORIGIN=http://admin-api:9000");
     expect(nextConfig).toContain("process.env.CT_API_INTERNAL_ORIGIN");
 });
+
+test("admin task imports workspace packages with literal specifiers so they bundle into the compiled binary", async () => {
+    const admin = await Bun.file(operatorPath("src/tasks/admin.ts")).text();
+
+    // `bun build --compile` only bundles dynamic imports whose specifier is a
+    // static string literal. A computed specifier like
+    // import(`@cool-tunnel/${name}`) is invisible to the bundler, so the
+    // packages are absent from the binary and every `ct admin` subcommand dies
+    // with `Cannot find module '@cool-tunnel/config' from '/$bunfs/root/...'`.
+    expect(admin).toContain('import("@cool-tunnel/config")');
+    expect(admin).toContain('import("@cool-tunnel/db")');
+    expect(admin).toContain('import("@cool-tunnel/security")');
+    expect(admin).not.toMatch(/import\(`@cool-tunnel\//);
+    expect(admin).not.toContain("packageName(");
+});
