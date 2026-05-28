@@ -35,8 +35,16 @@
 set -uo pipefail
 
 # Resolve to the directory containing this script so `ct` works
-# regardless of $PWD when invoked via PATH symlink.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# regardless of $PWD when invoked via PATH symlink. Walk the symlink
+# chain manually rather than relying on `readlink -f`, which is not
+# available on macOS without coreutils.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
 # ---------- Help -------------------------------------------------
