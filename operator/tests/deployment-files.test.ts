@@ -310,3 +310,21 @@ test("release publishes one combined image bundle per platform by default", asyn
     const fetchScript = await Bun.file(repoPath("scripts/fetch_image_bundle.sh")).text();
     expect(fetchScript).toContain("load_legacy_bundle");
 });
+
+test("admin password input prompts interactively (hidden) on a TTY", async () => {
+    const admin = await Bun.file(operatorPath("src/tasks/admin.ts")).text();
+
+    // create-owner / reset-password prompt for the password with hidden
+    // input + confirmation when run in a terminal, instead of silently
+    // blocking on --password-stdin.
+    expect(admin).toContain("process.stdin.isTTY");
+    expect(admin).toContain("setRawMode(true)");
+    expect(admin).toContain("Confirm password:");
+
+    // Raw mode (echo off) MUST be enabled before the prompt label is
+    // written, or input typed immediately would be echoed to the screen.
+    const rawIdx = admin.indexOf("stdin.setRawMode(true)");
+    const labelIdx = admin.indexOf("process.stderr.write(label)");
+    expect(rawIdx).toBeGreaterThan(-1);
+    expect(labelIdx).toBeGreaterThan(rawIdx);
+});

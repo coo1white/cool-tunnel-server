@@ -199,6 +199,50 @@ function requiredArg(args: readonly string[], name: string): string {
     return value;
 }
 
+// Read a single line from the TTY without echoing it, so a password
+// never appears on screen, in scrollback, or in shell history.
+function promptHiddenLine(label: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const stdin = process.stdin;
+        const wasRaw = stdin.isRaw === true;
+        // Disable echo BEFORE writing the label so input is never echoed,
+        // even if the operator types before the prompt fully renders.
+        try {
+            stdin.setRawMode(true);
+        } catch {
+            // Not a real TTY; caller guards on isTTY so this is unexpected.
+        }
+        process.stderr.write(label);
+        stdin.resume();
+        let buf = "";
+        const finish = (err?: Error): void => {
+            stdin.removeListener("data", onData);
+            try {
+                stdin.setRawMode(wasRaw);
+            } catch {
+                /* ignore */
+            }
+            stdin.pause();
+            process.stderr.write("\n");
+            if (err) reject(err);
+            else resolve(buf);
+        };
+        const onData = (chunk: Buffer): void => {
+            for (const ch of chunk.toString("utf8")) {
+                const code = ch.charCodeAt(0);
+                if (code === 13 || code === 10 || code === 4) return finish(); // CR / LF / Ctrl-D
+                if (code === 3) return finish(new Error("aborted")); // Ctrl-C
+                if (code === 127 || code === 8) {
+                    buf = buf.slice(0, -1); // Backspace / Delete
+                } else if (code >= 32) {
+                    buf += ch; // append printable; ignore other control chars
+                }
+            }
+        };
+        stdin.on("data", onData);
+    });
+}
+
 async function readPasswordArg(args: readonly string[], env: Record<string, string> = process.env as Record<string, string>): Promise<string> {
     const fromArg = valueArg(args, "--password");
     if (fromArg) return fromArg;
@@ -208,8 +252,19 @@ async function readPasswordArg(args: readonly string[], env: Record<string, stri
         const text = await new Response(Bun.stdin.stream()).text();
         const password = text.replace(/\r?\n$/, "");
         if (password) return password;
+        throw new Error("No password received on stdin.");
     }
-    throw new Error("Missing password. Use --password-stdin or CT_ADMIN_PASSWORD; --password is supported only for controlled rescue shells.");
+    // Default for an interactive terminal: prompt with hidden input and a
+    // confirmation, so the operator never has to discover --password-stdin
+    // or leak the password into argv/history.
+    if (process.stdin.isTTY) {
+        const password = await promptHiddenLine("Password (min 12 chars): ");
+        if (!password) throw new Error("No password entered.");
+        const confirm = await promptHiddenLine("Confirm password: ");
+        if (password !== confirm) throw new Error("Passwords did not match; nothing was changed.");
+        return password;
+    }
+    throw new Error("Missing password. Run in a terminal to be prompted, or pipe it with --password-stdin (CT_ADMIN_PASSWORD also works for automation).");
 }
 
 function ttlArg(args: readonly string[], fallback: number): number {
@@ -296,10 +351,14 @@ function renderAdminUsage(): string {
     return `Usage:
   ct-operator admin migrate
   ct-operator admin bootstrap [--ttl-minutes 30]
-  ct-operator admin create-owner --email EMAIL --username NAME --password-stdin
+  ct-operator admin create-owner --email EMAIL --username NAME [--password-stdin]
   ct-operator admin users list
   ct-operator admin users disable --id ID
   ct-operator admin users enable --id ID
-  ct-operator admin users reset-password --id ID --password-stdin
+  ct-operator admin users reset-password --id ID [--password-stdin]
+
+Password input: run in a terminal to be prompted (hidden, with
+confirmation). For automation, pipe it with --password-stdin or set
+CT_ADMIN_PASSWORD.
   ct-operator admin users set-role --id ID --role owner|admin|operator|viewer`;
 }
