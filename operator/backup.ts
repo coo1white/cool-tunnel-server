@@ -54,8 +54,14 @@ export async function runBackup(): Promise<number> {
 
         step(`Bundle into ${out}`);
         const material = bootstrapMaterialPath(config);
+        // The repo-root files must be added with an absolute `-C`, not
+        // `-C ..`. `tmpDir` is two levels deep (`tmp/backup-XXXXXX`), so a
+        // relative `-C ..` lands in `tmp/`, not the repo root, and tar
+        // fails with "package.json: Cannot stat: No such file or directory".
+        // `ensureRepoRoot()` above guarantees cwd is the repo root here.
+        const repoRoot = process.cwd();
         const tar = await capture(
-            $`tar -czf ${out} -C ${tmpDir} admin.sqlite caddy_data.tgz -C .. .env manifests caddy/Caddyfile.tpl package.json pnpm-lock.yaml`,
+            $`tar -czf ${out} -C ${tmpDir} admin.sqlite caddy_data.tgz -C ${repoRoot} .env manifests caddy/Caddyfile.tpl package.json pnpm-lock.yaml`,
         );
         if (!tar.ok) die(`tar bundle failed (exit ${tar.code})`, tar.stderr.split("\n")[0] ?? "");
         chmodSync(out, 0o600);
