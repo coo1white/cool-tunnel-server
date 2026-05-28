@@ -14,6 +14,58 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.4] - 2026-05-27 - Runtime contract validation and admin auth hardening
+
+### Added
+
+- Runtime validation of the admin client/server contract: shared Zod
+  schemas are now the single source of truth, the web client parses every
+  API response against them, and the API validates every response payload
+  before sending, so any drift fails loudly instead of silently corrupting
+  data.
+- Forced password-change enforcement: an account flagged to rotate its
+  password (e.g. after an admin reset) is blocked from the API until it
+  changes the password through the new self-service `POST /api/me/password`
+  endpoint, with a matching `/change-password` admin page.
+- An `apps/web` test suite, folded into the root test script and CI gates.
+
+### Changed
+
+- Split the `packages/db` god-file into cohesive modules behind an
+  unchanged public package API.
+- Each runtime image now publishes as a single release asset (split
+  threshold raised to 250 MiB), roughly halving the release asset count.
+- Admin form submissions surface server-side validation errors inline
+  instead of crashing with a 500, with an error boundary as a safety net.
+- The legacy `.env` auto-migration now runs as part of `ct update`.
+
+### Fixed
+
+- Compose `ps` array output, GNU `df` line-wrapping, unparseable
+  proxy-account `expiresAt`, and a non-numeric `/api/audit?limit` no longer
+  cause health-gate timeouts or 500s.
+- Proxy-account secret fields (`uuid`, `subscriptionUrl`) are now typed as
+  optional, matching the role-based redaction the API already performs.
+
+### Security
+
+- Enforce an absolute 30-day session lifetime so the sliding expiry can no
+  longer be extended indefinitely, and record the client IP on
+  `auth.login` / `auth.logout` / `user.password_changed` audit events.
+- Default the admin API bind to loopback and refuse to disable Secure
+  cookies in production.
+- Bound the login-throttle map, made CSRF and subscription-signature
+  comparisons constant-time, and broadened secret redaction (Basic/Digest
+  authorization, escaped JSON quotes, trailing query strings).
+
+### Removed
+
+- Retired the unused `ct-server-core` Rust daemon and the legacy
+  PHP/Laravel data importer. The `ct-protocol` crate that clients consume
+  is retained.
+
+---
+
 ## [0.5.3] - 2026-05-26 - Security, privacy, and release-readiness hardening
 
 ### Changed
