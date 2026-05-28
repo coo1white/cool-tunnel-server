@@ -3,6 +3,7 @@ name: client runtime release
 on:
   release:
     types: [published]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
