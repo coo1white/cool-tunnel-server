@@ -328,3 +328,20 @@ test("admin password input prompts interactively (hidden) on a TTY", async () =>
     expect(rawIdx).toBeGreaterThan(-1);
     expect(labelIdx).toBeGreaterThan(rawIdx);
 });
+
+test("image-bundle fetch waits for a still-publishing release instead of failing", async () => {
+    const fetchScript = await Bun.file(repoPath("scripts/fetch_image_bundle.sh")).text();
+
+    // A tag publishes the operator binary first and the image bundle minutes
+    // later; the fetch must poll for the bundle rather than exit immediately,
+    // so `ct update`/`ct install` run right after a release don't fail.
+    expect(fetchScript).toContain("CT_IMAGE_BUNDLE_WAIT_SECS");
+    expect(fetchScript).toContain("WAIT_INTERVAL");
+    expect(fetchScript).toContain("bundle_deadline");
+    expect(fetchScript).toContain('sleep "$WAIT_INTERVAL"');
+    // fail-fast remains available for CI/automation
+    expect(fetchScript).toContain("CT_IMAGE_BUNDLE_WAIT_SECS=0");
+    // the existing dual-format support must remain intact
+    expect(fetchScript).toContain("load_legacy_bundle");
+    expect(fetchScript).toContain("load_image_bom");
+});

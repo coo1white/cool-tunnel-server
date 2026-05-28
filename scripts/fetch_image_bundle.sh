@@ -45,6 +45,13 @@ LEGACY_TARGET="cool-tunnel-server-images-${OS}-${ARCH}.tar.gz"
 URL_BASE="${CT_RELEASE_URL_BASE:-https://github.com/coo1white/cool-tunnel-server/releases/download/v${VERSION}}"
 BUNDLE_DIR="${CT_IMAGE_BUNDLE_DIR:-.runtime/image-bundles}"
 BUNDLE_STREAM_TMPDIR="${CT_IMAGE_BUNDLE_STREAM_TMPDIR:-${TMPDIR:-/tmp}}"
+# A freshly pushed tag publishes the operator binary first and the image
+# bundle minutes later (it has to build all the runtime images). Wait, bounded,
+# for the bundle to appear instead of failing, so `ct update` / `ct install`
+# run right after a release succeed on the first try. Set
+# CT_IMAGE_BUNDLE_WAIT_SECS=0 to fail fast (CI/automation).
+WAIT_SECS="${CT_IMAGE_BUNDLE_WAIT_SECS:-900}"
+WAIT_INTERVAL="${CT_IMAGE_BUNDLE_WAIT_INTERVAL:-15}"
 mkdir -p "$BUNDLE_DIR"
 
 curl_fetch() {
@@ -56,12 +63,8 @@ curl_fetch() {
         "$@"
 }
 
-SUMS=$(curl_fetch "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
-if [[ -z "$SUMS" ]]; then
-    echo "fetch_image_bundle: no SHA256SUMS at ${URL_BASE}."
-    echo "fetch_image_bundle: expected a published release with checksums. Retrying is safe after the release workflow finishes."
-    exit 2
-fi
+# Helpers read $SUMS at call time; the wait loop below refreshes it.
+SUMS=""
 sha_for() {
     echo "$SUMS" | awk -v t="$1" '$2 == t || $2 == "*"t {print $1; exit}'
 }
@@ -80,10 +83,32 @@ explain_missing_bundle() {
     echo "fetch_image_bundle: retrying is safe after maintainers publish the missing release assets."
 }
 
-if ! release_entry_available "$BOM_TARGET" && ! release_entry_available "$LEGACY_TARGET"; then
-    explain_missing_bundle
-    exit 2
-fi
+# Poll SHA256SUMS until the image bundle entry (combined tarball or BOM) is
+# published, or the wait budget is exhausted. Tolerates the gap between a tag
+# push and the image-bundle job finishing.
+bundle_deadline=$(( $(date +%s) + WAIT_SECS ))
+wait_announced=0
+while :; do
+    SUMS=$(curl_fetch "${URL_BASE}/SHA256SUMS" 2>/dev/null || true)
+    if [[ -n "$SUMS" ]] && { release_entry_available "$BOM_TARGET" || release_entry_available "$LEGACY_TARGET"; }; then
+        break
+    fi
+    if (( $(date +%s) >= bundle_deadline )); then
+        if [[ -z "$SUMS" ]]; then
+            echo "fetch_image_bundle: no SHA256SUMS at ${URL_BASE} after ${WAIT_SECS}s." >&2
+            echo "fetch_image_bundle: expected a published release with checksums; retry once the release workflow finishes." >&2
+        else
+            explain_missing_bundle
+        fi
+        exit 2
+    fi
+    if [[ "$wait_announced" == "0" ]]; then
+        echo "fetch_image_bundle: image bundle for v${VERSION} (${OS}-${ARCH}) is not published yet — the release may still be building." >&2
+        echo "fetch_image_bundle: waiting up to ${WAIT_SECS}s (polling every ${WAIT_INTERVAL}s); Ctrl-C to abort, or set CT_IMAGE_BUNDLE_WAIT_SECS=0 to fail fast." >&2
+        wait_announced=1
+    fi
+    sleep "$WAIT_INTERVAL"
+done
 
 verify_file() {
     local file="$1"
