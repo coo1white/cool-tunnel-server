@@ -1,7 +1,7 @@
 {
   "name": "admin-web",
   "kind": "container-image",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "upstream": "https://github.com/coo1white/cool-tunnel-server",
   "verify": {
     "command": [
