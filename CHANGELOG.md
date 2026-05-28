@@ -14,6 +14,20 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.8] - 2026-05-28 - Interactive admin password prompt
+
+### Changed
+
+- `ct admin create-owner` and `ct admin users reset-password` now prompt
+  for the password interactively (hidden input, with confirmation) when
+  run in a terminal, instead of silently blocking on stdin. Previously,
+  running them without `--password-stdin` / `CT_ADMIN_PASSWORD` printed
+  `[admin] start` and hung with no prompt. `--password-stdin` and
+  `CT_ADMIN_PASSWORD` still work for piping and automation; echo is
+  disabled before the prompt renders so the password is never shown.
+
+---
+
 ## [0.5.7] - 2026-05-28 - One combined image bundle per platform
 
 ### Changed
@@ -11769,7 +11783,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.7...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.8...HEAD
+[0.5.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.4...v0.5.5

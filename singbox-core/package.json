@@ -1,6 +1,6 @@
 {
   "name": "singbox-core",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Shared sing-box management core for Cool Tunnel server + client. VLESS+Reality config renderer, binary fetcher/verifier, process supervisor. Compiled via `bun build --compile` to a single executable embedded in both repos.",
   "license": "AGPL-3.0-only",
   "type": "module",
