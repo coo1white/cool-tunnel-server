@@ -15,6 +15,14 @@ RUN pnpm install --frozen-lockfile
 
 COPY apps/web apps/web
 COPY packages/shared packages/shared
+# Next.js bakes rewrites() destinations into routes-manifest.json at
+# BUILD time, so CT_API_INTERNAL_ORIGIN must be present here, not only
+# at runtime. Without it the /up and /api/* proxies freeze to the dev
+# fallback (http://127.0.0.1:9000) and fail with ECONNREFUSED inside the
+# container, even though compose sets the var at runtime. The value is
+# the compose service address; override via build-arg for other topos.
+ARG CT_API_INTERNAL_ORIGIN=http://admin-api:9000
+ENV CT_API_INTERNAL_ORIGIN=${CT_API_INTERNAL_ORIGIN}
 RUN pnpm --filter @cool-tunnel/web typecheck \
     && pnpm --filter @cool-tunnel/web build
 

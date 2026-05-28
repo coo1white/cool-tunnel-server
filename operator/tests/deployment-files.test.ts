@@ -256,3 +256,20 @@ test("backup bundles repo-root files via an absolute -C, not a fragile relative 
     expect(backup).toContain("-C ${repoRoot} .env manifests caddy/Caddyfile.tpl package.json pnpm-lock.yaml");
     expect(backup).not.toContain("-C .. .env");
 });
+
+test("admin-web image bakes CT_API_INTERNAL_ORIGIN at build time for next rewrites", async () => {
+    const dockerfile = await Bun.file(repoPath("docker/admin-web/Dockerfile")).text();
+    const nextConfig = await Bun.file(repoPath("apps/web/next.config.mjs")).text();
+
+    // next rewrites() are frozen into routes-manifest.json at build time,
+    // so the in-cluster API origin must be set BEFORE `pnpm ... build`,
+    // not just at runtime — otherwise /up and /api/* proxy to the dev
+    // fallback 127.0.0.1:9000 and ECONNREFUSED inside the container.
+    const buildIdx = dockerfile.indexOf("@cool-tunnel/web build");
+    const envIdx = dockerfile.indexOf("ENV CT_API_INTERNAL_ORIGIN=");
+    expect(envIdx).toBeGreaterThan(-1);
+    expect(buildIdx).toBeGreaterThan(-1);
+    expect(envIdx).toBeLessThan(buildIdx);
+    expect(dockerfile).toContain("ARG CT_API_INTERNAL_ORIGIN=http://admin-api:9000");
+    expect(nextConfig).toContain("process.env.CT_API_INTERNAL_ORIGIN");
+});
