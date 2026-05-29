@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Activity, ClipboardList, Gauge, LogOut, Settings, Users } from "lucide-react";
+import { LogOut } from "lucide-react";
 import type { Permission } from "@cool-tunnel/shared";
 import { getSession, has } from "./api";
 import { logoutAction } from "./actions";
+import { NavLinks, type NavIcon } from "./nav-links";
+import { ThemeToggle } from "./theme-toggle";
 
 export { Notice, PermissionDenied, StatusPill } from "./components";
 
-const nav = [
-  { href: "/dashboard", label: "Dashboard", icon: Gauge, permission: "dashboard:read" as Permission },
-  { href: "/users", label: "Users", icon: Users, permission: "proxy-accounts:read" as Permission },
-  { href: "/settings", label: "Settings", icon: Settings, permission: "settings:read" as Permission },
-  { href: "/status", label: "Status", icon: Activity, permission: "status:read" as Permission },
-  { href: "/audit", label: "Audit", icon: ClipboardList, permission: "audit:read" as Permission },
+const nav: { href: string; label: string; icon: NavIcon; permission: Permission }[] = [
+  { href: "/dashboard", label: "Dashboard", icon: "dashboard", permission: "dashboard:read" },
+  { href: "/users", label: "Users", icon: "users", permission: "proxy-accounts:read" },
+  { href: "/settings", label: "Settings", icon: "settings", permission: "settings:read" },
+  { href: "/status", label: "Status", icon: "status", permission: "status:read" },
+  { href: "/audit", label: "Audit", icon: "audit", permission: "audit:read" },
 ];
 
 export async function AdminShell({ children, title, subtitle, action }: {
@@ -25,15 +26,18 @@ export async function AdminShell({ children, title, subtitle, action }: {
 }) {
   const session = await getSession();
   if (session.user.mustChangePassword) redirect("/change-password");
+  const items = nav
+    .filter((item) => has(item.permission, session))
+    .map(({ href, label, icon }) => ({ href, label, icon }));
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">Cool Tunnel</div>
+        <div className="brand"><span className="brand-mark">C</span> Cool Tunnel</div>
         <nav className="nav">
-          {nav.filter((item) => has(item.permission, session)).map((item) => {
-            const Icon = item.icon;
-            return <Link href={item.href} key={item.href}><Icon size={18} /> {item.label}</Link>;
-          })}
+          <NavLinks items={items} />
+        </nav>
+        <div className="nav-spacer" />
+        <nav className="nav">
           <form action={logoutAction}>
             <button type="submit"><LogOut size={18} /> Logout</button>
           </form>
@@ -45,7 +49,10 @@ export async function AdminShell({ children, title, subtitle, action }: {
             <p className="eyebrow">{subtitle ?? `${session.user.role} access`}</p>
             <h1>{title}</h1>
           </div>
-          <div>{action}</div>
+          <div className="topbar-actions">
+            {action}
+            <ThemeToggle />
+          </div>
         </header>
         {children}
       </main>
