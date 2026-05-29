@@ -383,17 +383,33 @@ test("network preflight probe retries transient failures", async () => {
     expect(preflight).toContain("--retry-connrefused");
 });
 
-test("release marks latest only after both platform image bundles are present", async () => {
+test("release marks latest only after every BOM asset is present", async () => {
     const release = await Bun.file(repoPath(".github/workflows/release.yml")).text();
+    const bom = JSON.parse(await Bun.file(repoPath("manifests/release-assets.json")).text()) as { assets: string[] };
 
-    // The release is created without latest; a finalize job verifies both
-    // platform bundles, then marks latest — so a failed bundle build can't
-    // leave "latest" pointing at a partial release.
+    // The release is created without latest; a finalize job verifies the full
+    // release BOM, then marks latest — so a failed asset job (bundle, operator
+    // binary, or client runtime) can't leave "latest" on an incomplete release.
     expect(release).toContain("--latest=false");
     expect(release).toContain("finalize:");
-    expect(release).toContain("cool-tunnel-server-images-linux-x64.tar.gz");
-    expect(release).toContain("cool-tunnel-server-images-linux-arm64.tar.gz");
-    // finalize gates marking latest on both bundles being present.
+    expect(release).toContain("jq -r '.assets[]' manifests/release-assets.json");
+    // finalize gates marking latest on the BOM check.
     const finalizeIdx = release.indexOf("finalize:");
-    expect(release.indexOf("--latest", finalizeIdx)).toBeGreaterThan(finalizeIdx);
+    expect(release.indexOf("--latest", finalizeIdx + 1)).toBeGreaterThan(finalizeIdx);
+
+    // The BOM lists every expected platform/asset, so a partial release is caught.
+    for (const a of [
+        "SHA256SUMS",
+        "ct-operator-linux-x64",
+        "ct-operator-linux-arm64",
+        "ct-operator-darwin-arm64",
+        "singbox-core-linux-x64",
+        "singbox-core-linux-arm64",
+        "cool-tunnel-server-images-linux-x64.tar.gz",
+        "cool-tunnel-server-images-linux-arm64.tar.gz",
+        "cool-tunnel-core-v*",
+        "sing-box-v*-darwin-universal",
+    ]) {
+        expect(bom.assets).toContain(a);
+    }
 });
