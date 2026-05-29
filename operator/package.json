@@ -1,6 +1,6 @@
 {
   "name": "ct-operator",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "description": "Cool Tunnel Server operator CLI for self-hosted proxy server install, doctor, render, backup, restore, and update workflows.",
   "license": "AGPL-3.0-only",
   "type": "module",

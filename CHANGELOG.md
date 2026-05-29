@@ -12,6 +12,10 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+---
+
+## [0.5.15] - 2026-05-29 - Release requires both platform bundles to be latest
+
 ### Changed
 
 - A release is marked "latest" only after BOTH platform image bundles
@@ -11894,7 +11898,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.14...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.15...HEAD
+[0.5.15]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.14...v0.5.15
 [0.5.14]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.13...v0.5.14
 [0.5.13]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.12...v0.5.13
 [0.5.12]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.11...v0.5.12
