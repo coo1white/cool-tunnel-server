@@ -16,7 +16,10 @@ const RUNTIME_CONTAINERS: ReadonlyArray<{ name: string; container: string }> = [
     { name: "admin-web", container: "ct-admin-web" },
 ];
 
-const DOCKER_SOCKET = process.env["CT_DOCKER_SOCKET"] ?? "/var/run/docker.sock";
+// admin-api no longer touches the Docker socket directly — it queries the
+// allowlist-only docker-proxy over HTTP (see docker-proxy.ts). When unset
+// (e.g. local dev without the proxy) every probe degrades to "unknown".
+const DOCKER_API_BASE = (process.env["CT_DOCKER_API"] ?? "").replace(/\/+$/, "");
 const QUERY_TIMEOUT_MS = 2000;
 
 export interface DockerContainerState {
@@ -46,11 +49,11 @@ export function mapContainerState(state: DockerContainerState | null): { status:
 // Returns the raw State, `null` for a 404 (no such container), or "error" when
 // the socket can't be queried at all.
 async function inspectContainer(container: string): Promise<DockerContainerState | null | "error"> {
+    if (!DOCKER_API_BASE) return "error";
     try {
-        const res = await fetch(`http://localhost/containers/${container}/json`, {
-            unix: DOCKER_SOCKET,
+        const res = await fetch(`${DOCKER_API_BASE}/containers/${container}/json`, {
             signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
-        } as RequestInit & { unix: string });
+        });
         if (res.status === 404) return null;
         if (!res.ok) return "error";
         const body = (await res.json()) as { State?: DockerContainerState };

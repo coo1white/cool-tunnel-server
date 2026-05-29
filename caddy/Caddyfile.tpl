@@ -12,7 +12,6 @@
     admin 127.0.0.1:2019
 
     servers {
-        metrics
         trusted_proxies static private_ranges
     }
 

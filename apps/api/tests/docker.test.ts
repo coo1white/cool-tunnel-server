@@ -3,6 +3,7 @@
 
 import { test, expect } from "bun:test";
 import { mapContainerState } from "../src/docker";
+import { authorize } from "../src/docker-proxy";
 
 test("running + healthy -> running", () => {
     const r = mapContainerState({ Status: "running", Health: { Status: "healthy" } });
@@ -49,4 +50,33 @@ test("status values stay within the StatusSummary schema enum", () => {
     ]) {
         expect(allowed.has(mapContainerState(state).status)).toBe(true);
     }
+});
+
+test("docker-proxy allowlist permits only health + restart for known containers", () => {
+    expect(authorize("GET", "/containers/ct-caddy/json")).toBe(true);
+    expect(authorize("GET", "/containers/ct-singbox/json")).toBe(true);
+    expect(authorize("GET", "/containers/ct-admin-web/json")).toBe(true);
+    expect(authorize("POST", "/containers/ct-singbox/restart")).toBe(true);
+    expect(authorize("POST", "/containers/ct-caddy/restart")).toBe(true);
+});
+
+test("docker-proxy allowlist denies every escape vector", () => {
+    // Wrong method for the path.
+    expect(authorize("POST", "/containers/ct-caddy/json")).toBe(false);
+    expect(authorize("GET", "/containers/ct-caddy/restart")).toBe(false);
+    // Unknown / arbitrary container (admin-api must not inspect or restart itself here).
+    expect(authorize("GET", "/containers/ct-admin-api/json")).toBe(false);
+    expect(authorize("POST", "/containers/evil/restart")).toBe(false);
+    // Host-root-granting / privileged Engine endpoints.
+    expect(authorize("POST", "/containers/create")).toBe(false);
+    expect(authorize("POST", "/containers/ct-caddy/exec")).toBe(false);
+    expect(authorize("POST", "/containers/ct-caddy/start")).toBe(false);
+    expect(authorize("POST", "/containers/ct-caddy/stop")).toBe(false);
+    expect(authorize("GET", "/containers/json")).toBe(false); // list-all
+    expect(authorize("GET", "/images/json")).toBe(false);
+    expect(authorize("GET", "/info")).toBe(false);
+    expect(authorize("POST", "/build")).toBe(false);
+    // Path-traversal shapes never reach an allowed terminal.
+    expect(authorize("GET", "/containers/../images/json")).toBe(false);
+    expect(authorize("GET", "/containers/ct-caddy/json/../../images/json")).toBe(false);
 });
