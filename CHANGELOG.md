@@ -14,6 +14,19 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.14] - 2026-05-29 - Network probe retries transient failures
+
+### Fixed
+
+- The `ct install` / `ct update` network-reachability preflight retries
+  transient failures (`curl --retry 2 --retry-delay 2 --retry-connrefused`)
+  instead of aborting on a single blip, so a momentary timeout or
+  refused/reset connection on a flaky or throttled link no longer fails
+  the run. A genuinely unreachable host still fails with the same
+  diagnostic.
+
+---
+
 ## [0.5.13] - 2026-05-29 - Proxy table UX fixes
 
 ### Fixed
@@ -11873,7 +11886,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.13...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.14...HEAD
+[0.5.14]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.13...v0.5.14
 [0.5.13]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.12...v0.5.13
 [0.5.12]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.11...v0.5.12
 [0.5.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.10...v0.5.11
