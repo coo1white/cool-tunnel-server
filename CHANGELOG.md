@@ -14,6 +14,29 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.11] - 2026-05-29 - Admin panel redesign and richer user management
+
+### Added
+
+- Light/dark theme for the admin panel with a header toggle (follows the
+  OS by default, persisted; no flash on load).
+- Proxy Accounts management: client-side search + status filter, a
+  Protocol / Expires / Last seen column set, a "+ New" create modal, and
+  a per-row reveal+copy for the subscription URL. Reveal is
+  permission-gated, redacted to owner/admin, and writes a
+  `proxy_account.subscription_revealed` audit event (the token stays
+  masked by default).
+
+### Changed
+
+- Restyled the whole panel — refined sidebar with active-route
+  highlighting, elevated cards, cleaner tables, accent focus rings, and
+  status pills — implemented as a CSS/layout pass that keeps the
+  server-rendered architecture and adds no UI dependency (bundle
+  unchanged).
+
+---
+
 ## [0.5.10] - 2026-05-28 - Tolerate a still-publishing release on update
 
 ### Fixed
@@ -11822,7 +11845,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.10...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.11...HEAD
+[0.5.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.7...v0.5.8
