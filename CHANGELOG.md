@@ -35,6 +35,20 @@ before relying on a version bump as a compatibility signal.
 - **Secrets at rest:** bootstrap-token audit fingerprints use SHA-256
   (was a non-cryptographic hash); the SQLite WAL/SHM sidecars are
   `chmod 0600` rather than relying on the directory mode alone.
+- **Login brute-force:** added a per-account (email) throttle alongside the
+  per-IP one, so a distributed/botnet password-spray against a known admin
+  email is slowed even when no single source IP hits its limit.
+- **Docker socket blast-radius:** admin-api no longer mounts the Docker
+  socket. A minimal allowlist-only `docker-proxy` (same image, minimal
+  command) holds the socket read-only and forwards only
+  `GET /containers/<name>/json` and `POST /containers/<name>/restart` for the
+  known containers — so a compromised admin-api can't create a privileged
+  container and escape to host root. This also fixes the restart action,
+  which previously shelled out to a `docker` CLI not present in the image.
+  Removed the unused Caddy `metrics` handler.
+- **Dependencies:** removed the unused `@hono/node-server` (cleared a High +
+  a Moderate advisory in its serve-static middleware); the API serves via
+  `Bun.serve`, not the Node adapter.
 
 ### Changed
 

@@ -657,3 +657,39 @@ test("security headers add HSTS in secure mode and a CSP on the setup page", asy
     closeFixture(insecure);
   }
 });
+
+test("login throttle locks a sprayed account across rotating source IPs", async () => {
+  const f = await ownerFixture();
+  try {
+    // A distributed spray: each attempt comes from a fresh IP (so no single IP
+    // reaches its own 5/min limit), all targeting one (non-existent) account.
+    const target = "spray-target@example.com";
+    const attempt = async (ip: string, password: string) => {
+      const page = await f.app.request("/login");
+      const body = await page.text();
+      const csrf = body.match(/name="csrf" value="([^"]+)"/)?.[1] ?? "";
+      const cookie = page.headers.get("set-cookie")?.split(";")[0] ?? "";
+      return f.app.request("/login", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+          "x-forwarded-for": ip,
+          origin: "http://localhost:9000",
+          referer: "http://localhost:9000/login",
+        },
+        body: new URLSearchParams({ csrf, email: target, password }),
+      });
+    };
+    for (let i = 0; i < 10; i++) {
+      const res = await attempt(`203.0.113.${101 + i}`, "wrong-password-value");
+      expect(res.status).toBe(401); // each IP fresh; the per-account counter climbs
+    }
+    // 11th try for the same account from yet another fresh IP is now
+    // account-throttled — even the *correct* password never reaches auth.
+    const blocked = await attempt("203.0.113.200", "correct horse battery staple");
+    expect(blocked.status).toBe(429);
+  } finally {
+    closeFixture(f);
+  }
+});
