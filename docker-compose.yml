@@ -110,15 +110,20 @@ services:
       CADDYFILE_TEMPLATE: /srv/caddy/Caddyfile.tpl
       SINGBOX_CONFIG_PATH: /data/config/singbox.json
       CT_MANIFESTS_DIR: /srv/manifests
+      # Live container health + the restart action go through the allowlist-only
+      # docker-proxy over HTTP — admin-api never holds the Docker socket.
+      CT_DOCKER_API: http://ct-docker-proxy:2375
     volumes:
       - ./data/admin:/data/admin
       - caddy_etc:/etc/caddy
       - ./caddy/Caddyfile.tpl:/srv/caddy/Caddyfile.tpl:ro
       - ./manifests:/srv/manifests:ro
       - singbox_config:/data/config
-      - /var/run/docker.sock:/var/run/docker.sock
     expose:
       - "9000"
+    depends_on:
+      docker-proxy:
+        condition: service_started
     networks:
       - ct-net
 
@@ -139,6 +144,30 @@ services:
     depends_on:
       admin-api:
         condition: service_started
+    networks:
+      - ct-net
+
+  # Allowlist-only Docker socket forwarder. This is the ONLY service that
+  # mounts the Docker socket. It runs the same image as admin-api but with a
+  # minimal CMD (apps/api/src/docker-proxy.ts) that permits exactly
+  # `GET /containers/<name>/json` and `POST /containers/<name>/restart` for the
+  # known containers, refusing everything else. So a compromised admin-api
+  # cannot reach the Engine API surface that grants host root.
+  docker-proxy:
+    <<: *svc-hardening
+    image: cool-tunnel-server-admin-api:latest
+    container_name: ct-docker-proxy
+    restart: unless-stopped
+    command: ["bun", "run", "apps/api/src/docker-proxy.ts"]
+    environment:
+      <<: *utf8-env
+      CT_DOCKER_PROXY_PORT: "2375"
+    mem_limit: 96m
+    pids_limit: 32
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "2375"
     networks:
       - ct-net
 

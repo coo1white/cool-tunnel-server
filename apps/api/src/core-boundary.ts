@@ -33,12 +33,40 @@ export async function runCoreAction(action: CoreAction, config: AdminConfig, sto
     case "render-singbox":
       return renderSingbox(config, store);
     case "restart-services":
-      return runCommand(["docker", "compose", "restart", "singbox", "caddy"]);
+      return restartServices();
     case "backup":
       return { ok: false, code: 2, stdout: "", stderr: "Backup is intentionally CLI-only. Run `ct backup` from the VPS shell.\n" };
     case "restore":
       return { ok: false, code: 2, stdout: "", stderr: "Restore is intentionally CLI-only. Run `ct restore <backup.tar.gz>` from the VPS shell.\n" };
   }
+}
+
+// Restart the data-plane containers via the allowlist-only docker-proxy
+// (POST /containers/<name>/restart), not the Docker socket / `docker compose`
+// CLI (which isn't installed in the admin-api image). The proxy permits only
+// this restart + the health read, so the admin-api never holds socket access
+// that could create a privileged container.
+async function restartServices(): Promise<BoundaryResult> {
+  const base = (process.env["CT_DOCKER_API"] ?? "").replace(/\/+$/, "");
+  if (!base) {
+    return { ok: false, code: 2, stdout: "", stderr: "Restart is unavailable: CT_DOCKER_API (the Docker proxy) is not configured. Run `ct restart` from the VPS shell.\n" };
+  }
+  const done: string[] = [];
+  for (const name of ["ct-singbox", "ct-caddy"]) {
+    try {
+      const res = await fetch(`${base}/containers/${name}/restart`, {
+        method: "POST",
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) {
+        return { ok: false, code: 1, stdout: done.join("\n"), stderr: `Failed to restart ${name}: HTTP ${res.status}.\n` };
+      }
+      done.push(`Restarted ${name}.`);
+    } catch (error) {
+      return { ok: false, code: 1, stdout: done.join("\n"), stderr: redactSensitive(`Error restarting ${name}: ${error instanceof Error ? error.message : String(error)}\n`) };
+    }
+  }
+  return { ok: true, code: 0, stdout: done.join("\n") + "\n", stderr: "" };
 }
 
 export async function runCommand(argv: readonly string[], input?: string): Promise<BoundaryResult> {
