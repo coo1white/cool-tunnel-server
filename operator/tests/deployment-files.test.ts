@@ -383,19 +383,20 @@ test("network preflight probe retries transient failures", async () => {
     expect(preflight).toContain("--retry-connrefused");
 });
 
-test("release marks latest only after every BOM asset is present", async () => {
+test("release stays a draft until every BOM asset is present, then publishes + marks latest", async () => {
     const release = await Bun.file(repoPath(".github/workflows/release.yml")).text();
     const bom = JSON.parse(await Bun.file(repoPath("manifests/release-assets.json")).text()) as { assets: string[] };
 
-    // The release is created without latest; a finalize job verifies the full
-    // release BOM, then marks latest — so a failed asset job (bundle, operator
-    // binary, or client runtime) can't leave "latest" on an incomplete release.
-    expect(release).toContain("--latest=false");
+    // The release is created as a draft (hidden); a finalize job verifies the
+    // full release BOM, then un-drafts (publishes) + marks latest — so an
+    // incomplete release (any failed asset job) is never publicly visible.
+    expect(release).toContain("--verify-tag --draft");
     expect(release).toContain("finalize:");
     expect(release).toContain("jq -r '.assets[]' manifests/release-assets.json");
-    // finalize gates marking latest on the BOM check.
+    // finalize publishes (un-draft) + marks latest, gated on the BOM check.
     const finalizeIdx = release.indexOf("finalize:");
-    expect(release.indexOf("--latest", finalizeIdx + 1)).toBeGreaterThan(finalizeIdx);
+    expect(release.indexOf("--draft=false", finalizeIdx)).toBeGreaterThan(finalizeIdx);
+    expect(release.indexOf("--latest", finalizeIdx)).toBeGreaterThan(finalizeIdx);
 
     // The BOM lists every expected platform/asset, so a partial release is caught.
     for (const a of [

@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Tag-triggered release orchestrator.
 #
-# On a `v*` tag push this creates the GitHub release (NOT yet marked latest)
-# and then drives the asset pipelines in dependency order via `workflow_call`,
-# finally marking the release latest only once EVERY asset in the release BOM
-# (manifests/release-assets.json) is present:
+# On a `v*` tag push this creates the GitHub release as a DRAFT (hidden) and
+# then drives the asset pipelines in dependency order via `workflow_call`,
+# finally PUBLISHING the release (un-draft) and marking it latest only once
+# EVERY asset in the release BOM (manifests/release-assets.json) is present:
 #
-#   create-release -> operator -> client-runtime -> image-bundle (amd64, arm64)
-#                  -> finalize (require every BOM asset, then mark latest)
+#   create-release (draft) -> operator -> client-runtime -> image-bundle (amd64, arm64)
+#                          -> finalize (require every BOM asset, then publish + mark latest)
 #
-# Deferring "latest" until finalize means a failed asset job (a missing image
-# bundle, operator binary, or client runtime asset) never leaves "latest"
-# pointing at an incomplete release; the previous complete release stays latest
-# until the new one matches the BOM.
+# Keeping the release a draft until finalize means an incomplete release is
+# never publicly visible or downloadable: a failed asset job (a missing image
+# bundle, operator binary, or client runtime asset) leaves the release a draft,
+# and the previous complete release stays the only public/latest one.
 #
 # Ordering rationale:
 #   - operator-release uploads `singbox-core-*`, which the image-bundle build
@@ -70,21 +70,21 @@ jobs:
           echo "----- release notes -----"
           cat release-notes.md
 
-      - name: Create or publish the release (latest deferred to finalize)
+      - name: Create the release as a draft (published by finalize)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          # Publish but do NOT mark latest yet — the finalize job marks latest
-          # only after both platform image bundles are confirmed present, so a
-          # failed bundle build can't leave "latest" pointing at a partial
-          # release.
+          # Create as a DRAFT so an incomplete release is never publicly visible
+          # while assets build. The finalize job un-drafts (publishes) and marks
+          # latest only once every BOM asset is present, so a PUBLISHED release
+          # always carries the full asset set.
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest=false
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=true --prerelease=false
           else
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --title "$tag" --notes-file release-notes.md --verify-tag --latest=false
+              --title "$tag" --notes-file release-notes.md --verify-tag --draft
           fi
 
   operator:
@@ -147,4 +147,4 @@ jobs:
             exit 1
           fi
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
-          echo "release ${tag} marked latest (all ${#want[@]} BOM assets present)"
+          echo "release ${tag} published + marked latest (all ${#want[@]} BOM assets present)"
