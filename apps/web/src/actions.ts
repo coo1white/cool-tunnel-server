@@ -124,20 +124,23 @@ export async function revealSubscriptionAction(id: string): Promise<{ ok: boolea
   }
 }
 
-export async function proxyCommandAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const id = value(formData, "id");
-  const command = value(formData, "command");
+// Imperative server action: the command is passed explicitly (no form
+// submitter), so it can't be dropped the way a shared multi-button form did,
+// and the client renders feedback in one place to keep the buttons in a
+// stable row.
+export async function proxyCommand(id: string, command: string): Promise<ActionState> {
   try {
     if (command === "delete") {
       await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}`, {}, "DELETE");
     } else {
-      await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}/${command}`);
+      await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}/${encodeURIComponent(command)}`);
     }
   } catch (error) {
     return stateError(error);
   }
   revalidatePath("/users");
-  return { ok: true, message: command === "delete" ? "Proxy account deleted." : "Proxy account updated." };
+  const message = command === "delete" ? "Account deleted." : command === "regenerate-uuid" ? "UUID rotated." : "Account updated.";
+  return { ok: true, message };
 }
 
 export async function updateSettingsAction(_prev: ActionState, formData: FormData): Promise<ActionState> {

@@ -755,3 +755,21 @@ button:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- Row actions (table action cell) ------------------------------------ */
+.row-actions {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.row-actions .toolbar {
+  flex-wrap: nowrap;
+}
+
+.row-actions .notice {
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  width: fit-content;
+}
