@@ -382,3 +382,18 @@ test("network preflight probe retries transient failures", async () => {
     expect(preflight).toContain("--retry");
     expect(preflight).toContain("--retry-connrefused");
 });
+
+test("release marks latest only after both platform image bundles are present", async () => {
+    const release = await Bun.file(repoPath(".github/workflows/release.yml")).text();
+
+    // The release is created without latest; a finalize job verifies both
+    // platform bundles, then marks latest — so a failed bundle build can't
+    // leave "latest" pointing at a partial release.
+    expect(release).toContain("--latest=false");
+    expect(release).toContain("finalize:");
+    expect(release).toContain("cool-tunnel-server-images-linux-x64.tar.gz");
+    expect(release).toContain("cool-tunnel-server-images-linux-arm64.tar.gz");
+    // finalize gates marking latest on both bundles being present.
+    const finalizeIdx = release.indexOf("finalize:");
+    expect(release.indexOf("--latest", finalizeIdx)).toBeGreaterThan(finalizeIdx);
+});
