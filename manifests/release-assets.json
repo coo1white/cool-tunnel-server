@@ -1,0 +1,15 @@
+{
+  "_comment": "Bill of materials for a COMPLETE release. The release workflow's finalize job requires a published asset matching every pattern below before it marks the release 'latest'. Entries are shell glob patterns (most exact; version-pinned ones use '*'). Keep this in sync with the asset-producing workflows: operator-release.yml, client-runtime-release.yml, and release-image-bundle.yml.",
+  "assets": [
+    "SHA256SUMS",
+    "ct-operator-linux-x64",
+    "ct-operator-linux-arm64",
+    "ct-operator-darwin-arm64",
+    "singbox-core-linux-x64",
+    "singbox-core-linux-arm64",
+    "cool-tunnel-server-images-linux-x64.tar.gz",
+    "cool-tunnel-server-images-linux-arm64.tar.gz",
+    "cool-tunnel-core-v*",
+    "sing-box-v*-darwin-universal"
+  ]
+}

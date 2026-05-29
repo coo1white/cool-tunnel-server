@@ -12,6 +12,14 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+### Changed
+
+- The release "latest" gate now verifies the full release bill of materials
+  (`manifests/release-assets.json`) — every operator binary, `singbox-core`,
+  client-runtime asset, and both image bundles — not just the image bundles,
+  before promoting a release to latest. If any asset job leaves the release
+  incomplete, finalize fails and the previous complete release stays latest.
+
 ---
 
 ## [0.5.15] - 2026-05-29 - Release requires both platform bundles to be latest
