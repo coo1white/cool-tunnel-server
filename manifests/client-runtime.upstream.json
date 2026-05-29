@@ -32,11 +32,11 @@
     },
     "cool-tunnel-core": {
       "kind": "binary",
-      "version": "3.0.8",
+      "version": "3.1.5",
       "upstream": "https://github.com/coo1white/cool-tunnel-server",
       "source": {
         "repo": "https://github.com/coo1white/cool-tunnel",
-        "ref": "v3.0.8"
+        "ref": "v3.1.5"
       },
       "assets": {
         "darwin-universal": {
