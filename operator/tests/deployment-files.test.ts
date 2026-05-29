@@ -345,3 +345,16 @@ test("image-bundle fetch waits for a still-publishing release instead of failing
     expect(fetchScript).toContain("load_legacy_bundle");
     expect(fetchScript).toContain("load_image_bom");
 });
+
+test("proxy/user action forms carry command as a hidden input, not a submit-button value", async () => {
+    const usersPage = await Bun.file(repoPath("apps/web/app/users/page.tsx")).text();
+    const editPage = await Bun.file(repoPath("apps/web/app/users/[id]/page.tsx")).text();
+
+    // Multiple submit buttons sharing one useActionState form drop the clicked
+    // button's name/value, so `command` arrived empty and the request 404'd.
+    // Each action must be its own form with command as a hidden input.
+    for (const page of [usersPage, editPage]) {
+        expect(page).toContain('type="hidden" name="command"');
+        expect(page).not.toMatch(/<button[^>]*name="command"/);
+    }
+});

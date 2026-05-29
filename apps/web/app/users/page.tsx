@@ -64,12 +64,27 @@ export default async function UsersPage() {
                   <td className="muted">{account.subscriptionUrlMasked ?? "Unavailable"}</td>
                   <td>
                     {has("proxy-accounts:write", session) && (
-                      <ActionForm className="toolbar" action={proxyCommandAction}>
-                        <input type="hidden" name="id" value={account.id} />
-                        <button className="btn secondary" name="command" value={account.enabled ? "disable" : "enable"} type="submit">{account.enabled ? "Disable" : "Enable"}</button>
-                        <button className="btn secondary" name="command" value="regenerate-uuid" type="submit"><RotateCcw size={16} /> UUID</button>
-                        <button className="btn danger" name="command" value="delete" type="submit"><Trash2 size={16} /></button>
-                      </ActionForm>
+                      // One form per action, command as a hidden input. Multiple
+                      // submit buttons in a single useActionState form drop the
+                      // clicked button's name/value, so `command` arrived empty
+                      // and the request 404'd.
+                      <div className="toolbar">
+                        <ActionForm action={proxyCommandAction}>
+                          <input type="hidden" name="id" value={account.id} />
+                          <input type="hidden" name="command" value={account.enabled ? "disable" : "enable"} />
+                          <button className="btn secondary" type="submit">{account.enabled ? "Disable" : "Enable"}</button>
+                        </ActionForm>
+                        <ActionForm action={proxyCommandAction}>
+                          <input type="hidden" name="id" value={account.id} />
+                          <input type="hidden" name="command" value="regenerate-uuid" />
+                          <button className="btn secondary" type="submit"><RotateCcw size={16} /> UUID</button>
+                        </ActionForm>
+                        <ActionForm action={proxyCommandAction}>
+                          <input type="hidden" name="id" value={account.id} />
+                          <input type="hidden" name="command" value="delete" />
+                          <button className="btn danger" type="submit"><Trash2 size={16} /></button>
+                        </ActionForm>
+                      </div>
                     )}
                   </td>
                 </tr>
