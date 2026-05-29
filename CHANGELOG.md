@@ -14,6 +14,21 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.13] - 2026-05-29 - Proxy table UX fixes
+
+### Fixed
+
+- Proxy account action buttons (Disable/Enable, UUID, Delete) no longer
+  reflow when a result message appears: the buttons stay in a fixed row
+  and feedback renders on one line below (success auto-clears, errors
+  persist). Commands are invoked imperatively with an explicit command
+  string.
+- The subscription cell is now a single one-click Copy button: it fetches
+  the full URL via the audited reveal endpoint and writes it to the
+  clipboard without displaying the token on screen.
+
+---
+
 ## [0.5.12] - 2026-05-29 - Docs accuracy and UI polish
 
 ### Changed
@@ -11858,7 +11873,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.12...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.13...HEAD
+[0.5.13]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.12...v0.5.13
 [0.5.12]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.11...v0.5.12
 [0.5.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.9...v0.5.10
