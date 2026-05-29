@@ -10,7 +10,7 @@ import { hashBootstrapToken, redactSensitive } from "@cool-tunnel/security";
 import { REQUIRED_SCHEMA_VERSION, type AdminUser } from "@cool-tunnel/shared";
 import { createApiApp } from "../src/app";
 import { createAuth } from "../src/auth";
-import { isCoreAction } from "../src/core-boundary";
+import { buildServerRenderAccounts, isCoreAction } from "../src/core-boundary";
 
 const SECRET = "test-better-auth-secret-".padEnd(43, "x");
 
@@ -353,6 +353,104 @@ test("proxy accounts, subscription URL masking, and manifest endpoint work", asy
     const missing = await f.app.request("/api/v1/subscription/not-a-token");
     expect(missing.status).toBe(200);
     expect(missing.headers.get("content-type")).toContain("text/html");
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("proxy-account mutations auto-render sing-box (audited as core.render-singbox)", async () => {
+  const f = await ownerFixture();
+  try {
+    const s = await signIn(f.app);
+    const headers = { cookie: s.cookie, "x-csrf-token": s.csrf, "content-type": "application/json" };
+
+    const created = await f.app.request("/api/proxy-accounts", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ username: "renderme" }),
+    });
+    expect(created.status).toBe(201);
+    const id = ((await created.json()) as { account: { id: string } }).account.id;
+
+    // Rotating the UUID must re-render so the new credential reaches the
+    // sing-box inbound — the "unknown UUID" failure this guards against.
+    const rotated = await f.app.request(`/api/proxy-accounts/${id}/regenerate-uuid`, { method: "POST", headers });
+    expect(rotated.status).toBe(200);
+
+    const audit = await f.app.request("/api/audit", { headers: { cookie: s.cookie } });
+    expect(audit.status).toBe(200);
+    const log = JSON.stringify(await audit.json());
+    // Each mutation triggers a render attempt, audited with its trigger. (The
+    // render can't write /data in the test sandbox; the audit records the
+    // attempt regardless, which is what proves the endpoints wired it in.)
+    expect(log).toContain("core.render-singbox");
+    expect(log).toContain("proxy_account.create");
+    expect(log).toContain("proxy_account.regenerate-uuid");
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("buildServerRenderAccounts emits the previous UUID only during the rotation grace window", async () => {
+  const f = await ownerFixture();
+  try {
+    const created = f.store.createProxyAccount(f.owner, { username: "graceful" });
+    const originalUuid = created.uuid!;
+    const rotated = f.store.regenerateProxyUuid(f.owner, created.id);
+    const newUuid = rotated.uuid!;
+    expect(newUuid).not.toBe(originalUuid);
+    expect(rotated.previousUuidValidUntil).toBeTruthy();
+    const graceUntil = Date.parse(rotated.previousUuidValidUntil!);
+
+    // Within the grace window: both the new and the previous UUID are emitted,
+    // the previous one as a distinct `<username>-prev` user.
+    const within = buildServerRenderAccounts(f.store, graceUntil - 1000);
+    expect(within.find((a) => a.username === "graceful")?.uuid).toBe(newUuid);
+    expect(within.find((a) => a.username === "graceful-prev")?.uuid).toBe(originalUuid);
+
+    // After it lapses: only the current UUID remains.
+    const after = buildServerRenderAccounts(f.store, graceUntil + 1000);
+    expect(after.find((a) => a.username === "graceful")?.uuid).toBe(newUuid);
+    expect(after.find((a) => a.username === "graceful-prev")).toBeUndefined();
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("operator/viewer never see uuid or previousUuid on a proxy account", async () => {
+  const f = await ownerFixture();
+  try {
+    const ownerSession = await signIn(f.app);
+    const ownerHeaders = { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" };
+
+    const created = await f.app.request("/api/proxy-accounts", {
+      method: "POST", headers: ownerHeaders, body: JSON.stringify({ username: "secretacct" }),
+    });
+    const id = ((await created.json()) as { account: { id: string } }).account.id;
+    // Rotate so previousUuid is populated (the grace-window credential).
+    await f.app.request(`/api/proxy-accounts/${id}/regenerate-uuid`, { method: "POST", headers: ownerHeaders });
+
+    // Owner sees both the current and previous credential.
+    const ownerView = await f.app.request(`/api/proxy-accounts/${id}`, { headers: { cookie: ownerSession.cookie } });
+    const ownerAccount = ((await ownerView.json()) as { account: Record<string, unknown> }).account;
+    expect(ownerAccount.uuid).toBeTruthy();
+    expect(ownerAccount.previousUuid).toBeTruthy();
+
+    // A viewer (read-only) must get neither uuid nor previousUuid (both are live
+    // credentials), only the masked subscription URL.
+    const createViewer = await f.app.request("/api/users", {
+      method: "POST", headers: ownerHeaders,
+      body: JSON.stringify({ email: "v@example.com", username: "viewer", name: "Viewer", password: "correct horse battery staple", role: "viewer", mustChangePassword: false }),
+    });
+    expect(createViewer.status).toBe(201);
+    const viewerSession = await signIn(f.app, "v@example.com");
+    const viewerView = await f.app.request(`/api/proxy-accounts/${id}`, { headers: { cookie: viewerSession.cookie } });
+    expect(viewerView.status).toBe(200);
+    const viewerAccount = ((await viewerView.json()) as { account: Record<string, unknown> }).account;
+    expect(viewerAccount.uuid).toBeUndefined();
+    expect(viewerAccount.previousUuid).toBeUndefined();
+    expect(viewerAccount.subscriptionUrl).toBeUndefined();
+    expect(viewerAccount.subscriptionUrlMasked).toBeTruthy();
   } finally {
     closeFixture(f);
   }

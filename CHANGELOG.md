@@ -12,6 +12,26 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Proxy-account changes now re-render sing-box immediately.** Creating,
+  updating, enabling, disabling, **rotating the UUID of**, or deleting a proxy
+  account re-renders the sing-box server config right away (best-effort,
+  audited as `core.render-singbox`), so the live VLESS inbound always matches
+  the database. Previously these mutations left the running sing-box stale
+  until a manual `ct render singbox`, which surfaced as a client handshake
+  failing with `unknown UUID` after a UUID rotation. The supervisor's existing
+  config watch/poll reloads sing-box, so no restart is involved.
+
+### Changed
+
+- **UUID rotation now has a data-plane grace window.** While a rotated
+  account's `previousUuidValidUntil` is still in the future, the server render
+  emits the previous UUID as a second VLESS user (`<username>-prev`), so a
+  `regenerate-uuid` no longer instantly drops clients that haven't re-fetched
+  their subscription. The 10-minute window `regenerateProxyUuid` already
+  recorded is now honored end-to-end.
+
 ---
 
 ## [0.6.0] - 2026-05-30 - Security hardening: socket isolation, access control, anti-spray

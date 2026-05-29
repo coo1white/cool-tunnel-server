@@ -589,6 +589,7 @@ function rowToProxyAccountSecret(row: Record<string, unknown>, panelDomain: stri
   return {
     ...rowToProxyAccount(row, panelDomain, secret),
     uuid: String(row.uuid),
+    previousUuid: row.previousUuid === null || row.previousUuid === undefined ? null : String(row.previousUuid),
     subscriptionUrl: subscriptionUrlFor(row, panelDomain, secret),
   };
 }

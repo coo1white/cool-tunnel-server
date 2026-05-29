@@ -52,10 +52,15 @@ export const ProxyAccountSchema = z.object({
 });
 export type ProxyAccount = z.infer<typeof ProxyAccountSchema>;
 
-// uuid and subscriptionUrl are only returned to owner/admin; the API redacts
-// them for operator/viewer, so the contract treats them as optional.
+// uuid, previousUuid, and subscriptionUrl are only returned to owner/admin;
+// the API redacts them for operator/viewer, so the contract treats them as
+// optional. previousUuid is the pre-rotation credential, still valid until
+// previousUuidValidUntil — the server render emits it as a second VLESS user
+// during that grace window so a `regenerate-uuid` doesn't instantly drop
+// clients that haven't re-fetched their subscription yet.
 export const ProxyAccountSecretViewSchema = ProxyAccountSchema.extend({
   uuid: z.string().optional(),
+  previousUuid: z.string().nullable().optional(),
   subscriptionUrl: z.string().nullable().optional(),
 });
 export type ProxyAccountSecretView = z.infer<typeof ProxyAccountSecretViewSchema>;
