@@ -233,6 +233,16 @@ export class AdminStore {
     return row ? rowToProxyAccountSecret(row, this.panelDomain(), this.config?.authSecret ?? "") : null;
   }
 
+  // Returns the account with its secret subscription URL/uuid and records an
+  // audit event — the subscription token is masked in the UI by default, so a
+  // deliberate reveal is logged.
+  revealProxySubscription(actor: AdminUser, id: string): ProxyAccountSecretView {
+    const account = this.getProxyAccount(id);
+    if (!account) throw new StoreError("not_found", "Proxy account not found.", 404);
+    this.audit(actor.id, "proxy_account.subscription_revealed", "proxy_account", id, { username: account.username });
+    return account;
+  }
+
   createProxyAccount(actor: AdminUser, input: CreateProxyAccountInput): ProxyAccountSecretView {
     const id = randomId();
     const uuid = crypto.randomUUID();

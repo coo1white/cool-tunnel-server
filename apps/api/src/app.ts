@@ -297,6 +297,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   app.post("/api/proxy-accounts/:id/enable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), true) }, 200, ProxyAccountResponseSchema));
   app.post("/api/proxy-accounts/:id/disable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), false) }, 200, ProxyAccountResponseSchema));
   app.post("/api/proxy-accounts/:id/regenerate-uuid", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.regenerateProxyUuid(c.get("session").user as AdminUser, requiredParam(c, "id")) }, 200, ProxyAccountResponseSchema));
+  app.post("/api/proxy-accounts/:id/reveal", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: redactProxyAccountFor(c.get("session").user.role, store.revealProxySubscription(c.get("session").user as AdminUser, requiredParam(c, "id")) as unknown as Record<string, unknown>) }, 200, ProxyAccountResponseSchema));
   app.delete("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), (c) => {
     store.deleteProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"));
     return ok(c);

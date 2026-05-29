@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
-import { Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { AdminShell, PermissionDenied, StatusPill } from "../../src/ui";
-import { ActionForm } from "../../src/action-form";
 import { getSession, has, listProxyAccounts, listUsers } from "../../src/api";
-import { createProxyAccountAction, proxyCommandAction } from "../../src/actions";
+import { ProxyAccounts } from "../../src/proxy-accounts";
 
 export default async function UsersPage() {
   const session = await getSession();
@@ -37,62 +36,9 @@ export default async function UsersPage() {
         </section>
       ) : <PermissionDenied message="Your role can view proxy accounts, but not admin users." />}
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <h2>Proxy Accounts</h2>
-        {has("proxy-accounts:write", session) && (
-          <ActionForm className="form" action={createProxyAccountAction}>
-            <div className="grid cols-3">
-              <div className="field"><label>Username</label><input name="username" required /></div>
-              <div className="field"><label>Label</label><input name="label" /></div>
-              <div className="field"><label>Local port</label><input name="clientDefaultLocalPort" type="number" defaultValue="1080" min="1024" max="65535" /></div>
-            </div>
-            <div className="grid cols-3">
-              <div className="field"><label>Expires at</label><input name="expiresAt" type="datetime-local" /></div>
-              <label className="checkbox"><input name="enabled" type="checkbox" defaultChecked /> Enabled</label>
-              <button className="btn" type="submit"><Plus size={16} /> Create proxy account</button>
-            </div>
-          </ActionForm>
-        )}
-        {accounts.length === 0 ? <div className="empty">No proxy accounts yet.</div> : (
-          <table>
-            <thead><tr><th>Account</th><th>Status</th><th>Subscription</th><th>Actions</th></tr></thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.id}>
-                  <td>{account.username}<br /><span className="muted">{account.label ?? "No label"}</span></td>
-                  <td><StatusPill value={account.status} /></td>
-                  <td className="muted">{account.subscriptionUrlMasked ?? "Unavailable"}</td>
-                  <td>
-                    {has("proxy-accounts:write", session) && (
-                      // One form per action, command as a hidden input. Multiple
-                      // submit buttons in a single useActionState form drop the
-                      // clicked button's name/value, so `command` arrived empty
-                      // and the request 404'd.
-                      <div className="toolbar">
-                        <ActionForm action={proxyCommandAction}>
-                          <input type="hidden" name="id" value={account.id} />
-                          <input type="hidden" name="command" value={account.enabled ? "disable" : "enable"} />
-                          <button className="btn secondary" type="submit">{account.enabled ? "Disable" : "Enable"}</button>
-                        </ActionForm>
-                        <ActionForm action={proxyCommandAction}>
-                          <input type="hidden" name="id" value={account.id} />
-                          <input type="hidden" name="command" value="regenerate-uuid" />
-                          <button className="btn secondary" type="submit"><RotateCcw size={16} /> UUID</button>
-                        </ActionForm>
-                        <ActionForm action={proxyCommandAction}>
-                          <input type="hidden" name="id" value={account.id} />
-                          <input type="hidden" name="command" value="delete" />
-                          <button className="btn danger" type="submit"><Trash2 size={16} /></button>
-                        </ActionForm>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+      <div style={{ marginTop: 16 }}>
+        <ProxyAccounts accounts={accounts} canWrite={has("proxy-accounts:write", session)} />
+      </div>
     </AdminShell>
   );
 }
