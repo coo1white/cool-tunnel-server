@@ -12,6 +12,10 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+---
+
+## [0.6.0] - 2026-05-30 - Security hardening: socket isolation, access control, anti-spray
+
 ### Security
 
 - **Access control:** an admin can no longer create, disable, demote, or
@@ -11956,7 +11960,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.16...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.16...v0.6.0
 [0.5.16]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.15...v0.5.16
 [0.5.15]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.14...v0.5.15
 [0.5.14]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.13...v0.5.14
