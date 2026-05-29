@@ -105,8 +105,8 @@ Install:
 ct install
 ```
 
-The installer downloads verified Docker image slices for your CPU
-architecture, loads them with Docker, migrates the DB, renders Caddy
+The installer downloads the verified Docker image bundle for your CPU
+architecture, loads it with Docker, migrates the DB, renders Caddy
 and sing-box config, starts the stack, and creates the first admin
 setup path. On normal tagged releases, a small VPS does not build Rust,
 Bun, Go, Next.js, or Docker images locally.

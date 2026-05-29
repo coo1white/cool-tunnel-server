@@ -137,7 +137,7 @@ classes:
 | `auto-stashing local edits before update` | Working tree has local edits | `ct update` stashes them automatically; recover with `git stash pop` |
 | `network: cannot reach ...` | Outbound HTTPS broken from the VPS | Check the diagnostic block's command ladder (ping / dig / curl) |
 | `low disk under repo path: NG free` | The VPS is still too full after auto-clean | Follow the diagnostic block; usually `docker system prune -af` + checking large host directories |
-| `prebuilt Docker image bundle is required` | Release asset is missing for this CPU architecture | Run `./scripts/fetch_image_bundle.sh`; if it says no entry in `SHA256SUMS`, publish the missing image BOM/slices |
+| `prebuilt Docker image bundle is required` | Release asset is missing for this CPU architecture | Run `./scripts/fetch_image_bundle.sh`; if it says no entry in `SHA256SUMS`, publish the missing image bundle |
 | `post-swap check NG: <component>` | A specific service didn't come up clean | The diagnostic block lists which component + the targeted `docker compose logs ...` to run |
 
 Before install/update loads release images, `ct install` and
@@ -160,7 +160,7 @@ df -h /var/lib/docker     # should be >= 4G free
 ct update                  # retry
 ```
 
-If the image BOM or slices are missing from the release:
+If the image bundle is missing from the release:
 
 ```sh
 ./scripts/fetch_image_bundle.sh

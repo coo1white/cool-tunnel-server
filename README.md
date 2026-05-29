@@ -28,8 +28,8 @@ the VPS, domain, updates, backups, provider terms, and local law.
   and config rendering.
 - **Docker Compose runtime** with Caddy SNI routing, sing-box,
   `admin-api`, and `admin-web`.
-- **Release-pinned Docker image slices** with `SHA256SUMS`
-  verification and a per-architecture image BOM.
+- **Release-pinned Docker image bundles** (one per architecture) with
+  `SHA256SUMS` verification.
 - **No local runtime builds on the VPS** during normal install/update:
   the server downloads verified release images and loads them with
   Docker.
@@ -85,8 +85,8 @@ nano .env
 ./ct doctor
 ```
 
-Release installs download verified Docker image slices for the VPS CPU
-architecture and load them one at a time. The VPS uses `docker load`;
+Release installs download the verified Docker image bundle for the VPS
+CPU architecture and load it in one step. The VPS uses `docker load`;
 it does not build Rust, Bun, Go, Node/Next, or Docker images
 during `ct install` or `ct update`.
 
@@ -219,8 +219,8 @@ Server releases own the runtime assets used by clients:
 - `SHA256SUMS`;
 - `ct-operator-linux-x64` and `ct-operator-linux-arm64`;
 - `singbox-core-linux-*`;
-- per-architecture `cool-tunnel-server-images-linux-*.bom.json`
-  plus image slice assets for VPS `ct install` and `ct update`;
+- per-architecture `cool-tunnel-server-images-linux-*.tar.gz` image
+  bundle for VPS `ct install` and `ct update`;
 - `sing-box` runtime asset;
 - `cool-tunnel-core` runtime asset.
 

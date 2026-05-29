@@ -336,8 +336,8 @@ sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=${AUTH_SECRET}|" .env
 
 The minimum spec — **1 vCPU, 1 GB RAM** — is enough to *run* the
 stack (idle ≈ 240 MiB, moderate load ≈ 400-500 MiB). Tagged releases
-download a verified image BOM plus Docker image slices for the VPS CPU
-architecture and load them one component at a time. The normal
+download a verified Docker image bundle for the VPS CPU architecture and
+load it with Docker in one step. The normal
 production path does **not** build Rust, Bun, Go, Next.js, or
 Docker images on the VPS.
 
@@ -345,8 +345,8 @@ The swap step below is optional runtime safety for very small servers.
 It is no longer required for release installs, because release installs
 must not compile or build runtime images locally. If `ct install` says a
 prebuilt Docker image bundle is missing, the release assets are
-incomplete for your architecture; the fix is to publish the image BOM
-and slices, not to compile on the VPS.
+incomplete for your architecture; the fix is to publish the image
+bundle, not to compile on the VPS.
 
 ### a. Add a 2 GB swapfile
 
