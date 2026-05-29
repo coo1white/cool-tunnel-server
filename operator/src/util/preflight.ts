@@ -8,7 +8,6 @@
 // math, threshold compare) is split into named helpers so it can
 // be unit-tested without spawning subprocesses.
 
-import { mkdirSync } from "node:fs";
 import { $, capture, which } from "./sh";
 import type { DiagFailure } from "./diag";
 
@@ -272,18 +271,8 @@ export interface Ipv4OnlyPreflightResult {
     readonly detail: string;
 }
 
-const IPV4_ONLY_SYSCTL_PATH = "/etc/sysctl.d/99-disable-ipv6.conf";
 const DOCKER_DAEMON_PATH = "/etc/docker/daemon.json";
 const DOCKER_IPV4_DNS = ["1.1.1.1", "8.8.8.8"] as const;
-const IPV4_ONLY_SYSCTL_CONTENT = `# auto-written by ct preflight.
-# cool-tunnel-server is IPv4-only by default so Docker/Rust builds
-# do not drift into broken provider routes. To opt out, remove this file,
-# set /etc/docker/daemon.json ipv6=true intentionally, and run with
-# CT_SKIP_IPV6_AUTO_DISABLE=1.
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
-`;
 
 export type DockerDaemonIpv4OnlyMerge =
     | { readonly ok: true; readonly text: string; readonly changed: boolean; readonly dockerIpv4Only: boolean }
@@ -330,62 +319,6 @@ export function dockerDaemonIsIpv4Only(existing: string | null): boolean {
             && (parsed as Record<string, unknown>)["ipv6"] === false;
     } catch {
         return false;
-    }
-}
-
-async function readOptionalText(path: string): Promise<string | null> {
-    try {
-        if (!(await Bun.file(path).exists())) return null;
-        return await Bun.file(path).text();
-    } catch {
-        return null;
-    }
-}
-
-async function ensureDockerIpv4Only(): Promise<{ ok: boolean; detail?: string }> {
-    try {
-        const existingSysctl = await readOptionalText(IPV4_ONLY_SYSCTL_PATH);
-        const sysctlChanged = existingSysctl !== IPV4_ONLY_SYSCTL_CONTENT;
-        if (sysctlChanged) {
-            await Bun.write(IPV4_ONLY_SYSCTL_PATH, IPV4_ONLY_SYSCTL_CONTENT);
-        }
-        const sysctl = await capture($`sysctl --system`);
-        if (!sysctl.ok) {
-            return {
-                ok: false,
-                detail: `sysctl --system failed: ${sysctl.stderr.trim().split("\n")[0] ?? `exit ${sysctl.code}`}`,
-            };
-        }
-
-        mkdirSync("/etc/docker", { recursive: true });
-        const existing = await readOptionalText(DOCKER_DAEMON_PATH);
-        const merged = mergeDockerDaemonIpv4Only(existing);
-        if (!merged.ok) return { ok: false, detail: merged.detail };
-
-        if (merged.changed) {
-            await Bun.write(DOCKER_DAEMON_PATH, merged.text);
-        }
-
-        if (merged.changed || sysctlChanged) {
-            const restart = await capture($`systemctl restart docker`);
-            if (!restart.ok) {
-                return {
-                    ok: false,
-                    detail: `systemctl restart docker failed: ${restart.stderr.trim().split("\n")[0] ?? `exit ${restart.code}`}`,
-                };
-            }
-            await capture($`docker buildx prune -af`);
-        }
-
-        return {
-            ok: true,
-            detail: merged.changed || sysctlChanged
-                ? "enforced IPv4-only sysctl + Docker daemon config and restarted docker"
-                : "IPv4-only already enforced",
-        };
-    } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { ok: false, detail: msg };
     }
 }
 
@@ -443,53 +376,4 @@ export function classifyIpv4OnlyPreflight(input: {
         action: alreadyIpv4Only ? "ok" : "fixed",
         detail: `IPv4-only enforced (${input.fixResult.detail ?? "ok"})`,
     };
-}
-
-// Pre-flight equivalent of scripts/lib.sh::enforce_ipv4_only_networking,
-// invoked by install/update before the Rust build. IPv4-only is now
-// the project default; `CT_SKIP_IPV6_AUTO_DISABLE=1` is the explicit
-// opt-out for operators who maintain known-good dual-stack infrastructure.
-export async function checkIpv4OnlyRouting(): Promise<Ipv4OnlyPreflightResult> {
-    const skipEnv = process.env["CT_SKIP_IPV6_AUTO_DISABLE"] === "1";
-    if (skipEnv) {
-        return classifyIpv4OnlyPreflight({
-            skipEnv,
-            sysctlPresent: false,
-            hasGlobalRoute: false,
-            canDetect: false,
-            fixResult: null,
-        });
-    }
-
-    const sysctlPresent = await Bun.file(IPV4_ONLY_SYSCTL_PATH).exists();
-    const dockerDaemonText = await readOptionalText(DOCKER_DAEMON_PATH);
-    const dockerDaemonIpv4Only = dockerDaemonIsIpv4Only(dockerDaemonText);
-
-    const alreadyIpv4Only = sysctlPresent && dockerDaemonIpv4Only;
-    const fixResult = alreadyIpv4Only ? { ok: true, detail: "IPv4-only already enforced" } : await ensureDockerIpv4Only();
-
-    if (!(await which("curl"))) {
-        return classifyIpv4OnlyPreflight({
-            skipEnv: false,
-            sysctlPresent,
-            hasGlobalRoute: false,
-            canDetect: false,
-            dockerDaemonIpv4Only,
-            fixResult,
-        });
-    }
-
-    const rustStaticIpv4 = await capture(
-        $`curl -4 -sS --connect-timeout 5 --max-time 10 -o /dev/null https://static.rust-lang.org/`,
-    );
-
-    return classifyIpv4OnlyPreflight({
-        skipEnv: false,
-        sysctlPresent,
-        hasGlobalRoute: false,
-        canDetect: true,
-        dockerDaemonIpv4Only,
-        rustStaticIpv4Ok: rustStaticIpv4.ok,
-        fixResult,
-    });
 }

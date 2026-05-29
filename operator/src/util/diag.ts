@@ -28,19 +28,3 @@ export function dieWithDiag(summary: string, diag: string): never {
     }
     process.exit(1);
 }
-
-// Format a DiagFailure into the same text shape that dieWithDiag
-// would write. Useful when a preflight chain wants to accumulate
-// failures before deciding whether to die.
-export function formatDiagFailure(f: DiagFailure): string {
-    const lines: string[] = [];
-    lines.push(`${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(f.summary)}`);
-    if (f.diag) {
-        lines.push("");
-        lines.push(`${ANSI.bold}Diagnostic:${ANSI.reset}`);
-        for (const line of redactSensitive(f.diag).split("\n")) {
-            lines.push(`  ${line}`);
-        }
-    }
-    return lines.join("\n");
-}
