@@ -2,12 +2,11 @@
 
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import { Check, Copy, Eye, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import type { ProxyAccount } from "@cool-tunnel/shared";
-import { ActionForm } from "./action-form";
 import { Notice, StatusPill } from "./components";
-import { createProxyAccountAction, proxyCommandAction, revealSubscriptionAction } from "./actions";
+import { createProxyAccountAction, proxyCommand, revealSubscriptionAction } from "./actions";
 import type { ActionState } from "./api";
 
 const PROTOCOL_LABELS: Record<string, string> = { vless_reality: "Reality" };
@@ -64,6 +63,40 @@ function RevealSubscription({ id, masked }: { id: string; masked: string | null 
         </button>
       )}
       {err && <span className="sub-err">{err}</span>}
+    </div>
+  );
+}
+
+// Action buttons stay in a fixed row; feedback shows on a single line BELOW
+// the row (success auto-clears, errors persist), so a result never reflows the
+// buttons. Commands are invoked imperatively with an explicit command string.
+function ProxyRowActions({ account }: { account: ProxyAccount }) {
+  const [pending, startTransition] = useTransition();
+  const [msg, setMsg] = useState<ActionState | null>(null);
+
+  function run(command: string) {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await proxyCommand(account.id, command);
+      setMsg(res);
+      if (res.ok) setTimeout(() => setMsg(null), 2500);
+    });
+  }
+
+  return (
+    <div className="row-actions">
+      <div className="toolbar">
+        <button className="btn secondary" type="button" disabled={pending} onClick={() => run(account.enabled ? "disable" : "enable")}>
+          {account.enabled ? "Disable" : "Enable"}
+        </button>
+        <button className="btn secondary" type="button" disabled={pending} onClick={() => run("regenerate-uuid")}>
+          <RotateCcw size={16} /> UUID
+        </button>
+        <button className="btn danger" type="button" disabled={pending} onClick={() => run("delete")} aria-label="Delete account">
+          <Trash2 size={16} />
+        </button>
+      </div>
+      {msg && <Notice state={msg} />}
     </div>
   );
 }
@@ -150,27 +183,7 @@ export function ProxyAccounts({ accounts, canWrite }: { accounts: ProxyAccount[]
                   <td className="muted">{fmtDate(account.expiresAt, "Never")}</td>
                   <td className="muted">{fmtDate(account.lastSeenAt, "—")}</td>
                   <td><RevealSubscription id={account.id} masked={account.subscriptionUrlMasked} /></td>
-                  <td>
-                    {canWrite && (
-                      <div className="toolbar">
-                        <ActionForm action={proxyCommandAction}>
-                          <input type="hidden" name="id" value={account.id} />
-                          <input type="hidden" name="command" value={account.enabled ? "disable" : "enable"} />
-                          <button className="btn secondary" type="submit">{account.enabled ? "Disable" : "Enable"}</button>
-                        </ActionForm>
-                        <ActionForm action={proxyCommandAction}>
-                          <input type="hidden" name="id" value={account.id} />
-                          <input type="hidden" name="command" value="regenerate-uuid" />
-                          <button className="btn secondary" type="submit"><RotateCcw size={16} /> UUID</button>
-                        </ActionForm>
-                        <ActionForm action={proxyCommandAction}>
-                          <input type="hidden" name="id" value={account.id} />
-                          <input type="hidden" name="command" value="delete" />
-                          <button className="btn danger" type="submit"><Trash2 size={16} /></button>
-                        </ActionForm>
-                      </div>
-                    )}
-                  </td>
+                  <td>{canWrite && <ProxyRowActions account={account} />}</td>
                 </tr>
               ))}
             </tbody>
