@@ -12,6 +12,10 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+---
+
+## [0.6.1] - 2026-05-30 - Auto-render sing-box on proxy-account changes
+
 ### Fixed
 
 - **Proxy-account changes now re-render sing-box immediately.** Creating,
@@ -31,6 +35,13 @@ before relying on a version bump as a compatibility signal.
   `regenerate-uuid` no longer instantly drops clients that haven't re-fetched
   their subscription. The 10-minute window `regenerateProxyUuid` already
   recorded is now honored end-to-end.
+
+### Security
+
+- `previousUuid` is a live credential during the grace window, so it is now
+  stripped from proxy-account API responses for operator/viewer (alongside
+  `uuid` and the subscription URL) — the secret view can't leak it to a
+  read-only role.
 
 ---
 
@@ -11980,7 +11991,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.16...v0.6.0
 [0.5.16]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.15...v0.5.16
 [0.5.15]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.14...v0.5.15
