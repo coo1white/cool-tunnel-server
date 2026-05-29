@@ -90,19 +90,30 @@ const PASSWORD_CHANGE_ALLOWED_PATHS = new Set(["/api/me", "/api/logout", "/api/m
 const SUBSCRIPTION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const LOGIN_THROTTLE_WINDOW_MS = 60_000;
 const LOGIN_THROTTLE_MAX = 5;
+// Per-account (email) throttle: a wider cap over a longer window that is
+// independent of the source IP. The per-IP limit alone is defeated by a
+// distributed/botnet spray (many IPs, few tries each) against one known admin
+// email; this catches that. The threshold sits well above honest-fumble rates
+// and the window is short, so it slows spray without being an easy
+// lock-the-admin-out DoS, and it never blocks a *correct* credential beyond the
+// short window.
+const ACCOUNT_THROTTLE_WINDOW_MS = 15 * 60_000;
+const ACCOUNT_THROTTLE_MAX = 10;
 const LOGIN_THROTTLE_MAX_KEYS = 10_000;
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+type AttemptEntry = { count: number; resetAt: number };
+const loginAttempts = new Map<string, AttemptEntry>();
+const accountAttempts = new Map<string, AttemptEntry>();
 
-function pruneLoginAttempts(now: number): void {
-  for (const [key, entry] of loginAttempts) {
-    if (entry.resetAt <= now) loginAttempts.delete(key);
+function pruneAttempts(attempts: Map<string, AttemptEntry>, now: number): void {
+  for (const [key, entry] of attempts) {
+    if (entry.resetAt <= now) attempts.delete(key);
   }
-  // Hard cap so a flood of distinct client IPs within one window (X-Forwarded-For
-  // is attacker-controlled) cannot grow the Map without bound. Drop oldest first.
-  while (loginAttempts.size > LOGIN_THROTTLE_MAX_KEYS) {
-    const oldest = loginAttempts.keys().next().value;
+  // Hard cap so a flood of distinct keys (X-Forwarded-For is attacker-influenced;
+  // emails are attacker-chosen) cannot grow a Map without bound. Drop oldest first.
+  while (attempts.size > LOGIN_THROTTLE_MAX_KEYS) {
+    const oldest = attempts.keys().next().value;
     if (oldest === undefined) break;
-    loginAttempts.delete(oldest);
+    attempts.delete(oldest);
   }
 }
 
@@ -131,12 +142,13 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   });
   app.post("/login", async (c) => {
     const form = await c.req.formData();
+    const email = String(form.get("email") ?? "");
     const csrf = String(form.get("csrf") ?? "");
     const csrfCookie = getCookie(c, LOGIN_CSRF_COOKIE) ?? "";
     if (!validLoginCsrf(csrf, csrfCookie)) {
       return loginResponse(c, "Sign in expired. Reload the sign-in page and try again.", 403);
     }
-    const throttle = checkLoginThrottle(c, options.config);
+    const throttle = checkLoginThrottle(c, options.config, email);
     if (!throttle.ok) {
       return loginResponse(c, "Too many sign-in attempts. Wait a minute and try again.", 429);
     }
@@ -150,16 +162,16 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
         cookie: c.req.header("cookie") ?? "",
       },
       body: JSON.stringify({
-        email: String(form.get("email") ?? ""),
+        email,
         password: String(form.get("password") ?? ""),
         rememberMe: true,
       }),
     }));
     if (!response.ok) {
-      recordFailedLogin(throttle.key);
+      recordFailedLogin(throttle);
       return loginResponse(c, "Sign in failed. Check the email and password.", 401);
     }
-    clearLoginThrottle(throttle.key);
+    clearLoginThrottle(throttle);
     const headers = new Headers({
       location: "/dashboard",
       "cache-control": "no-store",
@@ -604,30 +616,57 @@ function clientIp(c: Context): string | null {
   return forwarded || c.req.header("x-real-ip") || null;
 }
 
-function checkLoginThrottle(c: Context, config: AdminConfig): { ok: true; key: string } | { ok: false; key: string } {
-  const key = loginThrottleKey(c, config);
-  const now = Date.now();
-  pruneLoginAttempts(now);
-  const current = loginAttempts.get(key);
-  if (!current || current.resetAt <= now) {
-    loginAttempts.set(key, { count: 0, resetAt: now + LOGIN_THROTTLE_WINDOW_MS });
-    return { ok: true, key };
-  }
-  return current.count >= LOGIN_THROTTLE_MAX ? { ok: false, key } : { ok: true, key };
+interface LoginThrottle {
+  readonly ok: boolean;
+  readonly ipKey: string;
+  readonly accountKey: string;
 }
 
-function recordFailedLogin(key: string): void {
-  const now = Date.now();
-  const current = loginAttempts.get(key);
+function accountThrottleKey(email: string, config: AdminConfig): string {
+  return createHmac("sha256", config.authSecret).update(`acct:${email.trim().toLowerCase()}`).digest("hex").slice(0, 24);
+}
+
+function attemptsOver(attempts: Map<string, AttemptEntry>, key: string, max: number, now: number): boolean {
+  if (!key) return false;
+  const current = attempts.get(key);
+  if (!current || current.resetAt <= now) return false;
+  return current.count >= max;
+}
+
+function bumpAttempts(attempts: Map<string, AttemptEntry>, key: string, windowMs: number, now: number): void {
+  if (!key) return;
+  const current = attempts.get(key);
   if (!current || current.resetAt <= now) {
-    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_THROTTLE_WINDOW_MS });
+    attempts.set(key, { count: 1, resetAt: now + windowMs });
     return;
   }
-  loginAttempts.set(key, { ...current, count: current.count + 1 });
+  attempts.set(key, { ...current, count: current.count + 1 });
 }
 
-function clearLoginThrottle(key: string): void {
-  loginAttempts.delete(key);
+// Throttle on BOTH the source IP and the target account. The IP key trusts the
+// front proxy chain (admin-api is internal-only and only reachable via the
+// bundled proxy + Caddy, which set X-Forwarded-For from the real peer); the
+// account key needs no such trust, so it holds even if the IP is spoofable.
+function checkLoginThrottle(c: Context, config: AdminConfig, email: string): LoginThrottle {
+  const now = Date.now();
+  pruneAttempts(loginAttempts, now);
+  pruneAttempts(accountAttempts, now);
+  const ipKey = loginThrottleKey(c, config);
+  const accountKey = email ? accountThrottleKey(email, config) : "";
+  const blocked = attemptsOver(loginAttempts, ipKey, LOGIN_THROTTLE_MAX, now)
+    || attemptsOver(accountAttempts, accountKey, ACCOUNT_THROTTLE_MAX, now);
+  return { ok: !blocked, ipKey, accountKey };
+}
+
+function recordFailedLogin(throttle: LoginThrottle): void {
+  const now = Date.now();
+  bumpAttempts(loginAttempts, throttle.ipKey, LOGIN_THROTTLE_WINDOW_MS, now);
+  bumpAttempts(accountAttempts, throttle.accountKey, ACCOUNT_THROTTLE_WINDOW_MS, now);
+}
+
+function clearLoginThrottle(throttle: LoginThrottle): void {
+  loginAttempts.delete(throttle.ipKey);
+  if (throttle.accountKey) accountAttempts.delete(throttle.accountKey);
 }
 
 function permissionsFor(user: CurrentSession["user"]): Permission[] {
