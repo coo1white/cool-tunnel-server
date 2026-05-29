@@ -23,11 +23,14 @@ the VPS, domain, updates, backups, provider terms, and local law.
 - **Next.js admin UI** for accounts, settings, health, audit history,
   and subscription URLs.
 - **Bun/Hono admin API** with Better Auth, RBAC, and SQLite storage.
-- **Private VLESS + Reality endpoint** generated from admin state.
+- **Private VLESS + Reality endpoint** generated from admin state — the
+  live sing-box config re-renders automatically on every account change,
+  with a grace window on UUID rotation so clients aren't dropped mid-rotate.
 - **`ct` operator CLI** for install, update, doctor, backup, restore,
   and config rendering.
 - **Docker Compose runtime** with Caddy SNI routing, sing-box,
-  `admin-api`, and `admin-web`.
+  `admin-api`, `admin-web`, and an allowlist-only `docker-proxy` that
+  keeps the Docker socket out of the panel process.
 - **Release-pinned Docker image bundles** (one per architecture) with
   `SHA256SUMS` verification.
 - **No local runtime builds on the VPS** during normal install/update:
@@ -190,12 +193,34 @@ deployment.
 | `singbox` | VLESS + Reality proxy service |
 | `admin-api` | Hono/Bun API, Better Auth, SQLite store, subscription endpoint, and render actions |
 | `admin-web` | Next.js admin dashboard |
+| `docker-proxy` | Allowlist-only Docker-socket forwarder — the **only** service mounting the socket (read-only). It permits just container health reads and restarts, so `admin-api` never holds socket access that could reach the host daemon |
 
 The control plane is the Better-T-Stack monorepo: `apps/web`,
 `apps/api`, `packages/shared`, `packages/db`, `packages/security`,
 `packages/config`, the TypeScript operator CLI, `singbox-core`, and the
 shared Rust `ct-protocol` crate. See [docs/architecture.md](./docs/architecture.md)
 for diagrams and design rationale.
+
+## Security
+
+Defense-in-depth for protecting admin and proxy-user data:
+
+- **Docker-socket isolation.** Only the minimal `docker-proxy` holds the Docker
+  socket (read-only) and forwards just container health reads and restarts, so a
+  panel compromise cannot reach the host daemon to escape the container.
+- **RBAC with peer-admin limits.** Owner / admin / operator / viewer roles are
+  enforced in the API and re-checked in the data layer; admins manage only
+  operator/viewer (never a peer admin or owner), and the last active owner
+  cannot be removed.
+- **Auth hardening.** Argon2id password hashing, secure-by-default forced
+  rotation for admin-created accounts, per-IP **and** per-account login
+  throttling against brute-force/spray, session-bound CSRF tokens, and
+  HSTS + a strict CSP on the panel.
+- **Secrets at rest.** `.env` and the SQLite database (with its WAL/SHM
+  sidecars) are mode `0600`; subscription tokens are unforgeable HMACs; audit
+  entries and logs redact secret values.
+
+Found something? See [SECURITY.md](./SECURITY.md).
 
 ## Project Rule
 
