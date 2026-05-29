@@ -373,3 +373,12 @@ test("subscription reveal is permission-gated, redacted, and audited", async () 
     expect(store).toContain("revealProxySubscription");
     expect(store).toContain('"proxy_account.subscription_revealed"');
 });
+
+test("network preflight probe retries transient failures", async () => {
+    const preflight = await Bun.file(repoPath("operator/src/util/preflight.ts")).text();
+
+    // A momentary blip on a flaky/throttled link must not abort install/update;
+    // the reachability probe retries before declaring a host unreachable.
+    expect(preflight).toContain("--retry");
+    expect(preflight).toContain("--retry-connrefused");
+});
