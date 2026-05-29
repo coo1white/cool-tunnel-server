@@ -289,5 +289,5 @@ export const DEFAULT_PROTOCOL_KEYS: ProtocolKey[] = ["vless_reality"];
 export const DEFAULT_REALITY_DEST_HOST = "www.microsoft.com";
 export const DEFAULT_ACME_DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory";
 export const DEFAULT_DOH_RESOLVER = "https://dns.alidns.com/dns-query";
-export const RELEASE_VERSION = "0.5.13";
+export const RELEASE_VERSION = "0.5.14";
 export const REQUIRED_SCHEMA_VERSION = 5;
