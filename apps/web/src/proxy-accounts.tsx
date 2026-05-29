@@ -3,7 +3,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import { Check, Copy, Eye, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { Check, Copy, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import type { ProxyAccount } from "@cool-tunnel/shared";
 import { Notice, StatusPill } from "./components";
 import { createProxyAccountAction, proxyCommand, revealSubscriptionAction } from "./actions";
@@ -24,44 +24,40 @@ function fmtDate(iso: string | null, fallback: string): string {
   return Number.isNaN(d.getTime()) ? fallback : d.toISOString().slice(0, 10);
 }
 
-function RevealSubscription({ id, masked }: { id: string; masked: string | null }) {
-  const [url, setUrl] = useState<string | null>(null);
+// One-click copy: fetches the full subscription URL (audited) and writes it to
+// the clipboard without ever displaying the token on screen. The cell keeps
+// showing the masked URL.
+function CopySubscription({ id, masked }: { id: string; masked: string | null }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function reveal() {
+  async function copy() {
     setBusy(true);
     setErr(null);
     const res = await revealSubscriptionAction(id);
-    setBusy(false);
-    if (res.ok && res.url) setUrl(res.url);
-    else setErr(res.message ?? "Reveal failed.");
-  }
-
-  async function copy() {
-    if (!url) return;
+    if (!res.ok || !res.url) {
+      setBusy(false);
+      setErr(res.message ?? "Copy failed.");
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(res.url);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      setErr("Clipboard blocked; select and copy manually.");
+      setErr("Clipboard blocked.");
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="sub-cell">
-      <code className="sub-url" title={url ?? undefined}>{url ?? masked ?? "Unavailable"}</code>
-      {url ? (
-        <button type="button" className="icon-btn sm" onClick={copy} title="Copy subscription URL">
-          {copied ? <Check size={15} /> : <Copy size={15} />}
-        </button>
-      ) : (
-        <button type="button" className="icon-btn sm" onClick={reveal} disabled={busy} title="Reveal full URL (audited)">
-          <Eye size={15} />
-        </button>
-      )}
+      <code className="sub-url">{masked ?? "Unavailable"}</code>
+      <button type="button" className="icon-btn sm" onClick={copy} disabled={busy} title="Copy full subscription URL (audited)">
+        {copied ? <Check size={15} /> : <Copy size={15} />}
+      </button>
       {err && <span className="sub-err">{err}</span>}
     </div>
   );
@@ -182,7 +178,7 @@ export function ProxyAccounts({ accounts, canWrite }: { accounts: ProxyAccount[]
                   <td className="muted">{protocolLabel(account.enabledProtocols)}</td>
                   <td className="muted">{fmtDate(account.expiresAt, "Never")}</td>
                   <td className="muted">{fmtDate(account.lastSeenAt, "—")}</td>
-                  <td><RevealSubscription id={account.id} masked={account.subscriptionUrlMasked} /></td>
+                  <td><CopySubscription id={account.id} masked={account.subscriptionUrlMasked} /></td>
                   <td>{canWrite && <ProxyRowActions account={account} />}</td>
                 </tr>
               ))}
