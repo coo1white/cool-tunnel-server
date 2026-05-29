@@ -14,6 +14,19 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.12] - 2026-05-29 - Docs accuracy and UI polish
+
+### Changed
+
+- Corrected stale "image slices / BOM" wording in README, GETTING_STARTED,
+  and the installation/operations docs — releases publish one combined
+  image bundle per platform since v0.5.7.
+- Conservative admin-panel polish: keyboard `:focus-visible` rings, themed
+  thin scrollbars, accent text selection, and a `prefers-reduced-motion`
+  guard. No layout or color changes.
+
+---
+
 ## [0.5.11] - 2026-05-29 - Admin panel redesign and richer user management
 
 ### Added
@@ -11845,7 +11858,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.11...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.12...HEAD
+[0.5.12]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.11...v0.5.12
 [0.5.11]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.8...v0.5.9
