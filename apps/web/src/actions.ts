@@ -110,6 +110,20 @@ export async function createProxyAccountAction(_prev: ActionState, formData: For
   return { ok: true, message: "Proxy account created." };
 }
 
+// Imperative server action (called directly from the client reveal button).
+// Returns the full subscription URL for owner/admin; the API records an audit
+// event. Kept off the table's default render so the token stays masked.
+export async function revealSubscriptionAction(id: string): Promise<{ ok: boolean; url?: string; message?: string }> {
+  try {
+    const res = await apiMutation<{ account?: { subscriptionUrl?: string | null } }>(`/api/proxy-accounts/${encodeURIComponent(id)}/reveal`);
+    const url = res.account?.subscriptionUrl ?? null;
+    if (!url) return { ok: false, message: "Subscription URL is not available for your role." };
+    return { ok: true, url };
+  } catch (error) {
+    return { ok: false, message: stateError(error).message };
+  }
+}
+
 export async function proxyCommandAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const id = value(formData, "id");
   const command = value(formData, "command");

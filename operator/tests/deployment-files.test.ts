@@ -347,14 +347,29 @@ test("image-bundle fetch waits for a still-publishing release instead of failing
 });
 
 test("proxy/user action forms carry command as a hidden input, not a submit-button value", async () => {
-    const usersPage = await Bun.file(repoPath("apps/web/app/users/page.tsx")).text();
+    // Proxy command forms now live in the client table component; user command
+    // forms remain on the user-edit page.
+    const proxyTable = await Bun.file(repoPath("apps/web/src/proxy-accounts.tsx")).text();
     const editPage = await Bun.file(repoPath("apps/web/app/users/[id]/page.tsx")).text();
 
     // Multiple submit buttons sharing one useActionState form drop the clicked
     // button's name/value, so `command` arrived empty and the request 404'd.
     // Each action must be its own form with command as a hidden input.
-    for (const page of [usersPage, editPage]) {
+    for (const page of [proxyTable, editPage]) {
         expect(page).toContain('type="hidden" name="command"');
         expect(page).not.toMatch(/<button[^>]*name="command"/);
     }
+});
+
+test("subscription reveal is permission-gated, redacted, and audited", async () => {
+    const app = await Bun.file(repoPath("apps/api/src/app.ts")).text();
+    const store = await Bun.file(repoPath("packages/db/src/store.ts")).text();
+
+    // The subscription token is masked by default; revealing the full URL must
+    // require write permission, pass through redactProxyAccountFor (owner/admin
+    // only), and record an audit event.
+    expect(app).toContain('app.post("/api/proxy-accounts/:id/reveal"');
+    expect(app).toMatch(/proxy-accounts\/:id\/reveal".*requirePermission\("proxy-accounts:write"\).*redactProxyAccountFor/s);
+    expect(store).toContain("revealProxySubscription");
+    expect(store).toContain('"proxy_account.subscription_revealed"');
 });
