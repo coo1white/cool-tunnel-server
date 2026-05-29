@@ -61,8 +61,12 @@ When the network is back, re-run:
 }
 
 async function defaultNetworkProbe(host: string): Promise<boolean> {
+    // Retry transient failures (timeouts, refused/reset connections, transient
+    // 5xx) so a momentary blip on a flaky or throttled VPS link doesn't abort
+    // install/update. No -f: any HTTP response means the round trip completed,
+    // which is all this reachability gate needs.
     const r = await capture(
-        $`curl -sS --connect-timeout 5 --max-time 10 -o /dev/null https://${host}/`,
+        $`curl -sS --connect-timeout 5 --max-time 10 --retry 2 --retry-delay 2 --retry-connrefused -o /dev/null https://${host}/`,
     );
     return r.ok;
 }
