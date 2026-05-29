@@ -561,3 +561,99 @@ test("auth audit events capture the client IP", () => {
     closeFixture(f);
   }
 });
+
+test("an admin cannot create or manage peer admins, only operator/viewer", async () => {
+  const f = await ownerFixture();
+  try {
+    const ownerSession = await signIn(f.app);
+    const oh = { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" };
+    const mkUser = async (email: string, username: string, role: string) => {
+      const res = await f.app.request("/api/users", {
+        method: "POST",
+        headers: oh,
+        body: JSON.stringify({ email, username, name: username, password: "correct horse battery staple", role, mustChangePassword: false }),
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { user: AdminUser }).user;
+    };
+    await mkUser("admina@example.com", "admina", "admin");
+    const adminB = await mkUser("adminb@example.com", "adminb", "admin");
+    const operator = await mkUser("op@example.com", "operator1", "operator");
+
+    const adminSession = await signIn(f.app, "admina@example.com");
+    const ah = { cookie: adminSession.cookie, "x-csrf-token": adminSession.csrf, "content-type": "application/json" };
+
+    // An admin cannot mint a peer admin (canCreateRole).
+    const createAdmin = await f.app.request("/api/users", {
+      method: "POST",
+      headers: ah,
+      body: JSON.stringify({ email: "admin2@example.com", username: "admin2", name: "Admin2", password: "correct horse battery staple", role: "admin", mustChangePassword: false }),
+    });
+    expect(createAdmin.status).toBe(403);
+
+    // …but can create operator/viewer.
+    const createViewer = await f.app.request("/api/users", {
+      method: "POST",
+      headers: ah,
+      body: JSON.stringify({ email: "v2@example.com", username: "viewer2", name: "Viewer2", password: "correct horse battery staple", role: "viewer", mustChangePassword: false }),
+    });
+    expect(createViewer.status).toBe(201);
+
+    // An admin cannot disable or reset a peer admin (canManageTarget rank-strict).
+    const disablePeer = await f.app.request(`/api/users/${adminB.id}/disable`, { method: "POST", headers: ah });
+    expect(disablePeer.status).toBe(403);
+    const resetPeer = await f.app.request(`/api/users/${adminB.id}/reset-password`, {
+      method: "POST",
+      headers: ah,
+      body: JSON.stringify({ password: "another strong password" }),
+    });
+    expect(resetPeer.status).toBe(403);
+
+    // …but can disable a lower-ranked operator, and the owner can still manage the admin.
+    const disableOp = await f.app.request(`/api/users/${operator.id}/disable`, { method: "POST", headers: ah });
+    expect(disableOp.status).toBe(200);
+    const ownerDisablesAdmin = await f.app.request(`/api/users/${adminB.id}/disable`, { method: "POST", headers: oh });
+    expect(ownerDisablesAdmin.status).toBe(200);
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("new users default to a forced password change; the bootstrap owner does not", async () => {
+  const f = await ownerFixture();
+  try {
+    expect(f.owner.mustChangePassword).toBe(false);
+    const defaulted = f.store.createUser(f.owner, {
+      email: "defaulted@example.com", username: "defaulted", name: "Defaulted", passwordHash: "x", role: "operator",
+    });
+    expect(defaulted.mustChangePassword).toBe(true);
+    const optedOut = f.store.createUser(f.owner, {
+      email: "optedout@example.com", username: "optedout", name: "Opted Out", passwordHash: "x", role: "viewer", mustChangePassword: false,
+    });
+    expect(optedOut.mustChangePassword).toBe(false);
+  } finally {
+    closeFixture(f);
+  }
+});
+
+test("security headers add HSTS in secure mode and a CSP on the setup page", async () => {
+  const secure = tempFixture({ BETTER_AUTH_URL: "https://panel.example.com", CT_ADMIN_SECURE_COOKIES: "true" });
+  try {
+    const login = await secure.app.request("/login");
+    expect(login.headers.get("strict-transport-security") ?? "").toContain("includeSubDomains");
+    const setup = await secure.app.request("/setup");
+    const csp = setup.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("script-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+  } finally {
+    closeFixture(secure);
+  }
+
+  const insecure = await ownerFixture();
+  try {
+    const page = await insecure.app.request("/login");
+    expect(page.headers.get("strict-transport-security")).toBeNull();
+  } finally {
+    closeFixture(insecure);
+  }
+});

@@ -112,7 +112,10 @@ export class AdminStore {
       const token = this.consumeBootstrapTokenHash(tokenHash);
       if (!token.ok) throw new StoreError("invalid_bootstrap_token", bootstrapFailureMessage(token.reason), 403);
       if (input.role !== "owner") throw new StoreError("invalid_role", "First bootstrap user must be an owner.");
-      const user = this.insertUser(null, input);
+      // The bootstrap owner chooses their own password in the setup form, so they
+      // are never force-rotated. Set this explicitly rather than relying on the
+      // (now secure-by-default) insertUser fallback.
+      const user = this.insertUser(null, { ...input, mustChangePassword: false });
       this.audit(user.id, "bootstrap.owner.created", "user", user.id, { username: user.username });
       return user;
     })();
@@ -510,7 +513,7 @@ export class AdminStore {
         INSERT INTO user (
           id, name, email, emailVerified, image, createdAt, updatedAt, username, role, status, mustChangePassword
         ) VALUES (?, ?, ?, 0, NULL, ?, ?, ?, ?, 'active', ?)
-      `).run(id, name, email, ts, ts, username, role, input.mustChangePassword === true ? 1 : 0);
+      `).run(id, name, email, ts, ts, username, role, input.mustChangePassword === false ? 0 : 1);
       this.db.query(`
         INSERT INTO account (id, accountId, providerId, userId, password, createdAt, updatedAt)
         VALUES (?, ?, 'credential', ?, ?, ?, ?)

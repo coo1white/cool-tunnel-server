@@ -29,8 +29,8 @@ import {
   StatusResponseSchema,
   UserResponseSchema,
   UsersResponseSchema,
+  canCreateRole,
   hasPermission,
-  roleAtLeast,
   z,
   type AdminRole,
 } from "@cool-tunnel/shared";
@@ -82,6 +82,11 @@ class HttpError extends Error {
 
 const LOGIN_CSRF_COOKIE = "ct_login_csrf";
 const BOOTSTRAP_COOKIE = "ct_bootstrap_token";
+// The only endpoints a session flagged mustChangePassword may still reach: the
+// session probe, logout, and the self-service password change. Kept as a
+// normalized allowlist (deny-by-default) so a new data route can never silently
+// become reachable before the forced rotation.
+const PASSWORD_CHANGE_ALLOWED_PATHS = new Set(["/api/me", "/api/logout", "/api/me/password"]);
 const SUBSCRIPTION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const LOGIN_THROTTLE_WINDOW_MS = 60_000;
 const LOGIN_THROTTLE_MAX = 5;
@@ -112,7 +117,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     c.set("auth", auth);
     await next();
   });
-  app.use("*", securityHeaders());
+  app.use("*", securityHeaders(options.config));
   app.use("*", csrfProtection(options.config));
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
@@ -209,8 +214,8 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   // probe, logout, and the self-service change endpoint stay reachable.
   app.use("/api/*", async (c, next) => {
     if (!c.get("session").user.mustChangePassword) return next();
-    const path = c.req.path;
-    if (path === "/api/me" || path === "/api/logout" || path === "/api/me/password") return next();
+    const path = c.req.path.replace(/\/+$/, "") || "/";
+    if (PASSWORD_CHANGE_ALLOWED_PATHS.has(path)) return next();
     throw new HttpError(403, "password_change_required", "Change your password before continuing.", false, "/change-password");
   });
 
@@ -238,8 +243,11 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     const actor = c.get("session").user;
     const body = await safeJson(c);
     const role = parseRole(body.role ?? "viewer");
-    if (!roleAtLeast(actor.role, "admin")) throw new HttpError(403, "forbidden", "Your role cannot manage users.");
-    if (role === "owner" && actor.role !== "owner") throw new HttpError(403, "owner_required", "Only owners can create owner accounts.");
+    // canCreateRole is the single source of truth: owners create any role;
+    // admins create only operator/viewer (never a peer admin or an owner). This
+    // matches the manage/delete rules so an admin cannot mint an admin it is then
+    // not allowed to manage. requirePermission already blocks operator/viewer.
+    if (!canCreateRole(actor.role, role)) throw new HttpError(403, "forbidden", "Your role cannot create a user with that role.");
     const password = String(body.password ?? "");
     if (!validatePassword(password)) throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
     const input: CreateUserInput = {
@@ -305,7 +313,7 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
 
   app.get("/api/settings", requirePermission("settings:read"), (c) => ok(c, { settings: store.getSettings() }, 200, SettingsResponseSchema));
   app.patch("/api/settings", requirePermission("settings:update"), async (c) => {
-    const settings = await safeJson(c) as Partial<ServerSettings>;
+    const settings = parseSettingsInput(await safeJson(c));
     return ok(c, { settings: store.updateSettings(c.get("session").user as AdminUser, settings) }, 200, SettingsResponseSchema);
   });
   app.get("/api/status", requirePermission("status:read"), async (c) => {
@@ -362,15 +370,22 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   return { app, auth, store, config: options.config };
 }
 
-function securityHeaders(): MiddlewareHandler {
+function securityHeaders(config: Pick<AdminConfig, "secureCookies">): MiddlewareHandler {
   return async (c, next) => {
     await next();
     c.header("X-Content-Type-Options", "nosniff");
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "no-referrer");
     c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-    if (c.req.path === "/login") {
-      c.header("Content-Security-Policy", "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'");
+    // HSTS only when cookies are Secure (i.e. the deployment is HTTPS; production
+    // forces this on). Prevents an SSL-strip/downgrade exposing the session cookie.
+    if (config.secureCookies) {
+      c.header("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+    }
+    // CSP for both hand-rendered HTML pages (login and the unauthenticated
+    // bootstrap setup page), not just login.
+    if (c.req.path === "/login" || c.req.path === "/setup") {
+      c.header("Content-Security-Policy", "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
     }
     if (c.req.path === "/login" || c.req.path === "/setup" || c.req.path.startsWith("/api/auth/")) {
       c.header("Cache-Control", "no-store");
@@ -570,7 +585,11 @@ function appendSetCookies(headers: Headers, response: Response): void {
 }
 
 function csrfTokenForSession(session: CurrentSession, config: Pick<AdminConfig, "authSecret">): string {
-  const token = String(session.session.token ?? session.session.id ?? session.user.id);
+  // Bind the CSRF token to the real session token (cookieCache is disabled, so
+  // getSession always returns it). Refuse to synthesize a token from user.id —
+  // that would be static per user and identical across sessions/logins.
+  const token = String(session.session.token ?? "");
+  if (!token) throw new HttpError(401, "unauthorized", "Session is missing its token.");
   return createHmac("sha256", config.authSecret).update(`${session.user.id}:${token}`).digest("hex").slice(0, 32);
 }
 
@@ -658,6 +677,25 @@ function parseProxyInput(body: Record<string, unknown>, partial = false): Create
   if (body.clientDefaultLocalPort !== undefined) input.clientDefaultLocalPort = Number(body.clientDefaultLocalPort);
   if (Array.isArray(body.enabledProtocols)) input.enabledProtocols = body.enabledProtocols.filter((item): item is ProtocolKey => item === "vless_reality");
   if (body.expiresAt !== undefined) input.expiresAt = body.expiresAt === null ? null : String(body.expiresAt);
+  return input;
+}
+
+// Allow-list the only client-updatable server settings. Read-only/derived fields
+// (realityPublicKey, http3Enabled, lastCaddyfileHash, lastRenderedAt, updatedAt)
+// are never accepted from the request body, so a settings:update holder cannot
+// mass-assign them even if updateSettings later starts trusting a new field.
+function parseSettingsInput(body: Record<string, unknown>): Partial<ServerSettings> {
+  const input: Partial<ServerSettings> = {};
+  if (body.domain !== undefined) input.domain = String(body.domain);
+  if (body.panelDomain !== undefined) input.panelDomain = String(body.panelDomain);
+  if (body.acmeEmail !== undefined) input.acmeEmail = String(body.acmeEmail);
+  if (body.acmeDirectory !== undefined) input.acmeDirectory = String(body.acmeDirectory);
+  if (body.antiTrackingHideIp !== undefined) input.antiTrackingHideIp = Boolean(body.antiTrackingHideIp);
+  if (body.antiTrackingHideVia !== undefined) input.antiTrackingHideVia = Boolean(body.antiTrackingHideVia);
+  if (body.antiTrackingProbeResistance !== undefined) input.antiTrackingProbeResistance = Boolean(body.antiTrackingProbeResistance);
+  if (body.antiTrackingDohResolver !== undefined) input.antiTrackingDohResolver = String(body.antiTrackingDohResolver);
+  if (body.realityDestHost !== undefined) input.realityDestHost = String(body.realityDestHost);
+  if (Array.isArray(body.realityShortIds)) input.realityShortIds = body.realityShortIds.map((item) => String(item));
   return input;
 }
 
