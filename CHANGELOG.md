@@ -25,6 +25,13 @@ before relying on a version bump as a compatibility signal.
   900s, every 15s) for the bundle to appear before giving up. Set
   `CT_IMAGE_BUNDLE_WAIT_SECS=0` for the previous fail-fast behavior
   (CI/automation).
+- Proxy-account and admin-user actions (Disable/Enable, regenerate UUID,
+  reset password, Delete) no longer fail with "Route was not found." The
+  buttons shared one form, so under React 19 `useActionState` the clicked
+  button's `command` value was dropped and the request hit
+  `/api/proxy-accounts/<id>/` (no action). Each action is now its own form
+  with `command` as a hidden input. (Re-published in place; version
+  unchanged.)
 
 ---
 

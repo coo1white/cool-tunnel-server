@@ -50,13 +50,33 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
 
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Actions</h2>
-        <ActionForm className="toolbar" action={userCommandAction}>
-          <input type="hidden" name="id" value={user.id} />
-          {has("users:disable", session) && <button className="btn secondary" name="command" value={user.status === "active" ? "disable" : "enable"}>{user.status === "active" ? "Disable" : "Enable"}</button>}
-          {has("users:reset-password", session) && <input name="password" type="password" minLength={12} placeholder="New temporary password" />}
-          {has("users:reset-password", session) && <button className="btn secondary" name="command" value="reset-password">Reset password</button>}
-          {has("users:delete", session) && <button className="btn danger" name="command" value="delete">Delete</button>}
-        </ActionForm>
+        {/* One form per action, command as a hidden input. Multiple submit
+            buttons in a single useActionState form drop the clicked button's
+            name/value, so `command` arrived empty and the request 404'd. */}
+        <div className="toolbar">
+          {has("users:disable", session) && (
+            <ActionForm action={userCommandAction}>
+              <input type="hidden" name="id" value={user.id} />
+              <input type="hidden" name="command" value={user.status === "active" ? "disable" : "enable"} />
+              <button className="btn secondary" type="submit">{user.status === "active" ? "Disable" : "Enable"}</button>
+            </ActionForm>
+          )}
+          {has("users:reset-password", session) && (
+            <ActionForm action={userCommandAction}>
+              <input type="hidden" name="id" value={user.id} />
+              <input type="hidden" name="command" value="reset-password" />
+              <input name="password" type="password" minLength={12} placeholder="New temporary password" />
+              <button className="btn secondary" type="submit">Reset password</button>
+            </ActionForm>
+          )}
+          {has("users:delete", session) && (
+            <ActionForm action={userCommandAction}>
+              <input type="hidden" name="id" value={user.id} />
+              <input type="hidden" name="command" value="delete" />
+              <button className="btn danger" type="submit">Delete</button>
+            </ActionForm>
+          )}
+        </div>
       </section>
     </AdminShell>
   );
