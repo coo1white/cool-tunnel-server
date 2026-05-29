@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Tag-triggered release orchestrator.
 #
-# On a `v*` tag push this creates the GitHub release (marked latest) and then
-# drives the asset pipelines in dependency order via `workflow_call`:
+# On a `v*` tag push this creates the GitHub release (NOT yet marked latest)
+# and then drives the asset pipelines in dependency order via `workflow_call`,
+# finally marking the release latest only once BOTH platform image bundles are
+# present:
 #
 #   create-release -> operator -> client-runtime -> image-bundle (amd64, arm64)
+#                  -> finalize (require both bundles, then mark latest)
+#
+# Deferring "latest" until finalize means a failed arm64 (or amd64) bundle
+# build never leaves "latest" pointing at a release that is missing a platform;
+# the previous complete release stays latest until the new one is whole.
 #
 # Ordering rationale:
 #   - operator-release uploads `singbox-core-*`, which the image-bundle build
@@ -62,17 +69,21 @@ jobs:
           echo "----- release notes -----"
           cat release-notes.md
 
-      - name: Create or publish the release (marked latest)
+      - name: Create or publish the release (latest deferred to finalize)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          # Publish but do NOT mark latest yet — the finalize job marks latest
+          # only after both platform image bundles are confirmed present, so a
+          # failed bundle build can't leave "latest" pointing at a partial
+          # release.
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest=false
           else
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --title "$tag" --notes-file release-notes.md --verify-tag --latest
+              --title "$tag" --notes-file release-notes.md --verify-tag --latest=false
           fi
 
   operator:
@@ -95,3 +106,35 @@ jobs:
     with:
       platform: ${{ matrix.platform }}
     secrets: inherit
+
+  finalize:
+    # Runs even if a bundle leg failed, so the release is only marked latest
+    # when BOTH platform bundles are actually present (the assets are the
+    # source of truth, not the job outcomes).
+    needs: image-bundle
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both platform image bundles, then mark latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          missing=0
+          for want in \
+            cool-tunnel-server-images-linux-x64.tar.gz \
+            cool-tunnel-server-images-linux-arm64.tar.gz; do
+            if ! grep -qxF "$want" <<<"$assets"; then
+              echo "::error::release ${tag} is missing ${want}; not marking latest"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::refusing to mark ${tag} latest until both platform bundles are published; re-run the image-bundle job(s)."
+            exit 1
+          fi
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          echo "release ${tag} marked latest (both platform image bundles present)"

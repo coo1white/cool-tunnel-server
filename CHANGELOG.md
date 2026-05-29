@@ -12,6 +12,14 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+### Changed
+
+- A release is marked "latest" only after BOTH platform image bundles
+  (`linux-x64` and `linux-arm64`) are published. The release is created
+  not-latest and a finalize step verifies both bundles before promoting
+  it, so a failed bundle build can't leave "latest" pointing at a release
+  missing a platform.
+
 ---
 
 ## [0.5.14] - 2026-05-29 - Network probe retries transient failures
