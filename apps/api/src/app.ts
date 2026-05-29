@@ -304,22 +304,39 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   app.get("/api/proxy-accounts", requirePermission("proxy-accounts:read"), (c) => ok(c, { accounts: store.listProxyAccounts() }, 200, ProxyAccountsResponseSchema));
   app.post("/api/proxy-accounts", requirePermission("proxy-accounts:write"), async (c) => {
     const input = parseProxyInput(await safeJson(c));
-    return ok(c, { account: store.createProxyAccount(c.get("session").user as AdminUser, input) }, 201, ProxyAccountResponseSchema);
+    const account = store.createProxyAccount(c.get("session").user as AdminUser, input);
+    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.create");
+    return ok(c, { account }, 201, ProxyAccountResponseSchema);
   });
   app.get("/api/proxy-accounts/:id", requirePermission("proxy-accounts:read"), (c) => {
     const account = store.getProxyAccount(requiredParam(c, "id"));
     if (!account) throw new HttpError(404, "not_found", "Proxy account was not found.");
     return ok(c, { account: redactProxyAccountFor(c.get("session").user.role, account as unknown as Record<string, unknown>) }, 200, ProxyAccountResponseSchema);
   });
-  app.patch("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), async (c) => ok(c, {
-    account: store.updateProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"), parseProxyInput(await safeJson(c), true)),
-  }, 200, ProxyAccountResponseSchema));
-  app.post("/api/proxy-accounts/:id/enable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), true) }, 200, ProxyAccountResponseSchema));
-  app.post("/api/proxy-accounts/:id/disable", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), false) }, 200, ProxyAccountResponseSchema));
-  app.post("/api/proxy-accounts/:id/regenerate-uuid", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: store.regenerateProxyUuid(c.get("session").user as AdminUser, requiredParam(c, "id")) }, 200, ProxyAccountResponseSchema));
+  app.patch("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), async (c) => {
+    const account = store.updateProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"), parseProxyInput(await safeJson(c), true));
+    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.update");
+    return ok(c, { account }, 200, ProxyAccountResponseSchema);
+  });
+  app.post("/api/proxy-accounts/:id/enable", requirePermission("proxy-accounts:write"), async (c) => {
+    const account = store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), true);
+    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.enable");
+    return ok(c, { account }, 200, ProxyAccountResponseSchema);
+  });
+  app.post("/api/proxy-accounts/:id/disable", requirePermission("proxy-accounts:write"), async (c) => {
+    const account = store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), false);
+    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.disable");
+    return ok(c, { account }, 200, ProxyAccountResponseSchema);
+  });
+  app.post("/api/proxy-accounts/:id/regenerate-uuid", requirePermission("proxy-accounts:write"), async (c) => {
+    const account = store.regenerateProxyUuid(c.get("session").user as AdminUser, requiredParam(c, "id"));
+    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.regenerate-uuid");
+    return ok(c, { account }, 200, ProxyAccountResponseSchema);
+  });
   app.post("/api/proxy-accounts/:id/reveal", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: redactProxyAccountFor(c.get("session").user.role, store.revealProxySubscription(c.get("session").user as AdminUser, requiredParam(c, "id")) as unknown as Record<string, unknown>) }, 200, ProxyAccountResponseSchema));
-  app.delete("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), (c) => {
+  app.delete("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), async (c) => {
     store.deleteProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"));
+    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.delete");
     return ok(c);
   });
 
@@ -449,6 +466,38 @@ function requirePermissionForAction(action: CoreAction): (c: Context<{ Variables
     const user = c.get("session").user as AdminUser;
     if (!hasPermission(user, permission)) throw new HttpError(403, "forbidden", "Permission denied.");
   };
+}
+
+// After any proxy-account mutation, re-render the sing-box server config so the
+// live data-plane always reflects the DB. The supervisor reloads sing-box on
+// config change (fs.watch on the config dir + a 2s mtime poll), so a render is
+// all that's needed — no container restart. This closes the window where a
+// created / rotated / enabled / disabled / deleted account left the running
+// sing-box stale (most visibly: a `regenerate-uuid` whose new UUID never
+// reached the inbound, so the client failed VLESS auth with "unknown UUID").
+//
+// Best-effort: the mutation is already committed, so a render failure is
+// audited + logged but never turns a successful mutation into a 500.
+async function renderSingboxAfterProxyMutation(c: Context<{ Variables: Vars }>, store: AdminStore, config: AdminConfig, trigger: string): Promise<void> {
+  let code = -1;
+  let rendered = false;
+  let error: string | undefined;
+  try {
+    const result = await runCoreAction("render-singbox", config, store);
+    code = result.code;
+    rendered = result.ok;
+    if (!result.ok && result.stderr) error = result.stderr.slice(0, 200);
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
+  try {
+    store.audit(c.get("session").user.id, "core.render-singbox", "core", "render-singbox", { trigger, code, ok: rendered, ...(error ? { error } : {}) });
+  } catch {
+    // Auditing must never break the request path.
+  }
+  if (!rendered) {
+    console.warn(JSON.stringify({ level: "warn", msg: "auto_render_singbox_failed", trigger, code, error }));
+  }
 }
 
 async function coreActionResponse(c: Context<{ Variables: Vars }>, action: CoreAction, store: AdminStore, config: AdminConfig): Promise<Response> {
@@ -823,6 +872,7 @@ function redactProxyAccountFor(role: AdminRole, account: Record<string, unknown>
   if (role === "owner" || role === "admin") return account;
   const copy = { ...account };
   delete copy.uuid;
+  delete copy.previousUuid;
   delete copy.subscriptionUrl;
   return copy;
 }

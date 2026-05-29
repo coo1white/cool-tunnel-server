@@ -92,20 +92,51 @@ export async function runCommand(argv: readonly string[], input?: string): Promi
   };
 }
 
+export interface RenderAccount {
+  readonly username: string;
+  readonly uuid: string;
+}
+
+// Build the VLESS user list for the sing-box server config from the DB.
+//
+// Each active vless_reality account contributes its current UUID. While a
+// rotation's grace window is still open (previousUuidValidUntil in the
+// future), the pre-rotation UUID is emitted too — as a second user named
+// `<username>-prev` — so `regenerate-uuid` doesn't instantly reject clients
+// that haven't re-fetched their subscription yet. The window matches the one
+// `AdminStore.regenerateProxyUuid` records (10 min); after it lapses the old
+// UUID drops out on the next render.
+//
+// Falls back to a single inert placeholder user when there are no active
+// accounts, because sing-box rejects an empty `users[]`.
+export function buildServerRenderAccounts(store: AdminStore, now: number = Date.now()): RenderAccount[] {
+  const accounts: RenderAccount[] = [];
+  for (const account of store.listProxyAccounts()) {
+    if (account.status !== "active" || !account.enabledProtocols.includes("vless_reality")) continue;
+    const secret = store.getProxyAccount(account.id);
+    if (!secret?.uuid) continue;
+    accounts.push({ username: account.username, uuid: secret.uuid });
+    const graceUntil = account.previousUuidValidUntil;
+    if (
+      secret.previousUuid &&
+      secret.previousUuid !== secret.uuid &&
+      graceUntil !== null &&
+      Date.parse(graceUntil) > now
+    ) {
+      accounts.push({ username: `${account.username}-prev`, uuid: secret.previousUuid });
+    }
+  }
+  if (accounts.length === 0) {
+    return [{ username: "__no_active_accounts__", uuid: "00000000-0000-0000-0000-000000000000" }];
+  }
+  return accounts;
+}
+
 async function renderSingbox(config: AdminConfig, store: AdminStore): Promise<BoundaryResult> {
   const output = validateSafePath(config.singboxConfigPath, "SINGBOX_CONFIG_PATH");
   mkdirSync(dirname(output), { recursive: true, mode: 0o755 });
   const settings = store.getSettings();
-  const activeAccounts = store.listProxyAccounts()
-    .filter((account) => account.status === "active" && account.enabledProtocols.includes("vless_reality"))
-    .map((account) => {
-      const secret = store.getProxyAccount(account.id);
-      return secret ? { username: account.username, uuid: secret.uuid } : null;
-    })
-    .filter((account): account is { username: string; uuid: string } => account !== null);
-  const accounts = activeAccounts.length > 0
-    ? activeAccounts
-    : [{ username: "__no_active_accounts__", uuid: "00000000-0000-0000-0000-000000000000" }];
+  const accounts = buildServerRenderAccounts(store);
   const inputPath = `/tmp/ct-singbox-render-${crypto.randomUUID()}.json`;
   const input = {
     domain: settings.domain,
