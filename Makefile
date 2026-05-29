@@ -1,4 +1,4 @@
-# cool-tunnel-server v0.5.16 -- monorepo operator + developer Makefile.
+# cool-tunnel-server v0.6.0 -- monorepo operator + developer Makefile.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
