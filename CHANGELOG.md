@@ -14,6 +14,20 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.5.10] - 2026-05-28 - Tolerate a still-publishing release on update
+
+### Fixed
+
+- `ct update` / `ct install` run right after a release no longer fail with
+  "prebuilt Docker image bundle is required". A tag publishes the operator
+  binary within ~1 minute but the image bundle several minutes later;
+  `fetch_image_bundle.sh` now polls `SHA256SUMS` and waits (bounded, default
+  900s, every 15s) for the bundle to appear before giving up. Set
+  `CT_IMAGE_BUNDLE_WAIT_SECS=0` for the previous fail-fast behavior
+  (CI/automation).
+
+---
+
 ## [0.5.9] - 2026-05-28 - Live container health on the dashboard
 
 ### Changed
@@ -11801,7 +11815,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.9...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.10...HEAD
+[0.5.10]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.6...v0.5.7
