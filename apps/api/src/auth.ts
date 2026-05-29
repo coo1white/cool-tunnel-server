@@ -147,8 +147,3 @@ export async function getCurrentSession(auth: AuthInstance, headers: Headers): P
     },
   };
 }
-
-export async function hashPasswordWithAuth(auth: AuthInstance, password: string): Promise<string> {
-  const ctx = await auth.$context;
-  return ctx.password.hash(password);
-}

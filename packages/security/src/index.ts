@@ -261,10 +261,6 @@ export function validateSafePath(value: string, label: string): string {
   return path;
 }
 
-export function isProduction(env: Record<string, string | undefined>): boolean {
-  return (env["NODE_ENV"] ?? env["CT_ADMIN_ENV"] ?? env["APP_ENV"] ?? "").toLowerCase() === "production";
-}
-
 export function requireSessionSecret(env: Record<string, string | undefined>): string {
   const secret = env["BETTER_AUTH_SECRET"] ?? env["AUTH_SECRET"] ?? env["CT_ADMIN_SESSION_SECRET"] ?? "";
   if (secret.length < 32) throw new Error("BETTER_AUTH_SECRET must be at least 32 characters.");

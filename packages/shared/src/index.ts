@@ -13,7 +13,6 @@ export type UserStatus = (typeof USER_STATUSES)[number];
 export const UserStatusSchema = z.enum(USER_STATUSES);
 
 export const PROXY_ACCOUNT_STATUSES = ["active", "disabled", "expired"] as const;
-export type ProxyAccountStatus = (typeof PROXY_ACCOUNT_STATUSES)[number];
 export const ProxyAccountStatusSchema = z.enum(PROXY_ACCOUNT_STATUSES);
 
 export const PROTOCOL_KEYS = ["vless_reality"] as const;
@@ -228,10 +227,6 @@ export function hasPermission(user: Pick<AdminUser, "role" | "status">, permissi
   return ROLE_PERMISSIONS[user.role].includes(permission);
 }
 
-export function roleAtLeast(actual: AdminRole, minimum: AdminRole): boolean {
-  return ROLE_RANK[actual] >= ROLE_RANK[minimum];
-}
-
 export function canManageTarget(actor: Pick<AdminUser, "role">, target: Pick<AdminUser, "role">): boolean {
   if (actor.role === "owner") return true;
   // Admins may manage only ranks strictly below admin (operator/viewer) — never
@@ -252,15 +247,6 @@ export function canDeleteRole(actor: AdminRole, target: AdminRole): boolean {
   if (actor === "owner") return true;
   if (actor !== "admin") return false;
   return target === "operator" || target === "viewer";
-}
-
-export function roleLabel(role: AdminRole): string {
-  switch (role) {
-    case "owner": return "Owner";
-    case "admin": return "Admin";
-    case "operator": return "Operator";
-    case "viewer": return "Viewer";
-  }
 }
 
 // Response envelopes returned by the admin API. These are the single source of

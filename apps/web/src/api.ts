@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   AuditResponseSchema,
@@ -70,14 +70,6 @@ export async function getSession(): Promise<ApiSession> {
   return data;
 }
 
-export async function getOptionalSession(): Promise<ApiSession | null> {
-  try {
-    return await getSession();
-  } catch {
-    return null;
-  }
-}
-
 export async function apiMutation<T>(path: string, body: Record<string, unknown> = {}, method = "POST"): Promise<T> {
   const session = await getSession();
   return apiFetch<T>(path, {
@@ -123,11 +115,6 @@ export async function logout(): Promise<void> {
     body: "{}",
   });
   redirect("/login");
-}
-
-export async function getForwardedError(): Promise<string> {
-  const h = await headers();
-  return h.get("x-action-error") ?? "";
 }
 
 export function has(permission: Permission, session: ApiSession): boolean {
