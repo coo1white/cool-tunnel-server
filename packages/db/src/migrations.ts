@@ -17,10 +17,15 @@ export function openAdminDb(path: string): AdminDb {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 5000");
   if (path !== ":memory:") {
-    try {
-      chmodSync(path, 0o600);
-    } catch {
-      // Best effort for bind mounts.
+    // Lock down the DB and its WAL/SHM sidecars (which hold the same row data
+    // pre-checkpoint) to 0600 rather than relying on the parent dir mode + the
+    // ambient umask. Sidecars may not exist yet on a fresh DB — best effort.
+    for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+      try {
+        chmodSync(file, 0o600);
+      } catch {
+        // Best effort for bind mounts and not-yet-created sidecars.
+      }
     }
   }
   return { db, path };

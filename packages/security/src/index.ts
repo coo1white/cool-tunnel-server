@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 import type { AdminRole } from "@cool-tunnel/shared";
 
@@ -284,7 +284,10 @@ export async function hashBootstrapToken(token: string, secret: string): Promise
 }
 
 export function tokenFingerprint(token: string): string {
-  return Bun.hash(new TextEncoder().encode(token)).toString(16).padStart(16, "0").slice(0, 16);
+  // Keyless but cryptographic (SHA-256) and collision-resistant, unlike the
+  // previous non-cryptographic wyhash. Used only as an audit-log correlation
+  // handle for bootstrap tokens — the 256-bit random preimage is never recoverable.
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
 export function validBootstrapTokenShape(token: string): boolean {

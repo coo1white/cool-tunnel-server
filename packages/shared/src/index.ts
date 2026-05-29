@@ -229,7 +229,11 @@ export function roleAtLeast(actual: AdminRole, minimum: AdminRole): boolean {
 
 export function canManageTarget(actor: Pick<AdminUser, "role">, target: Pick<AdminUser, "role">): boolean {
   if (actor.role === "owner") return true;
-  if (actor.role === "admin") return target.role !== "owner";
+  // Admins may manage only ranks strictly below admin (operator/viewer) — never
+  // a peer admin or an owner. This prevents one admin from disabling, demoting,
+  // or resetting the password of another admin (lateral takeover / lockout) and
+  // keeps management consistent with canCreateRole/canDeleteRole.
+  if (actor.role === "admin") return ROLE_RANK[target.role] < ROLE_RANK.admin;
   return false;
 }
 

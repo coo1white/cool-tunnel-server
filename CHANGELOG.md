@@ -12,6 +12,30 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+### Security
+
+- **Access control:** an admin can no longer create, disable, demote, or
+  reset the password of a *peer admin* — admins now manage only
+  operator/viewer ranks (`canManageTarget` is rank-strict and the
+  create-user route enforces `canCreateRole`). Only an owner can manage
+  admins. This closes a same-tier lateral-takeover/lockout path and makes
+  create/manage/delete rules consistent.
+- **Forced password change** now defaults secure at the data layer: a user
+  created without an explicit flag is forced to rotate on first login
+  (the bootstrap owner, who chose their own password, is explicitly
+  exempt). The gate also uses a normalized deny-by-default allowlist so a
+  new route can't silently become reachable before rotation.
+- **Transport/headers:** added `Strict-Transport-Security` (when cookies
+  are Secure / production) and extended the strict `Content-Security-Policy`
+  to the bootstrap `/setup` page (previously only `/login`).
+- **CSRF tokens** are now bound strictly to the real session token and
+  refuse to degrade to a static per-user value.
+- **Settings API** now allow-lists the client-updatable fields at the route
+  boundary (no mass-assignment of derived/read-only settings).
+- **Secrets at rest:** bootstrap-token audit fingerprints use SHA-256
+  (was a non-cryptographic hash); the SQLite WAL/SHM sidecars are
+  `chmod 0600` rather than relying on the directory mode alone.
+
 ### Changed
 
 - A release is now created as a **draft** and only un-drafted (published)
