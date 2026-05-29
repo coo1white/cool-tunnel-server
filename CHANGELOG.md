@@ -12,6 +12,14 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+### Changed
+
+- A release is now created as a **draft** and only un-drafted (published)
+  by the finalize job once every BOM asset is present, so an incomplete
+  release is never publicly visible or downloadable while it builds. A
+  failed asset job leaves the release a draft; the previous complete
+  release stays the only public/latest one.
+
 ---
 
 ## [0.5.16] - 2026-05-29 - Release latest gated on the full asset BOM
