@@ -23,18 +23,18 @@ test("Bun/pnpm setup is pinned in the composite action (single source of truth)"
     expect(composite).toContain('default: "11.1.1"');
     expect(composite).not.toContain("bun-version: latest");
 
-    const releaseOperator = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
+    const releaseOperator = await Bun.file(repoPath(".github/workflows/release.yml")).text();
     expect(releaseOperator).toContain("uses: ./.github/actions/setup-bun-pnpm");
     expect(releaseOperator).not.toContain("bun-version: latest");
 });
 
 test("release workflows avoid floating Bun and fragile asset merges", async () => {
-    const clientRuntime = await Bun.file(repoPath(".github/workflows/release-client-runtime.yml")).text();
-    const imageBundle = await Bun.file(repoPath(".github/workflows/release-image-bundle.yml")).text();
+    const clientRuntime = await Bun.file(repoPath(".github/workflows/release.yml")).text();
+    const imageBundle = await Bun.file(repoPath(".github/workflows/release.yml")).text();
     const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
 
-    // release-client-runtime is a bun-only consumer (no pnpm), so it pins
-    // bun-version directly rather than using the setup-bun-pnpm composite.
+    // The client-runtime job in release.yml is a bun-only consumer (no pnpm),
+    // so it pins bun-version directly rather than using the setup-bun-pnpm composite.
     expect(clientRuntime).toContain("bun-version: 1.3.14");
     expect(clientRuntime).not.toContain("bun-version: latest");
     expect(clientRuntime).toContain("--clobber || true");
@@ -48,7 +48,7 @@ test("release workflows avoid floating Bun and fragile asset merges", async () =
 test("monorepo installs use the root pnpm lockfile instead of nested Bun installs", async () => {
     const ci = await Bun.file(repoPath(".github/workflows/ci.yml")).text();
     const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
-    const release = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
+    const release = await Bun.file(repoPath(".github/workflows/release.yml")).text();
     const composite = await Bun.file(repoPath(".github/actions/setup-bun-pnpm/action.yml")).text();
     const makefile = await Bun.file(repoPath("Makefile")).text();
     const singboxRelease = await Bun.file(repoPath("scripts/build_release_singbox_core_assets.sh")).text();
@@ -56,9 +56,9 @@ test("monorepo installs use the root pnpm lockfile instead of nested Bun install
     const adminWebDockerfile = await Bun.file(repoPath("docker/admin-web/Dockerfile")).text();
 
     // The composite action runs `pnpm install --frozen-lockfile` for the four
-    // ci/audit consumers (release-operator opts out and runs it in its own
-    // multi-step run block). So the literal command lives in the composite +
-    // release-operator + Makefile, and the workflow consumers reference the
+    // ci/audit consumers (release.yml's operator job opts out and runs it
+    // in its own multi-step run block). So the literal command lives in the
+    // composite + release.yml + Makefile, and ci/audit reference the
     // composite via `uses:`.
     expect(composite).toContain("pnpm install --frozen-lockfile");
     for (const body of [release, makefile]) {
@@ -91,11 +91,10 @@ test("operator linux x64 release binary uses baseline CPU target", async () => {
 });
 
 test("release workflow publishes prebuilt singbox-core assets with checksums", async () => {
-    const body = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
+    const body = await Bun.file(repoPath(".github/workflows/release.yml")).text();
     expect(body).toContain("Build prebuilt singbox-core assets");
     expect(body).toContain("operator/bin/singbox-core-linux-*");
     expect(body).toContain("sha256sum ct-operator-* > SHA256SUMS.generated");
-    expect(body).toContain('github.event.inputs.scope != \'operator-only\'');
     expect(body).toContain("sha256sum singbox-core-* >> SHA256SUMS.generated");
     expect(body).toContain("operator/bin/singbox-core-*");
     // The retired Rust server daemon must not reappear in the release path;
@@ -309,7 +308,7 @@ test("admin task imports workspace packages with literal specifiers so they bund
 
 test("release publishes one combined image bundle per platform by default", async () => {
     const buildScript = await Bun.file(repoPath("scripts/build_release_image_bundle.sh")).text();
-    const workflow = await Bun.file(repoPath(".github/workflows/release-image-bundle.yml")).text();
+    const workflow = await Bun.file(repoPath(".github/workflows/release.yml")).text();
 
     // Default output is a single cool-tunnel-server-images-<suffix>.tar.gz per
     // platform; the per-image streaming BOM is opt-in for tiny-disk hosts. The

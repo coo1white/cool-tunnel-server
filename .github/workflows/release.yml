@@ -1,37 +1,32 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tag-triggered release orchestrator.
+# Tag-triggered release pipeline (one file, one orchestrator).
 #
 # On a `v*` tag push this creates the GitHub release as a DRAFT (hidden) and
-# then drives the asset pipelines in dependency order via `workflow_call`,
-# finally PUBLISHING the release (un-draft) and marking it latest only once
-# EVERY asset in the release BOM (manifests/release-assets.json) is present:
+# then drives the asset jobs in dependency order:
 #
 #   create-release (draft) -> operator -> client-runtime -> image-bundle (amd64, arm64)
 #                          -> finalize (require every BOM asset, then publish + mark latest)
 #
 # Keeping the release a draft until finalize means an incomplete release is
-# never publicly visible or downloadable: a failed asset job (a missing image
-# bundle, operator binary, or client runtime asset) leaves the release a draft,
-# and the previous complete release stays the only public/latest one.
+# never publicly visible or downloadable: a failed asset job leaves the release
+# a draft, and the previous complete release stays the only public/latest one.
 #
 # Ordering rationale:
-#   - release-operator uploads `singbox-core-*`, which the image-bundle build
-#     downloads as a prebuilt input, so image bundles must run after it.
-#   - the asset jobs each merge into a shared `SHA256SUMS`, so they are
-#     serialized (and the two image-bundle platforms run one at a time) to
-#     avoid clobbering each other.
+#   - operator uploads `singbox-core-*`, which the image-bundle build downloads
+#     as a prebuilt input, so image bundles must run after it.
+#   - asset jobs each merge into a shared `SHA256SUMS`, so they are serialized
+#     (and the two image-bundle platforms run one at a time) to avoid clobbering.
 #
-# A release created with GITHUB_TOKEN does NOT emit `release: published`
-# (GitHub's recursion guard), so the called workflows are invoked directly
-# here rather than via the event. Their existing `release: published` and
-# `workflow_dispatch` triggers are retained for manual/recovery use and do
-# not double-run for token-created releases.
+# Recovery: use the Actions UI's "Re-run failed jobs" (preserves per-job state),
+# or `workflow_dispatch` on a tag ref to retry the whole pipeline from
+# create-release.
 
 name: release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -76,10 +71,6 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          # Create as a DRAFT so an incomplete release is never publicly visible
-          # while assets build. The finalize job un-drafts (publishes) and marks
-          # latest only once every BOM asset is present, so a PUBLISHED release
-          # always carries the full asset set.
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=true --prerelease=false
           else
@@ -87,32 +78,276 @@ jobs:
               --title "$tag" --notes-file release-notes.md --verify-tag --draft
           fi
 
+  # ------------------------------------------------------------------
+  # operator — ct-operator Bun CLI binaries + prebuilt singbox-core.
+  # ------------------------------------------------------------------
   operator:
     needs: create-release
-    uses: ./.github/workflows/release-operator.yml
-    secrets: inherit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
+      - uses: ./.github/actions/setup-bun-pnpm
+        with:
+          install: 'false'
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Build all targets
+        run: |
+          pnpm install --frozen-lockfile
+          cd operator
+          bun run build.ts all
+          ls -lh bin/
+
+      - name: Build prebuilt singbox-core assets
+        run: |
+          mkdir -p operator/bin
+          ./scripts/build_release_singbox_core_assets.sh
+          cp release-assets/singbox-core-linux-* operator/bin/
+          chmod +x operator/bin/singbox-core-linux-*
+          ls -lh operator/bin/singbox-core-linux-*
+
+      - name: Generate SHA256SUMS
+        working-directory: operator/bin
+        run: |
+          sha256sum ct-operator-* > SHA256SUMS.generated
+          sha256sum singbox-core-* >> SHA256SUMS.generated
+          cp SHA256SUMS.generated SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Merge existing release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p operator/bin/checksums
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern SHA256SUMS \
+            --dir operator/bin/checksums \
+            --clobber || true
+          if [ -s operator/bin/checksums/SHA256SUMS ]; then
+            cat operator/bin/SHA256SUMS.generated operator/bin/checksums/SHA256SUMS \
+              | awk 'NF && !seen[$2]++' \
+              > operator/bin/SHA256SUMS
+          fi
+          cat operator/bin/SHA256SUMS
+
+      - name: Attest release binaries
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
+        with:
+          subject-path: operator/bin/ct-operator-*
+
+      - name: Attest core release binaries
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
+        with:
+          subject-path: |
+            operator/bin/singbox-core-*
+
+      - name: Upload artifacts to release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            operator/bin/ct-operator-*
+            operator/bin/SHA256SUMS
+
+      - name: Upload core artifacts to release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            operator/bin/singbox-core-*
+
+  # ------------------------------------------------------------------
+  # client-runtime — universal macOS sing-box plugin + cool-tunnel-core
+  # built from the server-paired client repo (lipo'd for arm64+x64).
+  # ------------------------------------------------------------------
   client-runtime:
     needs: operator
-    uses: ./.github/workflows/release-client-runtime.yml
-    secrets: inherit
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install Rust targets
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Build client Rust core from server-paired source
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/runtime"
+          CORE_REF="${CORE_REF:-$(jq -r '.plugins["cool-tunnel-core"].source.ref' manifests/client-runtime.upstream.json)}"
+          SERVER_TAG="${GITHUB_REF_NAME}"
+          git clone --depth 1 --branch "$CORE_REF" https://github.com/coo1white/cool-tunnel.git /tmp/cool-tunnel-client
+          cd /tmp/cool-tunnel-client/core
+          cargo build --locked --release --target aarch64-apple-darwin --bin cool-tunnel-core
+          cargo build --locked --release --target x86_64-apple-darwin --bin cool-tunnel-core
+          lipo -create \
+            target/aarch64-apple-darwin/release/cool-tunnel-core \
+            target/x86_64-apple-darwin/release/cool-tunnel-core \
+            -output "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-${SERVER_TAG}"
+          codesign --force --sign - --timestamp=none "$GITHUB_WORKSPACE/runtime/cool-tunnel-core-${SERVER_TAG}"
+
+      - name: Build server-published sing-box universal plugin
+        run: |
+          mkdir -p runtime
+          ARM_URL=$(jq -r '.assets["darwin-arm64"].url' singbox-core/singbox.upstream.json)
+          X64_URL=$(jq -r '.assets["darwin-amd64"].url' singbox-core/singbox.upstream.json)
+          curl -fLs --retry 3 -o runtime/sing-box-arm64.tar.gz "$ARM_URL"
+          curl -fLs --retry 3 -o runtime/sing-box-x64.tar.gz "$X64_URL"
+          mkdir -p runtime/arm64 runtime/x64
+          tar -xzf runtime/sing-box-arm64.tar.gz -C runtime/arm64 --strip-components=1
+          tar -xzf runtime/sing-box-x64.tar.gz -C runtime/x64 --strip-components=1
+          TAG=$(jq -r '.upstream_tag' singbox-core/singbox.upstream.json)
+          lipo -create runtime/arm64/sing-box runtime/x64/sing-box -output "runtime/sing-box-${TAG}-darwin-universal"
+          codesign --force --sign - --timestamp=none "runtime/sing-box-${TAG}-darwin-universal"
+          rm -rf runtime/arm64 runtime/x64 runtime/sing-box-arm64.tar.gz runtime/sing-box-x64.tar.gz
+
+      - name: Stage runtime checksums
+        run: |
+          (cd runtime && shasum -a 256 \
+            sing-box-*-darwin-universal \
+            cool-tunnel-core-v*) \
+            > runtime/SHA256SUMS.runtime
+          cat runtime/SHA256SUMS.runtime
+
+      - name: Upload runtime plugins to server release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            runtime/sing-box-*-darwin-universal
+            runtime/cool-tunnel-core-v*
+
+      - name: Merge runtime checksums into single release SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p runtime/checksums
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern SHA256SUMS \
+            --dir runtime/checksums \
+            --clobber || true
+          if [ -s runtime/checksums/SHA256SUMS ]; then
+            cat runtime/checksums/SHA256SUMS runtime/SHA256SUMS.runtime \
+              | awk 'NF && !seen[$2]++' \
+              > runtime/SHA256SUMS
+          else
+            cp runtime/SHA256SUMS.runtime runtime/SHA256SUMS
+          fi
+          gh release upload "${GITHUB_REF_NAME}" runtime/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
+  # ------------------------------------------------------------------
+  # image-bundle — per-arch Docker image tarballs for `ct install` /
+  # `ct update`. Serialized via max-parallel:1 because both arches
+  # merge into the same SHA256SUMS file.
+  # ------------------------------------------------------------------
   image-bundle:
     needs: client-runtime
     strategy:
       max-parallel: 1
       matrix:
         platform: [linux/amd64, linux/arm64]
-    uses: ./.github/workflows/release-image-bundle.yml
-    with:
-      platform: ${{ matrix.platform }}
-    secrets: inherit
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Use local Docker builder
+        run: docker buildx use default
+
+      - name: Fetch prebuilt core inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'singbox-core-linux-*' \
+            --dir release-assets \
+            --clobber
+          chmod +x release-assets/singbox-core-linux-*
+
+      - name: Build image bundle assets
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            linux/amd64) suffix=linux-x64 ;;
+            linux/arm64) suffix=linux-arm64 ;;
+            *) echo "unsupported platform: ${{ matrix.platform }}" >&2; exit 2 ;;
+          esac
+          echo "suffix=$suffix" >> "$GITHUB_ENV"
+          PLATFORMS="${{ matrix.platform }}" \
+            ./scripts/build_release_image_bundle.sh
+
+      - name: Upload image assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          suffix="${suffix}"
+          bundle="release-assets/cool-tunnel-server-images-${suffix}.tar.gz"
+          if [ ! -f "$bundle" ]; then
+            echo "::error::combined image bundle not found: ${bundle}"
+            exit 1
+          fi
+          gh release upload "$tag" "$bundle" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
+      - name: Merge image checksums into release SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets/checksums
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern SHA256SUMS \
+            --dir release-assets/checksums \
+            --clobber || true
+          if [ -s release-assets/checksums/SHA256SUMS ]; then
+            cat release-assets/SHA256SUMS.images release-assets/checksums/SHA256SUMS \
+              | awk 'NF && !seen[$2]++' \
+              > release-assets/SHA256SUMS
+          else
+            cp release-assets/SHA256SUMS.images release-assets/SHA256SUMS
+          fi
+          gh release upload "${GITHUB_REF_NAME}" release-assets/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
+      - name: Upload workflow artifact copy
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: image-bundle-${{ env.suffix }}
+          path: |
+            release-assets/cool-tunnel-server-images-${{ env.suffix }}.tar.gz
+            release-assets/SHA256SUMS.images
+          retention-days: 14
+
+  # ------------------------------------------------------------------
+  # finalize — verify every BOM asset is present, then publish (un-draft)
+  # and mark latest. Runs even if an asset leg failed so the release stays
+  # a draft (no public partial release) rather than a half-published one.
+  # ------------------------------------------------------------------
   finalize:
-    # Runs even if an asset leg failed, so the release is only marked latest
-    # when EVERY asset in the release BOM (manifests/release-assets.json) is
-    # actually present — the published assets are the source of truth, not the
-    # job outcomes.
     needs: image-bundle
     if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-24.04
