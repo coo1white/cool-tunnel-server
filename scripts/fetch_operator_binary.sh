@@ -96,12 +96,17 @@ if [[ "$ACTUAL" != "$EXPECTED" ]]; then
     exit 1
 fi
 if command -v gh >/dev/null 2>&1; then
-    # The release-builder workflow was renamed in 0.6.3 (operator-release.yml ->
-    # release-operator.yml) to group with the other release-*.yml stages. The
-    # signed attestation bakes in whichever workflow path was current at build
-    # time, so try the new path first and fall back to the old one for binaries
-    # built before the rename (v0.6.2 and earlier).
+    # The release pipeline was consolidated into a single release.yml in 0.6.4
+    # (previously the operator binary was built by release-operator.yml, and
+    # before #277 by operator-release.yml). The signed attestation bakes in
+    # whichever workflow path was current at build time, so try each path in
+    # newest-to-oldest order so attestation verification keeps working for
+    # every published release, future and historical.
     if ! gh attestation verify "$NEW" \
+        --repo coo1white/cool-tunnel-server \
+        --signer-workflow .github/workflows/release.yml \
+        >/dev/null 2>&1 \
+       && ! gh attestation verify "$NEW" \
         --repo coo1white/cool-tunnel-server \
         --signer-workflow .github/workflows/release-operator.yml \
         >/dev/null 2>&1 \
