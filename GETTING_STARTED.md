@@ -15,7 +15,8 @@ installation reference, use
 | Root SSH or sudo | Needed for Docker and firewall setup |
 | A domain pointed at the VPS | Set an `A` record to the VPS public IPv4 |
 | Ports `80/tcp` and `443/tcp` open | Caddy uses 80 for ACME and 443 for panel/proxy traffic |
-| Docker Engine + Compose v2 | The installer checks this before loading release images |
+| Docker Engine + Compose v2 | The bootstrap installs it if missing; `ct install` checks it before loading release images |
+| ~1 GB RAM, ~25 GB disk | A small VPS works; the image bundle + loaded Docker images need disk headroom (a tight disk warns in `ct doctor`) |
 
 Before installing, confirm DNS from your laptop:
 
