@@ -15,10 +15,17 @@ test("Dockerfiles consume prebuilt singbox-core instead of compiling on VPS", as
     }
 });
 
-test("operator release workflow pins Bun instead of floating latest", async () => {
-    const body = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
-    expect(body).toContain("bun-version: 1.3.14");
-    expect(body).not.toContain("bun-version: latest");
+test("Bun/pnpm setup is pinned in the composite action (single source of truth)", async () => {
+    // After the workflow cleanup, the Bun + pnpm versions live in the
+    // composite action and every consumer uses `./.github/actions/setup-bun-pnpm`.
+    const composite = await Bun.file(repoPath(".github/actions/setup-bun-pnpm/action.yml")).text();
+    expect(composite).toContain('default: "1.3.14"');
+    expect(composite).toContain('default: "11.1.1"');
+    expect(composite).not.toContain("bun-version: latest");
+
+    const releaseOperator = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
+    expect(releaseOperator).toContain("uses: ./.github/actions/setup-bun-pnpm");
+    expect(releaseOperator).not.toContain("bun-version: latest");
 });
 
 test("release workflows avoid floating Bun and fragile asset merges", async () => {
@@ -26,6 +33,8 @@ test("release workflows avoid floating Bun and fragile asset merges", async () =
     const imageBundle = await Bun.file(repoPath(".github/workflows/release-image-bundle.yml")).text();
     const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
 
+    // release-client-runtime is a bun-only consumer (no pnpm), so it pins
+    // bun-version directly rather than using the setup-bun-pnpm composite.
     expect(clientRuntime).toContain("bun-version: 1.3.14");
     expect(clientRuntime).not.toContain("bun-version: latest");
     expect(clientRuntime).toContain("--clobber || true");
@@ -40,13 +49,23 @@ test("monorepo installs use the root pnpm lockfile instead of nested Bun install
     const ci = await Bun.file(repoPath(".github/workflows/ci.yml")).text();
     const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
     const release = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
+    const composite = await Bun.file(repoPath(".github/actions/setup-bun-pnpm/action.yml")).text();
     const makefile = await Bun.file(repoPath("Makefile")).text();
     const singboxRelease = await Bun.file(repoPath("scripts/build_release_singbox_core_assets.sh")).text();
     const adminApiDockerfile = await Bun.file(repoPath("docker/admin-api/Dockerfile")).text();
     const adminWebDockerfile = await Bun.file(repoPath("docker/admin-web/Dockerfile")).text();
 
-    for (const body of [ci, audit, release, makefile]) {
+    // The composite action runs `pnpm install --frozen-lockfile` for the four
+    // ci/audit consumers (release-operator opts out and runs it in its own
+    // multi-step run block). So the literal command lives in the composite +
+    // release-operator + Makefile, and the workflow consumers reference the
+    // composite via `uses:`.
+    expect(composite).toContain("pnpm install --frozen-lockfile");
+    for (const body of [release, makefile]) {
         expect(body).toContain("pnpm install --frozen-lockfile");
+    }
+    for (const body of [ci, audit, release]) {
+        expect(body).toContain("uses: ./.github/actions/setup-bun-pnpm");
         expect(body).not.toContain("bun install --frozen-lockfile");
     }
     for (const body of [adminApiDockerfile, adminWebDockerfile]) {
@@ -55,8 +74,6 @@ test("monorepo installs use the root pnpm lockfile instead of nested Bun install
     }
     expect(singboxRelease).toContain("install --frozen-lockfile");
     expect(singboxRelease).not.toContain("bun install --frozen-lockfile");
-    expect(release).toContain("version: 11.1.1");
-    expect(ci).toContain("version: 11.1.1");
 });
 
 test("admin web runtime includes node for next start", async () => {
