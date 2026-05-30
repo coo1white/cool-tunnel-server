@@ -15,7 +15,7 @@
 # and the previous complete release stays the only public/latest one.
 #
 # Ordering rationale:
-#   - operator-release uploads `singbox-core-*`, which the image-bundle build
+#   - release-operator uploads `singbox-core-*`, which the image-bundle build
 #     downloads as a prebuilt input, so image bundles must run after it.
 #   - the asset jobs each merge into a shared `SHA256SUMS`, so they are
 #     serialized (and the two image-bundle platforms run one at a time) to
@@ -89,12 +89,12 @@ jobs:
 
   operator:
     needs: create-release
-    uses: ./.github/workflows/operator-release.yml
+    uses: ./.github/workflows/release-operator.yml
     secrets: inherit
 
   client-runtime:
     needs: operator
-    uses: ./.github/workflows/client-runtime-release.yml
+    uses: ./.github/workflows/release-client-runtime.yml
     secrets: inherit
 
   image-bundle:

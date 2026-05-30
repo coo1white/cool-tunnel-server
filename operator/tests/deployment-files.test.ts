@@ -16,13 +16,13 @@ test("Dockerfiles consume prebuilt singbox-core instead of compiling on VPS", as
 });
 
 test("operator release workflow pins Bun instead of floating latest", async () => {
-    const body = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
+    const body = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
     expect(body).toContain("bun-version: 1.3.14");
     expect(body).not.toContain("bun-version: latest");
 });
 
 test("release workflows avoid floating Bun and fragile asset merges", async () => {
-    const clientRuntime = await Bun.file(repoPath(".github/workflows/client-runtime-release.yml")).text();
+    const clientRuntime = await Bun.file(repoPath(".github/workflows/release-client-runtime.yml")).text();
     const imageBundle = await Bun.file(repoPath(".github/workflows/release-image-bundle.yml")).text();
     const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
 
@@ -39,7 +39,7 @@ test("release workflows avoid floating Bun and fragile asset merges", async () =
 test("monorepo installs use the root pnpm lockfile instead of nested Bun installs", async () => {
     const ci = await Bun.file(repoPath(".github/workflows/ci.yml")).text();
     const audit = await Bun.file(repoPath(".github/workflows/audit.yml")).text();
-    const release = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
+    const release = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
     const makefile = await Bun.file(repoPath("Makefile")).text();
     const singboxRelease = await Bun.file(repoPath("scripts/build_release_singbox_core_assets.sh")).text();
     const adminApiDockerfile = await Bun.file(repoPath("docker/admin-api/Dockerfile")).text();
@@ -74,7 +74,7 @@ test("operator linux x64 release binary uses baseline CPU target", async () => {
 });
 
 test("release workflow publishes prebuilt singbox-core assets with checksums", async () => {
-    const body = await Bun.file(repoPath(".github/workflows/operator-release.yml")).text();
+    const body = await Bun.file(repoPath(".github/workflows/release-operator.yml")).text();
     expect(body).toContain("Build prebuilt singbox-core assets");
     expect(body).toContain("operator/bin/singbox-core-linux-*");
     expect(body).toContain("sha256sum ct-operator-* > SHA256SUMS.generated");
