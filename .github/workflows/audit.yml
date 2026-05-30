@@ -266,6 +266,12 @@ jobs:
               '"443:443/udp"|EXPOSE.*443/udp'
               # v0.0.5 → v0.0.6: caddyfile_safe_username calling-site
               # legacy is allowed (renaming is a v0.1 thing)
+              # v0.5.x → v0.6.0: the ct-server-core Rust daemon was retired
+              # (only core/ct-protocol remains). If the daemon's source path
+              # reappears outside CHANGELOG/AUDIT, a stale reference leaked back
+              # in — the bare name in ct-protocol's historical doc-comments is
+              # intentional and does not match this path pattern.
+              'core/ct-server-core'
           )
           # Build the scan list with `find` rather than relying on grep's
           # `--exclude` / `--exclude-dir` / `--include`. The latter combo

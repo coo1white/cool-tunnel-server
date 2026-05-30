@@ -5,7 +5,7 @@
 > releases — and the **boundaries** of what we deliberately do
 > NOT promise.
 >
-> **Current baseline (2026-05-26):** server `v0.5.2`,
+> **Current baseline (2026-05-30):** server `v0.6.1`,
 > macOS client `v2.0.26` (separate repo —
 > see [`docs/cross-platform-clients.md`](docs/cross-platform-clients.md)).
 
@@ -39,8 +39,7 @@ A pinned, reproducible, minor-version-stable stack:
 | Schema↔code | SQLite migrations are idempotent and carry v0.5.1 legacy staging tables into SQLite without dropping admin/account/settings data | `packages/db/tests/migration.test.ts`; `ct doctor` migration check |
 | Build reproducibility | Same commit + same `.env` → pinned release images and operator binaries | pinned base images, locked Cargo.lock + pnpm-lock.yaml, image BOMs |
 | API stability | `WireRequestV1` / `SubscriptionManifestV1` / `ComponentManifestV1` are append-only within a major | type tags `V1` are load-bearing; breaking → `V2` side-by-side |
-| Daemon network boundary | Every Unix-socket request is bounded by max frame bytes, read timeout, and typed error mapping; malformed peers reset the connection, not the process | `core/ct-server-core/src/frame.rs`, `err.rs`, `daemon.rs`; Rust tests |
-| Daemon state truth | One connection follows one FSM branch; invalid predecessor observations hard-reset the connection | `core/ct-server-core/src/daemon_fsm.rs`; `docs/daemon-fsm.md` |
+| Docker socket isolation | Only the allowlist-only `docker-proxy` holds the socket (read-only); admin-api can't reach the host daemon | `apps/api/tests/docker.test.ts`; `docker-compose.yml` |
 
 ## What we explicitly do NOT promise
 
@@ -49,7 +48,7 @@ A pinned, reproducible, minor-version-stable stack:
 | Throughput / capacity | Single-VPS deploy; capacity = whatever the VPS can do | operator measures with `scripts/stress/b_throughput.sh` (planned) |
 | Multi-region failover | Out of scope; one server per `domain` | DNS-level failover is the operator's call |
 | Client UI / UX of `cool-tunnel` (macOS) | Lives in a separate repo with its own LTSC commitments | `docs/cross-platform-clients.md` |
-| Analytics / telemetry | Deliberately not collected (anti-tracking posture) | `core/ct-server-core/src/metrics.rs` honest-no-op (v0.0.7) |
+| Analytics / telemetry | Deliberately not collected (anti-tracking posture) | no telemetry SDK; Better Auth telemetry disabled in `apps/api/src/auth.ts` |
 | Per-user destination logs | Refusing to collect ≠ failing to deliver | sing-box log level `warn` (v0.0.9) |
 
 ## Audit rhythm
@@ -144,54 +143,6 @@ v0.0.62.
 `unsafe_code = "deny"` (`[workspace.lints.rust]`) is the
 adjacent floor for memory safety, same enforcement model.
 
-### Zero blocking-syscall floor
-
-The async path of `ct-server-core` is structurally guaranteed
-not to leak blocking syscalls into the tokio runtime. Sweep
-across `core/ct-server-core/src/` (v0.0.65 audit, codified
-in this milestone) confirms:
-
-| Probe | Source result |
-| --- | --- |
-| `std::fs::*` | **0 hits** — all file I/O routes through `tokio::fs` |
-| `std::process::Command` | **0 hits** — no sync subprocess in async path |
-| `std::thread::sleep` | **0 hits** — only `tokio::time::sleep` |
-| `std::sync::Mutex` | **Bounded** — used only where the lock guard's `!Send` property is the *intended* compile-time guarantee against `.await`-while-held (e.g. the Coalescer in `redis_bridge`). Async-aware `tokio::sync::Mutex` is reserved for sites that genuinely cross await points. |
-| `block_on` | **1 hit** — `main.rs:339`, the top-of-runtime entry. Any nested usage is structurally wrong and would be caught in code review. |
-
-**Why the floor matters.** A blocking syscall on a tokio
-worker thread parks the thread, starves every other task
-sharing it, and inflates p99 latency for everything in the
-runtime. The sweep is the audit-time check; the floor is the
-norm we recheck every release. First codified in v0.0.65's
-async hardening; the daemon's per-request timeout (T-2) is
-the runtime tripwire, the semaphore (T-1) is the
-backpressure, and the Coalescer's `std::sync::Mutex`
-migration (T-4) makes the cross-`.await` violation a
-**compile error** rather than a runtime regression.
-
-### Zero leak (bounded-spawn) posture
-
-Every `tokio::spawn` site in production code is bounded by a
-known cardinality. v0.0.65 audit enumerated three
-production sites with their bound:
-
-| Site | Cardinality | Bound |
-| --- | --- | --- |
-| `daemon.rs::serve` per-client handler | 1 per accepted Unix-socket connection | `MAX_CONCURRENT_HANDLERS = 16` permits via `tokio::sync::Semaphore`; the 17th accept blocks. |
-| `redis_bridge.rs::spawn` subscriber | 1 per process lifetime | Singular |
-| `redis_bridge.rs::schedule_flush` trailing flush | 1 per Coalescer leading-edge admit | `FlushTracker.flush_handle.is_finished()` check makes it single-flight; defense-in-depth against a future Coalescer state-machine regression |
-
-**Why the floor matters.** Unbounded spawn under hostile or
-buggy load is a slow OOM in disguise — the runtime accepts
-work faster than it completes, the task heap grows, and
-eventually the process is killed. Bounded spawn turns the
-failure mode into honest backpressure: clients see slower
-accept, the daemon stays alive. Codified at v0.0.65 (T-1 +
-T-3); future spawn sites must declare their cardinality
-bound at the call site or in the surrounding module
-docstring.
-
 ### Internal-health observability vs user analytics
 
 The codebase distinguishes two categories of metric. They are
@@ -206,77 +157,22 @@ regression even if the implementation looks "internal."
 **Rule: a counter that identifies a specific user — even
 indirectly via labels (`{username="alice"}`, `{account_id="42"}`,
 `{target_host="..."}`, `{request_id="..."}`) — is not a metric.
-It's an audit-log entry, and it must go to
-`tracing::debug!` per `CONTRIBUTING.md § Logging discipline`,
-not to the `/metrics` endpoint.**
+It's an audit-log entry — and the audit log redacts secret-ish
+fields (`packages/security`), never an operator-visible health
+surface.**
 
 The two categories are structurally separable:
 - Per-user analytics has zero collection surface anywhere in the
-  binary; the existing `metrics.rs` no-op is the structural
-  enforcement.
-- Internal-health metrics live in `internal_metrics.rs` (added
-  v0.0.67); the registry's counter set is hand-enumerated at
-  module level so a future contribution adding a per-user label
-  is impossible to slip in without an explicit module edit
-  visible at code review.
+  codebase — there is no per-user counter to add a label to.
+- Internal-health is exposed only through `/api/status` and
+  `ct doctor`, whose payloads are hand-built from process/service
+  state, so a per-user field cannot slip in without an explicit,
+  code-review-visible edit.
 
 The audit cycles 40 (anti-tracking config) + 33 (composer audit)
 already cover the wire-format and dependency-side anti-tracking
 floor. The metrics-side carve-out above extends that to the
 operator-observable surface.
-
-### Bounded frame discipline
-
-Every network-boundary reader in `ct-server-core` must declare a
-policy before it can consume bytes:
-
-| Policy field | Bound |
-| --- | --- |
-| `policy_name()` | Stable semantic name for logs and documentation |
-| `max_frame_len()` | Maximum complete frame bytes one peer can force into memory |
-| `read_timeout()` | Maximum time one peer can retain a handler permit while framing |
-| `max_read_chunk_len()` | Maximum bytes requested from Tokio in one read |
-
-The daemon JSON-line protocol and internal HTTP metrics reader use
-`BytesMut` buffers that are retained per connection and split when a
-complete frame lands. This avoids per-turn `Vec` churn for honest
-small requests and bounds memory retained for hostile partial frames.
-
-`FrameTooLarge`, `ReadTimeout`, incomplete frames, invalid UTF-8, and
-malformed JSON are connection-scoped recovery paths. They close or
-hard-reset the offending connection and leave the daemon process alive.
-
-Codified at v0.0.69 in `core/ct-server-core/src/frame.rs` and wired
-through `daemon.rs` plus `internal_metrics.rs`.
-
-### No-forking daemon FSM
-
-Each accepted daemon Unix-socket connection is represented by a
-deterministic finite state machine:
-
-```text
-Accepted -> ReadingFrame -> DecodingUtf8 -> DecodingJson
-         -> Dispatching -> Responding -> ProbingConstancy
-         -> ReadingFrame
-```
-
-Clean EOF moves to `Disconnected`. Protocol deviation, invalid UTF-8,
-malformed JSON, oversized frames, read timeout, incomplete frames, or
-response-write failure moves to `HardReset`.
-
-The implementation uses `AtomicU8::compare_exchange`. A transition is
-valid only when the observed state exactly matches the required
-predecessor. Any mismatch records a hard reset and stores `HardReset`
-instead of creating a second branch of truth.
-
-After each successful turn the daemon enters `ProbingConstancy`: it
-measures turn latency and frame-pressure basis points, keeps hard caps
-unchanged, and narrows the next read chunk when pressure crosses the
-50% or 80% thresholds. That initiative logic is Heng applied to the
-control plane: active pressure sensing without speculative branching.
-
-Codified at v0.0.69 in `core/ct-server-core/src/daemon_fsm.rs`; text
-diagram and retrieval anchors live in `docs/daemon-fsm.md`.
 
 ## Boundaries
 
