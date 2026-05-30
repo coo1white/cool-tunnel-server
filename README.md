@@ -79,7 +79,17 @@ LATEST="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/coo1
 BRANCH="${LATEST}" /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/coo1white/cool-tunnel-server/${LATEST}/scripts/bootstrap.sh")"
 ```
 
-Configure and install:
+Generate the Reality keypair — a production install requires it, and the
+bootstrap generates `BETTER_AUTH_SECRET` but not these:
+
+```sh
+A=$([ "$(uname -m)" = aarch64 ] && echo arm64 || echo x64)
+curl -fsSL "https://github.com/coo1white/cool-tunnel-server/releases/latest/download/singbox-core-linux-${A}" -o /tmp/singbox-core
+chmod +x /tmp/singbox-core && /tmp/singbox-core reality-keygen
+```
+
+Configure and install (set the values below in `.env`, including the two
+`REALITY_*` keys from the command above):
 
 ```sh
 cd /opt/cool-tunnel-server
@@ -100,6 +110,8 @@ Set at least these `.env` values before running `./ct install`:
 | `DOMAIN` | Proxy/base domain |
 | `PANEL_DOMAIN` | Admin panel hostname, usually `panel.<DOMAIN>` |
 | `ACME_EMAIL` | Email for certificate renewal notices |
+| `REALITY_PRIVATE_KEY` | `private_key` from `singbox-core reality-keygen` (43-char base64url) |
+| `REALITY_PUBLIC_KEY` | Matching `public_key` from the same command |
 
 For the full install walkthrough, expected output, DNS checks, and
 recovery hints, read [GETTING_STARTED.md](./GETTING_STARTED.md).
