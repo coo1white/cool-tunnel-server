@@ -1,271 +1,119 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Contributing
 
-This document codifies the testing and documentation patterns the
-codebase already follows, so a new contributor (or a future
-maintainer revisiting cold) can extend the project without first
-reverse-engineering the conventions.
+This document codifies the conventions the codebase already
+follows, so a new contributor (or a future maintainer revisiting
+cold) can extend the project without reverse-engineering them.
 
 The contract this guide serves: [`LTSC.md`](./LTSC.md) — the
-project's published commitments, audit rhythm, and 2026
-milestones (Immutable Ballast, Zero `unwrap()` floor, Zero
-blocking-syscall floor, Zero leak / bounded-spawn posture). Every
-pattern below is a way to keep that contract honest at code-edit
-time rather than at audit time.
+project's published commitments and audit rhythm. Every pattern
+below is a way to keep that contract honest at code-edit time
+rather than at audit time.
 
 ---
 
-## Documentation patterns
+## Repository layout
 
-### Module rationale lives in `//!` blocks
+A Bun + TypeScript monorepo with one small Rust crate:
 
-Every module's top-of-file (after the SPDX header) carries a
-`//!` block describing **why** the module exists, **what** it
-contracts to do, and **what it explicitly is not**. These blocks
-render in `cargo doc --open` as the module's landing page.
+| Path | What |
+| --- | --- |
+| `apps/api` | Bun + Hono admin API: Better Auth, RBAC, SQLite store, subscription endpoint, the render/restart action boundary, and the `docker-proxy` socket forwarder |
+| `apps/web` | Next.js admin dashboard (server components + server actions) |
+| `packages/shared` | Zod schemas + types — the single source of truth for the client↔server contract — plus the RBAC role matrix |
+| `packages/db` | SQLite store and idempotent migrations |
+| `packages/security` | password hashing, token/HMAC helpers, secret redaction |
+| `packages/config` | environment parsing + validation |
+| `operator` | the `ct` CLI (install, update, doctor, backup, restore, render) |
+| `singbox-core` | TypeScript supervisor + renderer for the sing-box runtime |
+| `core/ct-protocol` | Rust crate: the canonical wire types clients fetch and build against |
 
-Example anchor: [`util/debounce.rs`](./core/ct-server-core/src/util/debounce.rs)
-opens with the design rationale for the 100 ms Coalescer window
-(why not 50 ms, why not 250 ms, what breaks at each end).
-
-Convention:
-- Line 1: SPDX header — stays as `//`, never `//!`
-- Lines 2..N: module rationale in `//!` blocks; every constant
-  threshold or concurrency cap explains its choice rationale
-- The `//!` block IS load-bearing per the **Immutable Ballast**
-  principle (`LTSC.md § 2026 milestones`). Don't strip it because
-  it looks long; strip it only if you've traced its referenced
-  versions through `CHANGELOG.md` and confirmed the incident is
-  no longer relevant.
-
-Pre-v0.0.66 most modules used `//` (regular comments — invisible
-to `cargo doc`). The v0.0.66 pivot converted them to `//!` so the
-rationale is browsable. New modules should follow `//!` from
-inception.
-
-### Item docs use `///`
-
-Public items (functions, types, constants) document their
-contract with `///`. Private items use `///` when the rationale
-is non-obvious; otherwise a short `// ` inline comment is fine.
-
-For numeric constants whose choice is non-obvious (timeout
-windows, concurrency caps, retry budgets), the `///` block must
-include the *reason* the value is what it is, not just what the
-value does. Example: `daemon.rs::MAX_CONCURRENT_HANDLERS = 16`
-documents why 16 (the bounded internal reload worker budget), not just that
-it's a cap.
+See [`STRUCTURE.md`](./STRUCTURE.md) for the full tree and
+[`docs/architecture.md`](./docs/architecture.md) for the design rationale.
 
 ---
 
-## Testing patterns
+## Local gates
 
-### Lint-floor escape hatch in `#[cfg(test)]` modules
+Run before pushing anything that touches the release path:
 
-The workspace denies `unwrap_used`, `expect_used`, `panic`,
-`todo`, `unimplemented` at deny-level. Test code is the one place
-these are tolerated — a test that can't fail loudly with `unwrap`
-is harder to read for very little gain. Every test module
-re-allows them explicitly:
-
-```rust
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod tests {
-    // ...
-}
+```sh
+pnpm install --frozen-lockfile
+bun run typecheck      # every workspace
+bun run test           # the full Bun test suite
+make ci                # the full gate (typecheck + tests + lint + manifest drift)
 ```
 
-The pattern is structural: the `#[allow(...)]` attribute
-documents that the relaxation is **scoped to test code only**.
-Production code stays under the floor. Don't move the
-`#[allow(...)]` to a wider scope (crate-level, or
-`#![cfg_attr(test, allow(...))]` on the crate root) — that hides
-the relaxation and lets it leak into a future refactor.
+For a Rust-only change in `core/ct-protocol`:
 
-### `#[test]` vs `#[tokio::test]`
+```sh
+cd core && cargo fmt --all && cargo test --workspace --locked && cargo clippy --workspace
+```
 
-| When | Macro | Why |
-|---|---|---|
-| Pure state-machine property (no `.await`) | `#[test]` | Faster; deterministic; no runtime startup cost. |
-| Anything that calls `async fn` or `.await`s | `#[tokio::test]` | Required for `.await` in test body. |
-| Concurrent stress (multiple tasks racing into shared state) | `#[tokio::test(flavor = "multi_thread", worker_threads = N)]` | The default single-thread flavor serializes spawned tasks; only multi-thread exercises actual race conditions on `Arc<Mutex<...>>`. |
-
-**Pin the flavor explicitly when concurrency is the property
-being tested.** The Coalescer's
-`coalescer_concurrent_admits_collapse_correctly`
-([`util/debounce.rs`](./core/ct-server-core/src/util/debounce.rs))
-uses `flavor = "multi_thread", worker_threads = 4` because it
-asserts a property under contention; running it on the default
-single-thread flavor would mask any latent serialization bug.
-
-### Stress tests vs property tests
-
-| Shape | Purpose | Example |
-|---|---|---|
-| **Property test** | Asserts a *contract* (e.g., "this state machine never returns X twice without an intervening Y"). Small inputs; deterministic. | `coalescer_first_event_fires_now_and_schedules_flush` |
-| **Stress test** | Asserts the property *survives load* (1M events, 100k events, 64-task contention). Catches O(N²) accidents and lock-ordering bugs. | `debouncer_stress_collapses_burst_to_one_per_window` (1M-event burst), `coalescer_stress_burst_collapses_to_at_most_two_fires` (100k-event burst), `coalescer_concurrent_admits_collapse_correctly` (64 tasks × 1000 events) |
-
-**A stress test should never simulate "real" production load —
-it should simulate *adversarial* load that the property must
-survive.** The Coalescer's contract is "≤ 2 fires per window
-regardless of N"; the stress test pushes N to 100k+ events to
-make any silent O(N) regression scream.
-
-### When to add a codified audit cycle vs a one-off test
-
-This codebase has two kinds of automated correctness checks:
-
-1. **Tests** (`cargo test --workspace`) — run on every CI build.
-   Verify the *behaviour* of code as committed.
-2. **Audit cycles** (`audit.yml`, weekly + per-PR) — run on a
-   slower cadence. Verify *cross-cutting properties* the test
-   suite can't easily express (RustSec advisories, stale-doc
-   leak-back, manifest drift, license diff).
-
-The decision rule:
-- One occurrence of a class of bug → **fix it, write a test for
-  the specific case**. Don't generalize prematurely.
-- Two occurrences of the same shape across releases → **codify
-  it**. Add a check to `audit.yml` (a new "Cycle N" — see
-  `AUDIT.md` for the numbering scheme), update `LTSC.md` if it's
-  cross-cutting, document the rotation policy.
-
-The single-occurrence first-fix discipline is deliberate: the
-audit suite is the project's slow-but-permanent memory, and
-adding a check has maintenance cost. Wait until the second sighting.
-
-### Test naming convention
-
-Tests are named for the *property* they assert, not the *function*
-they exercise. Read like specifications:
-
-- ✅ `burst_collapses_to_two_fires`
-- ✅ `repeated_leading_edges_stay_single_flight`
-- ✅ `error_msg_carries_call_site_in_display`
-- ❌ `test_admit` (just names the function under test)
-- ❌ `test_works` (says nothing)
-
-A failing test's name should already tell the reader what
-contract was violated, before they look at the assertion.
+CI mirrors these (`.github/workflows/ci.yml`) plus a secret scan and a
+stale-reference gate (`.github/workflows/audit.yml`). Wait for green before
+merging.
 
 ---
 
-## Async patterns (post-v0.0.65)
+## Patterns that hold the contract
 
-### Lock choice: `std::sync::Mutex` vs `tokio::sync::Mutex`
+### The API is schema-first
+`packages/shared` exports Zod schemas (`*ResponseSchema`) that are the **single
+source of truth** for every admin-API response. The API validates outgoing
+payloads against them (`ok(...)` in `apps/api/src/app.ts`) and the web client
+parses responses with the same schemas, so drift on either side fails loudly
+instead of silently corrupting data. Change the schema first; both sides follow.
 
-The compile-time guarantees differ:
+### Validation surfaces errors, never 500s
+Request bodies go through explicit allow-lists (`parseProxyInput`,
+`parseSettingsInput`, `parseRole`) and bad input returns a typed 4xx, not a 500.
+Web server actions surface validation failures inline via `ActionState` rather
+than throwing.
 
-| Lock | When to use |
-|---|---|
-| `std::sync::Mutex` | Critical section is brief and never crosses `.await`. The `MutexGuard` is `!Send`, so the compiler **prevents** holding it across an await point. This is the structural guarantee. |
-| `tokio::sync::Mutex` | Critical section legitimately spans `.await` (rare; prefer redesign). The async-aware lock yields cooperatively. |
+### Authorization is enforced server-side and re-checked in the store
+Route guards (`requirePermission`) gate the HTTP layer; the store layer
+re-checks (`canManageTarget`, last-owner preservation) so a wrong route guard
+can't escalate. The role matrix lives in `packages/shared`. The client `has()`
+helper only gates UI visibility — it is never the enforcement boundary.
 
-**Default to `std::sync::Mutex`.** If a future contributor finds
-themselves writing `.lock().await` followed by an `.await` on the
-locked data, that's the signal to redesign — not to reach for
-`tokio::sync::Mutex`. The Coalescer migration (v0.0.65 T-4) is
-the worked example.
+### Logs and audit entries must not carry per-user data
+Service stderr and the audit log pass through `redactSensitive` /
+`maskSensitive` (`packages/security`). The published posture promises no
+per-user analytics surface: usernames, emails, IPs, UUIDs, subscription tokens,
+and secrets must never reach a log line or audit detail in the clear. If an
+event needs that data to be useful, the abstraction is wrong — drop the field.
 
-### Spawn cardinality
+### Keep the Docker socket out of the app process
+The Docker socket is held only by the allowlist-only `docker-proxy`
+(`apps/api/src/docker-proxy.ts`); admin-api reaches container health + restart
+over HTTP, never the raw socket. Secrets at rest (`.env`, the SQLite DB + its
+WAL/SHM sidecars) are mode `0600`. See [`SECURITY.md`](./SECURITY.md).
 
-Every `tokio::spawn` site must declare its cardinality bound at
-the call site or in a surrounding module docstring. The current
-production sites are listed in
-[`LTSC.md § Zero leak (bounded-spawn) posture`](./LTSC.md). New
-spawn sites must add a row to that table or be visibly bounded
-by a permit / handle-check / per-process singleton.
-
-If a spawn's cardinality cannot be bounded, it doesn't ship.
-
----
-
-## Logging discipline (post-v0.0.67)
-
-The codebase uses `tracing` with `EnvFilter` (`RUST_LOG=…`).
-Defaults: `info` level on stderr, structured fields preferred
-over format strings. Three rules:
-
-| Rule | Why |
-|---|---|
-| **`info!` and above must NOT carry per-user identifiers** (`username`, `account_id`, `email`, IP addresses, subscription tokens). Demote to `debug!` if the field is operationally useful, or omit. | The published LTSC posture promises no per-user analytics surface. `info!` lines are the operator-visible default; PII at that level violates the promise even if the operator is the only consumer of their own logs. |
-| **`warn!` and `error!` describe operator-actionable failures** — what broke, what to check next. Use these for: render failures, reload failures, subscriber reconnects, semaphore saturation events. | Operators reading `docker compose logs` need actionable signal, not narrative. Reserve these levels for "something went wrong, here's the diagnostic." |
-| **`debug!` is the verbose investigation channel.** Per-user identifiers, decoded payloads, decision-trace events go here. Off by default; opt-in via `RUST_LOG=ct_server_core::module=debug`. | Operators investigating a specific incident enable debug for the relevant module only. The signal-to-noise ratio at info-level stays usable. |
-
-The audit pattern: `grep -rn "tracing::info!" core/ct-server-core/src/`
-must produce zero matches that include `username`, `account =`,
-`email`, `password`, `subscription_token`, or any IP-shaped
-field. The v0.0.67 hardening pass demoted two such sites
-(`db.rs::disable_account` and `quota.rs::enforce`); future
-contributions follow the same discipline.
-
-If a new event genuinely needs to be info-level AND carry
-per-user data (rare; usually a sign the wrong abstraction is
-being logged), surface the question in code review and document
-the exception inline. The default answer is "demote to debug."
-
----
-
-## Internal-health metrics (post-v0.0.67)
-
-Operator-internal-health counters are exposed via an optional
-Prometheus text-format `/metrics` endpoint (`ct-server-core
---metrics-bind <addr>`, default off). The boundary against
-user-tracking is documented in
-[`LTSC.md § Internal-health observability vs user analytics`](./LTSC.md).
-
-Rules for adding a new counter:
-
-| Allowed | Not allowed |
-|---|---|
-| Per-process state (uptime, restart count) | Per-user state (per-username connection count) |
-| Per-subsystem state (semaphore saturation, pool utilization) | Per-account labels (`{account="alice"}`) |
-| Operator-actionable rates (Coalescer fires/sec, subscriber restarts/sec) | Per-destination labels (`{target_host="example.com"}`) |
-| Whole-process counters with low-cardinality labels (`edge="leading\|trailing"`) | High-cardinality labels (`{request_id="..."}`) |
-
-Implementation pattern: add a counter field to
-`internal_metrics::MetricsRegistry`, expose an increment helper
-(`note_*`), call it from the producer site. The render function
-adds a `# HELP` + `# TYPE` directive and the value line.
-
-If a proposed counter would identify a specific user, even
-indirectly via labels — it's not a metric, it's an audit log
-entry. Send it to `tracing::debug!` (per the logging
-discipline above) and document why.
+### `core/ct-protocol` is append-only within a major
+The `*V1` wire types (`WireRequestV1`, `SubscriptionManifestV1`,
+`ComponentManifestV1`) are append-only; a breaking change ships a `V2`
+side-by-side. The crate is sync, dependency-light, and `cargo test`-covered —
+external clients fetch and build it, so its public API is a contract. Pin every
+version spot in lockstep with `make set-version`.
 
 ---
 
 ## Commit + PR flow
 
-- Branch off `main`. Naming: `feat/v0.0.X-...`, `fix/...`,
-  `chore/...`, `docs/...` — see recent merged PRs for examples.
-- Run `make ci` locally before pushing when the change touches the
-  release path. For focused Rust-only changes, run `cargo fmt --all`,
-  `cargo test --workspace --locked`, and `cargo doc --no-deps --workspace`.
-- For TypeScript workspace changes, run `pnpm install --frozen-lockfile`,
-  `pnpm run typecheck`, and the relevant `bun test` suites.
-- Commit messages: type-scoped subject (`feat(api): ...`,
-  `fix(daemon): ...`), body explaining *why* the change exists,
-  not what it does (the diff shows what). Past commits follow
-  this shape.
-- Wait for CI green before merging. The single exception is
-  `--prerelease` GitHub releases that ship operator-validated
-  separately (see `RELEASE.md`).
+- Branch off `main`. Naming: `feat/...`, `fix/...`, `chore/...`, `docs/...`.
+- Run the local gates above before pushing when the change touches the release path.
+- Commit messages: type-scoped subject (`feat(api): …`, `fix(operator): …`),
+  body explaining *why* the change exists, not what it does (the diff shows what).
+- Wait for CI green before merging. The single exception is `--prerelease`
+  GitHub releases that ship operator-validated separately (see [`RELEASE.md`](./RELEASE.md)).
 
 ---
 
 ## What this document is NOT
 
-- A style guide. `cargo fmt`, TypeScript, and the workspace test
-  runners are the style gates. They run in CI; if a required gate
-  fails, the change doesn't ship.
-- A complete reference. The contract is `LTSC.md`. The audit
-  cycles are `AUDIT.md`. The release ritual is `RELEASE.md`. This
-  file documents the *patterns* that hold those three together at
-  the code-edit layer.
-- A recommendation system. There's no `try this` for unfamiliar
-  cases. Where the codebase has a single deliberate pattern
-  (locks, spawn cardinality, `//!` docs), this file names it and
-  expects new code to match. Where it doesn't, code review is the
-  resolution path.
+- A style guide. `cargo fmt`, the TypeScript compiler, and the workspace test
+  runners are the style gates; they run in CI.
+- A complete reference. The contract is [`LTSC.md`](./LTSC.md), the audit cycles
+  are [`AUDIT.md`](./AUDIT.md), and the release ritual is [`RELEASE.md`](./RELEASE.md).
+  This file documents the *patterns* that hold those together at the code-edit layer.
