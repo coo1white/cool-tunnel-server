@@ -57,7 +57,7 @@ by default.
 
 ## GFW
 
-The Great Firewall of China. See `docs/going-to-china.md` for the
+The Great Firewall of China. See `docs/restrictive-networks.md` for the
 operator runbook.
 
 ## PASS / WARN / FAIL
