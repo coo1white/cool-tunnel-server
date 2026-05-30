@@ -48,6 +48,7 @@ the VPS, domain, updates, backups, provider terms, and local law.
 | Domain name | Point an `A` record at the VPS public IPv4 |
 | Open ports | `80/tcp` for ACME and `443/tcp` for panel/proxy traffic |
 | Small VPS | Designed for about 1 vCPU / 1 GB RAM deployments |
+| Disk | ~25 GB free recommended — the ~420 MB image bundle, the loaded Docker images, and update headroom can push a smaller disk to "tight" in `ct doctor` |
 
 New to VPS, ACME, or Docker terms? See the
 [glossary](./docs/glossary.md).
