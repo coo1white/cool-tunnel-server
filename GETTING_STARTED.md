@@ -99,6 +99,16 @@ Set these keys in `.env`:
 | `REALITY_PRIVATE_KEY` | 43-character Reality private key |
 | `REALITY_PUBLIC_KEY` | Matching 43-character Reality public key |
 
+`bootstrap.sh` generates `BETTER_AUTH_SECRET`, but not the Reality keypair.
+Generate it with the `singbox-core` release binary and copy `private_key` /
+`public_key` into `.env` (a production install refuses to start without them):
+
+```sh
+A=$([ "$(uname -m)" = aarch64 ] && echo arm64 || echo x64)
+curl -fsSL "https://github.com/coo1white/cool-tunnel-server/releases/latest/download/singbox-core-linux-${A}" -o /tmp/singbox-core
+chmod +x /tmp/singbox-core && /tmp/singbox-core reality-keygen
+```
+
 Install:
 
 ```sh
