@@ -334,37 +334,6 @@ ct doctor
 
 ---
 
-## Watching health over time
-
-The Rust daemon can expose Prometheus-format metrics for Grafana,
-Alertmanager, etc. Off by default.
-
-To enable:
-
-1. Edit `.env`, add: `CT_METRICS_BIND=127.0.0.1:9292`
-2. `ct update` (or `docker compose restart admin-api`)
-3. Scrape from inside the admin API container:
-
-   ```sh
-   docker compose exec -T admin-api curl -fsS http://127.0.0.1:9292/metrics
-   ```
-
-Three counters worth alarming on:
-
-- `ct_threshold_80pct_crossings_total` — the daemon got close to a
-  resource limit (frame buffer, latency budget). Investigate client
-  behaviour.
-- `ct_daemon_fsm_hard_resets_total` — the daemon rejected a
-  malformed protocol message. A non-zero rate usually means a
-  misbehaving client.
-- `otel_network_turn_latency_milliseconds` — daemon-side latency
-  distribution.
-
-Full Prometheus scrape config + Grafana queries:
-[docs/observability-dashboard.md](./observability-dashboard.md).
-
----
-
 ## Common problems and one-command fixes
 
 If something goes wrong, check this table first — most issues have

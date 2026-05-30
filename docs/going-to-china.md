@@ -276,8 +276,7 @@ works) and use it to reach your VPS. Plan ahead.
 The single-server architecture in v0.0.x has known limits for
 adversarial environments. A v0.1 epic on multi-server orchestration
 (admin UI manages a fleet, picks healthiest endpoint, automatic IP
-rotation via cloud-provider APIs) addresses these — see
-`docs/architectural-decisions-2026.md` for the design seed.
+rotation via cloud-provider APIs) addresses these.
 
 If you find yourself rotating VPS more than once a month, that
 epic is the right next investment. Until then, this single-server
