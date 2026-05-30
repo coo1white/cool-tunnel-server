@@ -72,7 +72,7 @@ jobs:
       run:
         working-directory: core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88
@@ -95,7 +95,7 @@ jobs:
       run:
         working-directory: core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88
@@ -116,15 +116,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.1.1
-          run_install: false
-      - run: pnpm install --frozen-lockfile
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: ./.github/actions/setup-bun-pnpm
       - run: pnpm run typecheck
       - run: bun test apps/api/tests apps/web/tests packages/db/tests packages/security/tests packages/config/tests
 
@@ -135,10 +128,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 0     # full history so gitleaks scans every commit
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -154,7 +147,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: Compare versions
         run: |
           set -euo pipefail
@@ -188,7 +181,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       # actions/dependency-review-action requires GitHub Advanced
       # Security or a public repository for the dependency-graph API
       # to be available. This repo is private without GHAS, so the
@@ -207,7 +200,7 @@ jobs:
       # visible in the run log if a maintainer wants to inspect.
       # If GHAS is later enabled, drop this flag to restore strict
       # mode. (v0.0.56.)
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48  # v4
         continue-on-error: true
         with:
           fail-on-severity: high
@@ -220,7 +213,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: grep for known-stale strings
         run: |
           set -euo pipefail
@@ -340,7 +333,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: assert Caddyfile hardening
         run: |
           set -euo pipefail

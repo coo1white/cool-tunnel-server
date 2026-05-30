@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Composite: set up Bun + pnpm (and optionally `pnpm install`) for every
+# TypeScript workspace job in CI and the release pipelines. Single source of
+# truth for the runtime versions — bumping bun or pnpm here updates every job.
+#
+# Default behavior matches what 4 of the 5 consumer jobs need
+# (bun + pnpm + frozen-lockfile install). Set `install: 'false'` for jobs
+# that wrap their own install in a multi-step run block.
+
+name: Set up Bun + pnpm
+description: Install Bun and pnpm at the pinned project versions, and optionally run pnpm install --frozen-lockfile.
+
+inputs:
+  bun-version:
+    description: Bun version to install.
+    required: false
+    default: "1.3.14"
+  pnpm-version:
+    description: pnpm version to install.
+    required: false
+    default: "11.1.1"
+  install:
+    description: Whether to run `pnpm install --frozen-lockfile` after setup. Set 'false' if the caller installs differently.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
+      with:
+        version: ${{ inputs.pnpm-version }}
+        run_install: false
+    - if: ${{ inputs.install == 'true' }}
+      shell: bash
+      run: pnpm install --frozen-lockfile
