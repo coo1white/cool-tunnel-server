@@ -14,6 +14,36 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.6.2] - 2026-05-30 - Maintenance: dead-code + legacy-doc cleanup
+
+Housekeeping only — no runtime behavior change from v0.6.1 (the removed code
+was unreferenced; docs and CI do not ship in the runtime image), so existing
+v0.6.1 deployments do not need to update.
+
+### Removed
+
+- Dead, unreferenced code: `roleAtLeast`, `roleLabel`, the
+  `ProxyAccountStatus` type alias, `isProduction`, `hashPasswordWithAuth`,
+  `getOptionalSession`, `getForwardedError`, `formatDiagFailure`, and the
+  unwired `checkIpv4OnlyRouting` IPv4-only preflight cluster (#270).
+- Three orphaned docs (`architectural-decisions-2026`, `release-stress-test`,
+  `design/sni-router-v0.1`) and the retired-daemon Prometheus `/metrics`
+  section in `docs/operations.md` (#271).
+
+### Changed
+
+- README now documents the `docker-proxy` service and adds a Security
+  section (#269).
+- Rewrote `CONTRIBUTING.md` for the current TS-monorepo + `ct-protocol` stack
+  and trimmed `LTSC.md`'s retired-`ct-server-core`-daemon sections (#272).
+
+### Added
+
+- CI stale-reference gate for the retired `core/ct-server-core` daemon path,
+  so it cannot leak back into docs (#272).
+
+---
+
 ## [0.6.1] - 2026-05-30 - Auto-render sing-box on proxy-account changes
 
 ### Fixed
@@ -11991,7 +12021,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.16...v0.6.0
 [0.5.16]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.15...v0.5.16
