@@ -1,4 +1,4 @@
-# Going to China — operator runbook
+# Operating in restrictive networks — operator runbook
 
 This runbook is for operators deploying or maintaining a Cool Tunnel
 server that needs to survive use from inside the Great Firewall of
