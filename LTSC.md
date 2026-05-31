@@ -5,7 +5,7 @@
 > releases — and the **boundaries** of what we deliberately do
 > NOT promise.
 >
-> **Current baseline (2026-05-30):** server `v0.6.3`,
+> **Current baseline (2026-05-30):** server `v0.6.4`,
 > macOS client `v2.0.26` (separate repo —
 > see [`docs/cross-platform-clients.md`](docs/cross-platform-clients.md)).
 

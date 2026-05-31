@@ -39,7 +39,7 @@ test("proxy account UUID rotates with previous UUID grace", () => {
     realityDestHost: "www.microsoft.com",
     realityShortIds: [""],
     antiTrackingDohResolver: "https://dns.alidns.com/dns-query",
-    version: "0.6.3",
+    version: "0.6.4",
   });
   store.ensureDefaults();
   const actor = store.createUser(null, {
