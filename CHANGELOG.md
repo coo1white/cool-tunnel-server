@@ -14,6 +14,40 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.8.2] - 2026-06-01 - Hotfix: pre-pull redis on install/update
+
+Hotfix for a v0.8.1 regression. The 6th container (redis) was added
+to `runtimeServices` but the existing `docker compose up --pull never`
+flag stayed in place. That flag is correct for our bundled
+`cool-tunnel-server-*` images (loaded via `docker load`) but wrong
+for redis, which is pulled from Docker Hub. On any operator VPS that
+didn't already have `redis:8-alpine` cached locally, `ct update` /
+`ct install` failed with:
+
+```
+✗ FAILED compose up failed
+  Container ct-redis Error response from daemon: No such image: redis:8-alpine
+```
+
+### Fixed
+
+- `operator/install.ts` and `operator/update.ts` now run
+  `docker compose pull --quiet redis` before the `compose up --pull never`,
+  so Redis is fetched from Docker Hub on the first run. Subsequent
+  runs use the locally-cached image.
+
+### Manual workaround for operators on broken v0.8.1
+
+```sh
+docker pull redis:8-alpine
+docker compose up -d redis
+ct update    # completes the originally-failed update
+```
+
+After v0.8.2 this is fully automatic.
+
+---
+
 ## [0.8.1] - 2026-06-01 - Redis + BullMQ for scheduled jobs (audit log retention)
 
 Last roadmap item from the Learning journey. **Honest re-shape** of
