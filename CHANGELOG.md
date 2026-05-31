@@ -14,6 +14,79 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.8.1] - 2026-06-01 - Redis + BullMQ for scheduled jobs (audit log retention)
+
+Last roadmap item from the Learning journey. **Honest re-shape** of
+course chapter #15 — see Learning:-15-redis-bullmq for the full
+decision log.
+
+### Added
+
+- **Redis** as the 6th container (`redis:8-alpine`, ~30MB RAM, no
+  password — internal-network isolation does the auth). Hardened,
+  healthchecked, `admin-api depends_on redis healthy`.
+- **BullMQ** queue + worker on admin-api with a typed `JobMap` for
+  scheduled / queued admin jobs.
+- **Nightly audit log retention job** (03:00 UTC) — deletes
+  `audit_log` rows older than `CT_AUDIT_RETENTION_DAYS` (default 90).
+  Closes a real gap: the table was append-only with no cleanup
+  policy. The job self-audits its run.
+- `CT_REDIS_URL` (default `redis://redis:6379`) and
+  `CT_AUDIT_RETENTION_DAYS` (default 90; 0 disables) config fields.
+- `AdminStore.pruneAuditLogOlderThan(cutoffIso)` — the DELETE stays
+  in the audited write-path layer.
+
+### Standing decisions (documented in Learning:-15-redis-bullmq)
+
+- **Redis added as 6th container** — BullMQ requires it; scheduled
+  jobs MUST survive process restarts. The 5 → 6 service jump is real
+  but the audit-log-grows-forever gap was worth closing.
+- **One real job, not vanity coverage.** Future jobs slot into the
+  same typed `JobMap`.
+- **No email/SMS deps**, no Tencent Cloud SDK, no end-user signup
+  verification flow. The course's "user signup" surface doesn't
+  exist in this admin-only project.
+- **No distributed rate-limit migration** — existing in-memory Map is
+  correct for single-server.
+- **Redis NOT exposed publicly** — bind only on `ct-net`.
+
+### Changed
+
+- Operator + doctor + install + update + auto-update + help all
+  updated for the 6th container (same pattern as v0.6.4's
+  docker-proxy addition). `ct doctor` now reports `Containers 6/6`.
+
+### New deps
+
+- `bullmq ^5` in `apps/api`
+- `ioredis 5.10.1` in `apps/api` (pinned to match bullmq's own
+  ioredis to avoid a 5.10/5.11 TypeScript type mismatch when
+  passing the connection to Worker)
+
+### Operator binary footprint (regression check)
+
+Module count and minify delta unchanged at 49 modules / -202 KB —
+BullMQ + ioredis are isolated to admin-api.
+
+### What's NOT in this release (deliberately deferred)
+
+- Admin notifications (typed events, SMTP, triggers)
+- Tencent Cloud / generic SMTP integration
+- Password reset via email
+- Distributed rate limit (Map is right for single-server)
+- End-user signup verification (no surface)
+- Redis password auth (network isolation suffices)
+
+### Last roadmap item
+
+With this, **10 of 12** Learning-journey items are shipped:
+- #2, #4, #5, #3, #6, #11, #14, #7, #9, **#15** — all ✅
+- #1 is a documentation-only meta-item (the roadmap itself acts as it)
+- #8 / #12 / #13 (MDX, blog layout, landing page) were explicitly
+  dropped back in v0.6.x — no business surface in this admin tool
+
+---
+
 ## [0.8.0] - 2026-06-01 - Prisma (alongside AdminStore) + UX polish
 
 A minor-version bump signifying the introduction of a new data-layer
