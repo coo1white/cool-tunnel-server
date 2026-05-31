@@ -12,6 +12,32 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI: pinned GitHub Actions bumped to Node 24-compatible major versions.**
+  GitHub deprecated Node 20 on its runners (force-bump June 16 2026,
+  removal September 16 2026). All 10 pinned actions across `ci.yml`,
+  `release.yml`, `audit.yml`, `tag-version.yml`, and the
+  `setup-bun-pnpm` composite action moved to their latest Node 24
+  releases:
+
+  | Action | Before | After |
+  |---|---|---|
+  | `actions/checkout` | v4 | v6.0.2 |
+  | `actions/cache` | v4 | v5.0.5 |
+  | `actions/upload-artifact` | v4 | v7.0.1 |
+  | `actions/attest-build-provenance` | v2 | v4.1.0 |
+  | `actions/dependency-review-action` | v4 | v5.0.0 |
+  | `softprops/action-gh-release` | v2 | v3.0.0 |
+  | `docker/setup-buildx-action` | v3 | v4.1.0 |
+  | `docker/setup-qemu-action` | v3 | v4.1.0 |
+  | `pnpm/action-setup` | v4 | v6.0.8 |
+  | `gitleaks/gitleaks-action` | v2 | v3.0.0 |
+
+  All pins use immutable commit SHAs (not floating tags). Major-version
+  bumps reviewed against release notes — no API changes affect this
+  project's usage patterns.
+
 ---
 
 ## [0.6.5] - 2026-05-31 - Biome takes over format + lint
