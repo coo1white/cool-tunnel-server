@@ -14,6 +14,39 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.9.0] - 2026-06-01 - Optional landing page on the bare proxy domain
+
+A browser (or scanner) visiting the bare `DOMAIN` over HTTPS used to get a
+TLS certificate warning and a borrowed CDN error page, because Reality
+forwards every non-client connection to `REALITY_DEST_HOST`. The new
+`CT_LANDING_PAGE` flag (off by default) lets the bare domain serve a real
+website instead: its own Let's Encrypt certificate and an ordinary landing
+page.
+
+It is safe for the proxy because real clients connect with the
+`REALITY_DEST_HOST` SNI, never the bare domain. Caddy's `layer4` splitter
+routes only the bare-domain SNI to the new landing site; all other traffic
+(including every proxy client) still falls through to sing-box / Reality
+untouched.
+
+### Added
+
+- `CT_LANDING_PAGE` (default `false`): opt-in real landing page on the bare
+  `DOMAIN`, served by Caddy on an inner `:8444` site with its own ACME
+  certificate. See `.env.example` and the wiki guide *Change the Reality
+  disguise*.
+- The Caddyfile renderer now supports a minimal `{{ if .Flag }} … {{ end }}`
+  conditional, used to gate the landing-page block. CI validates both the
+  enabled and disabled renderings against the shipped `layer4` Caddy image.
+
+### Notes
+
+- Enabling it makes Caddy request a certificate for `DOMAIN`, so the bare
+  domain must reach this host on ports 80/443. Existing deployments are
+  unaffected until they opt in; proxy clients are unaffected either way.
+
+---
+
 ## [0.8.2] - 2026-06-01 - Hotfix: pre-pull redis on install/update
 
 Hotfix for a v0.8.1 regression. The 6th container (redis) was added
