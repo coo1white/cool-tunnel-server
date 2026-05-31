@@ -14,6 +14,69 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.7.0] - 2026-06-01 - Tailwind v4 + shadcn introduction
+
+A minor-version bump signifying the introduction of a UI primitive
+library. Incremental adoption — existing CSS classes (`.btn`, `.field`,
+`.card`, all 92 of them) keep working; new shadcn primitives live
+alongside.
+
+### Added
+
+- **Tailwind v4** as the styling primitive layer for new components.
+  CSS-first config via `@theme {...}` block in `globals.css` —
+  no `tailwind.config.js`.
+- **shadcn primitives** at `apps/web/src/components/ui/`:
+  - `Button` — CVA variants (default / secondary / destructive /
+    outline / ghost / link) and sizes (sm / default / lg / icon),
+    with `asChild` via Radix Slot
+  - `Input` — focus-ring + disabled treatment
+  - `Label` — Radix Label primitive (forces `htmlFor` association)
+  - `Dialog` — Radix Dialog wrapper with full keyboard a11y
+- `apps/web/src/lib/utils.ts::cn()` — the shadcn standard
+  `twMerge(clsx(...))` helper.
+- `apps/web/components.json` — shadcn project config.
+- `@/*` path alias added to `apps/web/tsconfig.json` → `./src/*`.
+
+### Changed
+
+- `apps/web/src/proxy-accounts.tsx::CreateModal` refactored from a
+  hand-rolled `<div className="modal-overlay" onClick={...}>` to
+  shadcn `Dialog`. Removed the `noStaticElementInteractions` biome-ignore
+  added in v0.6.5. Form fields gained `htmlFor`/`id` wiring (4 of the
+  15 deferred `noLabelWithoutControl` warnings cleared incidentally).
+
+### New deps (apps/web only)
+
+- `tailwindcss` ^4.3.0 + `@tailwindcss/postcss` ^4.3.0
+- `postcss` ^8.5.15
+- `tw-animate-css` (Dialog state animations)
+- `class-variance-authority` (Button variants)
+- `clsx` + `tailwind-merge` (`cn()` inputs)
+- `@radix-ui/react-dialog` (Dialog a11y primitives)
+- `@radix-ui/react-label`
+- `@radix-ui/react-slot` (Button `asChild`)
+
+### Standing decisions (see Learning:-03-shadcn)
+
+- **shadcn only, no antd** — mixing two design systems would double
+  bundle + attack surface.
+- **Keep our zustand `useTheme`** — bypass shadcn's `next-themes`
+  integration. shadcn primitives read `data-theme` from `<html>`,
+  which the existing bootstrap script already sets.
+- **Incremental migration** — existing CSS classes stay during the
+  transition. No big-bang rewrite.
+
+### Bundle impact
+
+- `/users` route: 4.07 kB → 23.9 kB First Load JS (Radix Dialog cost,
+  amortised across any future dialog/sheet/popover work).
+- Other routes unchanged.
+- Tailwind utilities tree-shake — only classes the source actually
+  references get shipped.
+
+---
+
 ## [0.6.7] - 2026-06-01 - zustand for theme state
 
 ### Added
