@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Assert package.json matches the tag
         run: |
@@ -86,15 +86,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - uses: ./.github/actions/setup-bun-pnpm
         with:
           install: 'false'
 
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3  # v4.1.0
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
 
       - name: Build all targets
         run: |
@@ -137,18 +137,18 @@ jobs:
           cat operator/bin/SHA256SUMS
 
       - name: Attest release binaries
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
         with:
           subject-path: operator/bin/ct-operator-*
 
       - name: Attest core release binaries
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
         with:
           subject-path: |
             operator/bin/singbox-core-*
 
       - name: Upload artifacts to release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
           tag_name: ${{ github.ref_name }}
           files: |
@@ -156,7 +156,7 @@ jobs:
             operator/bin/SHA256SUMS
 
       - name: Upload core artifacts to release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
           tag_name: ${{ github.ref_name }}
           files: |
@@ -171,7 +171,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
@@ -220,7 +220,7 @@ jobs:
           cat runtime/SHA256SUMS.runtime
 
       - name: Upload runtime plugins to server release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
           tag_name: ${{ github.ref_name }}
           files: |
@@ -263,9 +263,9 @@ jobs:
     runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
 
       - name: Use local Docker builder
         run: docker buildx use default
@@ -334,7 +334,7 @@ jobs:
             --clobber
 
       - name: Upload workflow artifact copy
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: image-bundle-${{ env.suffix }}
           path: |
@@ -353,7 +353,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Require every BOM asset, then mark latest
         env:
           GH_TOKEN: ${{ github.token }}
