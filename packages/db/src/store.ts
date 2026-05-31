@@ -772,6 +772,7 @@ function rowToUser(row: Record<string, unknown>): AdminUser {
     role: requireRole(row.role),
     status: row.status === "disabled" ? "disabled" : "active",
     mustChangePassword: Number(row.mustChangePassword ?? 0) === 1,
+    twoFactorEnabled: Number(row.twoFactorEnabled ?? 0) === 1,
     createdAt: String(row.createdAt),
     updatedAt: String(row.updatedAt),
     lastLoginAt:

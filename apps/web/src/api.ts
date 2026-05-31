@@ -72,6 +72,32 @@ export async function apiFetch<T>(
   return parsed.data;
 }
 
+// better-auth's /api/auth/* endpoints don't use our { ok, data, error }
+// envelope — they return the plugin's own shape directly. This helper
+// forwards the cookie + parses as JSON; the caller validates the body.
+// Used by the 2FA actions (Learning #14).
+export async function betterAuthFetch<T = unknown>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; status: number; data: T | null }> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.toString();
+  const requestHeaders = new Headers({
+    accept: "application/json",
+    "content-type": "application/json",
+  });
+  if (cookieHeader) requestHeaders.set("cookie", cookieHeader);
+  const response = await fetch(`${apiOrigin}${path}`, {
+    method: "POST",
+    headers: requestHeaders,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await response.text();
+  const data = text ? (JSON.parse(text) as T) : null;
+  return { ok: response.ok, status: response.status, data };
+}
+
 export async function getSession(): Promise<ApiSession> {
   const data = await apiFetch<{ user: SessionUser; permissions: Permission[]; csrfToken: string }>(
     "/api/me",

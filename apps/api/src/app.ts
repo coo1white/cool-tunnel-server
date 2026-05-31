@@ -272,6 +272,80 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       return loginResponse(c, "Sign in failed. Check the email and password.", 401);
     }
     clearLoginThrottle(throttle);
+    // better-auth's twoFactor plugin (v0.7.3) responds with
+    // `twoFactorRedirect: true` when password verification succeeds but
+    // the user has 2FA enabled. The cookies returned here are a partial
+    // session that the second-step page (/two-factor) needs to call
+    // /api/auth/two-factor/verify-totp — so we still set them, just
+    // redirect to /two-factor instead of /dashboard.
+    const body = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { user?: { id?: string }; twoFactorRedirect?: boolean } | null;
+    const needsTwoFactor = body?.twoFactorRedirect === true;
+    const headers = new Headers({
+      location: needsTwoFactor ? "/two-factor" : "/dashboard",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+    });
+    appendSetCookies(headers, response);
+    headers.append(
+      "set-cookie",
+      cookieHeader(
+        LOGIN_CSRF_COOKIE,
+        "",
+        { maxAge: 0, sameSite: "Strict", httpOnly: true },
+        options.config,
+      ),
+    );
+    if (!needsTwoFactor && body?.user?.id) store.markLogin(body.user.id, clientIp(c));
+    return new Response(null, { status: 303, headers });
+  });
+
+  // Two-factor login second step. Lives parallel to /login because the
+  // user is in a pending-2FA state — better-auth has set partial-session
+  // cookies but the session isn't fully established yet. Served by
+  // admin-api so the cookie flow stays in one place, mirroring /login.
+  // See Learning:-14-better-auth.
+  app.get("/two-factor", (c) => {
+    if (new URL(c.req.url).search) return redirectNoStore("/two-factor");
+    return twoFactorPage(c, "");
+  });
+  app.post("/two-factor", async (c) => {
+    const form = await c.req.formData();
+    const csrf = String(form.get("csrf") ?? "");
+    const csrfCookie = getCookie(c, LOGIN_CSRF_COOKIE) ?? "";
+    if (!validLoginCsrf(csrf, csrfCookie)) {
+      return twoFactorPage(c, "Session expired. Sign in again.", 403);
+    }
+    const code = String(form.get("code") ?? "").trim();
+    const method = String(form.get("method") ?? "totp");
+    if (!code) {
+      return twoFactorPage(c, "Enter the code from your authenticator app.", 400);
+    }
+    const endpoint =
+      method === "backup"
+        ? "/api/auth/two-factor/verify-backup-code"
+        : "/api/auth/two-factor/verify-totp";
+    const response = await auth.handler(
+      new Request(`${options.config.baseUrl}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: trustedHeaderOrFallback(c.req.header("origin"), options.config.baseUrl),
+          referer: trustedHeaderOrFallback(
+            c.req.header("referer"),
+            `${options.config.baseUrl}/two-factor`,
+          ),
+          "x-forwarded-for": c.req.header("x-forwarded-for") ?? "",
+          cookie: c.req.header("cookie") ?? "",
+        },
+        body: JSON.stringify({ code }),
+      }),
+    );
+    if (!response.ok) {
+      return twoFactorPage(c, "Incorrect code. Try again.", 401);
+    }
     const headers = new Headers({
       location: "/dashboard",
       "cache-control": "no-store",
@@ -287,13 +361,11 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
         options.config,
       ),
     );
-    const userId = (
-      (await response
-        .clone()
-        .json()
-        .catch(() => null)) as { user?: { id?: string } } | null
-    )?.user?.id;
-    if (userId) store.markLogin(userId, clientIp(c));
+    const body = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { user?: { id?: string } } | null;
+    if (body?.user?.id) store.markLogin(body.user.id, clientIp(c));
     return new Response(null, { status: 303, headers });
   });
 
@@ -895,6 +967,35 @@ function loginResponse(c: Context<{ Variables: Vars }>, message: string, status 
 <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
 <button type="submit">Sign in</button></form></body></html>`;
   const response = c.html(body, status as 200 | 401 | 403);
+  response.headers.append(
+    "set-cookie",
+    cookieHeader(
+      LOGIN_CSRF_COOKIE,
+      csrf,
+      { sameSite: "Strict", httpOnly: true, maxAge: 600 },
+      c.get("store").config ?? undefined,
+    ),
+  );
+  return response;
+}
+
+function twoFactorPage(c: Context<{ Variables: Vars }>, message: string, status = 200): Response {
+  const csrf = `ctcsrf_${randomToken(24)}`;
+  const body = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cool Tunnel · Two-Factor</title>
+<style>body{font-family:system-ui,sans-serif;margin:3rem auto;max-width:28rem;padding:0 1rem;background:#f7f7f4;color:#1b1b18}label{display:block;margin:.8rem 0 .25rem}input{box-sizing:border-box;width:100%;padding:.7rem;border:1px solid #bbb;background:white;font-size:1.1rem;letter-spacing:.2em;text-align:center;font-variant-numeric:tabular-nums}.radio{display:flex;gap:1.5rem;margin:.5rem 0}.radio label{margin:0;display:flex;align-items:center;gap:.4rem;letter-spacing:normal}.radio input{width:auto;display:inline;margin:0}button{margin-top:1rem;padding:.75rem 1rem;border:0;background:#0f766e;color:white;font-weight:700;width:100%}.error{color:#9f1239}.muted{color:#666;font-size:.9rem}</style></head>
+<body><h1>Two-Factor Authentication</h1>
+<p class="muted">Enter the 6-digit code from your authenticator app — or use a backup code if you don't have your device.</p>
+${message ? `<p class="error">${escapeHtml(message)}</p>` : ""}
+<form method="post" action="/two-factor"><input type="hidden" name="csrf" value="${csrf}">
+<div class="radio">
+  <label><input type="radio" name="method" value="totp" checked> Authenticator code</label>
+  <label><input type="radio" name="method" value="backup"> Backup code</label>
+</div>
+<label>Code</label><input name="code" autocomplete="one-time-code" inputmode="text" required autofocus>
+<button type="submit">Verify</button></form></body></html>`;
+  const response = c.html(body, status as 200 | 400 | 401 | 403);
   response.headers.append(
     "set-cookie",
     cookieHeader(
