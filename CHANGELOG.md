@@ -14,6 +14,44 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.6.5] - 2026-05-31 - Biome takes over format + lint
+
+### Added
+
+- **Biome 2.4.16** at workspace root as the single source for formatting and
+  linting (replaces ad-hoc tsc-only checks). New `pnpm run lint` /
+  `pnpm run lint:fix` / `pnpm run format` scripts; new `lint` job in CI
+  that fails on style/lint regressions.
+- `biome.json` with project-matched style: 2-space indent, double quotes,
+  trailing commas, semicolons, 100-col. Recommended ruleset plus stricter
+  upgrades on `style` + `correctness` + `security`; relaxed in test files.
+
+### Changed
+
+- One-shot codebase normalization: ~130 files reformatted to consistent
+  2-space indent. Previously `operator/` and `singbox-core/` used 4-space
+  while `apps/` and `packages/` used 2-space. Future diffs stay small.
+
+### Fixed (real correctness items Biome's auto-fix can't handle)
+
+- `apps/web/app/error.tsx` — renamed `Error` → `ErrorBoundary` (was
+  shadowing the JS global; Next.js doesn't require the name).
+- `apps/web/app/status/page.tsx` — added explicit `type="submit"` to four
+  ActionForm buttons (was relying on implicit form-submit).
+- `operator/backup.ts` — typed the forward-declared `result` variable
+  (was implicit any).
+- `operator/src/tasks/admin.ts` — rewrote `return finish()` from a void
+  function into `finish(); return;` in the no-echo TTY password reader.
+
+### Deferred
+
+- ~15 admin-web form fields use sibling `<label>` + `<input>` without
+  `htmlFor`+`id`. Biome rule `noLabelWithoutControl` demoted from `error`
+  → `warn` for this release; a follow-up a11y refactor PR will fix each
+  instance and re-raise the rule.
+
+---
+
 ## [0.6.4] - 2026-05-31 - Doctor + operator know about the 5th container
 
 ### Fixed
