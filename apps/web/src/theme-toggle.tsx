@@ -3,32 +3,13 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
-
-type Theme = "light" | "dark";
+import { useTheme } from "./hooks";
 
 // Initial paint is handled by the inline no-FOUC script in the root layout,
 // which sets data-theme on <html> from localStorage before render. This
-// component just reflects and toggles that state.
+// component just reflects and toggles that state via the useTheme hook.
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme | null>(null);
-
-  useEffect(() => {
-    const current = document.documentElement.dataset.theme as Theme | undefined;
-    const system = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    setTheme(current ?? system);
-  }, []);
-
-  function toggle() {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    try {
-      localStorage.setItem("ct-theme", next);
-    } catch {
-      /* private mode / storage disabled — toggle still applies for this view */
-    }
-    setTheme(next);
-  }
+  const { theme, toggle } = useTheme();
 
   return (
     <button
