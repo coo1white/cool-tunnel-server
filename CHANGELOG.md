@@ -14,6 +14,38 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.6.7] - 2026-06-01 - zustand for theme state
+
+### Added
+
+- **`apps/web/src/stores/`** module hosting the first zustand store
+  (`useThemeStore`). SSR-safe by construction: no `document`/`localStorage`
+  access at module load, initial state is `theme: null` (renders the same on
+  server + client), all browser-touching logic gated to actions that fire
+  only after mount.
+- Co-located storage helpers (`readStoredTheme`, `writeStoredTheme`,
+  `resolveInitialTheme`) moved alongside the store — same concern, no
+  import cycle.
+- `apps/web/tests/stores.test.ts` — 10 unit tests on store actions, using
+  a fake DOM injected into `globalThis` (no `jsdom` dependency added).
+- New dep: `zustand ^5.0.14` in `apps/web` (~3KB minified+gzipped,
+  `useSyncExternalStore`-backed, React 19 compatible).
+
+### Changed
+
+- `apps/web/src/hooks/use-theme.ts` internals rewritten to consume the
+  zustand store. **Public API unchanged** — `useTheme()` still returns
+  the same `{ theme, setTheme, toggle }`, and `theme-toggle.tsx` got
+  zero changes.
+
+### Why beyond the learning exercise
+
+A future page that needs to read the theme (e.g., colour-matching a
+syntax-highlighted code block) can now do so with `useTheme()` and stay
+in sync with the toggle button on the nav bar — without prop-drilling.
+
+---
+
 ## [0.6.6] - 2026-06-01 - Custom hooks + Node-24-ready CI
 
 ### Added
