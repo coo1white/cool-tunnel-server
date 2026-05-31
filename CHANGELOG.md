@@ -14,6 +14,41 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.7.1] - 2026-06-01 - Intercepting + parallel routes for /users/<id>
+
+### Added
+
+- **Intercepting route** at `app/users/@modal/(.)[id]/page.tsx` —
+  soft-navigation from `/users` to `/users/<id>` opens the user-detail
+  as a Dialog overlay on top of the list, instead of replacing the
+  page. Esc, click-outside, and the close button all `router.back()`.
+- **Parallel route slot** at `app/users/@modal/` with `default.tsx`
+  returning `null` — the slot is inert until the intercepting route
+  fills it.
+- `app/users/layout.tsx` — declares the `modal` slot and renders
+  `{children}` + `{modal}`.
+- `apps/web/src/user-detail.tsx` — shared server component rendered by
+  BOTH the full page AND the intercepted modal. No form duplication.
+- `apps/web/src/user-detail-modal.tsx` — client wrapper around shadcn
+  Dialog that calls `router.back()` on close.
+
+### Changed
+
+- `apps/web/app/users/[id]/page.tsx` simplified to a thin shell that
+  delegates to `<UserDetail>`. Deep-linking and reloading still render
+  the full page unchanged.
+- Form fields in the extracted `user-detail.tsx` got proper `htmlFor`
+  +`id` wiring (5 more `noLabelWithoutControl` warnings cleared
+  incidentally — 9 of the original 15 now done).
+
+### Why this also exercises parallel routes
+
+The two patterns compose by design: intercepting routes render INTO
+parallel-route slots. They're not independent features — they're two
+halves of the same Next.js pattern.
+
+---
+
 ## [0.7.0] - 2026-06-01 - Tailwind v4 + shadcn introduction
 
 A minor-version bump signifying the introduction of a UI primitive
