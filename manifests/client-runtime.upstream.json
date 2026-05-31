@@ -1,12 +1,12 @@
 {
   "name": "client-runtime",
   "kind": "portable-runtime",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "upstream": "https://github.com/coo1white/cool-tunnel-server",
   "schema_version": 1,
   "authority": {
     "repo": "https://github.com/coo1white/cool-tunnel-server",
-    "release_tag": "v0.7.3",
+    "release_tag": "v0.8.0",
     "checksum_asset": "SHA256SUMS"
   },
   "plugins": {

@@ -14,6 +14,80 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.8.0] - 2026-06-01 - Prisma (alongside AdminStore) + UX polish
+
+A minor-version bump signifying the introduction of a new data-layer
+surface (Prisma) and the first round of UX polish (Skeleton, Form,
+metadata). The "honest re-shape" of course items #7 + #9 — see
+Learning:-09-prisma-ux for the full decision log.
+
+### Added
+
+- **Prisma client** (`@cool-tunnel/db/prisma`) targeting the existing
+  SQLite database via the libsql driver adapter. Type-safe READ path
+  for new features; AdminStore stays the audited write path for
+  security-relevant operations.
+- **`GET /api/me/sessions`** — first Prisma-backed endpoint. Lists the
+  current user's non-expired sessions; the row from the current request
+  is marked `current: true`.
+- **`/me/sessions` page** (Next.js server component) consumes the
+  endpoint with proper streaming.
+- **shadcn `Skeleton` primitive** at `apps/web/src/components/ui/skeleton.tsx`.
+- **shadcn `Form` primitive** at `apps/web/src/components/ui/form.tsx`
+  (react-hook-form + zod adapter wrappers).
+- **Per-page `metadata`** on every app route, composed via root
+  `title.template`: tabs/bookmarks/page titles now render correctly.
+
+### Changed
+
+- **Dashboard refactored** into independent Suspense-wrapped sections.
+  Each data fetch streams in separately with Skeleton fallbacks
+  instead of blocking on the slowest of the three.
+- **Change-password form** split into server shell + client form using
+  react-hook-form + zod resolver + shadcn Form primitives. Client-side
+  validation (min-length, confirm-match) before submit; the server
+  action stays unchanged.
+
+### Standing decisions (documented in Learning:-09-prisma-ux)
+
+- **Prisma alongside AdminStore, NOT replacing it.** Security audit
+  chain retained; the 650-line hand-written SQL stays.
+- **SQLite stays — Postgres NOT adopted.** A 1GB-VPS admin tool with
+  ~thousands of admin-metadata rows doesn't benefit from PG's
+  concurrency / capacity; it would just halve VPS headroom for no win.
+- **Prisma uses the libsql driver adapter** (not better-sqlite3) —
+  admin-api runs under Bun, and better-sqlite3's native bindings don't
+  yet work under Bun. libsql speaks the same SQLite file format so
+  AdminStore and Prisma open the same physical .db.
+- **Prisma exposed via `@cool-tunnel/db/prisma` subpath** (not the main
+  barrel). Keeps Prisma's runtime out of the operator binary (the
+  operator imports `@cool-tunnel/db` but doesn't need Prisma — barrel
+  re-export would have inflated the compiled binary by ~2.5x module
+  count).
+
+### New deps
+
+- `packages/db`: `prisma` + `@prisma/client` + `@prisma/adapter-libsql`
+  + `@libsql/client` (with `prisma generate` wired into `postinstall`
+  so CI's fresh install gets the client types).
+- `apps/web`: `react-hook-form` + `@hookform/resolvers` (for shadcn Form).
+
+### Operator binary footprint (regression check)
+
+The subpath split prevented operator bloat — module count and minify
+delta unchanged at 49 modules / -202 KB.
+
+### What's NOT in this release (deliberately deferred)
+
+- Postgres adoption — capacity-vs-cost rationale in wiki
+- AdminStore rewrite to Prisma — SQL audit chain retained
+- Mass form migration to react-hook-form — incremental as touched
+- Mass page conversion to Tailwind utilities
+- Skeleton applied beyond dashboard — pattern demonstrated
+- Prisma migrations system — `migrations.ts` remains canonical
+
+---
+
 ## [0.7.3] - 2026-06-01 - Two-factor authentication (TOTP) for admin sessions
 
 ### Added
