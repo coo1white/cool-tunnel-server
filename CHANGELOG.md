@@ -14,6 +14,65 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.7.3] - 2026-06-01 - Two-factor authentication (TOTP) for admin sessions
+
+### Added
+
+- **better-auth twoFactor plugin** enabled. Each user can opt-in to
+  TOTP from `/me`; enrolled users see a second-step prompt at login
+  for a 6-digit authenticator code or one of their 10 backup codes.
+- **New `/me` page** — self-service account view (profile + security).
+  Available to every authenticated role.
+- **3-step enrollment wizard** (password → QR code + backup codes →
+  verify first code) lives in shadcn `Dialog` from v0.7.0. Uses
+  `react-qr-code` for the QR rendering.
+- **`/two-factor` server-rendered login second step** at admin-api,
+  mirroring the `/login` pattern (CSRF-cookie protected). Form accepts
+  either an authenticator code or a backup code.
+
+### Standing decisions (documented in Learning:-14-better-auth)
+
+- **TOTP only — no email/SMS OTP.** We don't run email/SMS infra.
+- **Backup codes ON** (10 codes, 8 chars) — lost-phone recovery.
+- **Opt-in, not mandatory.** Mandatory enforcement (e.g., for owners)
+  is deferred.
+- **No admin override** to force-disable a user's 2FA. Adds attack
+  surface that needs careful design.
+- **No "trust device for N days".** Default to strict — every login
+  requires a code.
+
+### Changed
+
+- DB schema v5 → v6: new `twoFactor` table (better-auth plugin schema
+  mirror) and `user.twoFactorEnabled` column added via `addColumnIfMissing`
+  with `NOT NULL DEFAULT 0`. Existing rows default to disabled
+  (opt-in model).
+- `AdminUserSchema` + `SessionUserSchema` + `CurrentSession.user` all
+  gain `twoFactorEnabled: boolean` so the field flows through the
+  full admin-API + admin-web type stack.
+
+### New dep
+
+- `react-qr-code` ^2 in `apps/web` only (~2 KB SVG, no canvas).
+
+### Tests (+2, 295 pass total)
+
+- Migration test: asserts `twoFactor` table + 5 columns + 2 indexes
+  exist; asserts `user.twoFactorEnabled` column with default 0.
+- API smoke test: `/api/auth/two-factor/enable` returns 401/403 (not
+  404) — confirms the plugin mounted.
+
+### What's NOT in this release (deliberately deferred)
+
+- Mandatory 2FA enforcement
+- Admin override to force-disable a user's 2FA
+- "Trust this device for N days"
+- OpenAPI documentation of `/api/auth/two-factor/*` (better-auth plugin
+  routes go through `auth.handler`, not the `.openapi()` chain)
+- Backup-code regeneration (currently: disable + re-enroll)
+
+---
+
 ## [0.7.2] - 2026-06-01 - OpenAPI 3.1 spec as a release asset
 
 ### Added
