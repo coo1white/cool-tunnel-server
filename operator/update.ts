@@ -106,10 +106,7 @@ async function reloadRuntime(): Promise<void> {
   // that doesn't already have it cached. See v0.8.1 regression.
   const redisPull = await capture($`docker compose pull --quiet redis`);
   if (!redisPull.ok)
-    die(
-      "failed to pull redis image",
-      redisPull.stderr.split("\n").slice(0, 3).join("\n"),
-    );
+    die("failed to pull redis image", redisPull.stderr.split("\n").slice(0, 3).join("\n"));
   const up = await capture(
     $`docker compose up -d --no-build --pull never --force-recreate --remove-orphans ${runtimeServices}`,
   );

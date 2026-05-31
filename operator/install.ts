@@ -77,10 +77,7 @@ async function startStack(): Promise<void> {
   // matching logic + v0.8.1 regression context.
   const redisPull = await capture($`docker compose pull --quiet redis`);
   if (!redisPull.ok)
-    die(
-      "failed to pull redis image",
-      redisPull.stderr.split("\n").slice(0, 3).join("\n"),
-    );
+    die("failed to pull redis image", redisPull.stderr.split("\n").slice(0, 3).join("\n"));
   const up = await capture(
     $`docker compose up -d --no-build --pull never --remove-orphans admin-api admin-web singbox caddy docker-proxy redis`,
   );
