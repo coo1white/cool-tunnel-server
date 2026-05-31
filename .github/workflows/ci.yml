@@ -200,19 +200,27 @@ jobs:
       - name: Render and validate the Caddyfile
         run: |
           set -euo pipefail
-          rendered=$(mktemp)
-          # Substitute every binding the v0.4.0 renderer emits. The
-          # Caddyfile shrinks to a layer4 SNI splitter (PANEL_DOMAIN
-          # SNI → inner :8443, everything else → tcp/ct-singbox:443)
-          # plus the inner Caddy :8443 admin reverse-proxy. No more
-          # cert-acquisition stub or proxy-domain ACME — Reality
-          # replaces ACME on the proxy path; per-account credentials
-          # live in /data/config/singbox.json (singbox-core render-
-          # server's output, file-watched by ct-singbox's supervisor).
-          sed -e 's|{{ \.Domain }}|test.local|g' \
-              -e 's|{{ \.PanelDomain }}|panel.test.local|g' \
-              -e 's|{{ \.AcmeEmail }}|t@x.com|g' \
-              -e 's|{{ \.AcmeDirectory }}|https://acme-staging-v02.api.letsencrypt.org/directory|g' \
-              caddy/Caddyfile.tpl > "$rendered"
-          docker run --rm -v "$rendered":/etc/caddy/Caddyfile ct-caddy-test \
-              caddy validate --config /etc/caddy/Caddyfile
+          # The Caddyfile is a layer4 SNI splitter (PANEL_DOMAIN SNI →
+          # inner :8443 admin; everything else → tcp/ct-singbox:443).
+          # The Reality *proxy path* uses no ACME — real clients arrive
+          # with the REALITY_DEST_HOST SNI and fall through to
+          # ct-singbox. CT_LANDING_PAGE optionally adds a DOMAIN-SNI
+          # route → inner :8444 landing site (its own ACME cert), wrapped
+          # in a `{{ if .LandingPage }} … {{ end }}` block. The boundary
+          # renderer resolves that conditional; here we mimic both states
+          # with sed and validate each, so neither branch can regress.
+          subst() {
+            sed -e 's|{{ \.Domain }}|test.local|g' \
+                -e 's|{{ \.PanelDomain }}|panel.test.local|g' \
+                -e 's|{{ \.AcmeEmail }}|t@x.com|g' \
+                -e 's|{{ \.AcmeDirectory }}|https://acme-staging-v02.api.letsencrypt.org/directory|g'
+          }
+          off=$(mktemp); on=$(mktemp)
+          # CT_LANDING_PAGE off (default): drop the whole conditional block.
+          sed -e '/{{ if .LandingPage }}/,/{{ end }}/d' caddy/Caddyfile.tpl | subst > "$off"
+          # CT_LANDING_PAGE on: keep the block body, drop only the markers.
+          sed -e '/{{ if .LandingPage }}/d' -e '/{{ end }}/d' caddy/Caddyfile.tpl | subst > "$on"
+          for f in "$off" "$on"; do
+            docker run --rm -v "$f":/etc/caddy/Caddyfile ct-caddy-test \
+                caddy validate --config /etc/caddy/Caddyfile
+          done

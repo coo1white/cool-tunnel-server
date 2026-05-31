@@ -40,6 +40,18 @@ test("test config has safe defaults and no public signup", () => {
   expect(cfg.publicSignup).toBe(false);
   expect(cfg.secureCookies).toBe(false);
   expect(cfg.baseUrl).toBe("http://localhost:9000");
+  expect(cfg.landingPageEnabled).toBe(false);
+});
+
+test("CT_LANDING_PAGE opts the bare domain into a real landing page", () => {
+  const cfg = loadAdminConfig({
+    CT_ADMIN_ENV: "test",
+    BETTER_AUTH_SECRET: SECRET,
+    DOMAIN: "proxy.example.com",
+    PANEL_DOMAIN: "panel.example.com",
+    CT_LANDING_PAGE: "true",
+  });
+  expect(cfg.landingPageEnabled).toBe(true);
 });
 
 test("production refuses to disable secure cookies", () => {

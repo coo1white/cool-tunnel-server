@@ -41,6 +41,11 @@ export interface AdminConfig {
   readonly realityPublicKey: string;
   readonly realityDestHost: string;
   readonly realityShortIds: readonly string[];
+  // Opt-in: serve a real landing page (own cert) on the bare DOMAIN so a
+  // browser sees an ordinary site instead of the Reality-borrowed cert/CDN
+  // error. Off by default — proxy clients use the REALITY_DEST_HOST SNI and
+  // are unaffected either way. See caddy/Caddyfile.tpl.
+  readonly landingPageEnabled: boolean;
   readonly antiTrackingDohResolver: string;
   readonly version: string;
   // Redis + BullMQ (Learning #15, v0.8.1). Backend for scheduled
@@ -218,6 +223,7 @@ export function loadAdminConfig(env: EnvMap = process.env as EnvMap): AdminConfi
       "REALITY_DEST_HOST",
     ),
     realityShortIds: validateShortIds(envValue(env, "REALITY_SHORT_IDS")),
+    landingPageEnabled: parseBool(envValue(env, "CT_LANDING_PAGE"), false),
     antiTrackingDohResolver: dohResolver,
     version: RELEASE_VERSION,
     redisUrl: envValue(env, "CT_REDIS_URL") || "redis://redis:6379",
