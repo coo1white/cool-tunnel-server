@@ -56,6 +56,8 @@ function stubConfig(): AdminConfig {
     realityShortIds: [],
     antiTrackingDohResolver: "",
     version: process.env.npm_package_version ?? "0.0.0",
+    redisUrl: "redis://openapi.example:6379",
+    auditRetentionDays: 90,
   };
 }
 

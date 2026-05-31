@@ -43,6 +43,8 @@ test("proxy account UUID rotates with previous UUID grace", () => {
     realityShortIds: [""],
     antiTrackingDohResolver: "https://dns.alidns.com/dns-query",
     version: "0.6.4",
+    redisUrl: "redis://localhost:6379",
+    auditRetentionDays: 90,
   });
   store.ensureDefaults();
   const actor = store.createUser(null, {
@@ -114,4 +116,29 @@ test("twoFactor schema (better-auth 2FA plugin) is migrated", () => {
     .map((i) => i.name);
   expect(indexes).toContain("twoFactor_userId_idx");
   expect(indexes).toContain("twoFactor_secret_idx");
+});
+
+test("pruneAuditLogOlderThan deletes rows older than cutoff", () => {
+  const { db } = openAdminDb(":memory:");
+  migrateAdminDb(db);
+  const store = new AdminStore(db);
+  // Seed 3 audit rows at known timestamps: 100 days ago, 30 days ago, now.
+  const day = 24 * 60 * 60 * 1000;
+  const t100 = new Date(Date.now() - 100 * day).toISOString();
+  const t30 = new Date(Date.now() - 30 * day).toISOString();
+  const tNow = new Date().toISOString();
+  for (const ts of [t100, t30, tNow]) {
+    db.query(
+      "INSERT INTO audit_log (action, actorUserId, targetType, targetId, detail, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("test.event", null, null, null, "{}", ts);
+  }
+  expect(store.listAudit(10).length).toBe(3);
+
+  // 90-day cutoff: only the t100 row is too old.
+  const cutoff = new Date(Date.now() - 90 * day).toISOString();
+  expect(store.pruneAuditLogOlderThan(cutoff)).toBe(1);
+  expect(store.listAudit(10).length).toBe(2);
+
+  // Same cutoff again: no further deletes.
+  expect(store.pruneAuditLogOlderThan(cutoff)).toBe(0);
 });

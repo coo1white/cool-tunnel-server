@@ -22,7 +22,14 @@ import { die, makeTerm } from "./src/util/term";
 import { waitFor } from "./src/util/wait";
 
 const { step, ok, warn } = makeTerm();
-const runtimeServices = ["admin-api", "admin-web", "singbox", "caddy", "docker-proxy"] as const;
+const runtimeServices = [
+  "admin-api",
+  "admin-web",
+  "singbox",
+  "caddy",
+  "docker-proxy",
+  "redis",
+] as const;
 
 async function preflight(): Promise<void> {
   const network = await checkNetwork();
@@ -118,7 +125,7 @@ async function waitForRuntimeReady(): Promise<void> {
     onTimeout: () => undefined,
   });
   if (ready) {
-    ok("admin-api, admin-web, singbox, caddy, and docker-proxy are healthy");
+    ok("admin-api, admin-web, singbox, caddy, docker-proxy, and redis are healthy");
     return;
   }
   const unready = describeUnreadyServices(lastRows, runtimeServices) || "unknown";

@@ -61,7 +61,7 @@ async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reas
       .map((line) => line.trim())
       .filter(Boolean),
   );
-  const missing = ["admin-api", "admin-web", "caddy", "singbox", "docker-proxy"].filter(
+  const missing = ["admin-api", "admin-web", "caddy", "singbox", "docker-proxy", "redis"].filter(
     (service) => !running.has(service),
   );
   if (missing.length > 0) {

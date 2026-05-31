@@ -49,13 +49,23 @@ test("parseComposePsRows reads a single JSON array (older compose output)", () =
     // forwarder). It has no healthcheck, so Health is "" — the doctor
     // accepts running-without-healthcheck as healthy.
     { Service: "docker-proxy", State: "running", Health: "" },
+    // redis was added in v0.8.1 (BullMQ backend). It DOES have a
+    // healthcheck (redis-cli ping) — healthy when present.
+    { Service: "redis", State: "running", Health: "healthy" },
   ]);
   const rows = parseComposePsRows(arrayOutput);
-  expect(rows.size).toBe(5);
+  expect(rows.size).toBe(6);
   expect(rows.get("caddy")?.health).toBe("healthy");
   // A healthy array-formatted stack must NOT be reported as unready.
   expect(
-    describeUnreadyServices(rows, ["admin-api", "admin-web", "singbox", "caddy", "docker-proxy"]),
+    describeUnreadyServices(rows, [
+      "admin-api",
+      "admin-web",
+      "singbox",
+      "caddy",
+      "docker-proxy",
+      "redis",
+    ]),
   ).toBe("");
 });
 

@@ -110,7 +110,7 @@ Next topic:  ./ct help doctor
     Prerequisites          docker compose, .env mode
     Structural             DNS, ports 80/443, ACME cert expiry
     Application            Hono /up endpoint, direct-dial config
-    Compose stack          admin-api, admin-web, caddy, singbox, docker-proxy
+    Compose stack          admin-api, admin-web, caddy, singbox, docker-proxy, redis
     Resources              disk + RAM headroom
     Info                   release version, active proxy accounts
 

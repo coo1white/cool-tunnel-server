@@ -43,6 +43,12 @@ export interface AdminConfig {
   readonly realityShortIds: readonly string[];
   readonly antiTrackingDohResolver: string;
   readonly version: string;
+  // Redis + BullMQ (Learning #15, v0.8.1). Backend for scheduled
+  // admin jobs (audit-log retention today; future admin notifications).
+  readonly redisUrl: string;
+  // Days of audit_log to keep. 0 disables cleanup (table grows
+  // unboundedly — not recommended). Default 90.
+  readonly auditRetentionDays: number;
 }
 
 export function parseBool(value: string | undefined, fallback: boolean): boolean {
@@ -214,5 +220,16 @@ export function loadAdminConfig(env: EnvMap = process.env as EnvMap): AdminConfi
     realityShortIds: validateShortIds(envValue(env, "REALITY_SHORT_IDS")),
     antiTrackingDohResolver: dohResolver,
     version: RELEASE_VERSION,
+    redisUrl: envValue(env, "CT_REDIS_URL") || "redis://redis:6379",
+    auditRetentionDays: parseRetentionDays(envValue(env, "CT_AUDIT_RETENTION_DAYS")),
   };
+}
+
+function parseRetentionDays(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return 90;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    throw new Error("CT_AUDIT_RETENTION_DAYS must be a non-negative integer");
+  }
+  return n;
 }

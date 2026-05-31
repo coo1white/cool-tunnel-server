@@ -124,6 +124,8 @@ services:
     depends_on:
       docker-proxy:
         condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - ct-net
 
@@ -171,10 +173,38 @@ services:
     networks:
       - ct-net
 
+  # Redis 8.x — the BullMQ backend for scheduled / queued admin jobs
+  # (audit-log retention today; future admin notifications, etc.).
+  # Bind only on the internal ct-net network; NOT exposed publicly.
+  # No password — network isolation does the auth here. If you ever
+  # expose Redis off-host, add `requirepass` + secret-rotate.
+  redis:
+    <<: *svc-hardening
+    image: redis:8-alpine
+    container_name: ct-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    environment:
+      <<: *utf8-env
+    mem_limit: 96m
+    pids_limit: 32
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    networks:
+      - ct-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
 volumes:
   caddy_etc:
   caddy_data:
   singbox_config:
+  redis_data:
 
 networks:
   ct-net:
