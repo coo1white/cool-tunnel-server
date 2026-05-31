@@ -9,6 +9,7 @@ import {
   StoreError,
   type UpdateUserInput,
 } from "@cool-tunnel/db";
+import { getPrismaClient } from "@cool-tunnel/db/prisma";
 import {
   constantTimeEqual,
   hashBootstrapToken,
@@ -34,6 +35,7 @@ import {
   DEFAULT_PROTOCOL_KEYS,
   hasPermission,
   MeResponseSchema,
+  MySessionsResponseSchema,
   ProxyAccountResponseSchema,
   ProxyAccountsResponseSchema,
   SettingsResponseSchema,
@@ -478,6 +480,39 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       MeResponseSchema,
     ),
   );
+
+  // /api/me/sessions — first Prisma-backed endpoint in the project
+  // (v0.8.0, Learning #7+#9). Lists the current user's non-expired
+  // sessions; the row from the current session is marked `current:true`.
+  // AdminStore remains the audited write path; Prisma is the typed read
+  // path for new features like this. See packages/db/src/prisma.ts.
+  app.get("/api/me/sessions", async (c) => {
+    const session = c.get("session");
+    const userId = session.user.id;
+    const currentSessionId = String((session.session as { id?: unknown }).id ?? "");
+    const prisma = getPrismaClient(options.config.dbPath);
+    const nowIso = new Date().toISOString();
+    const rows = await prisma.session.findMany({
+      where: { userId, expiresAt: { gt: nowIso } },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        createdAt: true,
+        expiresAt: true,
+        ipAddress: true,
+        userAgent: true,
+      },
+    });
+    const sessions = rows.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      ipAddress: row.ipAddress,
+      userAgent: row.userAgent,
+      current: row.id === currentSessionId,
+    }));
+    return ok(c, { sessions }, 200, MySessionsResponseSchema);
+  });
 
   app.get("/api/users", requirePermission("users:read"), (c) =>
     ok(c, { users: store.listUsers() }, 200, UsersResponseSchema),

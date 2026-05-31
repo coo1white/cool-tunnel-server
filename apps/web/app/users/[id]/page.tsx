@@ -9,6 +9,8 @@ import { getSession, getUser, has } from "../../../src/api";
 import { AdminShell, PermissionDenied } from "../../../src/ui";
 import { UserDetail } from "../../../src/user-detail";
 
+export const metadata = { title: "User" };
+
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }, session] = await Promise.all([params, getSession()]);
   if (!has("users:read", session)) {

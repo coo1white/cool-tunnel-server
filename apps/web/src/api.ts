@@ -13,6 +13,8 @@ import type {
 import {
   AuditResponseSchema,
   MeResponseSchema,
+  type MySession,
+  MySessionsResponseSchema,
   ProxyAccountResponseSchema,
   ProxyAccountsResponseSchema,
   SettingsResponseSchema,
@@ -122,6 +124,12 @@ export async function apiMutation<T>(
 
 export async function listUsers(): Promise<AdminUser[]> {
   return (await apiFetch<{ users: AdminUser[] }>("/api/users", {}, UsersResponseSchema)).users;
+}
+
+export async function listMySessions(): Promise<MySession[]> {
+  return (
+    await apiFetch<{ sessions: MySession[] }>("/api/me/sessions", {}, MySessionsResponseSchema)
+  ).sessions;
 }
 
 export async function getUser(id: string): Promise<AdminUser> {

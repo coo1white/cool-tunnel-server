@@ -5,7 +5,8 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./prisma": "./src/prisma.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -14,6 +15,10 @@
   "dependencies": {
     "@cool-tunnel/config": "workspace:*",
     "@cool-tunnel/security": "workspace:*",
-    "@cool-tunnel/shared": "workspace:*"
+    "@cool-tunnel/shared": "workspace:*",
+    "@libsql/client": "^0.17.3",
+    "@prisma/adapter-libsql": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "prisma": "^7.8.0"
   }
 }

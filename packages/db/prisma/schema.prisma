@@ -1,0 +1,184 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model account {
+  id                    String @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  String?
+  refreshTokenExpiresAt String?
+  scope                 String?
+  password              String?
+  createdAt             String
+  updatedAt             String
+  user                  user    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId])
+  @@ignore
+}
+
+model audit_log {
+  id          Int     @id @default(autoincrement())
+  actorUserId String?
+  action      String
+  targetType  String?
+  targetId    String?
+  detail      String?
+  createdAt   String
+
+  @@index([createdAt])
+}
+
+model bootstrap_token {
+  id        String @id
+  tokenHash String  @unique(map: "sqlite_autoindex_bootstrap_token_2")
+  expiresAt String
+  usedAt    String?
+  createdAt String
+
+  @@index([expiresAt])
+}
+
+model fake_website {
+  id        String @id
+  slug      String  @unique(map: "sqlite_autoindex_fake_website_2")
+  name      String
+  template  String  @default("blog")
+  title     String?
+  tagline   String?
+  payload   String?
+  isActive  Int     @default(0)
+  createdAt String
+  updatedAt String
+}
+
+model proxy_account {
+  id                     String @id
+  username               String  @unique(map: "sqlite_autoindex_proxy_account_2")
+  uuid                   String  @unique(map: "sqlite_autoindex_proxy_account_3")
+  previousUuid           String?
+  previousUuidValidUntil String?
+  subscriptionSecret     String? @unique(map: "sqlite_autoindex_proxy_account_4")
+  label                  String?
+  enabled                Int     @default(1)
+  clientDefaultLocalPort Int     @default(1080)
+  enabledProtocols       String  @default("[\"vless_reality\"]")
+  expiresAt              String?
+  lastSeenAt             String?
+  metadata               String?
+  createdAt              String
+  updatedAt              String
+
+  @@index([previousUuidValidUntil], map: "proxy_account_previous_uuid_idx")
+  @@index([enabled, expiresAt], map: "proxy_account_enabled_expires_idx")
+}
+
+model rateLimit {
+  id          String @id
+  key         String  @unique(map: "sqlite_autoindex_rateLimit_2")
+  count       Int
+  lastRequest BigInt
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model schema_meta {
+  key   String? @id
+  value String
+
+  @@ignore
+}
+
+model server_config {
+  id                          Int     @id @default(autoincrement())
+  domain                      String
+  panelDomain                 String
+  acmeEmail                   String
+  acmeDirectory               String  @default("https://acme-v02.api.letsencrypt.org/directory")
+  antiTrackingHideIp          Int     @default(1)
+  antiTrackingHideVia         Int     @default(1)
+  antiTrackingProbeResistance Int     @default(1)
+  antiTrackingDohResolver     String  @default("https://dns.alidns.com/dns-query")
+  http3Enabled                Int     @default(0)
+  realityPrivateKey           String
+  realityPublicKey            String
+  realityDestHost             String  @default("www.microsoft.com")
+  realityShortIds             String  @default("[\"\"]")
+  lastCaddyfileHash           String?
+  lastRenderedAt              String?
+  selfProbeHistory            String?
+  createdAt                   String
+  updatedAt                   String
+}
+
+model session {
+  id        String @id
+  expiresAt String
+  token     String  @unique(map: "sqlite_autoindex_session_2")
+  createdAt String
+  updatedAt String
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      user    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model twoFactor {
+  id          String @id
+  userId      String
+  secret      String
+  backupCodes String
+  verified    Int     @default(1)
+  user        user    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([secret])
+  @@index([userId])
+  @@ignore
+}
+
+model user {
+  id                 String     @id
+  name               String
+  email              String      @unique(map: "sqlite_autoindex_user_2")
+  emailVerified      Int         @default(0)
+  image              String?
+  createdAt          String
+  updatedAt          String
+  username           String      @unique(map: "sqlite_autoindex_user_3")
+  role               String      @default("viewer")
+  status             String      @default("active")
+  mustChangePassword Int         @default(0)
+  lastLoginAt        String?
+  disabledAt         String?
+  twoFactorEnabled   Int         @default(0)
+  account            account[]   @ignore
+  session            session[]
+  twoFactor          twoFactor[] @ignore
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model verification {
+  id         String @id
+  identifier String
+  value      String
+  expiresAt  String
+  createdAt  String
+  updatedAt  String
+
+  @@index([identifier])
+  @@ignore
+}

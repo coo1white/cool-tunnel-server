@@ -22,6 +22,8 @@ import { PermissionDenied } from "../../../../src/ui";
 import { UserDetail } from "../../../../src/user-detail";
 import { UserDetailModal } from "../../../../src/user-detail-modal";
 
+export const metadata = { title: "User" };
+
 export default async function InterceptedUserDetailPage({
   params,
 }: {

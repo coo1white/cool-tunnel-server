@@ -3,6 +3,8 @@
 import { listAudit } from "../../src/api";
 import { AdminShell } from "../../src/ui";
 
+export const metadata = { title: "Audit" };
+
 export default async function AuditPage() {
   const audit = await listAudit();
   return (

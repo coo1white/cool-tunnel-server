@@ -6,6 +6,8 @@ import { runAction } from "../../src/actions";
 import { getStatus } from "../../src/api";
 import { AdminShell, StatusPill } from "../../src/ui";
 
+export const metadata = { title: "Status" };
+
 export default async function StatusPage() {
   const status = await getStatus();
   return (
