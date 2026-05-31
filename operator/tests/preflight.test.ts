@@ -99,7 +99,7 @@ test("classifyDiskSpace reports docker root pressure with the detected root path
 test("classifyStackUp: all required services running → ok", () => {
     const r = classifyStackUp(
         ["admin-api", "admin-web", "caddy"],
-        new Set(["admin-api", "admin-web", "caddy", "singbox"]),
+        new Set(["admin-api", "admin-web", "caddy", "singbox", "docker-proxy"]),
     );
     expect(r.ok).toBe(true);
     expect(r.missing).toEqual([]);

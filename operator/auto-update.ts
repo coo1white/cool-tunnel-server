@@ -56,7 +56,7 @@ async function preflightStackHealthy(): Promise<{ ok: true } | { ok: false; reas
         return { ok: false, reason: "docker compose ps failed; run `ct doctor` before auto-updating" };
     }
     const running = new Set(ps.stdout.split("\n").map((line) => line.trim()).filter(Boolean));
-    const missing = ["admin-api", "admin-web", "caddy", "singbox"].filter((service) => !running.has(service));
+    const missing = ["admin-api", "admin-web", "caddy", "singbox", "docker-proxy"].filter((service) => !running.has(service));
     if (missing.length > 0) {
         return { ok: false, reason: `stack pre-flight: required services not running: ${missing.join(", ")}; run 'ct doctor' first` };
     }
