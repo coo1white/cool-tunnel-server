@@ -14,6 +14,44 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.6.3] - 2026-05-31 - Admin-panel layout fix + tighter audit redaction
+
+### Fixed
+
+- **`/users/<id>` Actions row layout.** The Disable / temporary-password
+  input / Reset password / Delete buttons were each their own form inside a
+  shared toolbar, which left them visually jumbled, and the **Save user**
+  submit button stretched the full width of the form because `<button>` was a
+  direct grid child of `.form`. New `UserActions` client component mirrors
+  the proxy-row pattern (imperative `userCommand()` via `useTransition`,
+  fixed horizontal row, single feedback line below); password input is
+  visually paired only with Reset password; Delete is pushed right with a
+  `confirm()` guard; Save user is wrapped in `.form-actions` so it stays
+  button-sized.
+- **Audit log no longer over-redacts timestamp-shaped fields.** Keys whose
+  name *contained* a SECRETISH substring (e.g. `previousUuidValidUntil`
+  matched on "uuid"; `tokenFingerprint` matched on "token") were
+  blanket-redacted even though the values are not credentials. Added a small
+  `SAFE_KEY_SUFFIXES` allowlist in `maskSensitive` (`ValidUntil`,
+  `ExpiresAt`, `CreatedAt`, `UpdatedAt`, `RotatedAt`, `RevealedAt`,
+  `Fingerprint`, `Hint`); real secrets (`uuid`, `subscriptionUrl`, `token`,
+  `password`, …) still redact. Regression test asserts both directions.
+
+### Changed
+
+- Docs polish under `[Unreleased]` since v0.6.2 (Reality-keygen install
+  step in README + GETTING_STARTED, disk-requirement note, region-neutral
+  `restrictive-networks.md` runbook) is now part of the shipped tree.
+
+### Internal
+
+- CI workflow tidy: release stages grouped alphabetically (#277), Bun/pnpm
+  setup DRY'd into a composite action + all third-party actions pinned to
+  commit SHAs (#278), 4 release workflows consolidated into one
+  `release.yml` (#279). Zero functional change to the release pipeline.
+
+---
+
 ## [0.6.2] - 2026-05-30 - Maintenance: dead-code + legacy-doc cleanup
 
 Housekeeping only — no runtime behavior change from v0.6.1 (the removed code
@@ -12021,7 +12059,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/coo1white/cool-tunnel-server/compare/v0.5.16...v0.6.0
