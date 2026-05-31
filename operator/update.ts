@@ -97,6 +97,16 @@ async function reloadRuntime(): Promise<void> {
   ok("configs rendered");
 
   step("Recreate services");
+  // Pre-pull non-bundled images BEFORE `compose up --pull never`. Our
+  // cool-tunnel-server-* images come from the `docker load` step
+  // above; --pull never is correct for those (avoids accidentally
+  // racing Docker Hub against a verified bundle). But redis is
+  // pulled from Docker Hub — without this pre-pull, --pull never
+  // would fail with "No such image: redis:8-alpine" on any host
+  // that doesn't already have it cached. See v0.8.1 regression.
+  const redisPull = await capture($`docker compose pull --quiet redis`);
+  if (!redisPull.ok)
+    die("failed to pull redis image", redisPull.stderr.split("\n").slice(0, 3).join("\n"));
   const up = await capture(
     $`docker compose up -d --no-build --pull never --force-recreate --remove-orphans ${runtimeServices}`,
   );

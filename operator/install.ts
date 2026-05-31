@@ -71,6 +71,13 @@ async function renderInitialConfig(): Promise<void> {
 
 async function startStack(): Promise<void> {
   step("Start Cool Tunnel stack");
+  // Pre-pull redis (not in the image bundle; comes from Docker Hub).
+  // Without this, --pull never below would fail on first install:
+  // "No such image: redis:8-alpine". See operator/update.ts for the
+  // matching logic + v0.8.1 regression context.
+  const redisPull = await capture($`docker compose pull --quiet redis`);
+  if (!redisPull.ok)
+    die("failed to pull redis image", redisPull.stderr.split("\n").slice(0, 3).join("\n"));
   const up = await capture(
     $`docker compose up -d --no-build --pull never --remove-orphans admin-api admin-web singbox caddy docker-proxy redis`,
   );
