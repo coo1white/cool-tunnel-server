@@ -82,6 +82,33 @@ const SECRET_QUERY_KEYS = [
 
 const SECRETISH_KEY = /(password|passwd|pwd|token|secret|cookie|session|authorization|uuid|subscription|database_url|db_url|redis_url|private[_-]?key|api[_-]?key)/i;
 
+// Keys whose name *contains* a SECRETISH word but whose VALUE is not itself
+// a secret — typically derived/metadata fields produced alongside a secret.
+// Without this allowlist, audit/log entries lose useful operator context
+// (e.g. `previousUuidValidUntil` is a timestamp, `tokenFingerprint` is a
+// one-way-hashed correlation handle deliberately stored as non-secret).
+//
+// Match is suffix-based, case-insensitive: any key whose tail is one of
+// these is treated as non-secret and its value is recursed-into normally.
+const SAFE_KEY_SUFFIXES = [
+  "ValidUntil",
+  "ExpiresAt",
+  "CreatedAt",
+  "UpdatedAt",
+  "RotatedAt",
+  "RevealedAt",
+  "Fingerprint",
+  "Hint",
+] as const;
+
+function isSafeMetadataKey(key: string): boolean {
+  const k = key.toLowerCase();
+  for (const suffix of SAFE_KEY_SUFFIXES) {
+    if (k.endsWith(suffix.toLowerCase())) return true;
+  }
+  return false;
+}
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
@@ -180,7 +207,16 @@ export function maskSensitive(value: unknown): unknown {
   if (typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = SECRETISH_KEY.test(k) ? "<redacted>" : maskSensitive(v);
+      if (isSafeMetadataKey(k)) {
+        // Safe metadata (timestamp / fingerprint / hint) — recurse into the
+        // value normally so an inner secret in a nested object is still
+        // caught, but don't blanket-redact this key.
+        out[k] = maskSensitive(v);
+      } else if (SECRETISH_KEY.test(k)) {
+        out[k] = "<redacted>";
+      } else {
+        out[k] = maskSensitive(v);
+      }
     }
     return out;
   }

@@ -3,7 +3,8 @@
 import { AdminShell, PermissionDenied, StatusPill } from "../../../src/ui";
 import { ActionForm } from "../../../src/action-form";
 import { getSession, getUser, has } from "../../../src/api";
-import { updateUserAction, userCommandAction } from "../../../src/actions";
+import { updateUserAction } from "../../../src/actions";
+import { UserActions } from "../../../src/user-actions";
 
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }, session] = await Promise.all([params, getSession()]);
@@ -11,6 +12,10 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     return <AdminShell title="User"><PermissionDenied /></AdminShell>;
   }
   const user = await getUser(id);
+  const canDisable = has("users:disable", session);
+  const canReset = has("users:reset-password", session);
+  const canDelete = has("users:delete", session);
+
   return (
     <AdminShell title={user.name} subtitle={user.email}>
       <section className="card">
@@ -43,41 +48,26 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
               </div>
               <label className="checkbox"><input name="mustChangePassword" type="checkbox" defaultChecked={user.mustChangePassword} /> Require password change</label>
             </div>
-            <button className="btn" type="submit">Save user</button>
+            {/* Wrap so the button doesn't stretch to the parent grid cell. */}
+            <div className="form-actions">
+              <button className="btn" type="submit">Save user</button>
+            </div>
           </ActionForm>
         ) : <PermissionDenied />}
       </section>
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <h2>Actions</h2>
-        {/* One form per action, command as a hidden input. Multiple submit
-            buttons in a single useActionState form drop the clicked button's
-            name/value, so `command` arrived empty and the request 404'd. */}
-        <div className="toolbar">
-          {has("users:disable", session) && (
-            <ActionForm action={userCommandAction}>
-              <input type="hidden" name="id" value={user.id} />
-              <input type="hidden" name="command" value={user.status === "active" ? "disable" : "enable"} />
-              <button className="btn secondary" type="submit">{user.status === "active" ? "Disable" : "Enable"}</button>
-            </ActionForm>
-          )}
-          {has("users:reset-password", session) && (
-            <ActionForm action={userCommandAction}>
-              <input type="hidden" name="id" value={user.id} />
-              <input type="hidden" name="command" value="reset-password" />
-              <input name="password" type="password" minLength={12} placeholder="New temporary password" />
-              <button className="btn secondary" type="submit">Reset password</button>
-            </ActionForm>
-          )}
-          {has("users:delete", session) && (
-            <ActionForm action={userCommandAction}>
-              <input type="hidden" name="id" value={user.id} />
-              <input type="hidden" name="command" value="delete" />
-              <button className="btn danger" type="submit">Delete</button>
-            </ActionForm>
-          )}
-        </div>
-      </section>
+      {(canDisable || canReset || canDelete) && (
+        <section className="card" style={{ marginTop: 16 }}>
+          <h2>Actions</h2>
+          <UserActions
+            userId={user.id}
+            status={user.status}
+            canDisable={canDisable}
+            canReset={canReset}
+            canDelete={canDelete}
+          />
+        </section>
+      )}
     </AdminShell>
   );
 }

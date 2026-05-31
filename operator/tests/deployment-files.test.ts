@@ -364,15 +364,17 @@ test("image-bundle fetch waits for a still-publishing release instead of failing
 
 test("proxy/user actions pass the command explicitly, never via a shared submit button", async () => {
     const proxyTable = await Bun.file(repoPath("apps/web/src/proxy-accounts.tsx")).text();
+    const userActions = await Bun.file(repoPath("apps/web/src/user-actions.tsx")).text();
     const editPage = await Bun.file(repoPath("apps/web/app/users/[id]/page.tsx")).text();
 
     // A clicked submit button's name/value is dropped under React 19
     // useActionState when buttons share one form (the empty-command 404).
-    // Proxy commands are now invoked imperatively with an explicit command
-    // string; the user-edit page keeps one form per action with a hidden input.
+    // Both proxy and user commands are now invoked imperatively with an
+    // explicit command string from a client component.
     expect(proxyTable).toContain("proxyCommand(account.id,");
-    expect(editPage).toContain('type="hidden" name="command"');
-    for (const page of [proxyTable, editPage]) {
+    expect(userActions).toContain("userCommand(userId,");
+    expect(editPage).toContain("<UserActions");
+    for (const page of [proxyTable, userActions, editPage]) {
         expect(page).not.toMatch(/<button[^>]*name="command"/);
     }
 });
