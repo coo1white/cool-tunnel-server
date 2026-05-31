@@ -378,7 +378,11 @@ test("image-bundle fetch waits for a still-publishing release instead of failing
 test("proxy/user actions pass the command explicitly, never via a shared submit button", async () => {
   const proxyTable = await Bun.file(repoPath("apps/web/src/proxy-accounts.tsx")).text();
   const userActions = await Bun.file(repoPath("apps/web/src/user-actions.tsx")).text();
-  const editPage = await Bun.file(repoPath("apps/web/app/users/[id]/page.tsx")).text();
+  // The user-detail content (with the <UserActions> mount) moved out of the
+  // page file into a shared component when v0.7.1 introduced the
+  // intercepting-route modal — both the full page and the modal render
+  // user-detail.tsx, so this is the new canonical host.
+  const userDetail = await Bun.file(repoPath("apps/web/src/user-detail.tsx")).text();
 
   // A clicked submit button's name/value is dropped under React 19
   // useActionState when buttons share one form (the empty-command 404).
@@ -386,8 +390,8 @@ test("proxy/user actions pass the command explicitly, never via a shared submit 
   // explicit command string from a client component.
   expect(proxyTable).toContain("proxyCommand(account.id,");
   expect(userActions).toContain("userCommand(userId,");
-  expect(editPage).toContain("<UserActions");
-  for (const page of [proxyTable, userActions, editPage]) {
+  expect(userDetail).toContain("<UserActions");
+  for (const page of [proxyTable, userActions, userDetail]) {
     expect(page).not.toMatch(/<button[^>]*name="command"/);
   }
 });
