@@ -4,7 +4,7 @@
 import upstreamRaw from "../singbox.upstream.json" with { type: "json" };
 
 /** singbox-core release line (bumped in lockstep with cool-tunnel-server). */
-export const SINGBOX_CORE_VERSION = "0.7.2";
+export const SINGBOX_CORE_VERSION = "0.7.3";
 
 /** Pinned sing-box upstream version this binary expects. */
 export const SINGBOX_UPSTREAM_TAG: string = (upstreamRaw as { upstream_tag: string }).upstream_tag;
