@@ -15,6 +15,7 @@
     "@cool-tunnel/db": "workspace:*",
     "@cool-tunnel/security": "workspace:*",
     "@cool-tunnel/shared": "workspace:*",
+    "@hono/zod-openapi": "^1.4.0",
     "better-auth": "1.6.11",
     "hono": "4.12.23"
   }
