@@ -12,14 +12,38 @@ before relying on a version bump as a compatibility signal.
 
 ## [Unreleased]
 
+---
+
+## [0.6.6] - 2026-06-01 - Custom hooks + Node-24-ready CI
+
+### Added
+
+- **`apps/web/src/hooks/` module** consolidating three previously-duplicated
+  client-component patterns into named, reusable, documented hooks:
+  - `useImperativeAction` — `useTransition` + single-slot `ActionState`
+    buffer + auto-clear-on-success. Replaces the inline pattern that
+    lived in both `user-actions.tsx` and `proxy-accounts.tsx`.
+  - `useClipboard` — three-state copy-with-feedback. Accepts either a
+    plain string OR an async getter (the getter form keeps audited
+    reveals — like the subscription URL — out of any React state slot).
+  - `useTheme` — localStorage + DOM dataset + system-preference fallback.
+    Designed for a transparent zustand swap in v0.6.7 (Learning #5).
+- Pure helpers `readStoredTheme` / `writeStoredTheme` / `resolveInitialTheme`
+  exported alongside `useTheme` for tests + use outside React.
+- `apps/web/tests/hooks.test.ts` — 6 unit tests on the pure storage
+  helpers (read/write/tamper defense/throwing-storage).
+
 ### Changed
 
-- **CI: pinned GitHub Actions bumped to Node 24-compatible major versions.**
+- `user-actions.tsx`, `proxy-accounts.tsx`, `theme-toggle.tsx` refactored
+  to consume the new hooks. Net diff: −50 lines at the call sites; the
+  shared behaviour now has a single documented owner.
+
+- **CI: pinned GitHub Actions bumped to Node-24-compatible major versions.**
   GitHub deprecated Node 20 on its runners (force-bump June 16 2026,
   removal September 16 2026). All 10 pinned actions across `ci.yml`,
   `release.yml`, `audit.yml`, `tag-version.yml`, and the
-  `setup-bun-pnpm` composite action moved to their latest Node 24
-  releases:
+  `setup-bun-pnpm` composite action moved to their latest Node-24 releases:
 
   | Action | Before | After |
   |---|---|---|
