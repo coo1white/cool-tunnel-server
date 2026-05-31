@@ -10,6 +10,7 @@
     "cool-tunnel-server-images-linux-x64.tar.gz",
     "cool-tunnel-server-images-linux-arm64.tar.gz",
     "cool-tunnel-core-v*",
-    "sing-box-v*-darwin-universal"
+    "sing-box-v*-darwin-universal",
+    "openapi.json"
   ]
 }

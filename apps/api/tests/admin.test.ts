@@ -76,8 +76,8 @@ async function signIn(
   const cookie =
     setCookie
       .split(",")
-      .map((part) => part.trim())
-      .find((part) => part.includes("ct-admin.session_token="))
+      .map((part: string) => part.trim())
+      .find((part: string) => part.includes("ct-admin.session_token="))
       ?.split(";")[0] ?? "";
   const me = cookie ? await app.request("/api/me", { headers: { cookie } }) : null;
   const csrf = me?.ok ? ((await me.json()) as { csrfToken: string }).csrfToken : "";

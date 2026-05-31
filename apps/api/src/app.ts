@@ -42,7 +42,8 @@ import {
   UsersResponseSchema,
   type z,
 } from "@cool-tunnel/shared";
-import { type Context, Hono, type MiddlewareHandler } from "hono";
+import { createRoute, OpenAPIHono, z as zOA } from "@hono/zod-openapi";
+import type { Context, MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 import { type AuthInstance, type CurrentSession, createAuth, getCurrentSession } from "./auth";
 import { type BoundaryResult, type CoreAction, isCoreAction, runCoreAction } from "./core-boundary";
@@ -61,11 +62,99 @@ export interface ApiAppOptions {
 }
 
 export interface ApiApp {
-  readonly app: Hono<{ Variables: Vars }>;
+  readonly app: OpenAPIHono<{ Variables: Vars }>;
   readonly auth: AuthInstance;
   readonly store: AdminStore;
   readonly config: AdminConfig;
 }
+
+// ── OpenAPI route declarations ───────────────────────────────────────────
+//
+// Routes declared with createRoute() appear in the build-time openapi.json
+// release asset (see scripts/generate-openapi.ts + the openapi-bundle
+// release job). Routes registered via plain app.get/app.post stay
+// undocumented — opt-in pattern, incremental migration.
+//
+// Inline schemas here are appropriate for the v0.7.2 first-endpoint
+// scope. Promote stable schemas to @cool-tunnel/shared when more
+// endpoints reference the same shape.
+
+const SubscriptionProtocolSchema = zOA
+  .object({
+    type: zOA.literal("vless_reality"),
+    host: zOA.string(),
+    port: zOA.number().int(),
+    flow: zOA.string(),
+    security: zOA.string(),
+  })
+  .openapi("SubscriptionProtocol");
+
+const SubscriptionProfileSchema = zOA
+  .object({
+    host: zOA.string(),
+    port: zOA.number().int(),
+    username: zOA.string(),
+    uuid: zOA.string().uuid(),
+    label: zOA.string(),
+    client_defaults: zOA.object({ local_port: zOA.number().int() }),
+    protocols: zOA.array(SubscriptionProtocolSchema),
+    reality: zOA.object({
+      public_key: zOA.string(),
+      dest_host: zOA.string(),
+      short_id: zOA.string(),
+    }),
+  })
+  .openapi("SubscriptionProfile");
+
+const SubscriptionResponseSchema = zOA
+  .object({
+    version: zOA.literal(2),
+    server: zOA.string(),
+    profiles: zOA.array(SubscriptionProfileSchema),
+    capabilities: zOA.object({
+      anti_tracking: zOA.array(zOA.string()),
+      http3: zOA.boolean(),
+    }),
+    issued_at: zOA.number().int(),
+    expires_at: zOA.number().int(),
+    signature: zOA.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .openapi("SubscriptionResponse");
+
+const SUBSCRIPTION_ROUTE = createRoute({
+  method: "get",
+  path: "/api/v1/subscription/{token}",
+  tags: ["Subscription"],
+  summary: "Fetch a client's signed subscription manifest",
+  description:
+    "Public, unauthenticated endpoint. The token is an HMAC-signed, per-account, non-enumerable identifier. On a miss (invalid token, disabled account, expired account, missing Reality config) the response is the cover-site HTML at the same URL — indistinguishable from 'no such resource' to a probing client. On a hit, returns the signed JSON manifest the client renders into a sing-box config.",
+  request: {
+    params: zOA.object({
+      // No min/regex constraint: ANY token shape (wrong-length, wrong-format,
+      // empty) must produce the same cover-site response as a well-shaped
+      // token that doesn't resolve. Enforcing a shape here would leak
+      // "wrong format vs wrong value" via 400-vs-200 — defeating the
+      // probe-resistance design of the cover-site fallback.
+      token: zOA.string().openapi({
+        param: { name: "token", in: "path" },
+        description: "Opaque subscription token; HMAC-signed, per-account",
+        example: "abc123def4567890abcdef0123456789abcdef0123456789abcdef0123456789",
+      }),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Signed subscription manifest",
+      content: {
+        "application/json": { schema: SubscriptionResponseSchema },
+      },
+    },
+    404: {
+      description:
+        "Token missed (cover-site HTML returned; status is 200 in practice but documented here for clarity)",
+    },
+  },
+});
 
 class HttpError extends Error {
   constructor(
@@ -121,7 +210,11 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   const auth = options.auth ?? createAuth(options.config);
   const store = options.store;
   store.ensureDefaults(options.config);
-  const app = new Hono<{ Variables: Vars }>();
+  // OpenAPIHono extends Hono — every existing app.get/post/use etc.
+  // continues to work unchanged. The .openapi() method (added in v0.7.2,
+  // Learning #11) lets opt-in routes declare their schema for the
+  // build-time openapi.json release asset; see scripts/generate-openapi.ts.
+  const app = new OpenAPIHono<{ Variables: Vars }>();
 
   app.use("*", async (c, next) => {
     c.set("store", store);
@@ -255,7 +348,11 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     }
   });
 
-  app.get("/api/v1/subscription/:token", async (c) => subscriptionResponse(c, store));
+  // PUBLIC subscription endpoint — documented via @hono/zod-openapi so it
+  // appears in the build-time openapi.json release asset (Learning #11,
+  // v0.7.2). Schema is inlined for the v0.7.2 first-endpoint demo; future
+  // documented endpoints can promote shared schemas to @cool-tunnel/shared.
+  app.openapi(SUBSCRIPTION_ROUTE, async (c) => subscriptionResponse(c, store));
 
   app.use("/api/*", requireSession(auth));
   app.use("/api/*", requireApiCsrf(options.config));
