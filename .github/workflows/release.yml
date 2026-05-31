@@ -150,6 +150,7 @@ jobs:
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
+          draft: true  # only finalize is allowed to un-draft; see comments at top
           tag_name: ${{ github.ref_name }}
           files: |
             operator/bin/ct-operator-*
@@ -158,6 +159,7 @@ jobs:
       - name: Upload core artifacts to release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
+          draft: true  # only finalize is allowed to un-draft; see comments at top
           tag_name: ${{ github.ref_name }}
           files: |
             operator/bin/singbox-core-*
@@ -191,6 +193,7 @@ jobs:
       - name: Upload openapi.json to release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
+          draft: true  # only finalize is allowed to un-draft; see comments at top
           tag_name: ${{ github.ref_name }}
           files: apps/api/dist/openapi.json
 
@@ -254,6 +257,7 @@ jobs:
       - name: Upload runtime plugins to server release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
+          draft: true  # only finalize is allowed to un-draft; see comments at top
           tag_name: ${{ github.ref_name }}
           files: |
             runtime/sing-box-*-darwin-universal
