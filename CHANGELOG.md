@@ -14,6 +14,17 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.6.4] - 2026-05-31 - Doctor + operator know about the 5th container
+
+### Fixed
+
+- **`ct doctor` now counts the `docker-proxy` container** (it was undercounting
+  4/5 since v0.6.0 when the allowlist-only Docker-socket forwarder was added).
+  Same fix landed across `ct install` / `ct update` / `ct auto-update` /
+  `ct help` so every operator surface reports a consistent 5-service stack.
+
+---
+
 ## [0.6.3] - 2026-05-31 - Admin-panel layout fix + tighter audit redaction
 
 ### Fixed
@@ -12059,7 +12070,8 @@ This release was retired in favour of v0.0.2 once the unmaintained-
 forwardproxy concern surfaced. Tag is preserved for archaeological
 purposes; do not deploy v0.0.1.
 
-[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/coo1white/cool-tunnel-server/compare/v0.6.0...v0.6.1
