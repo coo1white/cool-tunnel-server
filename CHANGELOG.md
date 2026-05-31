@@ -14,6 +14,47 @@ before relying on a version bump as a compatibility signal.
 
 ---
 
+## [0.7.2] - 2026-06-01 - OpenAPI 3.1 spec as a release asset
+
+### Added
+
+- **`@hono/zod-openapi`** integration on the admin API. The Hono app
+  now extends `OpenAPIHono` (drop-in extension — every existing route
+  works unchanged); routes opt in to OpenAPI documentation via
+  `.openapi(createRoute(...), handler)`.
+- First documented endpoint: `GET /api/v1/subscription/{token}` with
+  full schema for the signed manifest response.
+- **`scripts/generate-openapi.ts`** — build-time spec emitter. Loads
+  the API with a stub config + in-memory migrated DB, calls
+  `app.getOpenAPI31Document(...)`, writes JSON to disk.
+- **`pnpm run openapi:build`** — runs the generator. Output goes to
+  `apps/api/dist/openapi.json` by default.
+- **New `openapi-bundle` release job** parallel to `operator`. Builds
+  the spec, attests via `actions/attest-build-provenance@v4.1.0`,
+  uploads `openapi.json` to the draft release.
+- `openapi.json` added to the BOM in `manifests/release-assets.json`;
+  the finalize gate requires it.
+
+### Standing decisions (documented in Learning:-11-openapi)
+
+- **Build-time only — NO runtime `/openapi.json` endpoint.** Exposing
+  the API surface to unauthenticated callers would defeat the cover-site
+  probe-resistance design on the subscription endpoint.
+- **No Swagger UI** — same reason.
+- **Keep `core/ct-protocol` Rust crate** as the Swift client's
+  wire-types source of truth. OpenAPI doesn't replace it; the
+  `openapi.json` is for any HTTP-only integration that prefers
+  schema-first.
+- **Incremental migration** — opt routes in via `.openapi()` as needed.
+  Plain `app.get`/`app.post` stays available for everything else.
+- **NO `min`/`regex` on the token path-param.** Enforcing shape would
+  return 400 for malformed tokens, leaking "wrong format vs wrong
+  value" through status codes — defeating the cover-site fallback's
+  probe resistance. The schema documents the intended shape via
+  `example` only.
+
+---
+
 ## [0.7.1] - 2026-06-01 - Intercepting + parallel routes for /users/<id>
 
 ### Added
