@@ -7,9 +7,12 @@
 // flow lives in TwoFactorPanel (a client component so the multi-step
 // wizard can hold state).
 
+import Link from "next/link";
 import { getSession } from "../../src/api";
 import { TwoFactorPanel } from "../../src/two-factor-panel";
 import { AdminShell, StatusPill } from "../../src/ui";
+
+export const metadata = { title: "My Account" };
 
 export default async function MePage() {
   const session = await getSession();
@@ -54,6 +57,16 @@ export default async function MePage() {
           path if you lose your device.
         </p>
         <TwoFactorPanel enabled={u.twoFactorEnabled} />
+      </section>
+
+      <section className="card" style={{ marginTop: 16 }}>
+        <h2>Active sessions</h2>
+        <p className="muted" style={{ marginBottom: 12 }}>
+          See all sign-ins currently active on your account.
+        </p>
+        <Link className="btn secondary" href="/me/sessions">
+          View sessions
+        </Link>
       </section>
     </AdminShell>
   );

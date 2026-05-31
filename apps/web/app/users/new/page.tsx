@@ -5,6 +5,8 @@ import { createUserAction } from "../../../src/actions";
 import { getSession, has } from "../../../src/api";
 import { AdminShell, PermissionDenied } from "../../../src/ui";
 
+export const metadata = { title: "New User" };
+
 export default async function NewUserPage() {
   const session = await getSession();
   return (

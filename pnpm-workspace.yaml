@@ -4,4 +4,7 @@ packages:
   - "operator"
   - "singbox-core"
 allowBuilds:
+  '@prisma/engines': true
+  better-sqlite3: true
+  prisma: true
   sharp: true

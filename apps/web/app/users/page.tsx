@@ -6,6 +6,8 @@ import { getSession, has, listProxyAccounts, listUsers } from "../../src/api";
 import { ProxyAccounts } from "../../src/proxy-accounts";
 import { AdminShell, PermissionDenied, StatusPill } from "../../src/ui";
 
+export const metadata = { title: "Users" };
+
 export default async function UsersPage() {
   const session = await getSession();
   const [users, accounts] = await Promise.all([

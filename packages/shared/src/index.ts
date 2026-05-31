@@ -280,6 +280,23 @@ export const MeResponseSchema = z.object({
   permissions: z.array(PermissionSchema),
   csrfToken: z.string(),
 });
+
+// /api/me/sessions — added in v0.8.0 (Learning #7+#9) as the first
+// Prisma-backed endpoint. Lists the active sessions for the current
+// session principal. Read-only; no auth claims beyond the existing
+// session cookie.
+export const MySessionSchema = z.object({
+  id: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  ipAddress: z.string().nullable(),
+  userAgent: z.string().nullable(),
+  current: z.boolean(),
+});
+export type MySession = z.infer<typeof MySessionSchema>;
+export const MySessionsResponseSchema = z.object({
+  sessions: z.array(MySessionSchema),
+});
 export const UsersResponseSchema = z.object({ users: z.array(AdminUserSchema) });
 export const UserResponseSchema = z.object({ user: AdminUserSchema });
 export const ProxyAccountsResponseSchema = z.object({ accounts: z.array(ProxyAccountSchema) });

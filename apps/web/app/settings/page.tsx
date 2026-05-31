@@ -5,6 +5,8 @@ import { updateSettingsAction } from "../../src/actions";
 import { getSession, getSettings, has } from "../../src/api";
 import { AdminShell, PermissionDenied } from "../../src/ui";
 
+export const metadata = { title: "Settings" };
+
 export default async function SettingsPage() {
   const session = await getSession();
   const settings = await getSettings();
