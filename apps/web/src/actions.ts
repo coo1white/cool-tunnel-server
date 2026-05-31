@@ -124,6 +124,41 @@ export async function revealSubscriptionAction(id: string): Promise<{ ok: boolea
   }
 }
 
+// Imperative server action for user-management buttons (Disable / Enable /
+// Reset password / Delete). Mirrors `proxyCommand`: the command is passed
+// explicitly so a shared multi-button form can't drop the submitter name,
+// and the client renders feedback in one place to keep the buttons in a
+// stable row. `password` is required only for `reset-password`.
+export async function userCommand(
+  id: string,
+  command: string,
+  password?: string,
+): Promise<ActionState> {
+  try {
+    if (command === "delete") {
+      await apiMutation(`/api/users/${encodeURIComponent(id)}`, {}, "DELETE");
+    } else if (command === "reset-password") {
+      await apiMutation(`/api/users/${encodeURIComponent(id)}/reset-password`, {
+        password: password ?? "",
+      });
+    } else {
+      await apiMutation(`/api/users/${encodeURIComponent(id)}/${encodeURIComponent(command)}`);
+    }
+  } catch (error) {
+    return stateError(error);
+  }
+  revalidatePath("/users");
+  revalidatePath(`/users/${id}`);
+  if (command === "delete") redirect("/users");
+  const message =
+    command === "reset-password"
+      ? "Temporary password set."
+      : command === "delete"
+      ? "User deleted."
+      : "User updated.";
+  return { ok: true, message };
+}
+
 // Imperative server action: the command is passed explicitly (no form
 // submitter), so it can't be dropped the way a shared multi-button form did,
 // and the client renders feedback in one place to keep the buttons in a

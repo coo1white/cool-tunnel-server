@@ -273,6 +273,58 @@ h2 {
   gap: 8px;
 }
 
+/* ---- Form action bar ----------------------------------------------------- */
+/* .form is `display: grid`, so a bare <button> stretches to the column.
+   Wrap submit buttons in .form-actions so they stay button-sized.          */
+.form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+/* ---- User-detail Actions row -------------------------------------------- */
+/* Three peers in one row: [Disable] | [pw input + Reset password] | [Delete].
+   The reset group keeps its input and button visually grouped; on narrow
+   widths the row wraps and the reset group fills available width.          */
+.user-actions {
+  align-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.user-actions__reset {
+  align-items: center;
+  display: flex;
+  flex: 1 1 320px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.user-actions__reset input {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  flex: 1 1 auto;
+  min-height: 40px;
+  min-width: 0;
+  padding: 9px 12px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.user-actions__reset input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: none;
+}
+
+/* Push the delete button to the far right, away from the destructive
+   accidental-click risk of being next to Reset password.                   */
+.user-actions__delete {
+  margin-left: auto;
+}
+
 /* ---- Buttons ------------------------------------------------------------ */
 .btn {
   align-items: center;

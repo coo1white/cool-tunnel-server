@@ -66,3 +66,29 @@ test("masks object details recursively", () => {
   expect(JSON.stringify(masked)).not.toContain("secret");
   expect(JSON.stringify(masked)).toContain("visible");
 });
+
+test("does not over-redact safe metadata keys whose name contains a SECRETISH word", () => {
+  // Audit entries emit fields like `previousUuidValidUntil` (a timestamp)
+  // and `tokenFingerprint` (a one-way hashed correlation handle) alongside
+  // real secrets. The key-substring redactor matches "uuid"/"token" inside
+  // those names, but the values are not secret — the allowlist of safe
+  // suffixes keeps them visible.
+  const masked = maskSensitive({
+    username: "test1",
+    previousUuidValidUntil: "2026-05-31T03:55:00.000Z",
+    // Low-entropy hex so gitleaks' generic-api-key rule doesn't fire on a
+    // synthetic test value. A real fingerprint is the first 16 hex chars of
+    // a SHA-256, which has similar shape; the value isn't a credential.
+    tokenFingerprint: "0000000000000000",
+    uuidUpdatedAt: "2026-05-31T03:55:00.000Z",
+    // Real secrets still get redacted:
+    uuid: "00112233-4455-6677-8899-aabbccddeeff",
+    subscriptionUrl: "https://x/api/v1/subscription/SECRET-TOKEN",
+  });
+  const json = JSON.stringify(masked);
+  expect(json).toContain("2026-05-31T03:55:00.000Z");        // timestamp visible
+  expect(json).toContain("0000000000000000");                 // fingerprint visible
+  expect(json).toContain("test1");                            // username visible
+  expect(json).not.toContain("00112233-4455-6677-8899");      // uuid still redacted
+  expect(json).not.toContain("SECRET-TOKEN");                 // subscriptionUrl still redacted
+});
