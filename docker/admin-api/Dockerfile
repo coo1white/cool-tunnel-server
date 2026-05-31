@@ -17,6 +17,11 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/security/package.json packages/security/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/db/package.json packages/db/package.json
+# The packages/db postinstall hook runs `prisma generate`, which needs
+# the schema file present BEFORE install. Copy prisma/ + the config
+# file alongside the package.json so the postinstall succeeds.
+COPY packages/db/prisma packages/db/prisma
+COPY packages/db/prisma.config.ts packages/db/prisma.config.ts
 RUN pnpm install --frozen-lockfile
 
 COPY apps/api apps/api
