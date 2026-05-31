@@ -6,6 +6,7 @@ import { AdminStore, migrateAdminDb, openAdminDb } from "@cool-tunnel/db";
 import { redactSensitive } from "@cool-tunnel/security";
 import { createApiApp } from "./app";
 import { createAuth } from "./auth";
+import { createJobRuntime, scheduleDefaultJobs } from "./jobs/queue";
 
 export async function serveAdminApi(
   env: Record<string, string | undefined> = process.env,
@@ -25,6 +26,30 @@ export async function serveAdminApi(
   process.stderr.write(
     redactSensitive(`ct admin API listening on ${config.host}:${config.port}\n`),
   );
+
+  // BullMQ runtime: spawn worker + register the default scheduled
+  // jobs (audit-log retention today; future jobs added in jobs/queue.ts).
+  // Errors here MUST NOT crash the server — admin-api stays up even if
+  // Redis is briefly unreachable; BullMQ + ioredis handle reconnection.
+  try {
+    const jobs = createJobRuntime({ config, store });
+    await scheduleDefaultJobs(jobs, config);
+    process.stderr.write(redactSensitive(`ct admin jobs ready (redis: ${config.redisUrl})\n`));
+    const shutdown = async () => {
+      await jobs.close();
+      process.exit(0);
+    };
+    process.once("SIGTERM", shutdown);
+    process.once("SIGINT", shutdown);
+  } catch (err) {
+    process.stderr.write(
+      redactSensitive(
+        `[jobs] startup failed (server stays up; scheduled jobs WILL NOT run): ${
+          err instanceof Error ? err.message : String(err)
+        }\n`,
+      ),
+    );
+  }
 }
 
 if (import.meta.main) {

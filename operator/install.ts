@@ -72,10 +72,10 @@ async function renderInitialConfig(): Promise<void> {
 async function startStack(): Promise<void> {
   step("Start Cool Tunnel stack");
   const up = await capture(
-    $`docker compose up -d --no-build --pull never --remove-orphans admin-api admin-web singbox caddy docker-proxy`,
+    $`docker compose up -d --no-build --pull never --remove-orphans admin-api admin-web singbox caddy docker-proxy redis`,
   );
   if (!up.ok) die("compose up failed", up.stderr.split("\n").slice(0, 5).join("\n"));
-  ok("admin-api, admin-web, singbox, caddy, and docker-proxy started");
+  ok("admin-api, admin-web, singbox, caddy, docker-proxy, and redis started");
 }
 
 export function renderScript(action: "render-caddyfile" | "render-singbox"): string {

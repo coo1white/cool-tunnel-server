@@ -669,7 +669,7 @@ async function checkSingboxDirectStrategy(_c: CheckCtx): Promise<CheckLine> {
 }
 
 async function checkContainerHealth(_c: CheckCtx): Promise<CheckLine> {
-  const services = ["admin-api", "admin-web", "caddy", "singbox", "docker-proxy"];
+  const services = ["admin-api", "admin-web", "caddy", "singbox", "docker-proxy", "redis"];
   const ps = await capture($`docker compose ps --format json`);
   if (!ps.ok || !ps.stdout.trim()) {
     return {

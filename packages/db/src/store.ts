@@ -349,6 +349,19 @@ export class AdminStore {
       .run(nowIso());
   }
 
+  /**
+   * Deletes audit_log rows whose createdAt is older than `cutoffIso`.
+   * Returns the number of rows deleted. Used by the BullMQ audit
+   * retention job (apps/api/src/jobs/audit-retention.ts) and exposed
+   * here so the SQL stays in the audited write-path layer.
+   *
+   * Called daily by default; safe to call manually for ad-hoc cleanup.
+   */
+  pruneAuditLogOlderThan(cutoffIso: string): number {
+    const result = this.db.query("DELETE FROM audit_log WHERE createdAt < ?").run(cutoffIso);
+    return Number((result as { changes?: number | bigint }).changes ?? 0);
+  }
+
   listProxyAccounts(): ProxyAccount[] {
     return this.db
       .query<Record<string, unknown>, []>("SELECT * FROM proxy_account ORDER BY createdAt DESC")
