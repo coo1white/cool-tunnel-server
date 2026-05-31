@@ -1,5 +1,38 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 
+/* Tailwind v4 — pulls in preflight + utilities. Existing custom CSS
+   below is preserved; new shadcn primitives sit alongside the existing
+   .btn/.card/.field classes. Incremental migration, not a big-bang. */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Bridge our design tokens into Tailwind's CSS-first config so shadcn
+   primitives can read them via class utilities (bg-surface, text-text,
+   border-line, etc.). The @theme block is Tailwind v4's replacement
+   for tailwind.config.js — colors here become utility classes
+   automatically. */
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
 /* ---- Theme tokens -------------------------------------------------------
    Light is the default. Dark applies when the OS prefers it (unless the user
    forced light) or when the user explicitly chose dark via the toggle, which

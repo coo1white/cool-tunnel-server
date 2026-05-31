@@ -3,8 +3,9 @@
 "use client";
 
 import type { ProxyAccount } from "@cool-tunnel/shared";
-import { Check, Copy, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { Check, Copy, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useActionState, useEffect, useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { createProxyAccountAction, proxyCommand, revealSubscriptionAction } from "./actions";
 import type { ActionState } from "./api";
 import { Notice, StatusPill } from "./components";
@@ -98,43 +99,40 @@ function ProxyRowActions({ account }: { account: ProxyAccount }) {
   );
 }
 
-function CreateModal({ onClose }: { onClose: () => void }) {
+function CreateModal({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [state, action] = useActionState<ActionState, FormData>(createProxyAccountAction, {
     ok: true,
     message: "",
   });
   useEffect(() => {
-    if (state.ok && state.message) onClose();
-  }, [state, onClose]);
+    if (state.ok && state.message) onOpenChange(false);
+  }, [state, onOpenChange]);
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: modal backdrop click-to-dismiss; inner dialog has role+aria-modal and keyboard close via the explicit Close button
-    <div className="modal-overlay" onClick={onClose} role="presentation">
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="New proxy account"
-      >
-        <div className="modal-head">
-          <h2>New proxy account</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
-        </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>New proxy account</DialogTitle>
+        </DialogHeader>
         <form className="form" action={action}>
           <div className="grid cols-3">
             <div className="field">
-              <label>Username</label>
-              <input name="username" required />
+              <label htmlFor="proxy-create-username">Username</label>
+              <input id="proxy-create-username" name="username" required />
             </div>
             <div className="field">
-              <label>Label</label>
-              <input name="label" />
+              <label htmlFor="proxy-create-label">Label</label>
+              <input id="proxy-create-label" name="label" />
             </div>
             <div className="field">
-              <label>Local port</label>
+              <label htmlFor="proxy-create-port">Local port</label>
               <input
+                id="proxy-create-port"
                 name="clientDefaultLocalPort"
                 type="number"
                 defaultValue="1080"
@@ -145,8 +143,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="grid cols-3">
             <div className="field">
-              <label>Expires at</label>
-              <input name="expiresAt" type="datetime-local" />
+              <label htmlFor="proxy-create-expires">Expires at</label>
+              <input id="proxy-create-expires" name="expiresAt" type="datetime-local" />
             </div>
             <label className="checkbox">
               <input name="enabled" type="checkbox" defaultChecked /> Enabled
@@ -157,8 +155,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           </div>
           <Notice state={state} />
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -262,7 +260,7 @@ export function ProxyAccounts({
         </div>
       )}
 
-      {creating && <CreateModal onClose={() => setCreating(false)} />}
+      <CreateModal open={creating} onOpenChange={setCreating} />
     </section>
   );
 }
