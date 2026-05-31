@@ -453,3 +453,32 @@ test("release stays a draft until every BOM asset is present, then publishes + m
     expect(bom.assets).toContain(a);
   }
 });
+
+test("Caddyfile routes panel always + bare-domain landing behind CT_LANDING_PAGE", async () => {
+  const tpl = await Bun.file(repoPath("caddy/Caddyfile.tpl")).text();
+
+  // Panel SNI → inner admin site is unconditional.
+  expect(tpl).toContain("sni {{ .PanelDomain }}");
+  expect(tpl).toContain("proxy 127.0.0.1:8443");
+
+  // The bare-domain SNI route + landing site (its own cert) are gated behind
+  // the CT_LANDING_PAGE flag, so they only render when opted in.
+  expect(tpl).toContain("{{ if .LandingPage }}");
+  expect(tpl).toContain("{{ end }}");
+  expect(tpl).toContain("sni {{ .Domain }}");
+  expect(tpl).toContain("proxy 127.0.0.1:8444");
+  expect(tpl).toContain("https://{{ .Domain }}:8444 {");
+  expect(tpl).toContain("respond `<!doctype html>");
+
+  // The landing route opens AFTER the conditional marker — i.e. it lives
+  // inside the gated block, not unconditionally.
+  expect(tpl.indexOf("@site_sni")).toBeGreaterThan(tpl.indexOf("{{ if .LandingPage }}"));
+
+  // Reality MUST stay the catch-all: real clients arrive with the
+  // REALITY_DEST_HOST SNI, so the unmatched route forwards to sing-box.
+  // Both named SNI routes must precede the catch-all, or panel/landing
+  // traffic would be swallowed by Reality.
+  const proxyToSingbox = tpl.indexOf("proxy ct-singbox:443");
+  expect(proxyToSingbox).toBeGreaterThan(tpl.indexOf("sni {{ .PanelDomain }}"));
+  expect(proxyToSingbox).toBeGreaterThan(tpl.indexOf("sni {{ .Domain }}"));
+});

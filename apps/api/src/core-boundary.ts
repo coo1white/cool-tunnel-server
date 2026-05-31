@@ -225,12 +225,16 @@ async function renderCaddyfile(config: AdminConfig, store: AdminStore): Promise<
   const templatePath = validateSafePath(config.caddyfileTemplate, "CADDYFILE_TEMPLATE");
   const outputPath = validateSafePath(config.caddyfilePath, "CADDYFILE_PATH");
   const template = await Bun.file(templatePath).text();
-  const body = renderTemplate(template, {
-    Domain: settings.domain,
-    PanelDomain: settings.panelDomain,
-    AcmeEmail: settings.acmeEmail,
-    AcmeDirectory: settings.acmeDirectory,
-  });
+  const body = renderTemplate(
+    template,
+    {
+      Domain: settings.domain,
+      PanelDomain: settings.panelDomain,
+      AcmeEmail: settings.acmeEmail,
+      AcmeDirectory: settings.acmeDirectory,
+    },
+    { LandingPage: config.landingPageEnabled },
+  );
   mkdirSync(dirname(outputPath), { recursive: true, mode: 0o755 });
   const previous = await Bun.file(outputPath)
     .text()
@@ -251,13 +255,32 @@ async function renderCaddyfile(config: AdminConfig, store: AdminStore): Promise<
   };
 }
 
-function renderTemplate(template: string, bindings: Record<string, string>): string {
+export function renderTemplate(
+  template: string,
+  bindings: Record<string, string>,
+  flags: Record<string, boolean> = {},
+): string {
   let body = template;
+  // Resolve `{{ if .Flag }} … {{ end }}` blocks first, so string
+  // substitution never runs on an excluded branch (e.g. {{ .Domain }}
+  // inside a disabled landing-page block).
+  for (const [key, on] of Object.entries(flags)) {
+    body = applyConditional(body, key, on);
+  }
   for (const [key, value] of Object.entries(bindings)) {
     caddyfileValidate(key, value);
     body = body.replaceAll(`{{ .${key} }}`, value);
   }
   return body;
+}
+
+// Minimal block conditional: the `{{ if .Flag }}` and `{{ end }}` markers each
+// sit on their own line. Removing the marker lines (and, when off, everything
+// between them) leaves no stray blank lines. No nesting and no else-branch —
+// that is all the Caddyfile template needs.
+function applyConditional(body: string, key: string, on: boolean): string {
+  const block = new RegExp(`\\{\\{ if \\.${key} \\}\\}\\n([\\s\\S]*?)\\{\\{ end \\}\\}\\n`, "g");
+  return body.replace(block, on ? "$1" : "");
 }
 
 function caddyfileValidate(key: string, value: string): void {

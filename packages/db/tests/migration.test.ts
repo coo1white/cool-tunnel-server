@@ -41,6 +41,7 @@ test("proxy account UUID rotates with previous UUID grace", () => {
     realityPublicKey: "B".repeat(43),
     realityDestHost: "www.microsoft.com",
     realityShortIds: [""],
+    landingPageEnabled: false,
     antiTrackingDohResolver: "https://dns.alidns.com/dns-query",
     version: "0.6.4",
     redisUrl: "redis://localhost:6379",

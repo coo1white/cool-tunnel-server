@@ -54,6 +54,7 @@ function stubConfig(): AdminConfig {
     realityPublicKey: "",
     realityDestHost: "",
     realityShortIds: [],
+    landingPageEnabled: false,
     antiTrackingDohResolver: "",
     version: process.env.npm_package_version ?? "0.0.0",
     redisUrl: "redis://openapi.example:6379",
