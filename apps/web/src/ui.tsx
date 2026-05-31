@@ -16,6 +16,7 @@ const nav: { href: string; label: string; icon: NavIcon; permission: Permission 
   { href: "/settings", label: "Settings", icon: "settings", permission: "settings:read" },
   { href: "/status", label: "Status", icon: "status", permission: "status:read" },
   { href: "/audit", label: "Audit", icon: "audit", permission: "audit:read" },
+  { href: "/me", label: "My Account", icon: "me", permission: "dashboard:read" },
 ];
 
 export async function AdminShell({

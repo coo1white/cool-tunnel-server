@@ -181,6 +181,21 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Two-factor authentication (better-auth twoFactor plugin schema mirror).
+-- Each row holds one user's TOTP secret + serialized backup codes.
+-- 'verified' is true once the user has confirmed the first 6-digit code
+-- during enrollment. Cascade deletes when the user is deleted.
+-- See Learning:-14-better-auth for the enrollment + login flow.
+CREATE TABLE IF NOT EXISTS twoFactor (
+  id TEXT PRIMARY KEY,
+  userId TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  secret TEXT NOT NULL,
+  backupCodes TEXT NOT NULL,
+  verified INTEGER NOT NULL DEFAULT 1 CHECK (verified IN (0,1))
+);
+CREATE INDEX IF NOT EXISTS twoFactor_userId_idx ON twoFactor(userId);
+CREATE INDEX IF NOT EXISTS twoFactor_secret_idx ON twoFactor(secret);
 `);
   addColumnIfMissing(db, "user", "username", "TEXT");
   addColumnIfMissing(db, "user", "role", "TEXT NOT NULL DEFAULT 'viewer'");
@@ -188,6 +203,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   addColumnIfMissing(db, "user", "mustChangePassword", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "user", "lastLoginAt", "TEXT");
   addColumnIfMissing(db, "user", "disabledAt", "TEXT");
+  addColumnIfMissing(db, "user", "twoFactorEnabled", "INTEGER NOT NULL DEFAULT 0");
   db.exec(
     "UPDATE user SET username = lower(substr(email, 1, instr(email || '@', '@') - 1)) WHERE username IS NULL OR username = ''",
   );

@@ -2,7 +2,7 @@
 
 "use client";
 
-import { Activity, ClipboardList, Gauge, Settings, Users } from "lucide-react";
+import { Activity, ClipboardList, Gauge, Settings, User, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -15,6 +15,7 @@ const ICONS = {
   settings: Settings,
   status: Activity,
   audit: ClipboardList,
+  me: User,
 } as const;
 
 export type NavIcon = keyof typeof ICONS;

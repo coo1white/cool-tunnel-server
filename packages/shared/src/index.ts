@@ -27,6 +27,7 @@ export const AdminUserSchema = z.object({
   role: AdminRoleSchema,
   status: UserStatusSchema,
   mustChangePassword: z.boolean(),
+  twoFactorEnabled: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastLoginAt: z.string().nullable(),
@@ -270,6 +271,7 @@ export const SessionUserSchema = z.object({
   role: AdminRoleSchema,
   status: UserStatusSchema,
   mustChangePassword: z.boolean(),
+  twoFactorEnabled: z.boolean(),
 });
 export type SessionUser = z.infer<typeof SessionUserSchema>;
 
@@ -291,4 +293,4 @@ export const DEFAULT_REALITY_DEST_HOST = "www.microsoft.com";
 export const DEFAULT_ACME_DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory";
 export const DEFAULT_DOH_RESOLVER = "https://dns.alidns.com/dns-query";
 export const RELEASE_VERSION = "0.6.4";
-export const REQUIRED_SCHEMA_VERSION = 5;
+export const REQUIRED_SCHEMA_VERSION = 6;

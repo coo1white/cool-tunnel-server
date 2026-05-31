@@ -5,6 +5,7 @@ import { openAdminDb } from "@cool-tunnel/db";
 import { hashPassword, redactSensitive, verifyPassword } from "@cool-tunnel/security";
 import { type AdminRole, requireRole } from "@cool-tunnel/shared";
 import { betterAuth } from "better-auth";
+import { twoFactor } from "better-auth/plugins";
 
 export type AuthInstance = ReturnType<typeof createAuth>;
 
@@ -22,6 +23,7 @@ export interface CurrentSession {
     readonly role: AdminRole;
     readonly status: "active" | "disabled";
     readonly mustChangePassword: boolean;
+    readonly twoFactorEnabled: boolean;
   };
   readonly session: Record<string, unknown>;
 }
@@ -35,6 +37,21 @@ export function createAuth(config: AdminConfig) {
     basePath: "/api/auth",
     trustedOrigins: [...config.trustedOrigins],
     telemetry: { enabled: false },
+    // Two-factor authentication via TOTP. Opt-in per-user; mandatory
+    // enforcement (e.g., for owners) is deliberately deferred — see
+    // Learning:-14-better-auth. SMS/email OTP NOT enabled (we don't
+    // run email/SMS infra; that's item #15 territory). Backup codes
+    // ON for lost-phone recovery.
+    plugins: [
+      twoFactor({
+        issuer: config.domain || "Cool Tunnel Admin",
+        skipVerificationOnEnable: false,
+        backupCodeOptions: {
+          amount: 10,
+          length: 8,
+        },
+      }),
+    ],
     emailAndPassword: {
       enabled: true,
       disableSignUp: !config.publicSignup,
@@ -55,6 +72,12 @@ export function createAuth(config: AdminConfig) {
         mustChangePassword: { type: "boolean", required: true, defaultValue: false },
         lastLoginAt: { type: "string", required: false },
         disabledAt: { type: "string", required: false },
+        // Mirrors the twoFactor plugin's user-schema addition so the
+        // field flows into session.user (and onward to CurrentSession,
+        // SessionUser, and the /api/me response). Keeping it here
+        // explicit avoids "is it auto-loaded?" plugin-implementation
+        // questions.
+        twoFactorEnabled: { type: "boolean", required: false, defaultValue: false },
       },
     },
     session: {
@@ -154,6 +177,7 @@ export async function getCurrentSession(
       role: requireRole(rawUser.role ?? "viewer"),
       status,
       mustChangePassword: rawUser.mustChangePassword === true || rawUser.mustChangePassword === 1,
+      twoFactorEnabled: rawUser.twoFactorEnabled === true || rawUser.twoFactorEnabled === 1,
     },
   };
 }

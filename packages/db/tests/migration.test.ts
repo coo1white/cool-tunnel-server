@@ -86,3 +86,32 @@ test("audit details minimize personal and secret fields", () => {
   expect(audit).not.toContain("hash");
   expect(audit).toContain("targetUsername");
 });
+
+test("twoFactor schema (better-auth 2FA plugin) is migrated", () => {
+  const { db } = openAdminDb(":memory:");
+  migrateAdminDb(db);
+
+  // user.twoFactorEnabled column exists with 0 default
+  const userCols = db
+    .query<{ name: string; dflt_value: string | null }, []>("PRAGMA table_info(user)")
+    .all();
+  const twoFaCol = userCols.find((c) => c.name === "twoFactorEnabled");
+  expect(twoFaCol).toBeDefined();
+  expect(twoFaCol?.dflt_value).toBe("0");
+
+  // twoFactor table exists with all 5 expected columns
+  const tfCols = db
+    .query<{ name: string }, []>("PRAGMA table_info(twoFactor)")
+    .all()
+    .map((c) => c.name)
+    .sort();
+  expect(tfCols).toEqual(["backupCodes", "id", "secret", "userId", "verified"]);
+
+  // FK + indexes registered
+  const indexes = db
+    .query<{ name: string }, []>("PRAGMA index_list(twoFactor)")
+    .all()
+    .map((i) => i.name);
+  expect(indexes).toContain("twoFactor_userId_idx");
+  expect(indexes).toContain("twoFactor_secret_idx");
+});

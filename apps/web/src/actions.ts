@@ -4,7 +4,13 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { type ActionState, logout as apiLogout, apiMutation, stateError } from "./api";
+import {
+  type ActionState,
+  logout as apiLogout,
+  apiMutation,
+  betterAuthFetch,
+  stateError,
+} from "./api";
 
 function value(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -265,4 +271,49 @@ export async function runAction(_prev: ActionState, formData: FormData): Promise
   }
   revalidatePath("/status");
   return { ok: true, message: `${command} complete.` };
+}
+
+// ─── Two-factor authentication (better-auth twoFactor plugin) ────────
+// All three actions hit /api/auth/two-factor/* which is mounted by the
+// plugin and bypasses our /api/* CSRF middleware (better-auth handles
+// its own protection via the session cookie). See Learning:-14-better-auth.
+
+export interface EnableTwoFactorResult {
+  ok: boolean;
+  message: string;
+  totpURI?: string;
+  backupCodes?: readonly string[];
+}
+
+export async function enableTwoFactorAction(password: string): Promise<EnableTwoFactorResult> {
+  if (!password) return { ok: false, message: "Enter your password." };
+  const res = await betterAuthFetch<{
+    totpURI?: string;
+    backupCodes?: readonly string[];
+  }>("/api/auth/two-factor/enable", { password });
+  if (!res.ok || !res.data?.totpURI) {
+    return { ok: false, message: "Password did not match." };
+  }
+  return {
+    ok: true,
+    message: "Scan the QR code with your authenticator app.",
+    totpURI: res.data.totpURI,
+    backupCodes: res.data.backupCodes ?? [],
+  };
+}
+
+export async function verifyEnrollTotpAction(code: string): Promise<ActionState> {
+  if (!code) return { ok: false, message: "Enter the 6-digit code." };
+  const res = await betterAuthFetch("/api/auth/two-factor/verify-totp", { code });
+  if (!res.ok) return { ok: false, message: "Incorrect code. Try again." };
+  revalidatePath("/me");
+  return { ok: true, message: "Two-factor authentication enabled." };
+}
+
+export async function disableTwoFactorAction(password: string): Promise<ActionState> {
+  if (!password) return { ok: false, message: "Enter your password to confirm." };
+  const res = await betterAuthFetch("/api/auth/two-factor/disable", { password });
+  if (!res.ok) return { ok: false, message: "Password did not match." };
+  revalidatePath("/me");
+  return { ok: true, message: "Two-factor authentication disabled." };
 }

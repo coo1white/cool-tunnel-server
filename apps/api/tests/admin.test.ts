@@ -1007,3 +1007,26 @@ test("login throttle locks a sprayed account across rotating source IPs", async 
     closeFixture(f);
   }
 });
+
+test("2FA: the better-auth twoFactor plugin endpoints are reachable", async () => {
+  // Smoke test for v0.7.3 — confirms the plugin is wired without
+  // attempting a full enrollment flow (TOTP enrollment requires shared
+  // state between requests, which the lighter-weight admin tests don't
+  // model). The full flow is exercised by the web UI in manual smoke.
+  const f = await ownerFixture();
+  try {
+    // The plugin auto-registers under /api/auth/two-factor/*; an
+    // unauthenticated request to enable should get 401 (session required),
+    // NOT 404 (route doesn't exist). The 401 confirms the plugin mounted.
+    const res = await f.app.request("/api/auth/two-factor/enable", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "anything" }),
+    });
+    expect(res.status).not.toBe(404);
+    // Plugin returned a structured error, not a generic Hono 404 page.
+    expect([400, 401, 403]).toContain(res.status);
+  } finally {
+    closeFixture(f);
+  }
+});
