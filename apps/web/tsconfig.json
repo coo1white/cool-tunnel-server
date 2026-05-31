@@ -9,7 +9,15 @@
     ],
     "allowJs": true,
     "incremental": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cool-tunnel/shared": ["../../packages/shared/src/index.ts"],
+      "@cool-tunnel/security": ["../../packages/security/src/index.ts"],
+      "@cool-tunnel/config": ["../../packages/config/src/index.ts"],
+      "@cool-tunnel/db": ["../../packages/db/src/index.ts"],
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
