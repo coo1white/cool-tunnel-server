@@ -2,52 +2,8 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-
-export type Theme = "light" | "dark";
-
-const THEME_STORAGE_KEY = "ct-theme";
-
-/**
- * Reads the persisted theme from `localStorage`, returning `null` for unset
- * or unrecognised values. Pure function — safe to call outside React.
- */
-export function readStoredTheme(storage: Storage = localStorage): Theme | null {
-  try {
-    const value = storage.getItem(THEME_STORAGE_KEY);
-    return value === "dark" || value === "light" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Writes the theme to `localStorage`. Swallows storage errors (private mode,
- * quota, blocked) — the in-memory toggle still applies for the current view.
- */
-export function writeStoredTheme(theme: Theme, storage: Storage = localStorage): void {
-  try {
-    storage.setItem(THEME_STORAGE_KEY, theme);
-  } catch {
-    /* private mode / storage disabled — toggle still applies for this view */
-  }
-}
-
-/**
- * Resolves the effective initial theme by checking, in priority order:
- *   1. `<html data-theme>` (set by the no-FOUC bootstrap script in layout)
- *   2. The persisted `localStorage` value
- *   3. The system preference (`prefers-color-scheme: dark`)
- *
- * Returns `"light"` as a last resort.
- */
-export function resolveInitialTheme(): Theme {
-  const fromHtml = document.documentElement.dataset.theme;
-  if (fromHtml === "dark" || fromHtml === "light") return fromHtml;
-  const stored = readStoredTheme();
-  if (stored) return stored;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
+import { useEffect } from "react";
+import { type Theme, useThemeStore } from "../stores/theme";
 
 /**
  * Reads, writes, and toggles the panel's dark/light theme.
@@ -60,9 +16,14 @@ export function resolveInitialTheme(): Theme {
  * The theme is committed to BOTH `document.documentElement.dataset.theme`
  * (immediate effect on the page) AND `localStorage` (persists across reloads).
  *
- * NOTE: This is set up for a future zustand-backed swap (Learning item #5,
- * v0.6.7). When that lands, the hook signature stays the same; the
- * `useState`/`useEffect` internals are replaced with a zustand store.
+ * SWAP NOTE (v0.6.7): the storage + system-preference helpers and the
+ * stateful machinery moved into a zustand store at `../stores/theme.ts`.
+ * The public shape of this hook is unchanged from v0.6.6 — `theme-toggle.tsx`
+ * needed no edits. Going through a global store rather than per-component
+ * `useState` means a future page that wants to read the theme (e.g., to
+ * colour-match a syntax-highlighted code block) can do so with `useTheme()`
+ * and stay in sync with the toggle button on the nav bar without
+ * prop-drilling.
  */
 export interface UseThemeResult {
   /** Current theme, or `null` during the initial hydration tick. */
@@ -74,27 +35,25 @@ export interface UseThemeResult {
 }
 
 export function useTheme(): UseThemeResult {
-  const [theme, setThemeState] = useState<Theme | null>(null);
+  const theme = useThemeStore((s) => s.theme);
+  const setTheme = useThemeStore((s) => s.setTheme);
+  const toggle = useThemeStore((s) => s.toggle);
+  const hydrate = useThemeStore((s) => s.hydrate);
 
+  // One-shot hydration on mount. The store's `hydrate` is idempotent, so
+  // React Strict Mode's double-invocation in dev is harmless.
   useEffect(() => {
-    setThemeState(resolveInitialTheme());
-  }, []);
-
-  const setTheme = useCallback((next: Theme) => {
-    document.documentElement.dataset.theme = next;
-    writeStoredTheme(next);
-    setThemeState(next);
-  }, []);
-
-  const toggle = useCallback(() => {
-    setThemeState((current) => {
-      if (current === null) return current;
-      const next: Theme = current === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      writeStoredTheme(next);
-      return next;
-    });
-  }, []);
+    hydrate();
+  }, [hydrate]);
 
   return { theme, setTheme, toggle };
 }
+
+// Re-export the storage helpers + Theme type so existing consumers
+// (and tests) that imported them from "./use-theme" keep working.
+export {
+  readStoredTheme,
+  resolveInitialTheme,
+  type Theme,
+  writeStoredTheme,
+} from "../stores/theme";
