@@ -10,7 +10,9 @@ test("Notice renders nothing when there is no message", () => {
 });
 
 test("Notice surfaces a failed action message with the error class", () => {
-  const html = renderToStaticMarkup(<Notice state={{ ok: false, message: "Password must be at least 12 characters." }} />);
+  const html = renderToStaticMarkup(
+    <Notice state={{ ok: false, message: "Password must be at least 12 characters." }} />,
+  );
   expect(html).toContain("Password must be at least 12 characters.");
   expect(html).toContain('class="notice error"');
 });
@@ -22,13 +24,17 @@ test("Notice marks a successful action with the info class", () => {
 });
 
 test("Notice escapes HTML in the message (no injection from API errors)", () => {
-  const html = renderToStaticMarkup(<Notice state={{ ok: false, message: "<img src=x onerror=alert(1)>" }} />);
+  const html = renderToStaticMarkup(
+    <Notice state={{ ok: false, message: "<img src=x onerror=alert(1)>" }} />,
+  );
   expect(html).not.toContain("<img");
   expect(html).toContain("&lt;img");
 });
 
 test("StatusPill encodes the value into its class and text", () => {
-  expect(renderToStaticMarkup(<StatusPill value="active" />)).toBe('<span class="status active">active</span>');
+  expect(renderToStaticMarkup(<StatusPill value="active" />)).toBe(
+    '<span class="status active">active</span>',
+  );
 });
 
 test("PermissionDenied shows the default and custom messages", () => {

@@ -4,10 +4,12 @@
 import { loadAdminConfig } from "@cool-tunnel/config";
 import { AdminStore, migrateAdminDb, openAdminDb } from "@cool-tunnel/db";
 import { redactSensitive } from "@cool-tunnel/security";
-import { createAuth } from "./auth";
 import { createApiApp } from "./app";
+import { createAuth } from "./auth";
 
-export async function serveAdminApi(env: Record<string, string | undefined> = process.env): Promise<void> {
+export async function serveAdminApi(
+  env: Record<string, string | undefined> = process.env,
+): Promise<void> {
   const config = loadAdminConfig(env);
   const { db } = openAdminDb(config.dbPath);
   migrateAdminDb(db);
@@ -20,7 +22,9 @@ export async function serveAdminApi(env: Record<string, string | undefined> = pr
     port: config.port,
     fetch: app.fetch,
   });
-  process.stderr.write(redactSensitive(`ct admin API listening on ${config.host}:${config.port}\n`));
+  process.stderr.write(
+    redactSensitive(`ct admin API listening on ${config.host}:${config.port}\n`),
+  );
 }
 
 if (import.meta.main) {

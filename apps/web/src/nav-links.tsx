@@ -2,9 +2,9 @@
 
 "use client";
 
+import { Activity, ClipboardList, Gauge, Settings, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, ClipboardList, Gauge, Settings, Users } from "lucide-react";
 
 // Icon keys are serializable, so the server shell can filter nav items by
 // permission and hand this client component a plain list (component refs
@@ -27,7 +27,12 @@ export function NavLinks({ items }: { items: { href: string; label: string; icon
         const Icon = ICONS[item.icon];
         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
-          <Link key={item.href} href={item.href} className={active ? "active" : undefined} aria-current={active ? "page" : undefined}>
+          <Link
+            key={item.href}
+            href={item.href}
+            className={active ? "active" : undefined}
+            aria-current={active ? "page" : undefined}
+          >
             <Icon size={18} /> {item.label}
           </Link>
         );

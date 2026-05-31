@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // NOTE: rewrites() is evaluated at BUILD time and frozen into
@@ -18,9 +18,9 @@ const nextConfig = {
     return [
       { source: "/api/:path*", destination: `${apiOrigin}/api/:path*` },
       { source: "/api/v1/:path*", destination: `${apiOrigin}/api/v1/:path*` },
-      { source: "/up", destination: `${apiOrigin}/up` }
+      { source: "/up", destination: `${apiOrigin}/up` },
     ];
-  }
+  },
 };
 
 export default nextConfig;

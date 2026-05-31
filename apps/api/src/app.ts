@@ -1,39 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { createHmac } from "node:crypto";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
-import { getCookie } from "hono/cookie";
 import type { AdminConfig } from "@cool-tunnel/config";
 import {
-  AdminStore,
-  StoreError,
+  type AdminStore,
   type CreateProxyAccountInput,
   type CreateUserInput,
+  StoreError,
   type UpdateUserInput,
 } from "@cool-tunnel/db";
-import type {
-  AdminUser,
-  ApiErrorBody,
-  ApiOk,
-  Permission,
-  ProtocolKey,
-  ServerSettings,
-} from "@cool-tunnel/shared";
-import {
-  AuditResponseSchema,
-  DEFAULT_PROTOCOL_KEYS,
-  MeResponseSchema,
-  ProxyAccountResponseSchema,
-  ProxyAccountsResponseSchema,
-  SettingsResponseSchema,
-  StatusResponseSchema,
-  UserResponseSchema,
-  UsersResponseSchema,
-  canCreateRole,
-  hasPermission,
-  z,
-  type AdminRole,
-} from "@cool-tunnel/shared";
 import {
   constantTimeEqual,
   hashBootstrapToken,
@@ -44,8 +19,33 @@ import {
   validBootstrapTokenShape,
   verifyPassword,
 } from "@cool-tunnel/security";
-import { createAuth, getCurrentSession, type AuthInstance, type CurrentSession } from "./auth";
-import { isCoreAction, runCoreAction, type BoundaryResult, type CoreAction } from "./core-boundary";
+import type {
+  AdminUser,
+  ApiErrorBody,
+  ApiOk,
+  Permission,
+  ProtocolKey,
+  ServerSettings,
+} from "@cool-tunnel/shared";
+import {
+  type AdminRole,
+  AuditResponseSchema,
+  canCreateRole,
+  DEFAULT_PROTOCOL_KEYS,
+  hasPermission,
+  MeResponseSchema,
+  ProxyAccountResponseSchema,
+  ProxyAccountsResponseSchema,
+  SettingsResponseSchema,
+  StatusResponseSchema,
+  UserResponseSchema,
+  UsersResponseSchema,
+  type z,
+} from "@cool-tunnel/shared";
+import { type Context, Hono, type MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
+import { type AuthInstance, type CurrentSession, createAuth, getCurrentSession } from "./auth";
+import { type BoundaryResult, type CoreAction, isCoreAction, runCoreAction } from "./core-boundary";
 import { containerServices } from "./docker";
 
 type Vars = {
@@ -133,8 +133,10 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
 
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
-  app.get("/up", (c) => c.json({ ok: true, service: "ct-admin-api", version: options.config.version }));
-  app.get("/", (c) => redirectNoStore(store.hasOwner() ? "/dashboard" : "/setup"));
+  app.get("/up", (c) =>
+    c.json({ ok: true, service: "ct-admin-api", version: options.config.version }),
+  );
+  app.get("/", (_c) => redirectNoStore(store.hasOwner() ? "/dashboard" : "/setup"));
 
   app.get("/login", (c) => {
     if (new URL(c.req.url).search) return redirectNoStore("/login");
@@ -152,21 +154,26 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     if (!throttle.ok) {
       return loginResponse(c, "Too many sign-in attempts. Wait a minute and try again.", 429);
     }
-    const response = await auth.handler(new Request(`${options.config.baseUrl}/api/auth/sign-in/email`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin: trustedHeaderOrFallback(c.req.header("origin"), options.config.baseUrl),
-        referer: trustedHeaderOrFallback(c.req.header("referer"), `${options.config.baseUrl}/login`),
-        "x-forwarded-for": c.req.header("x-forwarded-for") ?? "",
-        cookie: c.req.header("cookie") ?? "",
-      },
-      body: JSON.stringify({
-        email,
-        password: String(form.get("password") ?? ""),
-        rememberMe: true,
+    const response = await auth.handler(
+      new Request(`${options.config.baseUrl}/api/auth/sign-in/email`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: trustedHeaderOrFallback(c.req.header("origin"), options.config.baseUrl),
+          referer: trustedHeaderOrFallback(
+            c.req.header("referer"),
+            `${options.config.baseUrl}/login`,
+          ),
+          "x-forwarded-for": c.req.header("x-forwarded-for") ?? "",
+          cookie: c.req.header("cookie") ?? "",
+        },
+        body: JSON.stringify({
+          email,
+          password: String(form.get("password") ?? ""),
+          rememberMe: true,
+        }),
       }),
-    }));
+    );
     if (!response.ok) {
       recordFailedLogin(throttle);
       return loginResponse(c, "Sign in failed. Check the email and password.", 401);
@@ -178,38 +185,70 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
       "referrer-policy": "no-referrer",
     });
     appendSetCookies(headers, response);
-    headers.append("set-cookie", cookieHeader(LOGIN_CSRF_COOKIE, "", { maxAge: 0, sameSite: "Strict", httpOnly: true }, options.config));
-    const userId = (await response.clone().json().catch(() => null) as { user?: { id?: string } } | null)?.user?.id;
+    headers.append(
+      "set-cookie",
+      cookieHeader(
+        LOGIN_CSRF_COOKIE,
+        "",
+        { maxAge: 0, sameSite: "Strict", httpOnly: true },
+        options.config,
+      ),
+    );
+    const userId = (
+      (await response
+        .clone()
+        .json()
+        .catch(() => null)) as { user?: { id?: string } } | null
+    )?.user?.id;
     if (userId) store.markLogin(userId, clientIp(c));
     return new Response(null, { status: 303, headers });
   });
 
   app.get("/setup", (c) => {
-    if (store.hasOwner()) return setupPage(c, "Bootstrap is disabled because an owner already exists.", 403);
+    if (store.hasOwner())
+      return setupPage(c, "Bootstrap is disabled because an owner already exists.", 403);
     if (new URL(c.req.url).search && !c.req.query("token")) return redirectNoStore("/setup");
     const token = c.req.query("token");
     if (token) return bootstrapTokenCookieRedirect(token, options.config);
     return setupPage(c, "");
   });
   app.post("/setup", async (c) => {
-    if (store.hasOwner()) return setupPage(c, "Bootstrap is disabled because an owner already exists.", 403);
+    if (store.hasOwner())
+      return setupPage(c, "Bootstrap is disabled because an owner already exists.", 403);
     const form = await c.req.formData();
     const token = String(form.get("token") ?? "").trim() || (getCookie(c, BOOTSTRAP_COOKIE) ?? "");
     try {
-      if (!validBootstrapTokenShape(token)) throw new HttpError(403, "invalid_bootstrap_token", "Bootstrap token is invalid or expired.");
+      if (!validBootstrapTokenShape(token))
+        throw new HttpError(
+          403,
+          "invalid_bootstrap_token",
+          "Bootstrap token is invalid or expired.",
+        );
       const password = String(form.get("password") ?? "");
-      if (!validatePassword(password)) throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
+      if (!validatePassword(password))
+        throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
       const passwordHash = await hashPassword(password);
       const tokenHash = await hashBootstrapToken(token, options.config.authSecret);
-      store.createFirstOwner({
-        email: String(form.get("email") ?? ""),
-        username: String(form.get("username") ?? ""),
-        name: String(form.get("name") ?? ""),
-        role: "owner",
-        passwordHash,
-      }, tokenHash);
+      store.createFirstOwner(
+        {
+          email: String(form.get("email") ?? ""),
+          username: String(form.get("username") ?? ""),
+          name: String(form.get("name") ?? ""),
+          role: "owner",
+          passwordHash,
+        },
+        tokenHash,
+      );
       const response = redirectNoStore("/login");
-      response.headers.append("set-cookie", cookieHeader(BOOTSTRAP_COOKIE, "", { maxAge: 0, sameSite: "Strict", httpOnly: true }, options.config));
+      response.headers.append(
+        "set-cookie",
+        cookieHeader(
+          BOOTSTRAP_COOKIE,
+          "",
+          { maxAge: 0, sameSite: "Strict", httpOnly: true },
+          options.config,
+        ),
+      );
       return response;
     } catch (error) {
       return setupPage(c, errorMessage(error), statusFromError(error));
@@ -228,29 +267,52 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     if (!c.get("session").user.mustChangePassword) return next();
     const path = c.req.path.replace(/\/+$/, "") || "/";
     if (PASSWORD_CHANGE_ALLOWED_PATHS.has(path)) return next();
-    throw new HttpError(403, "password_change_required", "Change your password before continuing.", false, "/change-password");
+    throw new HttpError(
+      403,
+      "password_change_required",
+      "Change your password before continuing.",
+      false,
+      "/change-password",
+    );
   });
 
   app.post("/api/me/password", async (c) => {
     const body = await safeJson(c);
     const currentPassword = String(body.currentPassword ?? "");
     const newPassword = String(body.newPassword ?? "");
-    if (!validatePassword(newPassword)) throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
+    if (!validatePassword(newPassword))
+      throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
     const userId = c.get("session").user.id;
     const hash = store.getOwnPasswordHash(userId);
-    if (!hash || !(await verifyPassword(currentPassword, hash))) throw new HttpError(400, "invalid_current_password", "Current password is incorrect.");
-    if (await verifyPassword(newPassword, hash)) throw new HttpError(400, "password_reused", "Choose a password you have not used before.");
-    store.changeOwnPassword(userId, await hashPassword(newPassword), String(c.get("session").session.token ?? ""), clientIp(c));
+    if (!hash || !(await verifyPassword(currentPassword, hash)))
+      throw new HttpError(400, "invalid_current_password", "Current password is incorrect.");
+    if (await verifyPassword(newPassword, hash))
+      throw new HttpError(400, "password_reused", "Choose a password you have not used before.");
+    store.changeOwnPassword(
+      userId,
+      await hashPassword(newPassword),
+      String(c.get("session").session.token ?? ""),
+      clientIp(c),
+    );
     return ok(c);
   });
 
-  app.get("/api/me", (c) => ok(c, {
-    user: c.get("session").user,
-    permissions: permissionsFor(c.get("session").user),
-    csrfToken: csrfTokenForSession(c.get("session"), options.config),
-  }, 200, MeResponseSchema));
+  app.get("/api/me", (c) =>
+    ok(
+      c,
+      {
+        user: c.get("session").user,
+        permissions: permissionsFor(c.get("session").user),
+        csrfToken: csrfTokenForSession(c.get("session"), options.config),
+      },
+      200,
+      MeResponseSchema,
+    ),
+  );
 
-  app.get("/api/users", requirePermission("users:read"), (c) => ok(c, { users: store.listUsers() }, 200, UsersResponseSchema));
+  app.get("/api/users", requirePermission("users:read"), (c) =>
+    ok(c, { users: store.listUsers() }, 200, UsersResponseSchema),
+  );
   app.post("/api/users", requirePermission("users:create"), async (c) => {
     const actor = c.get("session").user;
     const body = await safeJson(c);
@@ -259,9 +321,11 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     // admins create only operator/viewer (never a peer admin or an owner). This
     // matches the manage/delete rules so an admin cannot mint an admin it is then
     // not allowed to manage. requirePermission already blocks operator/viewer.
-    if (!canCreateRole(actor.role, role)) throw new HttpError(403, "forbidden", "Your role cannot create a user with that role.");
+    if (!canCreateRole(actor.role, role))
+      throw new HttpError(403, "forbidden", "Your role cannot create a user with that role.");
     const password = String(body.password ?? "");
-    if (!validatePassword(password)) throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
+    if (!validatePassword(password))
+      throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
     const input: CreateUserInput = {
       email: String(body.email ?? ""),
       username: String(body.username ?? ""),
@@ -284,24 +348,63 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     if (body.username !== undefined) input.username = String(body.username);
     if (body.name !== undefined) input.name = String(body.name);
     if (body.role !== undefined) input.role = parseRole(body.role);
-    if (body.status !== undefined) input.status = body.status === "disabled" ? "disabled" : "active";
-    if (body.mustChangePassword !== undefined) input.mustChangePassword = Boolean(body.mustChangePassword);
-    return ok(c, { user: store.updateUser(c.get("session").user as AdminUser, requiredParam(c, "id"), input) }, 200, UserResponseSchema);
+    if (body.status !== undefined)
+      input.status = body.status === "disabled" ? "disabled" : "active";
+    if (body.mustChangePassword !== undefined)
+      input.mustChangePassword = Boolean(body.mustChangePassword);
+    return ok(
+      c,
+      { user: store.updateUser(c.get("session").user as AdminUser, requiredParam(c, "id"), input) },
+      200,
+      UserResponseSchema,
+    );
   });
-  app.post("/api/users/:id/enable", requirePermission("users:disable"), (c) => ok(c, { user: store.enableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) }, 200, UserResponseSchema));
-  app.post("/api/users/:id/disable", requirePermission("users:disable"), (c) => ok(c, { user: store.disableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) }, 200, UserResponseSchema));
-  app.post("/api/users/:id/reset-password", requirePermission("users:reset-password"), async (c) => {
-    const body = await safeJson(c);
-    const password = String(body.password ?? "");
-    if (!validatePassword(password)) throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
-    return ok(c, { user: store.resetPassword(c.get("session").user as AdminUser, requiredParam(c, "id"), await hashPassword(password)) }, 200, UserResponseSchema);
-  });
+  app.post("/api/users/:id/enable", requirePermission("users:disable"), (c) =>
+    ok(
+      c,
+      { user: store.enableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) },
+      200,
+      UserResponseSchema,
+    ),
+  );
+  app.post("/api/users/:id/disable", requirePermission("users:disable"), (c) =>
+    ok(
+      c,
+      { user: store.disableUser(c.get("session").user as AdminUser, requiredParam(c, "id")) },
+      200,
+      UserResponseSchema,
+    ),
+  );
+  app.post(
+    "/api/users/:id/reset-password",
+    requirePermission("users:reset-password"),
+    async (c) => {
+      const body = await safeJson(c);
+      const password = String(body.password ?? "");
+      if (!validatePassword(password))
+        throw new HttpError(400, "invalid_password", "Password must be at least 12 characters.");
+      return ok(
+        c,
+        {
+          user: store.resetPassword(
+            c.get("session").user as AdminUser,
+            requiredParam(c, "id"),
+            await hashPassword(password),
+          ),
+        },
+        200,
+        UserResponseSchema,
+      );
+    },
+  );
   app.delete("/api/users/:id", requirePermission("users:delete"), (c) => {
     store.deleteUser(c.get("session").user as AdminUser, requiredParam(c, "id"));
     return ok(c);
   });
 
-  app.get("/api/proxy-accounts", requirePermission("proxy-accounts:read"), (c) => ok(c, { accounts: store.listProxyAccounts() }, 200, ProxyAccountsResponseSchema));
+  app.get("/api/proxy-accounts", requirePermission("proxy-accounts:read"), (c) =>
+    ok(c, { accounts: store.listProxyAccounts() }, 200, ProxyAccountsResponseSchema),
+  );
   app.post("/api/proxy-accounts", requirePermission("proxy-accounts:write"), async (c) => {
     const input = parseProxyInput(await safeJson(c));
     const account = store.createProxyAccount(c.get("session").user as AdminUser, input);
@@ -311,39 +414,103 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   app.get("/api/proxy-accounts/:id", requirePermission("proxy-accounts:read"), (c) => {
     const account = store.getProxyAccount(requiredParam(c, "id"));
     if (!account) throw new HttpError(404, "not_found", "Proxy account was not found.");
-    return ok(c, { account: redactProxyAccountFor(c.get("session").user.role, account as unknown as Record<string, unknown>) }, 200, ProxyAccountResponseSchema);
+    return ok(
+      c,
+      {
+        account: redactProxyAccountFor(
+          c.get("session").user.role,
+          account as unknown as Record<string, unknown>,
+        ),
+      },
+      200,
+      ProxyAccountResponseSchema,
+    );
   });
   app.patch("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), async (c) => {
-    const account = store.updateProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"), parseProxyInput(await safeJson(c), true));
+    const account = store.updateProxyAccount(
+      c.get("session").user as AdminUser,
+      requiredParam(c, "id"),
+      parseProxyInput(await safeJson(c), true),
+    );
     await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.update");
     return ok(c, { account }, 200, ProxyAccountResponseSchema);
   });
-  app.post("/api/proxy-accounts/:id/enable", requirePermission("proxy-accounts:write"), async (c) => {
-    const account = store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), true);
-    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.enable");
-    return ok(c, { account }, 200, ProxyAccountResponseSchema);
-  });
-  app.post("/api/proxy-accounts/:id/disable", requirePermission("proxy-accounts:write"), async (c) => {
-    const account = store.setProxyEnabled(c.get("session").user as AdminUser, requiredParam(c, "id"), false);
-    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.disable");
-    return ok(c, { account }, 200, ProxyAccountResponseSchema);
-  });
-  app.post("/api/proxy-accounts/:id/regenerate-uuid", requirePermission("proxy-accounts:write"), async (c) => {
-    const account = store.regenerateProxyUuid(c.get("session").user as AdminUser, requiredParam(c, "id"));
-    await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.regenerate-uuid");
-    return ok(c, { account }, 200, ProxyAccountResponseSchema);
-  });
-  app.post("/api/proxy-accounts/:id/reveal", requirePermission("proxy-accounts:write"), (c) => ok(c, { account: redactProxyAccountFor(c.get("session").user.role, store.revealProxySubscription(c.get("session").user as AdminUser, requiredParam(c, "id")) as unknown as Record<string, unknown>) }, 200, ProxyAccountResponseSchema));
+  app.post(
+    "/api/proxy-accounts/:id/enable",
+    requirePermission("proxy-accounts:write"),
+    async (c) => {
+      const account = store.setProxyEnabled(
+        c.get("session").user as AdminUser,
+        requiredParam(c, "id"),
+        true,
+      );
+      await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.enable");
+      return ok(c, { account }, 200, ProxyAccountResponseSchema);
+    },
+  );
+  app.post(
+    "/api/proxy-accounts/:id/disable",
+    requirePermission("proxy-accounts:write"),
+    async (c) => {
+      const account = store.setProxyEnabled(
+        c.get("session").user as AdminUser,
+        requiredParam(c, "id"),
+        false,
+      );
+      await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.disable");
+      return ok(c, { account }, 200, ProxyAccountResponseSchema);
+    },
+  );
+  app.post(
+    "/api/proxy-accounts/:id/regenerate-uuid",
+    requirePermission("proxy-accounts:write"),
+    async (c) => {
+      const account = store.regenerateProxyUuid(
+        c.get("session").user as AdminUser,
+        requiredParam(c, "id"),
+      );
+      await renderSingboxAfterProxyMutation(
+        c,
+        store,
+        options.config,
+        "proxy_account.regenerate-uuid",
+      );
+      return ok(c, { account }, 200, ProxyAccountResponseSchema);
+    },
+  );
+  app.post("/api/proxy-accounts/:id/reveal", requirePermission("proxy-accounts:write"), (c) =>
+    ok(
+      c,
+      {
+        account: redactProxyAccountFor(
+          c.get("session").user.role,
+          store.revealProxySubscription(
+            c.get("session").user as AdminUser,
+            requiredParam(c, "id"),
+          ) as unknown as Record<string, unknown>,
+        ),
+      },
+      200,
+      ProxyAccountResponseSchema,
+    ),
+  );
   app.delete("/api/proxy-accounts/:id", requirePermission("proxy-accounts:write"), async (c) => {
     store.deleteProxyAccount(c.get("session").user as AdminUser, requiredParam(c, "id"));
     await renderSingboxAfterProxyMutation(c, store, options.config, "proxy_account.delete");
     return ok(c);
   });
 
-  app.get("/api/settings", requirePermission("settings:read"), (c) => ok(c, { settings: store.getSettings() }, 200, SettingsResponseSchema));
+  app.get("/api/settings", requirePermission("settings:read"), (c) =>
+    ok(c, { settings: store.getSettings() }, 200, SettingsResponseSchema),
+  );
   app.patch("/api/settings", requirePermission("settings:update"), async (c) => {
     const settings = parseSettingsInput(await safeJson(c));
-    return ok(c, { settings: store.updateSettings(c.get("session").user as AdminUser, settings) }, 200, SettingsResponseSchema);
+    return ok(
+      c,
+      { settings: store.updateSettings(c.get("session").user as AdminUser, settings) },
+      200,
+      SettingsResponseSchema,
+    );
   });
   app.get("/api/status", requirePermission("status:read"), async (c) => {
     const summary = store.statusSummary();
@@ -351,7 +518,9 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     summary.services = [...summary.services, ...(await containerServices())];
     return ok(c, { status: summary }, 200, StatusResponseSchema);
   });
-  app.post("/api/doctor/run", requirePermission("ops:doctor"), async (c) => coreActionResponse(c, "doctor", store, options.config));
+  app.post("/api/doctor/run", requirePermission("ops:doctor"), async (c) =>
+    coreActionResponse(c, "doctor", store, options.config),
+  );
   app.post("/api/render", requirePermission("ops:render"), async (c) => {
     const body: Record<string, unknown> = await safeJson(c).catch(() => ({}));
     const target = String(body.target ?? "singbox");
@@ -365,16 +534,24 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
     return coreActionResponse(c, action, store, options.config);
   });
   app.post("/api/logout", async (c) => {
-    const response = await auth.handler(new Request(`${options.config.baseUrl}/api/auth/sign-out`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie: c.req.header("cookie") ?? "",
-      },
-      body: "{}",
-    }));
+    const response = await auth.handler(
+      new Request(`${options.config.baseUrl}/api/auth/sign-out`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: c.req.header("cookie") ?? "",
+        },
+        body: "{}",
+      }),
+    );
     const ip = clientIp(c);
-    store.audit(c.get("session").user.id, "auth.logout", "user", c.get("session").user.id, ip ? { ip } : {});
+    store.audit(
+      c.get("session").user.id,
+      "auth.logout",
+      "user",
+      c.get("session").user.id,
+      ip ? { ip } : {},
+    );
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: response.headers,
@@ -382,18 +559,31 @@ export function createApiApp(options: ApiAppOptions): ApiApp {
   });
   app.get("/api/audit", requirePermission("audit:read"), (c) => {
     const parsed = Number(c.req.query("limit"));
-    return ok(c, { audit: store.listAudit(Number.isFinite(parsed) ? parsed : 100) }, 200, AuditResponseSchema);
+    return ok(
+      c,
+      { audit: store.listAudit(Number.isFinite(parsed) ? parsed : 100) },
+      200,
+      AuditResponseSchema,
+    );
   });
 
   app.notFound((c) => {
-    if (c.req.path.startsWith("/api/")) return apiError(c, new HttpError(404, "not_found", "Route was not found."));
+    if (c.req.path.startsWith("/api/"))
+      return apiError(c, new HttpError(404, "not_found", "Route was not found."));
     return coverSiteResponse(c);
   });
   app.onError((error, c) => {
     const http = normalizeError(error);
-    process.stderr.write(redactSensitive(`[api] ${http.code}: ${error instanceof Error ? error.message : String(error)}\n`));
+    process.stderr.write(
+      redactSensitive(
+        `[api] ${http.code}: ${error instanceof Error ? error.message : String(error)}\n`,
+      ),
+    );
     if (c.req.path.startsWith("/api/")) return apiError(c, http);
-    return new Response(redactSensitive(http.message), { status: http.status, headers: noStoreHeaders() });
+    return new Response(redactSensitive(http.message), {
+      status: http.status,
+      headers: noStoreHeaders(),
+    });
   });
 
   return { app, auth, store, config: options.config };
@@ -414,7 +604,10 @@ function securityHeaders(config: Pick<AdminConfig, "secureCookies">): Middleware
     // CSP for both hand-rendered HTML pages (login and the unauthenticated
     // bootstrap setup page), not just login.
     if (c.req.path === "/login" || c.req.path === "/setup") {
-      c.header("Content-Security-Policy", "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+      c.header(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
+      );
     }
     if (c.req.path === "/login" || c.req.path === "/setup" || c.req.path.startsWith("/api/auth/")) {
       c.header("Cache-Control", "no-store");
@@ -425,11 +618,14 @@ function securityHeaders(config: Pick<AdminConfig, "secureCookies">): Middleware
 function csrfProtection(config: AdminConfig): MiddlewareHandler {
   return async (c, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
-    if (c.req.path.startsWith("/api/auth/") || c.req.path === "/login" || c.req.path === "/setup") return next();
+    if (c.req.path.startsWith("/api/auth/") || c.req.path === "/login" || c.req.path === "/setup")
+      return next();
     const origin = c.req.header("origin");
-    if (origin && !config.trustedOrigins.includes(origin)) throw new HttpError(403, "csrf", "Request origin is not trusted.");
+    if (origin && !config.trustedOrigins.includes(origin))
+      throw new HttpError(403, "csrf", "Request origin is not trusted.");
     const secFetchSite = c.req.header("sec-fetch-site")?.toLowerCase();
-    if (secFetchSite && secFetchSite !== "same-origin" && secFetchSite !== "none") throw new HttpError(403, "csrf", "Cross-site admin requests are blocked.");
+    if (secFetchSite && secFetchSite !== "same-origin" && secFetchSite !== "none")
+      throw new HttpError(403, "csrf", "Cross-site admin requests are blocked.");
     return next();
   };
 }
@@ -438,7 +634,8 @@ function requireApiCsrf(config: AdminConfig): MiddlewareHandler<{ Variables: Var
   return async (c, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
     const csrf = c.req.header("x-csrf-token") ?? "";
-    if (!constantTimeEqual(csrf, csrfTokenForSession(c.get("session"), config))) throw new HttpError(403, "csrf", "CSRF token mismatch.");
+    if (!constantTimeEqual(csrf, csrfTokenForSession(c.get("session"), config)))
+      throw new HttpError(403, "csrf", "CSRF token mismatch.");
     return next();
   };
 }
@@ -455,7 +652,8 @@ function requireSession(auth: AuthInstance): MiddlewareHandler<{ Variables: Vars
 function requirePermission(permission: Permission): MiddlewareHandler<{ Variables: Vars }> {
   return async (c, next) => {
     const user = c.get("session").user as AdminUser;
-    if (!hasPermission(user, permission)) throw new HttpError(403, "forbidden", "Permission denied.");
+    if (!hasPermission(user, permission))
+      throw new HttpError(403, "forbidden", "Permission denied.");
     await next();
   };
 }
@@ -464,7 +662,8 @@ function requirePermissionForAction(action: CoreAction): (c: Context<{ Variables
   const permission = permissionForAction(action);
   return (c) => {
     const user = c.get("session").user as AdminUser;
-    if (!hasPermission(user, permission)) throw new HttpError(403, "forbidden", "Permission denied.");
+    if (!hasPermission(user, permission))
+      throw new HttpError(403, "forbidden", "Permission denied.");
   };
 }
 
@@ -478,7 +677,12 @@ function requirePermissionForAction(action: CoreAction): (c: Context<{ Variables
 //
 // Best-effort: the mutation is already committed, so a render failure is
 // audited + logged but never turns a successful mutation into a 500.
-async function renderSingboxAfterProxyMutation(c: Context<{ Variables: Vars }>, store: AdminStore, config: AdminConfig, trigger: string): Promise<void> {
+async function renderSingboxAfterProxyMutation(
+  c: Context<{ Variables: Vars }>,
+  store: AdminStore,
+  config: AdminConfig,
+  trigger: string,
+): Promise<void> {
   let code = -1;
   let rendered = false;
   let error: string | undefined;
@@ -491,56 +695,79 @@ async function renderSingboxAfterProxyMutation(c: Context<{ Variables: Vars }>, 
     error = err instanceof Error ? err.message : String(err);
   }
   try {
-    store.audit(c.get("session").user.id, "core.render-singbox", "core", "render-singbox", { trigger, code, ok: rendered, ...(error ? { error } : {}) });
+    store.audit(c.get("session").user.id, "core.render-singbox", "core", "render-singbox", {
+      trigger,
+      code,
+      ok: rendered,
+      ...(error ? { error } : {}),
+    });
   } catch {
     // Auditing must never break the request path.
   }
   if (!rendered) {
-    console.warn(JSON.stringify({ level: "warn", msg: "auto_render_singbox_failed", trigger, code, error }));
+    console.warn(
+      JSON.stringify({ level: "warn", msg: "auto_render_singbox_failed", trigger, code, error }),
+    );
   }
 }
 
-async function coreActionResponse(c: Context<{ Variables: Vars }>, action: CoreAction, store: AdminStore, config: AdminConfig): Promise<Response> {
-  if (!isCoreAction(action)) throw new HttpError(404, "unknown_action", "Unknown operational action.");
+async function coreActionResponse(
+  c: Context<{ Variables: Vars }>,
+  action: CoreAction,
+  store: AdminStore,
+  config: AdminConfig,
+): Promise<Response> {
+  if (!isCoreAction(action))
+    throw new HttpError(404, "unknown_action", "Unknown operational action.");
   const result = await runCoreAction(action, config, store);
   store.audit(c.get("session").user.id, `core.${action}`, "core", action, { code: result.code });
   return ok(c, { result: redactBoundary(result) }, result.ok ? 200 : 500);
 }
 
-async function subscriptionResponse(c: Context<{ Variables: Vars }>, store: AdminStore): Promise<Response> {
+async function subscriptionResponse(
+  c: Context<{ Variables: Vars }>,
+  store: AdminStore,
+): Promise<Response> {
   const row = await store.resolveSubscriptionToken(requiredParam(c, "token"));
   if (!row) return coverSiteResponse(c);
   const account = rowToSubscriptionAccount(row);
-  if (!account.enabled || (account.expiresAt && !(Date.parse(account.expiresAt) > Date.now()))) return coverSiteResponse(c);
+  if (!account.enabled || (account.expiresAt && !(Date.parse(account.expiresAt) > Date.now())))
+    return coverSiteResponse(c);
   const settings = store.getSettings();
-  if (!account.uuid || !settings.realityPublicKey || !settings.realityDestHost) return coverSiteResponse(c);
-  const protocols = account.enabledProtocols.length > 0 ? account.enabledProtocols : DEFAULT_PROTOCOL_KEYS;
+  if (!account.uuid || !settings.realityPublicKey || !settings.realityDestHost)
+    return coverSiteResponse(c);
+  const protocols =
+    account.enabledProtocols.length > 0 ? account.enabledProtocols : DEFAULT_PROTOCOL_KEYS;
   if (!protocols.includes("vless_reality")) return coverSiteResponse(c);
   const issuedAt = Math.floor(Date.now() / 1000);
   const shortId = settings.realityShortIds[0] ?? "";
   const body: Record<string, unknown> = {
     version: 2,
     server: settings.domain,
-    profiles: [{
-      host: settings.domain,
-      port: 443,
-      username: account.username,
-      uuid: account.uuid,
-      label: `${settings.domain} (${account.username})`,
-      client_defaults: { local_port: account.clientDefaultLocalPort },
-      protocols: [{
-        type: "vless_reality",
+    profiles: [
+      {
         host: settings.domain,
         port: 443,
-        flow: "",
-        security: "reality",
-      }],
-      reality: {
-        public_key: settings.realityPublicKey,
-        dest_host: settings.realityDestHost,
-        short_id: shortId,
+        username: account.username,
+        uuid: account.uuid,
+        label: `${settings.domain} (${account.username})`,
+        client_defaults: { local_port: account.clientDefaultLocalPort },
+        protocols: [
+          {
+            type: "vless_reality",
+            host: settings.domain,
+            port: 443,
+            flow: "",
+            security: "reality",
+          },
+        ],
+        reality: {
+          public_key: settings.realityPublicKey,
+          dest_host: settings.realityDestHost,
+          short_id: shortId,
+        },
       },
-    }],
+    ],
     capabilities: {
       anti_tracking: [
         settings.antiTrackingHideIp ? "hide_ip" : null,
@@ -571,7 +798,15 @@ function loginResponse(c: Context<{ Variables: Vars }>, message: string, status 
 <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
 <button type="submit">Sign in</button></form></body></html>`;
   const response = c.html(body, status as 200 | 401 | 403);
-  response.headers.append("set-cookie", cookieHeader(LOGIN_CSRF_COOKIE, csrf, { sameSite: "Strict", httpOnly: true, maxAge: 600 }, c.get("store").config ?? undefined));
+  response.headers.append(
+    "set-cookie",
+    cookieHeader(
+      LOGIN_CSRF_COOKIE,
+      csrf,
+      { sameSite: "Strict", httpOnly: true, maxAge: 600 },
+      c.get("store").config ?? undefined,
+    ),
+  );
   return response;
 }
 
@@ -594,7 +829,15 @@ ${tokenLoaded ? '<p class="note">A one-time bootstrap token is loaded for this b
 
 function bootstrapTokenCookieRedirect(token: string, config: AdminConfig): Response {
   const headers = noStoreHeaders({ location: "/setup" });
-  headers.append("set-cookie", cookieHeader(BOOTSTRAP_COOKIE, token, { sameSite: "Strict", httpOnly: true, maxAge: config.bootstrapTokenTtlMinutes * 60 }, config));
+  headers.append(
+    "set-cookie",
+    cookieHeader(
+      BOOTSTRAP_COOKIE,
+      token,
+      { sameSite: "Strict", httpOnly: true, maxAge: config.bootstrapTokenTtlMinutes * 60 },
+      config,
+    ),
+  );
   return new Response(null, { status: 303, headers });
 }
 
@@ -624,7 +867,9 @@ function cookieHeader(
     opts.httpOnly ? "HttpOnly" : "",
     config?.secureCookies ? "Secure" : "",
     `SameSite=${opts.sameSite}`,
-  ].filter(Boolean).join("; ");
+  ]
+    .filter(Boolean)
+    .join("; ");
 }
 
 function validLoginCsrf(value: string, cookieValue: string): boolean {
@@ -645,13 +890,19 @@ function appendSetCookies(headers: Headers, response: Response): void {
   }
 }
 
-function csrfTokenForSession(session: CurrentSession, config: Pick<AdminConfig, "authSecret">): string {
+function csrfTokenForSession(
+  session: CurrentSession,
+  config: Pick<AdminConfig, "authSecret">,
+): string {
   // Bind the CSRF token to the real session token (cookieCache is disabled, so
   // getSession always returns it). Refuse to synthesize a token from user.id —
   // that would be static per user and identical across sessions/logins.
   const token = String(session.session.token ?? "");
   if (!token) throw new HttpError(401, "unauthorized", "Session is missing its token.");
-  return createHmac("sha256", config.authSecret).update(`${session.user.id}:${token}`).digest("hex").slice(0, 32);
+  return createHmac("sha256", config.authSecret)
+    .update(`${session.user.id}:${token}`)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 function loginThrottleKey(c: Context, config: AdminConfig): string {
@@ -672,17 +923,30 @@ interface LoginThrottle {
 }
 
 function accountThrottleKey(email: string, config: AdminConfig): string {
-  return createHmac("sha256", config.authSecret).update(`acct:${email.trim().toLowerCase()}`).digest("hex").slice(0, 24);
+  return createHmac("sha256", config.authSecret)
+    .update(`acct:${email.trim().toLowerCase()}`)
+    .digest("hex")
+    .slice(0, 24);
 }
 
-function attemptsOver(attempts: Map<string, AttemptEntry>, key: string, max: number, now: number): boolean {
+function attemptsOver(
+  attempts: Map<string, AttemptEntry>,
+  key: string,
+  max: number,
+  now: number,
+): boolean {
   if (!key) return false;
   const current = attempts.get(key);
   if (!current || current.resetAt <= now) return false;
   return current.count >= max;
 }
 
-function bumpAttempts(attempts: Map<string, AttemptEntry>, key: string, windowMs: number, now: number): void {
+function bumpAttempts(
+  attempts: Map<string, AttemptEntry>,
+  key: string,
+  windowMs: number,
+  now: number,
+): void {
   if (!key) return;
   const current = attempts.get(key);
   if (!current || current.resetAt <= now) {
@@ -702,8 +966,9 @@ function checkLoginThrottle(c: Context, config: AdminConfig, email: string): Log
   pruneAttempts(accountAttempts, now);
   const ipKey = loginThrottleKey(c, config);
   const accountKey = email ? accountThrottleKey(email, config) : "";
-  const blocked = attemptsOver(loginAttempts, ipKey, LOGIN_THROTTLE_MAX, now)
-    || attemptsOver(accountAttempts, accountKey, ACCOUNT_THROTTLE_MAX, now);
+  const blocked =
+    attemptsOver(loginAttempts, ipKey, LOGIN_THROTTLE_MAX, now) ||
+    attemptsOver(accountAttempts, accountKey, ACCOUNT_THROTTLE_MAX, now);
   return { ok: !blocked, ipKey, accountKey };
 }
 
@@ -753,7 +1018,8 @@ async function safeJson(c: Context): Promise<Record<string, unknown>> {
 }
 
 function parseRole(value: unknown): AdminRole {
-  if (value === "owner" || value === "admin" || value === "operator" || value === "viewer") return value;
+  if (value === "owner" || value === "admin" || value === "operator" || value === "viewer")
+    return value;
   throw new HttpError(400, "invalid_role", "Choose a valid role.");
 }
 
@@ -762,9 +1028,14 @@ function parseProxyInput(body: Record<string, unknown>, partial = false): Create
   if (!partial || body.username !== undefined) input.username = String(body.username ?? "");
   if (body.label !== undefined) input.label = body.label === null ? null : String(body.label);
   if (body.enabled !== undefined) input.enabled = Boolean(body.enabled);
-  if (body.clientDefaultLocalPort !== undefined) input.clientDefaultLocalPort = Number(body.clientDefaultLocalPort);
-  if (Array.isArray(body.enabledProtocols)) input.enabledProtocols = body.enabledProtocols.filter((item): item is ProtocolKey => item === "vless_reality");
-  if (body.expiresAt !== undefined) input.expiresAt = body.expiresAt === null ? null : String(body.expiresAt);
+  if (body.clientDefaultLocalPort !== undefined)
+    input.clientDefaultLocalPort = Number(body.clientDefaultLocalPort);
+  if (Array.isArray(body.enabledProtocols))
+    input.enabledProtocols = body.enabledProtocols.filter(
+      (item): item is ProtocolKey => item === "vless_reality",
+    );
+  if (body.expiresAt !== undefined)
+    input.expiresAt = body.expiresAt === null ? null : String(body.expiresAt);
   return input;
 }
 
@@ -778,12 +1049,17 @@ function parseSettingsInput(body: Record<string, unknown>): Partial<ServerSettin
   if (body.panelDomain !== undefined) input.panelDomain = String(body.panelDomain);
   if (body.acmeEmail !== undefined) input.acmeEmail = String(body.acmeEmail);
   if (body.acmeDirectory !== undefined) input.acmeDirectory = String(body.acmeDirectory);
-  if (body.antiTrackingHideIp !== undefined) input.antiTrackingHideIp = Boolean(body.antiTrackingHideIp);
-  if (body.antiTrackingHideVia !== undefined) input.antiTrackingHideVia = Boolean(body.antiTrackingHideVia);
-  if (body.antiTrackingProbeResistance !== undefined) input.antiTrackingProbeResistance = Boolean(body.antiTrackingProbeResistance);
-  if (body.antiTrackingDohResolver !== undefined) input.antiTrackingDohResolver = String(body.antiTrackingDohResolver);
+  if (body.antiTrackingHideIp !== undefined)
+    input.antiTrackingHideIp = Boolean(body.antiTrackingHideIp);
+  if (body.antiTrackingHideVia !== undefined)
+    input.antiTrackingHideVia = Boolean(body.antiTrackingHideVia);
+  if (body.antiTrackingProbeResistance !== undefined)
+    input.antiTrackingProbeResistance = Boolean(body.antiTrackingProbeResistance);
+  if (body.antiTrackingDohResolver !== undefined)
+    input.antiTrackingDohResolver = String(body.antiTrackingDohResolver);
   if (body.realityDestHost !== undefined) input.realityDestHost = String(body.realityDestHost);
-  if (Array.isArray(body.realityShortIds)) input.realityShortIds = body.realityShortIds.map((item) => String(item));
+  if (Array.isArray(body.realityShortIds))
+    input.realityShortIds = body.realityShortIds.map((item) => String(item));
   return input;
 }
 
@@ -795,36 +1071,60 @@ function requiredParam(c: Context, name: string): string {
 
 function permissionForAction(action: CoreAction): Permission {
   switch (action) {
-    case "doctor": return "ops:doctor";
+    case "doctor":
+      return "ops:doctor";
     case "render-caddyfile":
-    case "render-singbox": return "ops:render";
-    case "restart-services": return "ops:restart";
-    case "backup": return "ops:backup";
-    case "restore": return "ops:restore";
+    case "render-singbox":
+      return "ops:render";
+    case "restart-services":
+      return "ops:restart";
+    case "backup":
+      return "ops:backup";
+    case "restore":
+      return "ops:restore";
   }
 }
 
 function actionForRoute(value: string): CoreAction | null {
   switch (value) {
-    case "doctor": return "doctor";
+    case "doctor":
+      return "doctor";
     case "render":
-    case "render-singbox": return "render-singbox";
-    case "render-caddyfile": return "render-caddyfile";
+    case "render-singbox":
+      return "render-singbox";
+    case "render-caddyfile":
+      return "render-caddyfile";
     case "restart":
-    case "restart-services": return "restart-services";
-    case "backup": return "backup";
-    case "restore": return "restore";
-    default: return null;
+    case "restart-services":
+      return "restart-services";
+    case "backup":
+      return "backup";
+    case "restore":
+      return "restore";
+    default:
+      return null;
   }
 }
 
-function ok<T extends object = Record<string, never>>(c: Context, payload = {} as T, status = 200, schema?: z.ZodTypeAny): Response {
+function ok<T extends object = Record<string, never>>(
+  c: Context,
+  payload = {} as T,
+  status = 200,
+  schema?: z.ZodTypeAny,
+): Response {
   let data = payload;
   if (schema) {
     const parsed = schema.safeParse(payload);
     if (!parsed.success) {
-      const detail = parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
-      throw new HttpError(500, "contract_violation", `Response payload did not match the API contract: ${detail}`, false);
+      const detail = parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("; ");
+      throw new HttpError(
+        500,
+        "contract_violation",
+        `Response payload did not match the API contract: ${detail}`,
+        false,
+      );
     }
     data = parsed.data;
   }
@@ -847,7 +1147,13 @@ function apiError(c: Context, error: HttpError): Response {
 function normalizeError(error: unknown): HttpError {
   if (error instanceof HttpError) return error;
   if (error instanceof StoreError) return new HttpError(error.status, error.code, error.message);
-  return new HttpError(500, "internal_error", "The admin API failed while handling this request. Check the admin service logs and retry after fixing the underlying component.", true, "docker compose logs --tail=120 admin-api");
+  return new HttpError(
+    500,
+    "internal_error",
+    "The admin API failed while handling this request. Check the admin service logs and retry after fixing the underlying component.",
+    true,
+    "docker compose logs --tail=120 admin-api",
+  );
 }
 
 function statusFromError(error: unknown): number {
@@ -868,7 +1174,10 @@ function redactBoundary(result: BoundaryResult): BoundaryResult {
   };
 }
 
-function redactProxyAccountFor(role: AdminRole, account: Record<string, unknown>): Record<string, unknown> {
+function redactProxyAccountFor(
+  role: AdminRole,
+  account: Record<string, unknown>,
+): Record<string, unknown> {
   if (role === "owner" || role === "admin") return account;
   const copy = { ...account };
   delete copy.uuid;
@@ -888,7 +1197,8 @@ function rowToSubscriptionAccount(row: Record<string, unknown>): {
   let enabledProtocols: ProtocolKey[] = [...DEFAULT_PROTOCOL_KEYS];
   try {
     const parsed = JSON.parse(String(row.enabledProtocols ?? "[]"));
-    if (Array.isArray(parsed)) enabledProtocols = parsed.filter((item): item is ProtocolKey => item === "vless_reality");
+    if (Array.isArray(parsed))
+      enabledProtocols = parsed.filter((item): item is ProtocolKey => item === "vless_reality");
   } catch {
     enabledProtocols = [...DEFAULT_PROTOCOL_KEYS];
   }
@@ -903,10 +1213,14 @@ function rowToSubscriptionAccount(row: Record<string, unknown>): {
 }
 
 function coverSiteResponse(c: Context): Response {
-  const body = "<!doctype html><html><head><meta charset=\"utf-8\"><title>Welcome</title></head><body><h1>Welcome</h1><p>Nothing to see here.</p></body></html>";
+  const body =
+    '<!doctype html><html><head><meta charset="utf-8"><title>Welcome</title></head><body><h1>Welcome</h1><p>Nothing to see here.</p></body></html>';
   const etag = createHmac("sha256", "cover").update(body).digest("hex").slice(0, 16);
   if (c.req.header("if-none-match") === `"${etag}"`) {
-    return new Response(null, { status: 304, headers: { etag: `"${etag}"`, "cache-control": "public, max-age=3600" } });
+    return new Response(null, {
+      status: 304,
+      headers: { etag: `"${etag}"`, "cache-control": "public, max-age=3600" },
+    });
   }
   return new Response(body, {
     status: 200,
@@ -919,11 +1233,15 @@ function coverSiteResponse(c: Context): Response {
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "\"": "&quot;",
-    "'": "&#39;",
-  })[char] ?? char);
+  return value.replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[char] ?? char,
+  );
 }

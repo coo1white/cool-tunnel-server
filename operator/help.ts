@@ -10,21 +10,21 @@
 
 const isTty = process.stdout.isTTY === true;
 const ANSI = {
-    bold: isTty ? "\x1b[1m" : "",
-    green: isTty ? "\x1b[32m" : "",
-    red: isTty ? "\x1b[31m" : "",
-    reset: isTty ? "\x1b[0m" : "",
+  bold: isTty ? "\x1b[1m" : "",
+  green: isTty ? "\x1b[32m" : "",
+  red: isTty ? "\x1b[31m" : "",
+  reset: isTty ? "\x1b[0m" : "",
 } as const;
 
 interface Topic {
-    readonly title: string;
-    readonly body: string;
+  readonly title: string;
+  readonly body: string;
 }
 
 export const TOPICS: Record<string, Topic> = {
-    "getting-started": {
-        title: "Getting started",
-        body: `You just SSH'd into a fresh Debian / Ubuntu VPS and want a
+  "getting-started": {
+    title: "Getting started",
+    body: `You just SSH'd into a fresh Debian / Ubuntu VPS and want a
 working Cool Tunnel deployment. The whole path is:
 
   1. Run the Homebrew-style bootstrap command from README.md
@@ -37,10 +37,10 @@ For the long-form tutorial, see README.md and docs/installation-debian.md.
 
 Next topic:  ./ct help install
 `,
-    },
-    "install": {
-        title: "ct install — first-time bootstrap",
-        body: `What it does:
+  },
+  install: {
+    title: "ct install — first-time bootstrap",
+    body: `What it does:
   - Verifies required tools are on PATH (docker, curl, jq)
   - Refuses to run without a mode-0600 .env
   - Loads the verified release Docker image bundle
@@ -68,10 +68,10 @@ Idempotent: safe to re-run if anything fails halfway.
 
 Next topic:  ./ct help update
 `,
-    },
-    "update": {
-        title: "update — pull a new release and reconcile",
-        body: `What it does:
+  },
+  update: {
+    title: "update — pull a new release and reconcile",
+    body: `What it does:
   Pre-flight:
     - Network reachable for GitHub release downloads
     - Disk headroom for release image slices and docker load
@@ -100,10 +100,10 @@ Migration note:
 
 Next topic:  ./ct help doctor
 `,
-    },
-    "doctor": {
-        title: "doctor — health dashboard",
-        body: `What it does:
+  },
+  doctor: {
+    title: "doctor — health dashboard",
+    body: `What it does:
   Runs read-only checks against the live stack and prints a
   PASS / WARN / FAIL table grouped by area:
 
@@ -129,10 +129,10 @@ Exit codes:
 
 Next topic:  ./ct help auto-update
 `,
-    },
-    "auto-update": {
-        title: "auto-update — unattended release-pulling agent",
-        body: `What it does:
+  },
+  "auto-update": {
+    title: "auto-update — unattended release-pulling agent",
+    body: `What it does:
   Checks origin/main for a newer release tag. If the deployed
   package.json version is older, it runs the standard ct update flow.
 
@@ -158,10 +158,10 @@ Exit codes:
 
 Next topic:  ./ct help backup
 `,
-    },
-    "backup": {
-        title: "backup — full deployment snapshot",
-        body: `What it does:
+  },
+  backup: {
+    title: "backup — full deployment snapshot",
+    body: `What it does:
   Creates a single tarball containing:
     - admin.sqlite copied with SQLite VACUUM INTO
     - caddy_data and caddy_etc volumes (ACME state and Caddyfile)
@@ -180,10 +180,10 @@ The command redacts diagnostics and never puts passwords or tokens on argv.
 
 Next topic:  ./ct help restore
 `,
-    },
-    "restore": {
-        title: "restore — recover from a backup tarball",
-        body: `What it does:
+  },
+  restore: {
+    title: "restore — recover from a backup tarball",
+    body: `What it does:
   Given backups/cool-tunnel-<ts>.tar.gz:
     - Refuses unsafe tar members before extraction
     - Restores admin.sqlite to data/admin/admin.sqlite
@@ -203,10 +203,10 @@ What it does NOT do:
 
 Next topic:  ./ct help troubleshooting
 `,
-    },
-    "troubleshooting": {
-        title: "Troubleshooting — common issues + diagnostic recipes",
-        body: `Top issues, ranked by how often they bite operators:
+  },
+  troubleshooting: {
+    title: "Troubleshooting — common issues + diagnostic recipes",
+    body: `Top issues, ranked by how often they bite operators:
 
 1. Admin API or web container restart-loops
    - docker compose logs --tail=120 admin-api admin-web
@@ -239,66 +239,74 @@ When asking for help, paste:
 
 Topics:  ./ct help   (list all)
 `,
-    },
+  },
 };
 
 export const TOPIC_SLUGS: readonly string[] = Object.keys(TOPICS);
 
 function h1(title: string): string {
-    const underline = "=".repeat(title.length);
-    return `\n${ANSI.bold}${ANSI.green}${title}${ANSI.reset}\n${ANSI.green}${underline}${ANSI.reset}\n`;
+  const underline = "=".repeat(title.length);
+  return `\n${ANSI.bold}${ANSI.green}${title}${ANSI.reset}\n${ANSI.green}${underline}${ANSI.reset}\n`;
 }
 
-export function renderTopic(slug: string): { ok: true; output: string } | { ok: false; error: string } {
-    const t = TOPICS[slug];
-    if (!t) {
-        return { ok: false, error: `unknown topic: ${slug}` };
-    }
-    return { ok: true, output: h1(t.title) + "\n" + t.body };
+export function renderTopic(
+  slug: string,
+): { ok: true; output: string } | { ok: false; error: string } {
+  const t = TOPICS[slug];
+  if (!t) {
+    return { ok: false, error: `unknown topic: ${slug}` };
+  }
+  return { ok: true, output: `${h1(t.title)}\n${t.body}` };
 }
 
 export function renderTopicList(): string {
-    const lines: string[] = [];
-    lines.push(`${ANSI.bold}${ANSI.green}cool-tunnel-server — operator help${ANSI.reset}`);
-    lines.push("");
-    lines.push("Usage:");
-    lines.push("  ct help <topic>");
-    lines.push("");
-    lines.push("Topics:");
-    for (const slug of TOPIC_SLUGS) {
-        lines.push(`  ${slug}`);
-    }
-    lines.push("");
-    lines.push("Start with:");
-    lines.push("  ct help getting-started");
-    lines.push("");
-    return lines.join("\n");
+  const lines: string[] = [];
+  lines.push(`${ANSI.bold}${ANSI.green}cool-tunnel-server — operator help${ANSI.reset}`);
+  lines.push("");
+  lines.push("Usage:");
+  lines.push("  ct help <topic>");
+  lines.push("");
+  lines.push("Topics:");
+  for (const slug of TOPIC_SLUGS) {
+    lines.push(`  ${slug}`);
+  }
+  lines.push("");
+  lines.push("Start with:");
+  lines.push("  ct help getting-started");
+  lines.push("");
+  return lines.join("\n");
 }
 
 async function main(): Promise<number> {
-    const argv = process.argv;
-    // Skip Bun's argv[0] (interpreter) + argv[1] (script). Filter
-    // operator-global flags so `ct-operator help <topic> --json`
-    // doesn't trip the unknown-topic branch.
-    const cmdIdx = argv.indexOf("help");
-    const rest = (cmdIdx >= 0 ? argv.slice(cmdIdx + 1) : argv.slice(2)).filter((a) => a !== "--json");
+  const argv = process.argv;
+  // Skip Bun's argv[0] (interpreter) + argv[1] (script). Filter
+  // operator-global flags so `ct-operator help <topic> --json`
+  // doesn't trip the unknown-topic branch.
+  const cmdIdx = argv.indexOf("help");
+  const rest = (cmdIdx >= 0 ? argv.slice(cmdIdx + 1) : argv.slice(2)).filter((a) => a !== "--json");
 
-    if (rest.length === 0 || rest[0] === "list" || rest[0] === "topics" || rest[0] === "-h" || rest[0] === "--help") {
-        process.stdout.write(renderTopicList());
-        return 0;
-    }
-    const slug = rest[0]!;
-    const r = renderTopic(slug);
-    if (!r.ok) {
-        process.stderr.write(`${ANSI.red}✗${ANSI.reset} ${r.error}\n\n`);
-        process.stderr.write(renderTopicList());
-        return 1;
-    }
-    process.stdout.write(r.output);
+  if (
+    rest.length === 0 ||
+    rest[0] === "list" ||
+    rest[0] === "topics" ||
+    rest[0] === "-h" ||
+    rest[0] === "--help"
+  ) {
+    process.stdout.write(renderTopicList());
     return 0;
+  }
+  const slug = rest[0]!;
+  const r = renderTopic(slug);
+  if (!r.ok) {
+    process.stderr.write(`${ANSI.red}✗${ANSI.reset} ${r.error}\n\n`);
+    process.stderr.write(renderTopicList());
+    return 1;
+  }
+  process.stdout.write(r.output);
+  return 0;
 }
 
 if (import.meta.main) {
-    const code = await main();
-    process.exit(code);
+  const code = await main();
+  process.exit(code);
 }

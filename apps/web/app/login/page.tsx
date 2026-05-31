@@ -13,9 +13,17 @@ export default function LoginPage() {
           </div>
           <div className="field">
             <label htmlFor="password">Password</label>
-            <input id="password" name="password" type="password" autoComplete="current-password" required />
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+            />
           </div>
-          <button className="btn" type="submit">Sign in</button>
+          <button className="btn" type="submit">
+            Sign in
+          </button>
         </form>
       </section>
     </main>

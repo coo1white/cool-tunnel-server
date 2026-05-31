@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { betterAuth } from "better-auth";
 import type { AdminConfig } from "@cool-tunnel/config";
 import { openAdminDb } from "@cool-tunnel/db";
-import { requireRole, type AdminRole } from "@cool-tunnel/shared";
 import { hashPassword, redactSensitive, verifyPassword } from "@cool-tunnel/security";
+import { type AdminRole, requireRole } from "@cool-tunnel/shared";
+import { betterAuth } from "better-auth";
 
 export type AuthInstance = ReturnType<typeof createAuth>;
 
@@ -92,7 +92,9 @@ export function createAuth(config: AdminConfig) {
           before: async (session) => {
             const db = openAdminDb(config.dbPath).db;
             try {
-              const row = db.query<{ status: string }, [string]>("SELECT status FROM user WHERE id = ?").get(String(session.userId));
+              const row = db
+                .query<{ status: string }, [string]>("SELECT status FROM user WHERE id = ?")
+                .get(String(session.userId));
               if (row?.status !== "active") return false;
             } finally {
               db.close();
@@ -105,27 +107,35 @@ export function createAuth(config: AdminConfig) {
       level: config.appEnv === "development" ? "debug" : "warn",
       disabled: false,
       log: (level, message, ...args) => {
-        const rendered = [message, ...args.map((arg) => {
-          if (typeof arg === "string") return arg;
-          try {
-            return JSON.stringify(arg);
-          } catch {
-            return String(arg);
-          }
-        })].join(" ");
+        const rendered = [
+          message,
+          ...args.map((arg) => {
+            if (typeof arg === "string") return arg;
+            try {
+              return JSON.stringify(arg);
+            } catch {
+              return String(arg);
+            }
+          }),
+        ].join(" ");
         const line = `[better-auth] ${level}: ${normalizeAuthLog(redactSensitive(rendered).replace(/("email"\s*:\s*")[^"]+(")/gi, "$1<redacted>$2"))}\n`;
-        if (level === "error" || level === "warn" || config.appEnv === "development") process.stderr.write(line);
+        if (level === "error" || level === "warn" || config.appEnv === "development")
+          process.stderr.write(line);
       },
     },
   });
 }
 
 function normalizeAuthLog(message: string): string {
-  if (/user not found|invalid password|invalid credentials/i.test(message)) return "authentication failed";
+  if (/user not found|invalid password|invalid credentials/i.test(message))
+    return "authentication failed";
   return message;
 }
 
-export async function getCurrentSession(auth: AuthInstance, headers: Headers): Promise<CurrentSession | null> {
+export async function getCurrentSession(
+  auth: AuthInstance,
+  headers: Headers,
+): Promise<CurrentSession | null> {
   const session = await auth.api.getSession({ headers });
   if (!session) return null;
   const rawSession = session.session as Record<string, unknown>;

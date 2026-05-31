@@ -13,33 +13,33 @@ import { redactSensitive } from "./redact";
 const isTty = process.stdout.isTTY === true;
 
 export const ANSI = {
-    bold: isTty ? "\x1b[1m" : "",
-    green: isTty ? "\x1b[32m" : "",
-    yellow: isTty ? "\x1b[33m" : "",
-    red: isTty ? "\x1b[31m" : "",
-    reset: isTty ? "\x1b[0m" : "",
+  bold: isTty ? "\x1b[1m" : "",
+  green: isTty ? "\x1b[32m" : "",
+  yellow: isTty ? "\x1b[33m" : "",
+  red: isTty ? "\x1b[31m" : "",
+  reset: isTty ? "\x1b[0m" : "",
 } as const;
 
 export interface Term {
-    step(msg: string): void;
-    ok(msg: string): void;
-    warn(msg: string): void;
+  step(msg: string): void;
+  ok(msg: string): void;
+  warn(msg: string): void;
 }
 
 export interface ArrowProgress {
-    advance(msg: string): void;
-    pulse(msg?: string): void;
-    hold(msg?: string): void;
-    release(): void;
-    complete(msg?: string): void;
-    fail(msg?: string): void;
+  advance(msg: string): void;
+  pulse(msg?: string): void;
+  hold(msg?: string): void;
+  release(): void;
+  complete(msg?: string): void;
+  fail(msg?: string): void;
 }
 
 type ProgressStream = {
-    readonly isTTY?: boolean;
-    readonly columns?: number;
-    readonly rows?: number;
-    write(s: string): void;
+  readonly isTTY?: boolean;
+  readonly columns?: number;
+  readonly rows?: number;
+  write(s: string): void;
 };
 
 // Create a fresh terminal helper with its own step counter.
@@ -48,153 +48,153 @@ type ProgressStream = {
 // e.g. a unit test importing the same module twice — don't share
 // the counter.
 export function makeTerm(opts?: { initialStep?: number }): Term {
-    let stepNum = opts?.initialStep ?? 0;
-    return {
-        step(msg: string) {
-            stepNum++;
-            console.log(
-                `\n${ANSI.bold}${ANSI.green}==>${ANSI.reset} ${ANSI.bold}${stepNum}.${ANSI.reset} ${msg}`,
-            );
-        },
-        ok(msg: string) {
-            console.log(`    ${ANSI.green}✓${ANSI.reset} ${redactSensitive(msg)}`);
-        },
-        warn(msg: string) {
-            console.error(`    ${ANSI.yellow}!${ANSI.reset} ${redactSensitive(msg)}`);
-        },
-    };
+  let stepNum = opts?.initialStep ?? 0;
+  return {
+    step(msg: string) {
+      stepNum++;
+      console.log(
+        `\n${ANSI.bold}${ANSI.green}==>${ANSI.reset} ${ANSI.bold}${stepNum}.${ANSI.reset} ${msg}`,
+      );
+    },
+    ok(msg: string) {
+      console.log(`    ${ANSI.green}✓${ANSI.reset} ${redactSensitive(msg)}`);
+    },
+    warn(msg: string) {
+      console.error(`    ${ANSI.yellow}!${ANSI.reset} ${redactSensitive(msg)}`);
+    },
+  };
 }
 
 export function formatArrowProgress(input: {
-    readonly label?: string;
-    readonly current: number;
-    readonly total: number;
-    readonly msg: string;
-    readonly width: number;
-    readonly failed?: boolean;
+  readonly label?: string;
+  readonly current: number;
+  readonly total: number;
+  readonly msg: string;
+  readonly width: number;
+  readonly failed?: boolean;
 }): string {
-    const total = Math.max(1, input.total);
-    const label = input.label ?? "";
-    const current = Math.min(Math.max(0, input.current), total);
-    const pct = Math.min(100, Math.max(0, Math.round((current / total) * 100)));
-    const prefix = `Progress: [${pct.toString().padStart(3, " ")}%] `;
-    const suffixParts = [` ${current}/${total}`];
-    if (label) suffixParts.push(` ${label}`);
-    if (input.msg) suffixParts.push(` ${input.msg}`);
-    const suffix = suffixParts.join("");
-    const barWidth = Math.max(8, input.width - prefix.length - suffix.length - 1);
-    const filled = Math.min(barWidth, Math.max(0, Math.round((pct / 100) * barWidth)));
-    const hashes = "#".repeat(filled);
-    const dots = ".".repeat(Math.max(0, barWidth - filled));
-    const raw = `${prefix}[${hashes}${dots}]${suffix}`;
-    const max = Math.max(20, input.width - 1);
-    return raw.length > max ? raw.slice(0, max - 1) + "…" : raw;
+  const total = Math.max(1, input.total);
+  const label = input.label ?? "";
+  const current = Math.min(Math.max(0, input.current), total);
+  const pct = Math.min(100, Math.max(0, Math.round((current / total) * 100)));
+  const prefix = `Progress: [${pct.toString().padStart(3, " ")}%] `;
+  const suffixParts = [` ${current}/${total}`];
+  if (label) suffixParts.push(` ${label}`);
+  if (input.msg) suffixParts.push(` ${input.msg}`);
+  const suffix = suffixParts.join("");
+  const barWidth = Math.max(8, input.width - prefix.length - suffix.length - 1);
+  const filled = Math.min(barWidth, Math.max(0, Math.round((pct / 100) * barWidth)));
+  const hashes = "#".repeat(filled);
+  const dots = ".".repeat(Math.max(0, barWidth - filled));
+  const raw = `${prefix}[${hashes}${dots}]${suffix}`;
+  const max = Math.max(20, input.width - 1);
+  return raw.length > max ? `${raw.slice(0, max - 1)}…` : raw;
 }
 
 export function terminalReserveBottomRow(rows: number): string {
-    const safeRows = Math.max(3, rows);
-    return `\x1b[1;${safeRows - 1}r\x1b[${safeRows - 1};1H`;
+  const safeRows = Math.max(3, rows);
+  return `\x1b[1;${safeRows - 1}r\x1b[${safeRows - 1};1H`;
 }
 
 export function terminalDrawBottomLine(rows: number, line: string): string {
-    const safeRows = Math.max(1, rows);
-    return `\x1b7\x1b[${safeRows};1H\x1b[2K${line}\x1b8`;
+  const safeRows = Math.max(1, rows);
+  return `\x1b7\x1b[${safeRows};1H\x1b[2K${line}\x1b8`;
 }
 
 export function terminalRestoreScrollRegion(rows: number): string {
-    const safeRows = Math.max(1, rows);
-    return `\x1b7\x1b[${safeRows};1H\x1b[2K\x1b8\x1b[r`;
+  const safeRows = Math.max(1, rows);
+  return `\x1b7\x1b[${safeRows};1H\x1b[2K\x1b8\x1b[r`;
 }
 
 export function makeArrowProgress(opts: {
-    readonly total: number;
-    readonly label?: string;
-    readonly stream?: ProgressStream;
-    readonly enabled?: boolean;
-    readonly repaintMs?: number;
+  readonly total: number;
+  readonly label?: string;
+  readonly stream?: ProgressStream;
+  readonly enabled?: boolean;
+  readonly repaintMs?: number;
 }): ArrowProgress {
-    const stream = opts.stream ?? process.stderr;
-    const total = Math.max(1, opts.total);
-    const enabled = opts.enabled ?? process.env["CT_PROGRESS_BAR"] !== "0";
-    const tty = enabled && stream.isTTY === true;
-    let current = 0;
-    let lastMsg = "starting";
-    let reservedRows: number | null = null;
-    let repaintTimer: Timer | null = null;
+  const stream = opts.stream ?? process.stderr;
+  const total = Math.max(1, opts.total);
+  const enabled = opts.enabled ?? process.env.CT_PROGRESS_BAR !== "0";
+  const tty = enabled && stream.isTTY === true;
+  let current = 0;
+  let lastMsg = "starting";
+  let reservedRows: number | null = null;
+  let repaintTimer: Timer | null = null;
 
-    const reserveBottomRow = () => {
-        if (!tty) return;
-        const rows = Math.max(3, stream.rows ?? 24);
-        if (reservedRows === rows) return;
-        reservedRows = rows;
+  const reserveBottomRow = () => {
+    if (!tty) return;
+    const rows = Math.max(3, stream.rows ?? 24);
+    if (reservedRows === rows) return;
+    reservedRows = rows;
 
-        // Debian/dpkg-style status line: keep normal process output in
-        // the scroll region above the final row, then draw progress on
-        // the final row. Docker build logs can scroll all day without
-        // overwriting the reserved progress line.
-        stream.write(terminalReserveBottomRow(rows));
-    };
+    // Debian/dpkg-style status line: keep normal process output in
+    // the scroll region above the final row, then draw progress on
+    // the final row. Docker build logs can scroll all day without
+    // overwriting the reserved progress line.
+    stream.write(terminalReserveBottomRow(rows));
+  };
 
-    const restoreScrollRegion = () => {
-        if (!tty || reservedRows === null) return;
-        const rows = reservedRows;
-        stream.write(terminalRestoreScrollRegion(rows));
-        reservedRows = null;
-    };
+  const restoreScrollRegion = () => {
+    if (!tty || reservedRows === null) return;
+    const rows = reservedRows;
+    stream.write(terminalRestoreScrollRegion(rows));
+    reservedRows = null;
+  };
 
-    const render = (msg = lastMsg, failed = false) => {
-        if (!enabled) return;
-        lastMsg = msg;
-        const width = Math.max(40, stream.columns ?? 100);
-        const line = formatArrowProgress({ label: opts.label, current, total, msg, width, failed });
-        if (!tty) {
-            stream.write(`${failed ? "!" : "==>"} ${line}\n`);
-            return;
-        }
-        reserveBottomRow();
-        const row = Math.max(1, stream.rows ?? 1);
-        const color = failed ? ANSI.red : current >= total ? ANSI.green : ANSI.yellow;
-        stream.write(terminalDrawBottomLine(row, `${color}${line}${ANSI.reset}`));
-    };
+  const render = (msg = lastMsg, failed = false) => {
+    if (!enabled) return;
+    lastMsg = msg;
+    const width = Math.max(40, stream.columns ?? 100);
+    const line = formatArrowProgress({ label: opts.label, current, total, msg, width, failed });
+    if (!tty) {
+      stream.write(`${failed ? "!" : "==>"} ${line}\n`);
+      return;
+    }
+    reserveBottomRow();
+    const row = Math.max(1, stream.rows ?? 1);
+    const color = failed ? ANSI.red : current >= total ? ANSI.green : ANSI.yellow;
+    stream.write(terminalDrawBottomLine(row, `${color}${line}${ANSI.reset}`));
+  };
 
-    const stopRepaint = () => {
-        if (repaintTimer === null) return;
-        clearInterval(repaintTimer);
-        repaintTimer = null;
-    };
+  const stopRepaint = () => {
+    if (repaintTimer === null) return;
+    clearInterval(repaintTimer);
+    repaintTimer = null;
+  };
 
-    return {
-        advance(msg: string) {
-            current = Math.min(total, current + 1);
-            render(msg);
-        },
-        pulse(msg?: string) {
-            render(msg ?? lastMsg);
-        },
-        hold(msg?: string) {
-            render(msg ?? lastMsg);
-            if (!tty || repaintTimer !== null) return;
-            const interval = Math.max(250, opts.repaintMs ?? 1000);
-            repaintTimer = setInterval(() => render(lastMsg), interval);
-        },
-        release() {
-            stopRepaint();
-            render(lastMsg);
-        },
-        complete(msg = "complete") {
-            stopRepaint();
-            current = total;
-            render(msg);
-            restoreScrollRegion();
-            if (tty) stream.write("\n");
-        },
-        fail(msg = "failed") {
-            stopRepaint();
-            render(msg, true);
-            restoreScrollRegion();
-            if (tty) stream.write("\n");
-        },
-    };
+  return {
+    advance(msg: string) {
+      current = Math.min(total, current + 1);
+      render(msg);
+    },
+    pulse(msg?: string) {
+      render(msg ?? lastMsg);
+    },
+    hold(msg?: string) {
+      render(msg ?? lastMsg);
+      if (!tty || repaintTimer !== null) return;
+      const interval = Math.max(250, opts.repaintMs ?? 1000);
+      repaintTimer = setInterval(() => render(lastMsg), interval);
+    },
+    release() {
+      stopRepaint();
+      render(lastMsg);
+    },
+    complete(msg = "complete") {
+      stopRepaint();
+      current = total;
+      render(msg);
+      restoreScrollRegion();
+      if (tty) stream.write("\n");
+    },
+    fail(msg = "failed") {
+      stopRepaint();
+      render(msg, true);
+      restoreScrollRegion();
+      if (tty) stream.write("\n");
+    },
+  };
 }
 
 // die() is a module-level function (not a Term method) so TS picks
@@ -203,7 +203,7 @@ export function makeArrowProgress(opts: {
 // the same narrowing in TS's analyser, so importers get the
 // narrowing-friendly version by importing the named export.
 export function die(msg: string, hint?: string): never {
-    console.error(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(msg)}`);
-    if (hint) console.error(`  ${ANSI.bold}↳ try:${ANSI.reset} ${redactSensitive(hint)}`);
-    process.exit(1);
+  console.error(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(msg)}`);
+  if (hint) console.error(`  ${ANSI.bold}↳ try:${ANSI.reset} ${redactSensitive(hint)}`);
+  process.exit(1);
 }

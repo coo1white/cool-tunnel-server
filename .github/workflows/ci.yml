@@ -97,6 +97,16 @@ jobs:
       - run: bun test apps/api/tests apps/web/tests packages/db/tests packages/security/tests packages/config/tests
       - run: pnpm run build
 
+  lint:
+    name: lint (biome — format + lint across the monorepo)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: ./.github/actions/setup-bun-pnpm
+      - name: biome check
+        run: pnpm run lint
+
   shell:
     name: shell (shellcheck)
     runs-on: ubuntu-24.04

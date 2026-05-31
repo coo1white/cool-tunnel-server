@@ -1,11 +1,11 @@
 {
-    "name": "doh-resolver",
-    "kind": "doh-endpoint",
-    "version": "operator-configured",
-    "upstream": "https://datatracker.ietf.org/doc/html/rfc8484",
-    "verify": {
-        "command": ["live"],
-        "expect_zero_exit": true
-    },
-    "note": "DNS-over-HTTPS resolver reachability check. Reads the live server setting from SQLite through the admin API path, not only the .env default, and dispatches an RFC 8484 binary DoH query for `example.com IN A`. Verifies the resolver responds and returns at least one answer record, catching captive portals or transparent DNS poisoners that 200-OK reachability checks can miss. For operators in censored regions where Cloudflare DoH is blocked, switch to a regional DoH endpoint in the admin settings and re-run `ct doctor`."
+  "name": "doh-resolver",
+  "kind": "doh-endpoint",
+  "version": "operator-configured",
+  "upstream": "https://datatracker.ietf.org/doc/html/rfc8484",
+  "verify": {
+    "command": ["live"],
+    "expect_zero_exit": true
+  },
+  "note": "DNS-over-HTTPS resolver reachability check. Reads the live server setting from SQLite through the admin API path, not only the .env default, and dispatches an RFC 8484 binary DoH query for `example.com IN A`. Verifies the resolver responds and returns at least one answer record, catching captive portals or transparent DNS poisoners that 200-OK reachability checks can miss. For operators in censored regions where Cloudflare DoH is blocked, switch to a regional DoH endpoint in the admin settings and re-run `ct doctor`."
 }

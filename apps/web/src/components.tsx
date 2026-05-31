@@ -6,7 +6,11 @@
 import { UserRoundCog } from "lucide-react";
 import type { ActionState } from "./api";
 
-export function PermissionDenied({ message = "Your role cannot use this action." }: { message?: string }) {
+export function PermissionDenied({
+  message = "Your role cannot use this action.",
+}: {
+  message?: string;
+}) {
   return (
     <div className="empty">
       <UserRoundCog size={28} />

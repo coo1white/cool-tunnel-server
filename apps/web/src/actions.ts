@@ -2,9 +2,9 @@
 
 "use server";
 
-import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { apiMutation, logout as apiLogout, stateError, type ActionState } from "./api";
+import { redirect } from "next/navigation";
+import { type ActionState, logout as apiLogout, apiMutation, stateError } from "./api";
 
 function value(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -18,7 +18,10 @@ export async function logoutAction(): Promise<void> {
   await apiLogout();
 }
 
-export async function changePasswordAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function changePasswordAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const newPassword = String(formData.get("newPassword") ?? "");
   if (newPassword !== String(formData.get("confirmPassword") ?? "")) {
     return { ok: false, message: "New password and confirmation do not match." };
@@ -35,7 +38,10 @@ export async function changePasswordAction(_prev: ActionState, formData: FormDat
   redirect("/dashboard");
 }
 
-export async function createUserAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function createUserAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   let createdId: string;
   try {
     const created = await apiMutation<{ user: { id: string } }>("/api/users", {
@@ -54,17 +60,24 @@ export async function createUserAction(_prev: ActionState, formData: FormData): 
   redirect(`/users/${createdId}`);
 }
 
-export async function updateUserAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function updateUserAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const id = value(formData, "id");
   try {
-    await apiMutation(`/api/users/${encodeURIComponent(id)}`, {
-      email: value(formData, "email"),
-      username: value(formData, "username"),
-      name: value(formData, "name"),
-      role: value(formData, "role"),
-      status: value(formData, "status"),
-      mustChangePassword: checked(formData, "mustChangePassword"),
-    }, "PATCH");
+    await apiMutation(
+      `/api/users/${encodeURIComponent(id)}`,
+      {
+        email: value(formData, "email"),
+        username: value(formData, "username"),
+        name: value(formData, "name"),
+        role: value(formData, "role"),
+        status: value(formData, "status"),
+        mustChangePassword: checked(formData, "mustChangePassword"),
+      },
+      "PATCH",
+    );
   } catch (error) {
     return stateError(error);
   }
@@ -73,14 +86,19 @@ export async function updateUserAction(_prev: ActionState, formData: FormData): 
   return { ok: true, message: "User updated." };
 }
 
-export async function userCommandAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function userCommandAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const id = value(formData, "id");
   const command = value(formData, "command");
   try {
     if (command === "delete") {
       await apiMutation(`/api/users/${encodeURIComponent(id)}`, {}, "DELETE");
     } else if (command === "reset-password") {
-      await apiMutation(`/api/users/${encodeURIComponent(id)}/reset-password`, { password: String(formData.get("password") ?? "") });
+      await apiMutation(`/api/users/${encodeURIComponent(id)}/reset-password`, {
+        password: String(formData.get("password") ?? ""),
+      });
     } else {
       await apiMutation(`/api/users/${encodeURIComponent(id)}/${command}`);
     }
@@ -90,10 +108,16 @@ export async function userCommandAction(_prev: ActionState, formData: FormData):
   revalidatePath("/users");
   revalidatePath(`/users/${id}`);
   if (command === "delete") redirect("/users");
-  return { ok: true, message: command === "reset-password" ? "Temporary password set." : "User updated." };
+  return {
+    ok: true,
+    message: command === "reset-password" ? "Temporary password set." : "User updated.",
+  };
 }
 
-export async function createProxyAccountAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function createProxyAccountAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   try {
     await apiMutation("/api/proxy-accounts", {
       username: value(formData, "username"),
@@ -113,9 +137,13 @@ export async function createProxyAccountAction(_prev: ActionState, formData: For
 // Imperative server action (called directly from the client reveal button).
 // Returns the full subscription URL for owner/admin; the API records an audit
 // event. Kept off the table's default render so the token stays masked.
-export async function revealSubscriptionAction(id: string): Promise<{ ok: boolean; url?: string; message?: string }> {
+export async function revealSubscriptionAction(
+  id: string,
+): Promise<{ ok: boolean; url?: string; message?: string }> {
   try {
-    const res = await apiMutation<{ account?: { subscriptionUrl?: string | null } }>(`/api/proxy-accounts/${encodeURIComponent(id)}/reveal`);
+    const res = await apiMutation<{ account?: { subscriptionUrl?: string | null } }>(
+      `/api/proxy-accounts/${encodeURIComponent(id)}/reveal`,
+    );
     const url = res.account?.subscriptionUrl ?? null;
     if (!url) return { ok: false, message: "Subscription URL is not available for your role." };
     return { ok: true, url };
@@ -154,8 +182,8 @@ export async function userCommand(
     command === "reset-password"
       ? "Temporary password set."
       : command === "delete"
-      ? "User deleted."
-      : "User updated.";
+        ? "User deleted."
+        : "User updated.";
   return { ok: true, message };
 }
 
@@ -168,30 +196,46 @@ export async function proxyCommand(id: string, command: string): Promise<ActionS
     if (command === "delete") {
       await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}`, {}, "DELETE");
     } else {
-      await apiMutation(`/api/proxy-accounts/${encodeURIComponent(id)}/${encodeURIComponent(command)}`);
+      await apiMutation(
+        `/api/proxy-accounts/${encodeURIComponent(id)}/${encodeURIComponent(command)}`,
+      );
     }
   } catch (error) {
     return stateError(error);
   }
   revalidatePath("/users");
-  const message = command === "delete" ? "Account deleted." : command === "regenerate-uuid" ? "UUID rotated." : "Account updated.";
+  const message =
+    command === "delete"
+      ? "Account deleted."
+      : command === "regenerate-uuid"
+        ? "UUID rotated."
+        : "Account updated.";
   return { ok: true, message };
 }
 
-export async function updateSettingsAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function updateSettingsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   try {
-    await apiMutation("/api/settings", {
-      domain: value(formData, "domain"),
-      panelDomain: value(formData, "panelDomain"),
-      acmeEmail: value(formData, "acmeEmail"),
-      acmeDirectory: value(formData, "acmeDirectory"),
-      antiTrackingHideIp: checked(formData, "antiTrackingHideIp"),
-      antiTrackingHideVia: checked(formData, "antiTrackingHideVia"),
-      antiTrackingProbeResistance: checked(formData, "antiTrackingProbeResistance"),
-      antiTrackingDohResolver: value(formData, "antiTrackingDohResolver"),
-      realityDestHost: value(formData, "realityDestHost"),
-      realityShortIds: value(formData, "realityShortIds").split(",").map((part) => part.trim()),
-    }, "PATCH");
+    await apiMutation(
+      "/api/settings",
+      {
+        domain: value(formData, "domain"),
+        panelDomain: value(formData, "panelDomain"),
+        acmeEmail: value(formData, "acmeEmail"),
+        acmeDirectory: value(formData, "acmeDirectory"),
+        antiTrackingHideIp: checked(formData, "antiTrackingHideIp"),
+        antiTrackingHideVia: checked(formData, "antiTrackingHideVia"),
+        antiTrackingProbeResistance: checked(formData, "antiTrackingProbeResistance"),
+        antiTrackingDohResolver: value(formData, "antiTrackingDohResolver"),
+        realityDestHost: value(formData, "realityDestHost"),
+        realityShortIds: value(formData, "realityShortIds")
+          .split(",")
+          .map((part) => part.trim()),
+      },
+      "PATCH",
+    );
   } catch (error) {
     return stateError(error);
   }
@@ -202,8 +246,18 @@ export async function updateSettingsAction(_prev: ActionState, formData: FormDat
 
 export async function runAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const command = value(formData, "command");
-  const body = command === "render-caddyfile" ? { target: "caddyfile" } : command === "render-singbox" ? { target: "singbox" } : {};
-  const path = command === "doctor" ? "/api/doctor/run" : command.startsWith("render-") ? "/api/render" : `/api/actions/${command}`;
+  const body =
+    command === "render-caddyfile"
+      ? { target: "caddyfile" }
+      : command === "render-singbox"
+        ? { target: "singbox" }
+        : {};
+  const path =
+    command === "doctor"
+      ? "/api/doctor/run"
+      : command.startsWith("render-")
+        ? "/api/render"
+        : `/api/actions/${command}`;
   try {
     await apiMutation(path, body);
   } catch (error) {

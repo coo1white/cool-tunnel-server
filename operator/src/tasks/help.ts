@@ -5,33 +5,33 @@
 // serve the same topic registry that `make help-<topic>` and
 // `./ct help <topic>` hit. Exit codes: 0 success, 1 unknown topic.
 
-import type { Task, TaskResult } from "../runner/task";
-import type { RunContext } from "../runner/context";
 import { renderTopic, renderTopicList } from "../../help";
+import type { RunContext } from "../runner/context";
+import type { Task, TaskResult } from "../runner/task";
 
 export class HelpTask implements Task {
-    readonly name = "help";
+  readonly name = "help";
 
-    async run(_ctx: RunContext): Promise<TaskResult> {
-        const cmdIdx = process.argv.indexOf("help");
-        const rest = (cmdIdx >= 0 ? process.argv.slice(cmdIdx + 1) : []).filter((a) => a !== "--json");
-        if (
-            rest.length === 0 ||
-            rest[0] === "list" ||
-            rest[0] === "topics" ||
-            rest[0] === "-h" ||
-            rest[0] === "--help"
-        ) {
-            process.stdout.write(renderTopicList());
-            return { ok: true, code: 0, summary: "list" };
-        }
-        const r = renderTopic(rest[0]!);
-        if (!r.ok) {
-            process.stderr.write(`✗ ${r.error}\n\n`);
-            process.stderr.write(renderTopicList());
-            return { ok: false, code: 1, summary: r.error };
-        }
-        process.stdout.write(r.output);
-        return { ok: true, code: 0, summary: rest[0]! };
+  async run(_ctx: RunContext): Promise<TaskResult> {
+    const cmdIdx = process.argv.indexOf("help");
+    const rest = (cmdIdx >= 0 ? process.argv.slice(cmdIdx + 1) : []).filter((a) => a !== "--json");
+    if (
+      rest.length === 0 ||
+      rest[0] === "list" ||
+      rest[0] === "topics" ||
+      rest[0] === "-h" ||
+      rest[0] === "--help"
+    ) {
+      process.stdout.write(renderTopicList());
+      return { ok: true, code: 0, summary: "list" };
     }
+    const r = renderTopic(rest[0]!);
+    if (!r.ok) {
+      process.stderr.write(`✗ ${r.error}\n\n`);
+      process.stderr.write(renderTopicList());
+      return { ok: false, code: 1, summary: r.error };
+    }
+    process.stdout.write(r.output);
+    return { ok: true, code: 0, summary: rest[0]! };
+  }
 }

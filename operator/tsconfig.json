@@ -21,6 +21,17 @@
 
     "types": ["bun"]
   },
-  "include": ["src/**/*", "build.ts", "auto-update.ts", "backup.ts", "install.ts", "restore.ts", "sbom.ts", "pin-images.ts", "update.ts", "tests/**/*"],
+  "include": [
+    "src/**/*",
+    "build.ts",
+    "auto-update.ts",
+    "backup.ts",
+    "install.ts",
+    "restore.ts",
+    "sbom.ts",
+    "pin-images.ts",
+    "update.ts",
+    "tests/**/*"
+  ],
   "exclude": ["node_modules", "bin"]
 }

@@ -3,8 +3,8 @@
 "use client";
 
 import { useActionState } from "react";
-import { Notice } from "./components";
 import type { ActionState } from "./api";
+import { Notice } from "./components";
 
 const INITIAL: ActionState = { ok: true, message: "" };
 
@@ -13,7 +13,11 @@ const INITIAL: ActionState = { ok: true, message: "" };
  * the action surface inline via <Notice> instead of bubbling to a 500. The
  * form fields are passed as children and stay server-rendered.
  */
-export function ActionForm({ action, className, children }: {
+export function ActionForm({
+  action,
+  className,
+  children,
+}: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   className?: string;
   children: React.ReactNode;
