@@ -3,10 +3,10 @@
 "use client";
 
 import { RotateCcw, Trash2, UserMinus, UserPlus } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { userCommand } from "./actions";
-import type { ActionState } from "./api";
 import { Notice } from "./components";
+import { useImperativeAction } from "./hooks";
 
 interface UserActionsProps {
   readonly userId: string;
@@ -27,21 +27,11 @@ interface UserActionsProps {
  * admin surfaces use the same vocabulary.
  */
 export function UserActions({ userId, status, canDisable, canReset, canDelete }: UserActionsProps) {
-  const [pending, startTransition] = useTransition();
-  const [msg, setMsg] = useState<ActionState | null>(null);
   const [password, setPassword] = useState("");
-
-  function run(command: string, pwd?: string) {
-    setMsg(null);
-    startTransition(async () => {
-      const res = await userCommand(userId, command, pwd);
-      setMsg(res);
-      if (res.ok) {
-        setPassword("");
-        setTimeout(() => setMsg(null), 2500);
-      }
-    });
-  }
+  const { pending, msg, run } = useImperativeAction(
+    (command: string, pwd?: string) => userCommand(userId, command, pwd),
+    { onSuccess: () => setPassword("") },
+  );
 
   const canSubmitReset = password.length >= 12 && !pending;
 

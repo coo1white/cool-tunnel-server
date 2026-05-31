@@ -4,10 +4,11 @@
 
 import type { ProxyAccount } from "@cool-tunnel/shared";
 import { Check, Copy, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { createProxyAccountAction, proxyCommand, revealSubscriptionAction } from "./actions";
 import type { ActionState } from "./api";
 import { Notice, StatusPill } from "./components";
+import { useClipboard, useImperativeAction } from "./hooks";
 
 const PROTOCOL_LABELS: Record<string, string> = { vless_reality: "Reality" };
 
@@ -28,28 +29,14 @@ function fmtDate(iso: string | null, fallback: string): string {
 // the clipboard without ever displaying the token on screen. The cell keeps
 // showing the masked URL.
 function CopySubscription({ id, masked }: { id: string; masked: string | null }) {
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const { copied, copying, error, copy } = useClipboard();
 
-  async function copy() {
-    setBusy(true);
-    setErr(null);
-    const res = await revealSubscriptionAction(id);
-    if (!res.ok || !res.url) {
-      setBusy(false);
-      setErr(res.message ?? "Copy failed.");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(res.url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setErr("Clipboard blocked.");
-    } finally {
-      setBusy(false);
-    }
+  function copySubscription() {
+    void copy(async () => {
+      const res = await revealSubscriptionAction(id);
+      if (!res.ok || !res.url) throw new Error(res.message ?? "Copy failed.");
+      return res.url;
+    });
   }
 
   return (
@@ -58,13 +45,13 @@ function CopySubscription({ id, masked }: { id: string; masked: string | null })
       <button
         type="button"
         className="icon-btn sm"
-        onClick={copy}
-        disabled={busy}
+        onClick={copySubscription}
+        disabled={copying}
         title="Copy full subscription URL (audited)"
       >
         {copied ? <Check size={15} /> : <Copy size={15} />}
       </button>
-      {err && <span className="sub-err">{err}</span>}
+      {error && <span className="sub-err">{error}</span>}
     </div>
   );
 }
@@ -73,17 +60,9 @@ function CopySubscription({ id, masked }: { id: string; masked: string | null })
 // the row (success auto-clears, errors persist), so a result never reflows the
 // buttons. Commands are invoked imperatively with an explicit command string.
 function ProxyRowActions({ account }: { account: ProxyAccount }) {
-  const [pending, startTransition] = useTransition();
-  const [msg, setMsg] = useState<ActionState | null>(null);
-
-  function run(command: string) {
-    setMsg(null);
-    startTransition(async () => {
-      const res = await proxyCommand(account.id, command);
-      setMsg(res);
-      if (res.ok) setTimeout(() => setMsg(null), 2500);
-    });
-  }
+  const { pending, msg, run } = useImperativeAction((command: string) =>
+    proxyCommand(account.id, command),
+  );
 
   return (
     <div className="row-actions">
