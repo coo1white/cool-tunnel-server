@@ -13,8 +13,8 @@
 // Wired into `make pin-images`.
 
 import { $ } from "bun";
-import { die, makeTerm } from "./src/util/term";
 import { ensureRepoRoot } from "./src/util/repo-root";
+import { die, makeTerm } from "./src/util/term";
 
 const { step, ok, warn } = makeTerm();
 
@@ -27,11 +27,11 @@ const { step, ok, warn } = makeTerm();
 // that silently no-op'd against renamed FROM lines. The fail-loud
 // guard in pin() catches that now.
 const MAPPINGS: ReadonlyArray<{ readonly file: string; readonly image: string }> = [
-    { file: "docker/caddy/Dockerfile", image: "caddy:2.11.3-builder" },
-    { file: "docker/caddy/Dockerfile", image: "caddy:2.11.3-alpine" },
-    { file: "docker/singbox/Dockerfile", image: "alpine:3.21" },
-    { file: "docker/admin-api/Dockerfile", image: "oven/bun:1.3.14-alpine" },
-    { file: "docker/admin-web/Dockerfile", image: "oven/bun:1.3.14-alpine" },
+  { file: "docker/caddy/Dockerfile", image: "caddy:2.11.3-builder" },
+  { file: "docker/caddy/Dockerfile", image: "caddy:2.11.3-alpine" },
+  { file: "docker/singbox/Dockerfile", image: "alpine:3.21" },
+  { file: "docker/admin-api/Dockerfile", image: "oven/bun:1.3.14-alpine" },
+  { file: "docker/admin-web/Dockerfile", image: "oven/bun:1.3.14-alpine" },
 ];
 
 // Build the FROM-line regex for a given image. Matches:
@@ -40,99 +40,98 @@ const MAPPINGS: ReadonlyArray<{ readonly file: string; readonly image: string }>
 //
 // Exported for unit tests.
 export function fromLineRe(image: string): RegExp {
-    const escaped = image.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`^(FROM\\s+)${escaped}(?:@sha256:[a-f0-9]+)?(\\s|$)`);
+  const escaped = image.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^(FROM\\s+)${escaped}(?:@sha256:[a-f0-9]+)?(\\s|$)`);
 }
 
 // Pure rewriter: takes a Dockerfile body, an image, and a digest;
 // returns the rewritten body and whether any line was changed. No I/O.
 export function rewriteDockerfile(
-    body: string,
-    image: string,
-    digest: string,
+  body: string,
+  image: string,
+  digest: string,
 ): { content: string; changedLines: number } {
-    const re = fromLineRe(image);
-    let changedLines = 0;
-    const out = body.split("\n").map((line) => {
-        const m = re.exec(line);
-        if (!m) return line;
-        changedLines++;
-        return `${m[1]}${image}@${digest}${m[2]}${line.slice(m[0].length)}`;
-    });
-    return { content: out.join("\n"), changedLines };
+  const re = fromLineRe(image);
+  let changedLines = 0;
+  const out = body.split("\n").map((line) => {
+    const m = re.exec(line);
+    if (!m) return line;
+    changedLines++;
+    return `${m[1]}${image}@${digest}${m[2]}${line.slice(m[0].length)}`;
+  });
+  return { content: out.join("\n"), changedLines };
 }
 
 // Best-effort digest resolution. Tries `docker buildx imagetools
 // inspect` first, then `docker manifest inspect`. Returns the
 // `sha256:<hex>` digest or null if both probes failed.
 async function resolveDigest(image: string): Promise<string | null> {
-    const buildx = await $`docker buildx imagetools inspect ${image} --format ${"{{json .Manifest}}"}`
-        .nothrow()
-        .quiet();
-    if (buildx.exitCode === 0) {
-        try {
-            const m = JSON.parse(buildx.stdout.toString());
-            if (typeof m.digest === "string" && m.digest.length > 0) return m.digest;
-        } catch {
-            // fall through
-        }
+  const buildx = await $`docker buildx imagetools inspect ${image} --format ${"{{json .Manifest}}"}`
+    .nothrow()
+    .quiet();
+  if (buildx.exitCode === 0) {
+    try {
+      const m = JSON.parse(buildx.stdout.toString());
+      if (typeof m.digest === "string" && m.digest.length > 0) return m.digest;
+    } catch {
+      // fall through
     }
-    const manifest = await $`docker manifest inspect ${image}`.nothrow().quiet();
-    if (manifest.exitCode === 0) {
-        try {
-            const m = JSON.parse(manifest.stdout.toString());
-            if (typeof m.manifests?.[0]?.digest === "string") return m.manifests[0].digest;
-            if (typeof m.config?.digest === "string") return m.config.digest;
-        } catch {
-            // fall through
-        }
+  }
+  const manifest = await $`docker manifest inspect ${image}`.nothrow().quiet();
+  if (manifest.exitCode === 0) {
+    try {
+      const m = JSON.parse(manifest.stdout.toString());
+      if (typeof m.manifests?.[0]?.digest === "string") return m.manifests[0].digest;
+      if (typeof m.config?.digest === "string") return m.config.digest;
+    } catch {
+      // fall through
     }
-    return null;
+  }
+  return null;
 }
 
 async function pin(file: string, image: string): Promise<void> {
-    const f = Bun.file(file);
-    if (!(await f.exists())) {
-        die(`pin-images: ${file} not found`,
-            "check the mappings list in operator/pin-images.ts");
-    }
-    const original = await f.text();
-    const re = fromLineRe(image);
-    if (!original.split("\n").some((l) => re.test(l))) {
-        die(
-            `pin-images mapping out of date: "${image}" not found in ${file}`,
-            "update operator/pin-images.ts to match the current FROM line, or remove the mapping if the image is gone",
-        );
-    }
+  const f = Bun.file(file);
+  if (!(await f.exists())) {
+    die(`pin-images: ${file} not found`, "check the mappings list in operator/pin-images.ts");
+  }
+  const original = await f.text();
+  const re = fromLineRe(image);
+  if (!original.split("\n").some((l) => re.test(l))) {
+    die(
+      `pin-images mapping out of date: "${image}" not found in ${file}`,
+      "update operator/pin-images.ts to match the current FROM line, or remove the mapping if the image is gone",
+    );
+  }
 
-    step(`Resolving ${image}`);
-    const digest = await resolveDigest(image);
-    if (!digest) {
-        warn(`could not resolve digest for ${image} — skipping`);
-        return;
-    }
-    ok(`  ${image}  →  ${digest}`);
-    const { content } = rewriteDockerfile(original, image, digest);
-    if (content !== original) {
-        await Bun.write(file, content);
-    }
+  step(`Resolving ${image}`);
+  const digest = await resolveDigest(image);
+  if (!digest) {
+    warn(`could not resolve digest for ${image} — skipping`);
+    return;
+  }
+  ok(`  ${image}  →  ${digest}`);
+  const { content } = rewriteDockerfile(original, image, digest);
+  if (content !== original) {
+    await Bun.write(file, content);
+  }
 }
 
 async function main(): Promise<number> {
-    const docker = Bun.which("docker");
-    if (!docker) {
-        die("required command 'docker' is not on PATH", "Install per docs/installation-debian.md");
-    }
-    ensureRepoRoot(import.meta.url);
+  const docker = Bun.which("docker");
+  if (!docker) {
+    die("required command 'docker' is not on PATH", "Install per docs/installation-debian.md");
+  }
+  ensureRepoRoot(import.meta.url);
 
-    for (const { file, image } of MAPPINGS) {
-        await pin(file, image);
-    }
-    ok("pin complete. Review the diff:  git diff docker/");
-    return 0;
+  for (const { file, image } of MAPPINGS) {
+    await pin(file, image);
+  }
+  ok("pin complete. Review the diff:  git diff docker/");
+  return 0;
 }
 
 if (import.meta.main) {
-    const code = await main();
-    process.exit(code);
+  const code = await main();
+  process.exit(code);
 }

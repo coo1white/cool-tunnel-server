@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { expect, test } from "bun:test";
-import { AdminStore, migrateAdminDb, openAdminDb } from "../src/index";
 import { REQUIRED_SCHEMA_VERSION } from "@cool-tunnel/shared";
+import { AdminStore, migrateAdminDb, openAdminDb } from "../src/index";
 
 test("SQLite migrations are idempotent and record schema version", () => {
   const { db } = openAdminDb(":memory:");
   migrateAdminDb(db);
   migrateAdminDb(db);
   const store = new AdminStore(db);
-  expect(store.migrationStatus()).toMatchObject({ ok: true, currentVersion: REQUIRED_SCHEMA_VERSION });
+  expect(store.migrationStatus()).toMatchObject({
+    ok: true,
+    currentVersion: REQUIRED_SCHEMA_VERSION,
+  });
 });
 
 test("proxy account UUID rotates with previous UUID grace", () => {
@@ -74,7 +77,10 @@ test("audit details minimize personal and secret fields", () => {
     role: "viewer",
   });
   store.deleteUser(owner, target.id);
-  const audit = store.listAudit(10).map((entry) => entry.detail ?? "").join("\n");
+  const audit = store
+    .listAudit(10)
+    .map((entry) => entry.detail ?? "")
+    .join("\n");
   expect(audit).not.toContain("owner@example.com");
   expect(audit).not.toContain("delete-me@example.com");
   expect(audit).not.toContain("hash");

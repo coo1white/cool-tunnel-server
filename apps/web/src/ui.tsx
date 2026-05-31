@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { redirect } from "next/navigation";
-import { LogOut } from "lucide-react";
 import type { Permission } from "@cool-tunnel/shared";
-import { getSession, has } from "./api";
+import { LogOut } from "lucide-react";
+import { redirect } from "next/navigation";
 import { logoutAction } from "./actions";
-import { NavLinks, type NavIcon } from "./nav-links";
+import { getSession, has } from "./api";
+import { type NavIcon, NavLinks } from "./nav-links";
 import { ThemeToggle } from "./theme-toggle";
 
 export { Notice, PermissionDenied, StatusPill } from "./components";
@@ -18,7 +18,12 @@ const nav: { href: string; label: string; icon: NavIcon; permission: Permission 
   { href: "/audit", label: "Audit", icon: "audit", permission: "audit:read" },
 ];
 
-export async function AdminShell({ children, title, subtitle, action }: {
+export async function AdminShell({
+  children,
+  title,
+  subtitle,
+  action,
+}: {
   children: React.ReactNode;
   title: string;
   subtitle?: string;
@@ -32,14 +37,18 @@ export async function AdminShell({ children, title, subtitle, action }: {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">C</span> Cool Tunnel</div>
+        <div className="brand">
+          <span className="brand-mark">C</span> Cool Tunnel
+        </div>
         <nav className="nav">
           <NavLinks items={items} />
         </nav>
         <div className="nav-spacer" />
         <nav className="nav">
           <form action={logoutAction}>
-            <button type="submit"><LogOut size={18} /> Logout</button>
+            <button type="submit">
+              <LogOut size={18} /> Logout
+            </button>
           </form>
         </nav>
       </aside>

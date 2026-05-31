@@ -1,12 +1,12 @@
 {
-    "name": "caddy",
-    "kind": "container-image",
-    "version": "v2.11.3",
-    "upstream": "https://github.com/caddyserver/caddy",
-    "verify": {
-        "command": ["curl", "-sIo", "/dev/null", "--connect-timeout", "5", "http://caddy:80/"],
-        "expect_zero_exit": true,
-        "expect_no_version_line": true
-    },
-    "note": "Apache-2.0. Caddy 2.11.3 with mholt/caddy-l4 used as the public front door: :80 handles HTTP-01 challenges + http-to-https redirect, and :443 is the layer4 SNI splitter (PANEL_DOMAIN to the inner admin HTTPS listener, all other SNI to ct-singbox:443). The verify probe issues HEAD http://caddy:80/ from an internal container; Caddy's :80 site redirects every request 308 to HTTPS, so a 308 response code confirms the listener is alive."
+  "name": "caddy",
+  "kind": "container-image",
+  "version": "v2.11.3",
+  "upstream": "https://github.com/caddyserver/caddy",
+  "verify": {
+    "command": ["curl", "-sIo", "/dev/null", "--connect-timeout", "5", "http://caddy:80/"],
+    "expect_zero_exit": true,
+    "expect_no_version_line": true
+  },
+  "note": "Apache-2.0. Caddy 2.11.3 with mholt/caddy-l4 used as the public front door: :80 handles HTTP-01 challenges + http-to-https redirect, and :443 is the layer4 SNI splitter (PANEL_DOMAIN to the inner admin HTTPS listener, all other SNI to ct-singbox:443). The verify probe issues HEAD http://caddy:80/ from an internal container; Caddy's :80 site redirects every request 308 to HTTPS, so a 308 response code confirms the listener is alive."
 }

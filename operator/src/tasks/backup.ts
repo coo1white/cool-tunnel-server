@@ -7,22 +7,22 @@
 // `./ct backup` can dispatch through the operator binary the
 // same way doctor / render / restore / update do.
 
-import type { Task, TaskResult } from "../runner/task";
 import type { RunContext } from "../runner/context";
+import type { Task, TaskResult } from "../runner/task";
 
 export class BackupTask implements Task {
-    readonly name = "backup";
+  readonly name = "backup";
 
-    async run(_ctx: RunContext): Promise<TaskResult> {
-        const { runBackup } = await import("../../backup");
-        try {
-            const code = await runBackup();
-            return code === 0
-                ? { ok: true, code: 0, summary: "backup written" }
-                : { ok: false, code, summary: `backup exited ${code}` };
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { ok: false, code: 1, summary: msg };
-        }
+  async run(_ctx: RunContext): Promise<TaskResult> {
+    const { runBackup } = await import("../../backup");
+    try {
+      const code = await runBackup();
+      return code === 0
+        ? { ok: true, code: 0, summary: "backup written" }
+        : { ok: false, code, summary: `backup exited ${code}` };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, code: 1, summary: msg };
     }
+  }
 }

@@ -222,12 +222,18 @@ export function requireRole(value: unknown): AdminRole {
   return value;
 }
 
-export function hasPermission(user: Pick<AdminUser, "role" | "status">, permission: Permission): boolean {
+export function hasPermission(
+  user: Pick<AdminUser, "role" | "status">,
+  permission: Permission,
+): boolean {
   if (user.status !== "active") return false;
   return ROLE_PERMISSIONS[user.role].includes(permission);
 }
 
-export function canManageTarget(actor: Pick<AdminUser, "role">, target: Pick<AdminUser, "role">): boolean {
+export function canManageTarget(
+  actor: Pick<AdminUser, "role">,
+  target: Pick<AdminUser, "role">,
+): boolean {
   if (actor.role === "owner") return true;
   // Admins may manage only ranks strictly below admin (operator/viewer) — never
   // a peer admin or an owner. This prevents one admin from disabling, demoting,

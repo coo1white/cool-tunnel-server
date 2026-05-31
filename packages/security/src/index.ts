@@ -80,7 +80,8 @@ const SECRET_QUERY_KEYS = [
   "apiKey",
 ];
 
-const SECRETISH_KEY = /(password|passwd|pwd|token|secret|cookie|session|authorization|uuid|subscription|database_url|db_url|redis_url|private[_-]?key|api[_-]?key)/i;
+const SECRETISH_KEY =
+  /(password|passwd|pwd|token|secret|cookie|session|authorization|uuid|subscription|database_url|db_url|redis_url|private[_-]?key|api[_-]?key)/i;
 
 // Keys whose name *contains* a SECRETISH word but whose VALUE is not itself
 // a secret — typically derived/metadata fields produced alongside a secret.
@@ -169,16 +170,25 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 
 export function redactSensitive(text: string): string {
   let out = text;
-  out = out.replace(/\b([A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|DATABASE_URL|DB_URL|SQLITE_URL|REDIS_URL)[A-Z0-9_]*\s*[:=]\s*)[^\s&,'"\\}<>]+/gi, "$1<redacted>");
+  out = out.replace(
+    /\b([A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|DATABASE_URL|DB_URL|SQLITE_URL|REDIS_URL)[A-Z0-9_]*\s*[:=]\s*)[^\s&,'"\\}<>]+/gi,
+    "$1<redacted>",
+  );
   out = out.replace(/\b(authorization:\s*)(\S+)(\s+[^\r\n]+)?/gi, (_m, p1, scheme, creds) =>
     creds ? `${p1}${scheme} <redacted>` : `${p1}<redacted>`,
   );
   out = out.replace(/\b(bearer\s+)[A-Za-z0-9._~+/=-]{10,}/gi, "$1<redacted>");
   out = out.replace(/\b(cookie:\s*)[^\r\n]+/gi, "$1<redacted>");
   out = out.replace(/\b(set-cookie:\s*)[^\r\n]+/gi, "$1<redacted>");
-  out = out.replace(/\b(mysql|mariadb|postgres|postgresql|redis|sqlite):\/\/[^\s'"<>]+/gi, "$1://<redacted>");
-  out = out.replace(/\b(https?:\/\/)[^:@\s'"<>\/]+:[^@\s'"<>\/]+@/gi, "$1<redacted>@");
-  out = out.replace(/(https?:\/\/[^\s'"<>]+\/api\/v1\/subscription\/)[A-Za-z0-9_-]+/g, "$1<redacted>");
+  out = out.replace(
+    /\b(mysql|mariadb|postgres|postgresql|redis|sqlite):\/\/[^\s'"<>]+/gi,
+    "$1://<redacted>",
+  );
+  out = out.replace(/\b(https?:\/\/)[^:@\s'"<>/]+:[^@\s'"<>/]+@/gi, "$1<redacted>@");
+  out = out.replace(
+    /(https?:\/\/[^\s'"<>]+\/api\/v1\/subscription\/)[A-Za-z0-9_-]+/g,
+    "$1<redacted>",
+  );
   out = out.replace(/(\/api\/v1\/subscription\/)[A-Za-z0-9_-]+/g, "$1<redacted>");
   out = out.replace(/(\/setup(?:\/bootstrap)?\?token=)[A-Za-z0-9_-]+/g, "$1<redacted>");
   for (const key of SECRET_QUERY_KEYS) {
@@ -187,15 +197,24 @@ export function redactSensitive(text: string): string {
   }
   out = out.replace(/\bctbt_[A-Za-z0-9_-]{20,}\b/g, "ctbt_<redacted>");
   out = out.replace(/\bbase64:[A-Za-z0-9+/=]{20,}\b/g, "base64:<redacted>");
-  out = out.replace(/\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b/g, "<uuid>");
+  out = out.replace(
+    /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b/g,
+    "<uuid>",
+  );
   for (const key of SECRET_ENV_KEYS) {
     out = out.replace(new RegExp(`\\b(${key})=([^\\s'"\\\\]+)`, "g"), "$1=<redacted>");
     out = out.replace(new RegExp(`\\b(${key})='[^']*'`, "g"), "$1='<redacted>'");
     out = out.replace(new RegExp(`\\b(${key})="[^"]*"`, "g"), '$1="<redacted>"');
   }
   for (const key of SECRET_JSON_KEYS) {
-    out = out.replace(new RegExp(`("${key}"\\s*:\\s*")(?:\\\\.|[^"\\\\])*(")`, "gi"), "$1<redacted>$2");
-    out = out.replace(new RegExp(`('${key}'\\s*=>\\s*')(?:\\\\.|[^'\\\\])*(')`, "gi"), "$1<redacted>$2");
+    out = out.replace(
+      new RegExp(`("${key}"\\s*:\\s*")(?:\\\\.|[^"\\\\])*(")`, "gi"),
+      "$1<redacted>$2",
+    );
+    out = out.replace(
+      new RegExp(`('${key}'\\s*=>\\s*')(?:\\\\.|[^'\\\\])*(')`, "gi"),
+      "$1<redacted>$2",
+    );
   }
   return out;
 }
@@ -248,7 +267,8 @@ export function validateUsername(value: string): boolean {
 
 export function normalizeUsername(value: string): string {
   const username = value.trim();
-  if (!validateUsername(username)) throw new Error("Use 3-64 letters, numbers, dot, dash, or underscore.");
+  if (!validateUsername(username))
+    throw new Error("Use 3-64 letters, numbers, dot, dash, or underscore.");
   return username;
 }
 
@@ -265,7 +285,9 @@ export function validateUuid(value: string): boolean {
 }
 
 export function validateId(value: string): boolean {
-  return /^[A-Za-z0-9_-]{8,128}$/.test(value) || validateUuid(value) || /^[0-9a-f]{32}$/.test(value);
+  return (
+    /^[A-Za-z0-9_-]{8,128}$/.test(value) || validateUuid(value) || /^[0-9a-f]{32}$/.test(value)
+  );
 }
 
 export function validateDomain(value: string): boolean {
@@ -276,7 +298,12 @@ export function validateDomain(value: string): boolean {
 }
 
 export function normalizeDomain(value: string, label = "domain"): string {
-  const domain = value.trim().toLowerCase().replace(/^https?:\/\//, "").split(/[/:]/)[0] ?? "";
+  const domain =
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .split(/[/:]/)[0] ?? "";
   if (!validateDomain(domain)) throw new Error(`${label} must be a valid DNS name.`);
   return domain;
 }
@@ -293,12 +320,13 @@ export function validateUrl(value: string, protocols: readonly string[] = ["http
 export function validateSafePath(value: string, label: string): string {
   const path = value.trim();
   if (!path.startsWith("/")) throw new Error(`${label} must be an absolute path`);
-  if (path.includes("\0") || path.split("/").includes("..")) throw new Error(`${label} must not contain NUL or '..' segments`);
+  if (path.includes("\0") || path.split("/").includes(".."))
+    throw new Error(`${label} must not contain NUL or '..' segments`);
   return path;
 }
 
 export function requireSessionSecret(env: Record<string, string | undefined>): string {
-  const secret = env["BETTER_AUTH_SECRET"] ?? env["AUTH_SECRET"] ?? env["CT_ADMIN_SESSION_SECRET"] ?? "";
+  const secret = env.BETTER_AUTH_SECRET ?? env.AUTH_SECRET ?? env.CT_ADMIN_SESSION_SECRET ?? "";
   if (secret.length < 32) throw new Error("BETTER_AUTH_SECRET must be at least 32 characters.");
   return secret;
 }

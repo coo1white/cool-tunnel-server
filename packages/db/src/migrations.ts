@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
-import { Database } from "bun:sqlite";
-import { DEFAULT_ACME_DIRECTORY, DEFAULT_DOH_RESOLVER, DEFAULT_REALITY_DEST_HOST, REQUIRED_SCHEMA_VERSION } from "@cool-tunnel/shared";
+import {
+  DEFAULT_ACME_DIRECTORY,
+  DEFAULT_DOH_RESOLVER,
+  DEFAULT_REALITY_DEST_HOST,
+  REQUIRED_SCHEMA_VERSION,
+} from "@cool-tunnel/shared";
 
 export interface AdminDb {
   db: Database;
@@ -183,15 +188,24 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   addColumnIfMissing(db, "user", "mustChangePassword", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "user", "lastLoginAt", "TEXT");
   addColumnIfMissing(db, "user", "disabledAt", "TEXT");
-  db.exec("UPDATE user SET username = lower(substr(email, 1, instr(email || '@', '@') - 1)) WHERE username IS NULL OR username = ''");
-  db.exec("UPDATE user SET role = 'viewer' WHERE role IS NULL OR role NOT IN ('owner','admin','operator','viewer')");
-  db.exec("UPDATE user SET status = 'active' WHERE status IS NULL OR status NOT IN ('active','disabled')");
-  db.query("INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(REQUIRED_SCHEMA_VERSION));
+  db.exec(
+    "UPDATE user SET username = lower(substr(email, 1, instr(email || '@', '@') - 1)) WHERE username IS NULL OR username = ''",
+  );
+  db.exec(
+    "UPDATE user SET role = 'viewer' WHERE role IS NULL OR role NOT IN ('owner','admin','operator','viewer')",
+  );
+  db.exec(
+    "UPDATE user SET status = 'active' WHERE status IS NULL OR status NOT IN ('active','disabled')",
+  );
+  db.query(
+    "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(String(REQUIRED_SCHEMA_VERSION));
 }
 
 function addColumnIfMissing(db: Database, table: string, column: string, definition: string): void {
   const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
-  if (!rows.some((row) => row.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  if (!rows.some((row) => row.name === column))
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 export function backupAdminSqlite(storagePath: string, destPath: string): void {

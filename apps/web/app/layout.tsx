@@ -16,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: deliberate no-FOUC theme bootstrap; content is a static string literal */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
         {children}
       </body>

@@ -5,8 +5,8 @@
 import { RotateCcw, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { useState, useTransition } from "react";
 import { userCommand } from "./actions";
-import { Notice } from "./components";
 import type { ActionState } from "./api";
+import { Notice } from "./components";
 
 interface UserActionsProps {
   readonly userId: string;
@@ -26,13 +26,7 @@ interface UserActionsProps {
  * Mirrors the ProxyRowActions pattern from proxy-accounts.tsx so the two
  * admin surfaces use the same vocabulary.
  */
-export function UserActions({
-  userId,
-  status,
-  canDisable,
-  canReset,
-  canDelete,
-}: UserActionsProps) {
+export function UserActions({ userId, status, canDisable, canReset, canDelete }: UserActionsProps) {
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<ActionState | null>(null);
   const [password, setPassword] = useState("");

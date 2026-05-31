@@ -3,18 +3,18 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
-  DEFAULT_ACME_DIRECTORY,
-  DEFAULT_DOH_RESOLVER,
-  DEFAULT_REALITY_DEST_HOST,
-  RELEASE_VERSION,
-} from "@cool-tunnel/shared";
-import {
   normalizeDomain,
   normalizeEmail,
   requireSessionSecret,
   validateSafePath,
   validateUrl,
 } from "@cool-tunnel/security";
+import {
+  DEFAULT_ACME_DIRECTORY,
+  DEFAULT_DOH_RESOLVER,
+  DEFAULT_REALITY_DEST_HOST,
+  RELEASE_VERSION,
+} from "@cool-tunnel/shared";
 
 export type EnvMap = Record<string, string | undefined>;
 
@@ -99,8 +99,9 @@ export function validateShortIds(value: string | undefined): readonly string[] {
 export function defaultAdminDbPath(env: EnvMap): string {
   const dbUrl = envValue(env, "DATABASE_URL");
   if (dbUrl.startsWith("sqlite://")) return dbUrl.replace(/^sqlite:\/\//, "");
-  const appEnv = (env["CT_ADMIN_ENV"] ?? env["APP_ENV"] ?? "").trim().toLowerCase();
-  if (appEnv === "test") return envValue(env, "CT_ADMIN_DB_PATH") || "/tmp/cool-tunnel-admin-test.sqlite";
+  const appEnv = (env.CT_ADMIN_ENV ?? env.APP_ENV ?? "").trim().toLowerCase();
+  if (appEnv === "test")
+    return envValue(env, "CT_ADMIN_DB_PATH") || "/tmp/cool-tunnel-admin-test.sqlite";
   return envValue(env, "CT_ADMIN_DB_PATH") || "./data/admin/admin.sqlite";
 }
 
@@ -112,29 +113,53 @@ export function loadAdminConfig(env: EnvMap = process.env as EnvMap): AdminConfi
   const appEnv = parseAppEnv(envValue(env, "CT_ADMIN_ENV") || envValue(env, "APP_ENV"));
   const port = parsePort(envValue(env, "CT_ADMIN_PORT"));
   const domain = normalizeDomain(envValue(env, "DOMAIN") || "localhost.localdomain", "DOMAIN");
-  const panelDomain = normalizeDomain(envValue(env, "PANEL_DOMAIN") || `panel.${domain}`, "PANEL_DOMAIN");
-  const defaultBase = appEnv === "production" ? `https://${panelDomain}` : `http://localhost:${port}`;
+  const panelDomain = normalizeDomain(
+    envValue(env, "PANEL_DOMAIN") || `panel.${domain}`,
+    "PANEL_DOMAIN",
+  );
+  const defaultBase =
+    appEnv === "production" ? `https://${panelDomain}` : `http://localhost:${port}`;
   const baseUrlRaw = envValue(env, "BETTER_AUTH_URL") || envValue(env, "APP_URL") || defaultBase;
   const url = new URL(baseUrlRaw);
-  const secureCookies = parseBool(envValue(env, "CT_ADMIN_SECURE_COOKIES"), appEnv === "production");
+  const secureCookies = parseBool(
+    envValue(env, "CT_ADMIN_SECURE_COOKIES"),
+    appEnv === "production",
+  );
   if (appEnv === "production" && secureCookies && url.protocol !== "https:") {
-    throw new Error("BETTER_AUTH_URL/APP_URL must use https:// in production when secure admin cookies are enabled");
+    throw new Error(
+      "BETTER_AUTH_URL/APP_URL must use https:// in production when secure admin cookies are enabled",
+    );
   }
   if (appEnv === "production" && !secureCookies) {
-    throw new Error("CT_ADMIN_SECURE_COOKIES cannot be disabled in production; admin session cookies must be Secure.");
+    throw new Error(
+      "CT_ADMIN_SECURE_COOKIES cannot be disabled in production; admin session cookies must be Secure.",
+    );
   }
   const ttl = Number(envValue(env, "CT_ADMIN_BOOTSTRAP_TOKEN_TTL_MINUTES") || "15");
   if (!Number.isInteger(ttl) || ttl < 1 || ttl > 120) {
     throw new Error("CT_ADMIN_BOOTSTRAP_TOKEN_TTL_MINUTES must be an integer from 1 to 120");
   }
   const acmeDirectory = envValue(env, "ACME_DIRECTORY") || DEFAULT_ACME_DIRECTORY;
-  if (!validateUrl(acmeDirectory, ["https:"])) throw new Error("ACME_DIRECTORY must be an https URL");
+  if (!validateUrl(acmeDirectory, ["https:"]))
+    throw new Error("ACME_DIRECTORY must be an https URL");
   const dohResolver = envValue(env, "ANTI_TRACKING_DOH_RESOLVER") || DEFAULT_DOH_RESOLVER;
-  if (!validateUrl(dohResolver, ["https:"])) throw new Error("ANTI_TRACKING_DOH_RESOLVER must be an https URL");
-  const realityPrivateKey = validateRealityKey(envValue(env, "REALITY_PRIVATE_KEY") || PLACEHOLDER_REALITY_KEY, "REALITY_PRIVATE_KEY");
-  const realityPublicKey = validateRealityKey(envValue(env, "REALITY_PUBLIC_KEY") || PLACEHOLDER_REALITY_KEY, "REALITY_PUBLIC_KEY");
-  if (appEnv === "production" && (realityPrivateKey === PLACEHOLDER_REALITY_KEY || realityPublicKey === PLACEHOLDER_REALITY_KEY)) {
-    throw new Error("REALITY_PRIVATE_KEY and REALITY_PUBLIC_KEY must be set to generated keys in production");
+  if (!validateUrl(dohResolver, ["https:"]))
+    throw new Error("ANTI_TRACKING_DOH_RESOLVER must be an https URL");
+  const realityPrivateKey = validateRealityKey(
+    envValue(env, "REALITY_PRIVATE_KEY") || PLACEHOLDER_REALITY_KEY,
+    "REALITY_PRIVATE_KEY",
+  );
+  const realityPublicKey = validateRealityKey(
+    envValue(env, "REALITY_PUBLIC_KEY") || PLACEHOLDER_REALITY_KEY,
+    "REALITY_PUBLIC_KEY",
+  );
+  if (
+    appEnv === "production" &&
+    (realityPrivateKey === PLACEHOLDER_REALITY_KEY || realityPublicKey === PLACEHOLDER_REALITY_KEY)
+  ) {
+    throw new Error(
+      "REALITY_PRIVATE_KEY and REALITY_PUBLIC_KEY must be set to generated keys in production",
+    );
   }
 
   const dbPath = resolve(defaultAdminDbPath(env));
@@ -162,15 +187,30 @@ export function loadAdminConfig(env: EnvMap = process.env as EnvMap): AdminConfi
     publicSignup: parseBool(envValue(env, "CT_PUBLIC_SIGNUP"), false),
     secureCookies,
     bootstrapTokenTtlMinutes: ttl,
-    caddyfilePath: validateSafePath(envValue(env, "CADDYFILE_PATH") || "/etc/caddy/Caddyfile", "CADDYFILE_PATH"),
-    caddyfileTemplate: validateSafePath(envValue(env, "CADDYFILE_TEMPLATE") || "/srv/caddy/Caddyfile.tpl", "CADDYFILE_TEMPLATE"),
-    singboxConfigPath: validateSafePath(envValue(env, "SINGBOX_CONFIG_PATH") || "/data/config/singbox.json", "SINGBOX_CONFIG_PATH"),
-    manifestsDir: validateSafePath(envValue(env, "CT_MANIFESTS_DIR") || "/srv/manifests", "CT_MANIFESTS_DIR"),
+    caddyfilePath: validateSafePath(
+      envValue(env, "CADDYFILE_PATH") || "/etc/caddy/Caddyfile",
+      "CADDYFILE_PATH",
+    ),
+    caddyfileTemplate: validateSafePath(
+      envValue(env, "CADDYFILE_TEMPLATE") || "/srv/caddy/Caddyfile.tpl",
+      "CADDYFILE_TEMPLATE",
+    ),
+    singboxConfigPath: validateSafePath(
+      envValue(env, "SINGBOX_CONFIG_PATH") || "/data/config/singbox.json",
+      "SINGBOX_CONFIG_PATH",
+    ),
+    manifestsDir: validateSafePath(
+      envValue(env, "CT_MANIFESTS_DIR") || "/srv/manifests",
+      "CT_MANIFESTS_DIR",
+    ),
     acmeEmail: normalizeEmail(envValue(env, "ACME_EMAIL") || "admin@example.com"),
     acmeDirectory,
     realityPrivateKey,
     realityPublicKey,
-    realityDestHost: normalizeDomain(envValue(env, "REALITY_DEST_HOST") || DEFAULT_REALITY_DEST_HOST, "REALITY_DEST_HOST"),
+    realityDestHost: normalizeDomain(
+      envValue(env, "REALITY_DEST_HOST") || DEFAULT_REALITY_DEST_HOST,
+      "REALITY_DEST_HOST",
+    ),
     realityShortIds: validateShortIds(envValue(env, "REALITY_SHORT_IDS")),
     antiTrackingDohResolver: dohResolver,
     version: RELEASE_VERSION,

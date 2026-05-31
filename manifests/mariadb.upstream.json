@@ -1,12 +1,16 @@
 {
-    "name": "mariadb",
-    "kind": "retired-container-image",
-    "version": "retired-in-v0.5.2",
-    "upstream": "https://hub.docker.com/_/mariadb",
-    "verify": {
-        "command": ["bash", "-c", "test ! -f docker-compose.yml || ! grep -Eq '^[[:space:]]*(db|mariadb):' docker-compose.yml"],
-        "expect_zero_exit": true,
-        "expect_no_version_line": true
-    },
-    "note": "Retired active runtime component. v0.5.2 stores admin/control-plane state in SQLite through packages/db and apps/api. Maintainers migrating a v0.5.1 deployment must export old data into explicit legacy_* staging tables before running `ct admin migrate`; this manifest remains only to document the retirement and to prevent a MariaDB service from reappearing in docker-compose.yml."
+  "name": "mariadb",
+  "kind": "retired-container-image",
+  "version": "retired-in-v0.5.2",
+  "upstream": "https://hub.docker.com/_/mariadb",
+  "verify": {
+    "command": [
+      "bash",
+      "-c",
+      "test ! -f docker-compose.yml || ! grep -Eq '^[[:space:]]*(db|mariadb):' docker-compose.yml"
+    ],
+    "expect_zero_exit": true,
+    "expect_no_version_line": true
+  },
+  "note": "Retired active runtime component. v0.5.2 stores admin/control-plane state in SQLite through packages/db and apps/api. Maintainers migrating a v0.5.1 deployment must export old data into explicit legacy_* staging tables before running `ct admin migrate`; this manifest remains only to document the retirement and to prevent a MariaDB service from reappearing in docker-compose.yml."
 }

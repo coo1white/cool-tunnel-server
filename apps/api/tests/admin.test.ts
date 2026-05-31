@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
-import { loadAdminConfig, bootstrapMaterialPath, type AdminConfig } from "@cool-tunnel/config";
+import { type AdminConfig, bootstrapMaterialPath, loadAdminConfig } from "@cool-tunnel/config";
 import { AdminStore, migrateAdminDb, openAdminDb } from "@cool-tunnel/db";
 import { hashBootstrapToken, redactSensitive } from "@cool-tunnel/security";
-import { REQUIRED_SCHEMA_VERSION, type AdminUser } from "@cool-tunnel/shared";
+import { type AdminUser, REQUIRED_SCHEMA_VERSION } from "@cool-tunnel/shared";
 import { createApiApp } from "../src/app";
 import { createAuth } from "../src/auth";
 import { buildServerRenderAccounts, isCoreAction } from "../src/core-boundary";
@@ -45,26 +45,40 @@ function tempFixture(extra: Record<string, string> = {}) {
 async function ownerFixture() {
   const f = tempFixture();
   const { token } = await f.store.createBootstrapToken(f.config, 30);
-  const passwordHash = await f.auth.$context.then((ctx) => ctx.password.hash("correct horse battery staple"));
+  const passwordHash = await f.auth.$context.then((ctx) =>
+    ctx.password.hash("correct horse battery staple"),
+  );
   const tokenHash = await hashBootstrapToken(token, f.config.authSecret);
-  const owner = f.store.createFirstOwner({
-    email: "owner@example.com",
-    username: "owner",
-    name: "Owner",
-    passwordHash,
-    role: "owner",
-  }, tokenHash);
+  const owner = f.store.createFirstOwner(
+    {
+      email: "owner@example.com",
+      username: "owner",
+      name: "Owner",
+      passwordHash,
+      role: "owner",
+    },
+    tokenHash,
+  );
   return { ...f, owner };
 }
 
-async function signIn(app: ReturnType<typeof createApiApp>["app"], email = "owner@example.com", password = "correct horse battery staple") {
+async function signIn(
+  app: ReturnType<typeof createApiApp>["app"],
+  email = "owner@example.com",
+  password = "correct horse battery staple",
+) {
   const res = await app.request("/api/auth/sign-in/email", {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.10" },
     body: JSON.stringify({ email, password, rememberMe: true }),
   });
   const setCookie = res.headers.get("set-cookie") ?? "";
-  const cookie = setCookie.split(",").map((part) => part.trim()).find((part) => part.includes("ct-admin.session_token="))?.split(";")[0] ?? "";
+  const cookie =
+    setCookie
+      .split(",")
+      .map((part) => part.trim())
+      .find((part) => part.includes("ct-admin.session_token="))
+      ?.split(";")[0] ?? "";
   const me = cookie ? await app.request("/api/me", { headers: { cookie } }) : null;
   const csrf = me?.ok ? ((await me.json()) as { csrfToken: string }).csrfToken : "";
   return { res, cookie, csrf, setCookie };
@@ -92,7 +106,10 @@ test("first owner setup consumes one-time bootstrap token and rejects reuse", as
 
     const create = await f.app.request("/setup", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", cookie: `ct_bootstrap_token=${encodeURIComponent(token)}` },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: `ct_bootstrap_token=${encodeURIComponent(token)}`,
+      },
       body: new URLSearchParams({
         email: "owner@example.com",
         username: "owner",
@@ -116,7 +133,10 @@ test("bootstrap token expiration blocks setup", async () => {
     const { token } = await f.store.createBootstrapToken(f.config, -1);
     const create = await f.app.request("/setup", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", cookie: `ct_bootstrap_token=${encodeURIComponent(token)}` },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: `ct_bootstrap_token=${encodeURIComponent(token)}`,
+      },
       body: new URLSearchParams({
         email: "owner@example.com",
         username: "owner",
@@ -179,7 +199,11 @@ test("login form scrubs query strings and posts credentials server-side", async 
         origin: "http://localhost:9000",
         referer: "http://localhost:9000/login",
       },
-      body: new URLSearchParams({ csrf, email: "owner@example.com", password: "correct horse battery staple" }),
+      body: new URLSearchParams({
+        csrf,
+        email: "owner@example.com",
+        password: "correct horse battery staple",
+      }),
     });
     expect(success.status).toBe(303);
     expect(success.headers.get("location")).toBe("/dashboard");
@@ -197,7 +221,11 @@ test("login form scrubs query strings and posts credentials server-side", async 
         origin: "null",
         referer: "",
       },
-      body: new URLSearchParams({ csrf: secondCsrf, email: "owner@example.com", password: "correct horse battery staple" }),
+      body: new URLSearchParams({
+        csrf: secondCsrf,
+        email: "owner@example.com",
+        password: "correct horse battery staple",
+      }),
     });
     expect(nullOriginSuccess.status).toBe(303);
     expect(nullOriginSuccess.headers.get("location")).toBe("/dashboard");
@@ -210,7 +238,11 @@ test("login form scrubs query strings and posts credentials server-side", async 
         origin: "http://localhost:9000",
         referer: "http://localhost:9000/login",
       },
-      body: new URLSearchParams({ csrf, email: "missing@example.com", password: "wrong-password-value" }),
+      body: new URLSearchParams({
+        csrf,
+        email: "missing@example.com",
+        password: "wrong-password-value",
+      }),
     });
     expect(failed.status).toBe(401);
     const failedBody = await failed.text();
@@ -232,7 +264,11 @@ test("login form scrubs query strings and posts credentials server-side", async 
           origin: "http://localhost:9000",
           referer: "http://localhost:9000/login",
         },
-        body: new URLSearchParams({ csrf: attemptCsrf, email: "missing@example.com", password: "wrong-password-value" }),
+        body: new URLSearchParams({
+          csrf: attemptCsrf,
+          email: "missing@example.com",
+          password: "wrong-password-value",
+        }),
       });
       expect(attempt.status).toBe(401);
     }
@@ -249,7 +285,11 @@ test("login form scrubs query strings and posts credentials server-side", async 
         origin: "http://localhost:9000",
         referer: "http://localhost:9000/login",
       },
-      body: new URLSearchParams({ csrf: blockedCsrf, email: "owner@example.com", password: "correct horse battery staple" }),
+      body: new URLSearchParams({
+        csrf: blockedCsrf,
+        email: "owner@example.com",
+        password: "correct horse battery staple",
+      }),
     });
     expect(blocked.status).toBe(429);
     expect(await blocked.text()).not.toContain("correct horse");
@@ -265,7 +305,11 @@ test("Better Auth cookies are httpOnly SameSite Lax and signup is disabled", asy
     const signup = await f.app.request("/api/auth/sign-up/email", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "new@example.com", password: "correct horse battery staple", name: "New" }),
+      body: JSON.stringify({
+        email: "new@example.com",
+        password: "correct horse battery staple",
+        name: "New",
+      }),
     });
     expect(signup.status).toBeGreaterThanOrEqual(400);
 
@@ -289,7 +333,11 @@ test("protected routes and role authorization enforce viewer/operator/admin/owne
     const ownerSession = await signIn(f.app);
     const createViewer = await f.app.request("/api/users", {
       method: "POST",
-      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      headers: {
+        cookie: ownerSession.cookie,
+        "x-csrf-token": ownerSession.csrf,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         email: "viewer@example.com",
         username: "viewer",
@@ -304,14 +352,22 @@ test("protected routes and role authorization enforce viewer/operator/admin/owne
     const viewerSession = await signIn(f.app, "viewer@example.com");
     const forbidden = await f.app.request("/api/users", {
       method: "POST",
-      headers: { cookie: viewerSession.cookie, "x-csrf-token": viewerSession.csrf, "content-type": "application/json" },
+      headers: {
+        cookie: viewerSession.cookie,
+        "x-csrf-token": viewerSession.csrf,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({}),
     });
     expect(forbidden.status).toBe(403);
 
     const demoteLastOwner = await f.app.request(`/api/users/${f.owner.id}`, {
       method: "PATCH",
-      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      headers: {
+        cookie: ownerSession.cookie,
+        "x-csrf-token": ownerSession.csrf,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ role: "admin" }),
     });
     expect(demoteLastOwner.status).toBe(400);
@@ -332,11 +388,17 @@ test("proxy accounts, subscription URL masking, and manifest endpoint work", asy
     const ownerSession = await signIn(f.app);
     const created = await f.app.request("/api/proxy-accounts", {
       method: "POST",
-      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      headers: {
+        cookie: ownerSession.cookie,
+        "x-csrf-token": ownerSession.csrf,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ username: "alice", label: "Alice", clientDefaultLocalPort: 1088 }),
     });
     expect(created.status).toBe(201);
-    const account = (await created.json()) as { account: { id: string; uuid: string; subscriptionUrl: string; subscriptionUrlMasked: string } };
+    const account = (await created.json()) as {
+      account: { id: string; uuid: string; subscriptionUrl: string; subscriptionUrlMasked: string };
+    };
     expect(account.account.uuid).toMatch(/[0-9a-f-]{36}/);
     expect(account.account.subscriptionUrlMasked).toContain("<redacted>");
     expect(account.account.subscriptionUrl).not.toContain("<redacted>");
@@ -344,7 +406,11 @@ test("proxy accounts, subscription URL masking, and manifest endpoint work", asy
     const manifest = await f.app.request(new URL(account.account.subscriptionUrl).pathname);
     expect(manifest.status).toBe(200);
     expect(manifest.headers.get("cache-control")).toBe("no-store");
-    const json = await manifest.json() as { version: number; profiles: Array<{ uuid: string; client_defaults: { local_port: number } }>; signature: string };
+    const json = (await manifest.json()) as {
+      version: number;
+      profiles: Array<{ uuid: string; client_defaults: { local_port: number } }>;
+      signature: string;
+    };
     expect(json.version).toBe(2);
     expect(json.profiles[0]?.uuid).toBe(account.account.uuid);
     expect(json.profiles[0]?.client_defaults.local_port).toBe(1088);
@@ -362,7 +428,11 @@ test("proxy-account mutations auto-render sing-box (audited as core.render-singb
   const f = await ownerFixture();
   try {
     const s = await signIn(f.app);
-    const headers = { cookie: s.cookie, "x-csrf-token": s.csrf, "content-type": "application/json" };
+    const headers = {
+      cookie: s.cookie,
+      "x-csrf-token": s.csrf,
+      "content-type": "application/json",
+    };
 
     const created = await f.app.request("/api/proxy-accounts", {
       method: "POST",
@@ -374,7 +444,10 @@ test("proxy-account mutations auto-render sing-box (audited as core.render-singb
 
     // Rotating the UUID must re-render so the new credential reaches the
     // sing-box inbound — the "unknown UUID" failure this guards against.
-    const rotated = await f.app.request(`/api/proxy-accounts/${id}/regenerate-uuid`, { method: "POST", headers });
+    const rotated = await f.app.request(`/api/proxy-accounts/${id}/regenerate-uuid`, {
+      method: "POST",
+      headers,
+    });
     expect(rotated.status).toBe(200);
 
     const audit = await f.app.request("/api/audit", { headers: { cookie: s.cookie } });
@@ -421,17 +494,28 @@ test("operator/viewer never see uuid or previousUuid on a proxy account", async 
   const f = await ownerFixture();
   try {
     const ownerSession = await signIn(f.app);
-    const ownerHeaders = { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" };
+    const ownerHeaders = {
+      cookie: ownerSession.cookie,
+      "x-csrf-token": ownerSession.csrf,
+      "content-type": "application/json",
+    };
 
     const created = await f.app.request("/api/proxy-accounts", {
-      method: "POST", headers: ownerHeaders, body: JSON.stringify({ username: "secretacct" }),
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({ username: "secretacct" }),
     });
     const id = ((await created.json()) as { account: { id: string } }).account.id;
     // Rotate so previousUuid is populated (the grace-window credential).
-    await f.app.request(`/api/proxy-accounts/${id}/regenerate-uuid`, { method: "POST", headers: ownerHeaders });
+    await f.app.request(`/api/proxy-accounts/${id}/regenerate-uuid`, {
+      method: "POST",
+      headers: ownerHeaders,
+    });
 
     // Owner sees both the current and previous credential.
-    const ownerView = await f.app.request(`/api/proxy-accounts/${id}`, { headers: { cookie: ownerSession.cookie } });
+    const ownerView = await f.app.request(`/api/proxy-accounts/${id}`, {
+      headers: { cookie: ownerSession.cookie },
+    });
     const ownerAccount = ((await ownerView.json()) as { account: Record<string, unknown> }).account;
     expect(ownerAccount.uuid).toBeTruthy();
     expect(ownerAccount.previousUuid).toBeTruthy();
@@ -439,14 +523,25 @@ test("operator/viewer never see uuid or previousUuid on a proxy account", async 
     // A viewer (read-only) must get neither uuid nor previousUuid (both are live
     // credentials), only the masked subscription URL.
     const createViewer = await f.app.request("/api/users", {
-      method: "POST", headers: ownerHeaders,
-      body: JSON.stringify({ email: "v@example.com", username: "viewer", name: "Viewer", password: "correct horse battery staple", role: "viewer", mustChangePassword: false }),
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        email: "v@example.com",
+        username: "viewer",
+        name: "Viewer",
+        password: "correct horse battery staple",
+        role: "viewer",
+        mustChangePassword: false,
+      }),
     });
     expect(createViewer.status).toBe(201);
     const viewerSession = await signIn(f.app, "v@example.com");
-    const viewerView = await f.app.request(`/api/proxy-accounts/${id}`, { headers: { cookie: viewerSession.cookie } });
+    const viewerView = await f.app.request(`/api/proxy-accounts/${id}`, {
+      headers: { cookie: viewerSession.cookie },
+    });
     expect(viewerView.status).toBe(200);
-    const viewerAccount = ((await viewerView.json()) as { account: Record<string, unknown> }).account;
+    const viewerAccount = ((await viewerView.json()) as { account: Record<string, unknown> })
+      .account;
     expect(viewerAccount.uuid).toBeUndefined();
     expect(viewerAccount.previousUuid).toBeUndefined();
     expect(viewerAccount.subscriptionUrl).toBeUndefined();
@@ -460,14 +555,20 @@ test("proxy account rejects an unparseable expiresAt with 400 (not 500)", async 
   const f = await ownerFixture();
   try {
     const ownerSession = await signIn(f.app);
-    const headers = { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" };
+    const headers = {
+      cookie: ownerSession.cookie,
+      "x-csrf-token": ownerSession.csrf,
+      "content-type": "application/json",
+    };
     const bad = await f.app.request("/api/proxy-accounts", {
       method: "POST",
       headers,
       body: JSON.stringify({ username: "bob", expiresAt: "soon" }),
     });
     expect(bad.status).toBe(400);
-    expect(((await bad.json()) as { error?: { code?: string } }).error?.code).toBe("invalid_expires_at");
+    expect(((await bad.json()) as { error?: { code?: string } }).error?.code).toBe(
+      "invalid_expires_at",
+    );
 
     const good = await f.app.request("/api/proxy-accounts", {
       method: "POST",
@@ -484,7 +585,9 @@ test("audit endpoint tolerates a non-numeric ?limit instead of 500", async () =>
   const f = await ownerFixture();
   try {
     const ownerSession = await signIn(f.app);
-    const audit = await f.app.request("/api/audit?limit=abc", { headers: { cookie: ownerSession.cookie } });
+    const audit = await f.app.request("/api/audit?limit=abc", {
+      headers: { cookie: ownerSession.cookie },
+    });
     expect(audit.status).toBe(200);
   } finally {
     closeFixture(f);
@@ -497,13 +600,19 @@ test("subscription endpoint rejects a token with a forged signature", async () =
     const ownerSession = await signIn(f.app);
     const created = await f.app.request("/api/proxy-accounts", {
       method: "POST",
-      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      headers: {
+        cookie: ownerSession.cookie,
+        "x-csrf-token": ownerSession.csrf,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ username: "dave" }),
     });
     const account = (await created.json()) as { account: { subscriptionUrl: string } };
     const realPath = new URL(account.account.subscriptionUrl).pathname;
     const realToken = realPath.split("/").pop() ?? "";
-    const decoded = Buffer.from(realToken.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const decoded = Buffer.from(realToken.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString(
+      "utf8",
+    );
     const id = decoded.split(".", 2)[0] ?? "";
     const forged = Buffer.from(`${id}.${"0".repeat(64)}`).toString("base64url");
 
@@ -525,24 +634,37 @@ test("settings validation, status, audit, migrations, and action boundary", asyn
     const ownerSession = await signIn(f.app);
     const badSettings = await f.app.request("/api/settings", {
       method: "PATCH",
-      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      headers: {
+        cookie: ownerSession.cookie,
+        "x-csrf-token": ownerSession.csrf,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ domain: "bad domain" }),
     });
     expect(badSettings.status).toBe(400);
 
     const status = await f.app.request("/api/status", { headers: { cookie: ownerSession.cookie } });
     expect(status.status).toBe(200);
-    expect(await status.json()).toMatchObject({ status: { migration: { ok: true, currentVersion: REQUIRED_SCHEMA_VERSION } } });
+    expect(await status.json()).toMatchObject({
+      status: { migration: { ok: true, currentVersion: REQUIRED_SCHEMA_VERSION } },
+    });
 
     const audit = await f.app.request("/api/audit", { headers: { cookie: ownerSession.cookie } });
     expect(audit.status).toBe(200);
     expect(JSON.stringify(await audit.json())).not.toContain("correct horse");
 
-    const noCsrf = await f.app.request("/api/render", { method: "POST", headers: { cookie: ownerSession.cookie } });
+    const noCsrf = await f.app.request("/api/render", {
+      method: "POST",
+      headers: { cookie: ownerSession.cookie },
+    });
     expect(noCsrf.status).toBe(403);
     const forgedCsrf = await f.app.request("/api/render", {
       method: "POST",
-      headers: { cookie: ownerSession.cookie, "x-csrf-token": "0".repeat(32), "content-type": "application/json" },
+      headers: {
+        cookie: ownerSession.cookie,
+        "x-csrf-token": "0".repeat(32),
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ target: "singbox" }),
     });
     expect(forgedCsrf.status).toBe(403);
@@ -554,13 +676,18 @@ test("settings validation, status, audit, migrations, and action boundary", asyn
 });
 
 test("bootstrap material path is root-only and redaction masks sensitive values", () => {
-  const f = tempFixture({ BETTER_AUTH_URL: "https://panel.example.com", CT_ADMIN_SECURE_COOKIES: "true" });
+  const f = tempFixture({
+    BETTER_AUTH_URL: "https://panel.example.com",
+    CT_ADMIN_SECURE_COOKIES: "true",
+  });
   try {
     const materialPath = bootstrapMaterialPath(f.config);
     writeFileSync(materialPath, "token=ctbt_secretTokenValue1234567890\n", { mode: 0o600 });
     chmodSync(materialPath, 0o600);
     expect(statSync(materialPath).mode & 0o777).toBe(0o600);
-    const redacted = redactSensitive("open /setup?token=ctbt_secretTokenValue1234567890 and https://panel.example.com/api/v1/subscription/abcdef");
+    const redacted = redactSensitive(
+      "open /setup?token=ctbt_secretTokenValue1234567890 and https://panel.example.com/api/v1/subscription/abcdef",
+    );
     expect(redacted).not.toContain("ctbt_secret");
     expect(redacted).not.toContain("abcdef");
   } finally {
@@ -572,10 +699,12 @@ test("production secure cookies require https", () => {
   const dir = mkdtempSync(join(tmpdir(), "ct-api-test-"));
   try {
     expect(() => {
-      const config: AdminConfig = loadAdminConfig(baseEnv(join(dir, "admin.sqlite"), {
-        CT_ADMIN_ENV: "production",
-        BETTER_AUTH_URL: "http://panel.example.com",
-      }));
+      const config: AdminConfig = loadAdminConfig(
+        baseEnv(join(dir, "admin.sqlite"), {
+          CT_ADMIN_ENV: "production",
+          BETTER_AUTH_URL: "http://panel.example.com",
+        }),
+      );
       return config;
     }).toThrow("https://");
   } finally {
@@ -589,7 +718,11 @@ test("forced password change gates the API until the user rotates their password
     const ownerSession = await signIn(f.app);
     const created = await f.app.request("/api/users", {
       method: "POST",
-      headers: { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" },
+      headers: {
+        cookie: ownerSession.cookie,
+        "x-csrf-token": ownerSession.csrf,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         email: "tempuser@example.com",
         username: "tempuser",
@@ -604,38 +737,71 @@ test("forced password change gates the API until the user rotates their password
     const session = await signIn(f.app, "tempuser@example.com", "initial temp password");
     expect(session.csrf).not.toBe("");
 
-    const blocked = await f.app.request("/api/proxy-accounts", { headers: { cookie: session.cookie } });
+    const blocked = await f.app.request("/api/proxy-accounts", {
+      headers: { cookie: session.cookie },
+    });
     expect(blocked.status).toBe(403);
-    expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe("password_change_required");
+    expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe(
+      "password_change_required",
+    );
 
     const me = await f.app.request("/api/me", { headers: { cookie: session.cookie } });
     expect(me.status).toBe(200);
-    expect(((await me.json()) as { user: { mustChangePassword: boolean } }).user.mustChangePassword).toBe(true);
+    expect(
+      ((await me.json()) as { user: { mustChangePassword: boolean } }).user.mustChangePassword,
+    ).toBe(true);
 
     const wrong = await f.app.request("/api/me/password", {
       method: "POST",
-      headers: { cookie: session.cookie, "x-csrf-token": session.csrf, "content-type": "application/json" },
-      body: JSON.stringify({ currentPassword: "not the password", newPassword: "a fresh strong password" }),
+      headers: {
+        cookie: session.cookie,
+        "x-csrf-token": session.csrf,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        currentPassword: "not the password",
+        newPassword: "a fresh strong password",
+      }),
     });
     expect(wrong.status).toBe(400);
-    expect(((await wrong.json()) as { error: { code: string } }).error.code).toBe("invalid_current_password");
+    expect(((await wrong.json()) as { error: { code: string } }).error.code).toBe(
+      "invalid_current_password",
+    );
 
     const reuse = await f.app.request("/api/me/password", {
       method: "POST",
-      headers: { cookie: session.cookie, "x-csrf-token": session.csrf, "content-type": "application/json" },
-      body: JSON.stringify({ currentPassword: "initial temp password", newPassword: "initial temp password" }),
+      headers: {
+        cookie: session.cookie,
+        "x-csrf-token": session.csrf,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        currentPassword: "initial temp password",
+        newPassword: "initial temp password",
+      }),
     });
     expect(reuse.status).toBe(400);
-    expect(((await reuse.json()) as { error: { code: string } }).error.code).toBe("password_reused");
+    expect(((await reuse.json()) as { error: { code: string } }).error.code).toBe(
+      "password_reused",
+    );
 
     const changed = await f.app.request("/api/me/password", {
       method: "POST",
-      headers: { cookie: session.cookie, "x-csrf-token": session.csrf, "content-type": "application/json" },
-      body: JSON.stringify({ currentPassword: "initial temp password", newPassword: "a fresh strong password" }),
+      headers: {
+        cookie: session.cookie,
+        "x-csrf-token": session.csrf,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        currentPassword: "initial temp password",
+        newPassword: "a fresh strong password",
+      }),
     });
     expect(changed.status).toBe(200);
 
-    const unblocked = await f.app.request("/api/proxy-accounts", { headers: { cookie: session.cookie } });
+    const unblocked = await f.app.request("/api/proxy-accounts", {
+      headers: { cookie: session.cookie },
+    });
     expect(unblocked.status).toBe(200);
   } finally {
     closeFixture(f);
@@ -664,12 +830,23 @@ test("an admin cannot create or manage peer admins, only operator/viewer", async
   const f = await ownerFixture();
   try {
     const ownerSession = await signIn(f.app);
-    const oh = { cookie: ownerSession.cookie, "x-csrf-token": ownerSession.csrf, "content-type": "application/json" };
+    const oh = {
+      cookie: ownerSession.cookie,
+      "x-csrf-token": ownerSession.csrf,
+      "content-type": "application/json",
+    };
     const mkUser = async (email: string, username: string, role: string) => {
       const res = await f.app.request("/api/users", {
         method: "POST",
         headers: oh,
-        body: JSON.stringify({ email, username, name: username, password: "correct horse battery staple", role, mustChangePassword: false }),
+        body: JSON.stringify({
+          email,
+          username,
+          name: username,
+          password: "correct horse battery staple",
+          role,
+          mustChangePassword: false,
+        }),
       });
       expect(res.status).toBe(201);
       return ((await res.json()) as { user: AdminUser }).user;
@@ -679,13 +856,24 @@ test("an admin cannot create or manage peer admins, only operator/viewer", async
     const operator = await mkUser("op@example.com", "operator1", "operator");
 
     const adminSession = await signIn(f.app, "admina@example.com");
-    const ah = { cookie: adminSession.cookie, "x-csrf-token": adminSession.csrf, "content-type": "application/json" };
+    const ah = {
+      cookie: adminSession.cookie,
+      "x-csrf-token": adminSession.csrf,
+      "content-type": "application/json",
+    };
 
     // An admin cannot mint a peer admin (canCreateRole).
     const createAdmin = await f.app.request("/api/users", {
       method: "POST",
       headers: ah,
-      body: JSON.stringify({ email: "admin2@example.com", username: "admin2", name: "Admin2", password: "correct horse battery staple", role: "admin", mustChangePassword: false }),
+      body: JSON.stringify({
+        email: "admin2@example.com",
+        username: "admin2",
+        name: "Admin2",
+        password: "correct horse battery staple",
+        role: "admin",
+        mustChangePassword: false,
+      }),
     });
     expect(createAdmin.status).toBe(403);
 
@@ -693,12 +881,22 @@ test("an admin cannot create or manage peer admins, only operator/viewer", async
     const createViewer = await f.app.request("/api/users", {
       method: "POST",
       headers: ah,
-      body: JSON.stringify({ email: "v2@example.com", username: "viewer2", name: "Viewer2", password: "correct horse battery staple", role: "viewer", mustChangePassword: false }),
+      body: JSON.stringify({
+        email: "v2@example.com",
+        username: "viewer2",
+        name: "Viewer2",
+        password: "correct horse battery staple",
+        role: "viewer",
+        mustChangePassword: false,
+      }),
     });
     expect(createViewer.status).toBe(201);
 
     // An admin cannot disable or reset a peer admin (canManageTarget rank-strict).
-    const disablePeer = await f.app.request(`/api/users/${adminB.id}/disable`, { method: "POST", headers: ah });
+    const disablePeer = await f.app.request(`/api/users/${adminB.id}/disable`, {
+      method: "POST",
+      headers: ah,
+    });
     expect(disablePeer.status).toBe(403);
     const resetPeer = await f.app.request(`/api/users/${adminB.id}/reset-password`, {
       method: "POST",
@@ -708,9 +906,15 @@ test("an admin cannot create or manage peer admins, only operator/viewer", async
     expect(resetPeer.status).toBe(403);
 
     // …but can disable a lower-ranked operator, and the owner can still manage the admin.
-    const disableOp = await f.app.request(`/api/users/${operator.id}/disable`, { method: "POST", headers: ah });
+    const disableOp = await f.app.request(`/api/users/${operator.id}/disable`, {
+      method: "POST",
+      headers: ah,
+    });
     expect(disableOp.status).toBe(200);
-    const ownerDisablesAdmin = await f.app.request(`/api/users/${adminB.id}/disable`, { method: "POST", headers: oh });
+    const ownerDisablesAdmin = await f.app.request(`/api/users/${adminB.id}/disable`, {
+      method: "POST",
+      headers: oh,
+    });
     expect(ownerDisablesAdmin.status).toBe(200);
   } finally {
     closeFixture(f);
@@ -722,11 +926,20 @@ test("new users default to a forced password change; the bootstrap owner does no
   try {
     expect(f.owner.mustChangePassword).toBe(false);
     const defaulted = f.store.createUser(f.owner, {
-      email: "defaulted@example.com", username: "defaulted", name: "Defaulted", passwordHash: "x", role: "operator",
+      email: "defaulted@example.com",
+      username: "defaulted",
+      name: "Defaulted",
+      passwordHash: "x",
+      role: "operator",
     });
     expect(defaulted.mustChangePassword).toBe(true);
     const optedOut = f.store.createUser(f.owner, {
-      email: "optedout@example.com", username: "optedout", name: "Opted Out", passwordHash: "x", role: "viewer", mustChangePassword: false,
+      email: "optedout@example.com",
+      username: "optedout",
+      name: "Opted Out",
+      passwordHash: "x",
+      role: "viewer",
+      mustChangePassword: false,
     });
     expect(optedOut.mustChangePassword).toBe(false);
   } finally {
@@ -735,7 +948,10 @@ test("new users default to a forced password change; the bootstrap owner does no
 });
 
 test("security headers add HSTS in secure mode and a CSP on the setup page", async () => {
-  const secure = tempFixture({ BETTER_AUTH_URL: "https://panel.example.com", CT_ADMIN_SECURE_COOKIES: "true" });
+  const secure = tempFixture({
+    BETTER_AUTH_URL: "https://panel.example.com",
+    CT_ADMIN_SECURE_COOKIES: "true",
+  });
   try {
     const login = await secure.app.request("/login");
     expect(login.headers.get("strict-transport-security") ?? "").toContain("includeSubDomains");

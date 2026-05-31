@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { expect, test } from "bun:test";
-import { constantTimeEqual, maskSensitive, maskSubscriptionUrl, redactSensitive } from "../src/index";
+import {
+  constantTimeEqual,
+  maskSensitive,
+  maskSubscriptionUrl,
+  redactSensitive,
+} from "../src/index";
 
 test("redacts free-form secrets, URLs, cookies, and UUIDs", () => {
   const text = [
@@ -86,9 +91,9 @@ test("does not over-redact safe metadata keys whose name contains a SECRETISH wo
     subscriptionUrl: "https://x/api/v1/subscription/SECRET-TOKEN",
   });
   const json = JSON.stringify(masked);
-  expect(json).toContain("2026-05-31T03:55:00.000Z");        // timestamp visible
-  expect(json).toContain("0000000000000000");                 // fingerprint visible
-  expect(json).toContain("test1");                            // username visible
-  expect(json).not.toContain("00112233-4455-6677-8899");      // uuid still redacted
-  expect(json).not.toContain("SECRET-TOKEN");                 // subscriptionUrl still redacted
+  expect(json).toContain("2026-05-31T03:55:00.000Z"); // timestamp visible
+  expect(json).toContain("0000000000000000"); // fingerprint visible
+  expect(json).toContain("test1"); // username visible
+  expect(json).not.toContain("00112233-4455-6677-8899"); // uuid still redacted
+  expect(json).not.toContain("SECRET-TOKEN"); // subscriptionUrl still redacted
 });

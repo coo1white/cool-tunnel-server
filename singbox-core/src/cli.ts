@@ -23,49 +23,49 @@ import { runVersion } from "./subcommands/version.ts";
 type SubcommandRunner = (argv: readonly string[]) => Promise<number> | number;
 
 const SUBCOMMANDS: Record<string, SubcommandRunner> = {
-    version: runVersion,
-    "render-server": runRenderServer,
-    "render-client": runRenderClient,
-    "reality-keygen": runRealityKeygen,
-    install: runInstall,
-    supervise: runSupervise,
+  version: runVersion,
+  "render-server": runRenderServer,
+  "render-client": runRenderClient,
+  "reality-keygen": runRealityKeygen,
+  install: runInstall,
+  supervise: runSupervise,
 };
 
 function usage(): string {
-    return [
-        "Usage: singbox-core <subcommand> [options]",
-        "",
-        "Subcommands:",
-        "  version                Print singbox-core + pinned sing-box version",
-        "  render-server          Render sing-box server config.json from --input",
-        "  render-client          Render sing-box client config.json from --input",
-        "  supervise              Watch config + cert, spawn/respawn sing-box",
-        "  install                Fetch + verify the pinned sing-box binary",
-        "  reality-keygen         Generate a Reality X25519 keypair",
-        "",
-        "Use `singbox-core <subcommand> --help` for subcommand-specific options.",
-    ].join("\n");
+  return [
+    "Usage: singbox-core <subcommand> [options]",
+    "",
+    "Subcommands:",
+    "  version                Print singbox-core + pinned sing-box version",
+    "  render-server          Render sing-box server config.json from --input",
+    "  render-client          Render sing-box client config.json from --input",
+    "  supervise              Watch config + cert, spawn/respawn sing-box",
+    "  install                Fetch + verify the pinned sing-box binary",
+    "  reality-keygen         Generate a Reality X25519 keypair",
+    "",
+    "Use `singbox-core <subcommand> --help` for subcommand-specific options.",
+  ].join("\n");
 }
 
 async function main(): Promise<number> {
-    const [, , subcommand, ...rest] = process.argv;
-    if (!subcommand || subcommand === "--help" || subcommand === "-h") {
-        process.stdout.write(usage() + "\n");
-        return subcommand ? 0 : 64;
-    }
-    const runner = SUBCOMMANDS[subcommand];
-    if (!runner) {
-        process.stderr.write(`singbox-core: unknown subcommand: ${subcommand}\n`);
-        process.stderr.write(usage() + "\n");
-        return 64;
-    }
-    try {
-        return await runner(rest);
-    } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`singbox-core ${subcommand}: ${msg}\n`);
-        return 1;
-    }
+  const [, , subcommand, ...rest] = process.argv;
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    process.stdout.write(`${usage()}\n`);
+    return subcommand ? 0 : 64;
+  }
+  const runner = SUBCOMMANDS[subcommand];
+  if (!runner) {
+    process.stderr.write(`singbox-core: unknown subcommand: ${subcommand}\n`);
+    process.stderr.write(`${usage()}\n`);
+    return 64;
+  }
+  try {
+    return await runner(rest);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`singbox-core ${subcommand}: ${msg}\n`);
+    return 1;
+  }
 }
 
 const code = await main();

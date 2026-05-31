@@ -25,18 +25,18 @@
  * which is wrong by one level).
  */
 export function ensureRepoRoot(callerImportMetaUrl: string): void {
-    if (isBunFsUrl(callerImportMetaUrl)) {
-        // Compiled-binary path. Trust process.cwd() — `./ct` set it
-        // for us; manual `cd /path/to/repo && ./ct <cmd>` does too.
-        return;
-    }
-    const repoRoot = new URL("..", callerImportMetaUrl).pathname.replace(/\/$/, "");
-    process.chdir(repoRoot);
+  if (isBunFsUrl(callerImportMetaUrl)) {
+    // Compiled-binary path. Trust process.cwd() — `./ct` set it
+    // for us; manual `cd /path/to/repo && ./ct <cmd>` does too.
+    return;
+  }
+  const repoRoot = new URL("..", callerImportMetaUrl).pathname.replace(/\/$/, "");
+  process.chdir(repoRoot);
 }
 
 /**
  * Exposed for testing — pure predicate, no I/O.
  */
 export function isBunFsUrl(url: string): boolean {
-    return url.includes("/$bunfs/");
+  return url.includes("/$bunfs/");
 }

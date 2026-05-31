@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { DEFAULT_PROTOCOL_KEYS } from "@cool-tunnel/shared";
 import type { ProtocolKey } from "@cool-tunnel/shared";
+import { DEFAULT_PROTOCOL_KEYS } from "@cool-tunnel/shared";
 
 export function normalizeProtocols(value: unknown): ProtocolKey[] {
   let raw: unknown = value;

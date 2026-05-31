@@ -17,8 +17,8 @@
 // admin-api, so it adds no new bundled image; its only attack surface is this
 // file, which parses nothing but the request line.
 
-const SOCKET = process.env["CT_DOCKER_SOCKET"] ?? "/var/run/docker.sock";
-const PORT = Number(process.env["CT_DOCKER_PROXY_PORT"] ?? "2375");
+const SOCKET = process.env.CT_DOCKER_SOCKET ?? "/var/run/docker.sock";
+const PORT = Number(process.env.CT_DOCKER_PROXY_PORT ?? "2375");
 
 // The only containers the dashboard inspects / the restart action targets.
 const ALLOWED_CONTAINERS = new Set(["ct-caddy", "ct-singbox", "ct-admin-web"]);

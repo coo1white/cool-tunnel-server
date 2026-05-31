@@ -1,12 +1,16 @@
 {
-    "name": "redis",
-    "kind": "retired-container-image",
-    "version": "retired-in-v0.5.2",
-    "upstream": "https://hub.docker.com/_/redis",
-    "verify": {
-        "command": ["bash", "-c", "test ! -f docker-compose.yml || ! grep -Eq '^[[:space:]]*redis:' docker-compose.yml"],
-        "expect_zero_exit": true,
-        "expect_no_version_line": true
-    },
-    "note": "Retired active runtime component. v0.5.2 removed the Laravel queue/cache/session stack; Better Auth sessions and control-plane state live in SQLite. This manifest remains only to document the retirement and to prevent a Redis service from reappearing in docker-compose.yml."
+  "name": "redis",
+  "kind": "retired-container-image",
+  "version": "retired-in-v0.5.2",
+  "upstream": "https://hub.docker.com/_/redis",
+  "verify": {
+    "command": [
+      "bash",
+      "-c",
+      "test ! -f docker-compose.yml || ! grep -Eq '^[[:space:]]*redis:' docker-compose.yml"
+    ],
+    "expect_zero_exit": true,
+    "expect_no_version_line": true
+  },
+  "note": "Retired active runtime component. v0.5.2 removed the Laravel queue/cache/session stack; Better Auth sessions and control-plane state live in SQLite. This manifest remains only to document the retirement and to prevent a Redis service from reappearing in docker-compose.yml."
 }

@@ -10,22 +10,22 @@ import { $ } from "bun";
 import { redactSensitive } from "./redact";
 
 export class ShellError extends Error {
-    constructor(
-        readonly cmdLabel: string,
-        readonly code: number,
-        readonly stdout: string,
-        readonly stderr: string,
-    ) {
-        super(`shell failed (${code}): ${cmdLabel}\n${redactSensitive(stderr).slice(0, 2000)}`);
-        this.name = "ShellError";
-    }
+  constructor(
+    readonly cmdLabel: string,
+    readonly code: number,
+    readonly stdout: string,
+    readonly stderr: string,
+  ) {
+    super(`shell failed (${code}): ${cmdLabel}\n${redactSensitive(stderr).slice(0, 2000)}`);
+    this.name = "ShellError";
+  }
 }
 
 export type ShResult = {
-    ok: boolean;
-    code: number;
-    stdout: string;
-    stderr: string;
+  ok: boolean;
+  code: number;
+  stdout: string;
+  stderr: string;
 };
 
 // Resolve a Bun shell promise without throwing on non-zero exit.
@@ -34,13 +34,13 @@ export type ShResult = {
 //   const r = await capture($`docker compose ps admin-api --status running`);
 //   if (!r.ok) handle(...);
 export async function capture(p: ReturnType<typeof $>): Promise<ShResult> {
-    const r = await p.nothrow().quiet();
-    return {
-        ok: r.exitCode === 0,
-        code: r.exitCode,
-        stdout: r.stdout.toString(),
-        stderr: r.stderr.toString(),
-    };
+  const r = await p.nothrow().quiet();
+  return {
+    ok: r.exitCode === 0,
+    code: r.exitCode,
+    stdout: r.stdout.toString(),
+    stderr: r.stderr.toString(),
+  };
 }
 
 // Live-streaming counterpart to capture() — pipes stdout AND stderr
@@ -55,9 +55,11 @@ export async function capture(p: ReturnType<typeof $>): Promise<ShResult> {
 // Trade-off: no captured stdout/stderr strings, so the caller's
 // error path can only show a generic diag (which is what the
 // build callers already do — they don't reference r.stdout).
-export async function runStreaming(p: ReturnType<typeof $>): Promise<{ ok: boolean; code: number }> {
-    const r = await p.nothrow();
-    return { ok: r.exitCode === 0, code: r.exitCode };
+export async function runStreaming(
+  p: ReturnType<typeof $>,
+): Promise<{ ok: boolean; code: number }> {
+  const r = await p.nothrow();
+  return { ok: r.exitCode === 0, code: r.exitCode };
 }
 
 const whichCache = new Map<string, boolean>();
@@ -69,11 +71,11 @@ const whichCache = new Map<string, boolean>();
 // every "<tool> not on PATH" warn as a false positive — fixing this
 // single primitive flips most doctor checks back to their real state.
 export async function which(bin: string): Promise<boolean> {
-    const cached = whichCache.get(bin);
-    if (cached !== undefined) return cached;
-    const found = Bun.which(bin) !== null;
-    whichCache.set(bin, found);
-    return found;
+  const cached = whichCache.get(bin);
+  if (cached !== undefined) return cached;
+  const found = Bun.which(bin) !== null;
+  whichCache.set(bin, found);
+  return found;
 }
 
 export { $ };

@@ -3,22 +3,22 @@
 //
 // Thin wrapper over operator/install.ts.
 
-import type { Task, TaskResult } from "../runner/task";
-import type { RunContext } from "../runner/context";
 import { runInstall } from "../../install";
+import type { RunContext } from "../runner/context";
+import type { Task, TaskResult } from "../runner/task";
 
 export class InstallTask implements Task {
-    readonly name = "install";
+  readonly name = "install";
 
-    async run(_ctx: RunContext): Promise<TaskResult> {
-        try {
-            const code = await runInstall();
-            return code === 0
-                ? { ok: true, code: 0, summary: "installed" }
-                : { ok: false, code, summary: `install exited ${code}` };
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { ok: false, code: 1, summary: msg };
-        }
+  async run(_ctx: RunContext): Promise<TaskResult> {
+    try {
+      const code = await runInstall();
+      return code === 0
+        ? { ok: true, code: 0, summary: "installed" }
+        : { ok: false, code, summary: `install exited ${code}` };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, code: 1, summary: msg };
     }
+  }
 }

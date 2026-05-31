@@ -2,7 +2,12 @@
 
 "use client";
 
-export default function Error({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function ErrorBoundary({
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
   return (
     <div className="shell">
       <main className="main">
@@ -13,9 +18,16 @@ export default function Error({ reset }: { error: Error & { digest?: string }; r
           </div>
         </header>
         <section className="card">
-          <p>The console hit an unexpected error while handling this request. Your session is still active.</p>
-          <p className="muted">Retry the action, or reload the page. If it keeps happening, check the admin API logs.</p>
-          <button className="btn" type="button" onClick={() => reset()}>Try again</button>
+          <p>
+            The console hit an unexpected error while handling this request. Your session is still
+            active.
+          </p>
+          <p className="muted">
+            Retry the action, or reload the page. If it keeps happening, check the admin API logs.
+          </p>
+          <button className="btn" type="button" onClick={() => reset()}>
+            Try again
+          </button>
         </section>
       </main>
     </div>

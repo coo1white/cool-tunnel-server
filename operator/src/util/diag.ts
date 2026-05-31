@@ -6,25 +6,27 @@
 // term.ts because the diagnostic envelope is bigger (multi-line
 // body, indentation) and only update / restore / install need it.
 
-import { ANSI } from "./term";
 import { redactSensitive } from "./redact";
+import { ANSI } from "./term";
 
 export interface DiagFailure {
-    readonly summary: string;
-    readonly diag: string;
+  readonly summary: string;
+  readonly diag: string;
 }
 
 // Print a "✗ FAILED <summary>" block + indented Diagnostic body
 // to stderr, then exit 1. Returns `never` so TS narrows control
 // flow after the call.
 export function dieWithDiag(summary: string, diag: string): never {
-    process.stderr.write(`\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(summary)}\n`);
-    if (diag) {
-        process.stderr.write(`\n${ANSI.bold}Diagnostic:${ANSI.reset}\n`);
-        for (const line of redactSensitive(diag).split("\n")) {
-            process.stderr.write(`  ${line}\n`);
-        }
-        process.stderr.write("\n");
+  process.stderr.write(
+    `\n${ANSI.red}${ANSI.bold}✗ FAILED${ANSI.reset} ${redactSensitive(summary)}\n`,
+  );
+  if (diag) {
+    process.stderr.write(`\n${ANSI.bold}Diagnostic:${ANSI.reset}\n`);
+    for (const line of redactSensitive(diag).split("\n")) {
+      process.stderr.write(`  ${line}\n`);
     }
-    process.exit(1);
+    process.stderr.write("\n");
+  }
+  process.exit(1);
 }

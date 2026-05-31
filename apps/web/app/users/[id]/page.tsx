@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { AdminShell, PermissionDenied, StatusPill } from "../../../src/ui";
 import { ActionForm } from "../../../src/action-form";
-import { getSession, getUser, has } from "../../../src/api";
 import { updateUserAction } from "../../../src/actions";
+import { getSession, getUser, has } from "../../../src/api";
+import { AdminShell, PermissionDenied, StatusPill } from "../../../src/ui";
 import { UserActions } from "../../../src/user-actions";
 
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }, session] = await Promise.all([params, getSession()]);
   if (!has("users:read", session)) {
-    return <AdminShell title="User"><PermissionDenied /></AdminShell>;
+    return (
+      <AdminShell title="User">
+        <PermissionDenied />
+      </AdminShell>
+    );
   }
   const user = await getUser(id);
   const canDisable = has("users:disable", session);
@@ -20,14 +24,25 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     <AdminShell title={user.name} subtitle={user.email}>
       <section className="card">
         <h2>Account</h2>
-        <p><StatusPill value={user.status} /> <span className="muted">{user.role}</span></p>
+        <p>
+          <StatusPill value={user.status} /> <span className="muted">{user.role}</span>
+        </p>
         {has("users:update", session) ? (
           <ActionForm className="form" action={updateUserAction}>
             <input type="hidden" name="id" value={user.id} />
             <div className="grid cols-3">
-              <div className="field"><label>Email</label><input name="email" type="email" defaultValue={user.email} required /></div>
-              <div className="field"><label>Username</label><input name="username" defaultValue={user.username} required /></div>
-              <div className="field"><label>Name</label><input name="name" defaultValue={user.name} required /></div>
+              <div className="field">
+                <label>Email</label>
+                <input name="email" type="email" defaultValue={user.email} required />
+              </div>
+              <div className="field">
+                <label>Username</label>
+                <input name="username" defaultValue={user.username} required />
+              </div>
+              <div className="field">
+                <label>Name</label>
+                <input name="name" defaultValue={user.name} required />
+              </div>
             </div>
             <div className="grid cols-3">
               <div className="field">
@@ -46,14 +61,25 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
                   <option value="disabled">Disabled</option>
                 </select>
               </div>
-              <label className="checkbox"><input name="mustChangePassword" type="checkbox" defaultChecked={user.mustChangePassword} /> Require password change</label>
+              <label className="checkbox">
+                <input
+                  name="mustChangePassword"
+                  type="checkbox"
+                  defaultChecked={user.mustChangePassword}
+                />{" "}
+                Require password change
+              </label>
             </div>
             {/* Wrap so the button doesn't stretch to the parent grid cell. */}
             <div className="form-actions">
-              <button className="btn" type="submit">Save user</button>
+              <button className="btn" type="submit">
+                Save user
+              </button>
             </div>
           </ActionForm>
-        ) : <PermissionDenied />}
+        ) : (
+          <PermissionDenied />
+        )}
       </section>
 
       {(canDisable || canReset || canDelete) && (
